@@ -1,0 +1,17 @@
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+.qdrant/
+.venv/
+dist/
+build/
+coverage/
+.DS_Store
+.worktrees/
+.docmancer/
+.docs-kit/
+downloaded-docs/
+/release-patch-pypi.sh
+/repush-release-tag.sh
+docs/

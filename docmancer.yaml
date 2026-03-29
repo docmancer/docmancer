@@ -1,0 +1,14 @@
+embedding:
+  provider: fastembed
+  model: BAAI/bge-small-en-v1.5
+
+vector_store:
+  provider: qdrant
+  local_path: .docmancer/qdrant
+  collection_name: knowledge_base
+  retrieval_limit: 5
+  score_threshold: 0.35
+
+ingestion:
+  chunk_size: 800
+  chunk_overlap: 120

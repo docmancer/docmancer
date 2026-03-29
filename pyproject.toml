@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling<1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "docmancer"
+dynamic = ["version"]
+description = "Fetch docs, embed locally, expose to AI agents via skills."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.2.1",
+    "qdrant-client>=1.10.0",
+    "fastembed>=0.6.0",
+    "httpx>=0.27.0",
+    "click>=8.0.0",
+    "pyyaml>=6.0",
+    "filelock>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
+
+[project.scripts]
+"docmancer" = "docmancer.cli.__main__:cli"
+
+[tool.hatch.version]
+path = "docmancer/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["docmancer"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
