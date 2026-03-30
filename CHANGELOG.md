@@ -4,10 +4,43 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Release numbers were restarted at **0.1.1** after a fresh git history; PyPI installs use this line only going forward.
+## [0.1.3] - Unreleased
+
+### Added
+
+- Shared CLI branding module (`docmancer/cli/ui.py`): ASCII banner, tagline, and helpers for TTY-aware color.
+- `looks_like_html()` and stricter HTML cleanup (strip `script` / `style` / `nav` / `footer` / `header` blocks before generic tag removal).
+- Tests for HTML vs markdown in the GitBook / `llms.txt` pipeline and unit tests for `html_utils`.
+
+### Changed
+
+- **`docmancer` / `--help`:** Main help uses the same banner and styling as other branded output.
+- **`docmancer doctor`:** Opens with the banner; status lines use consistent `[OK]` / `[--]` / `[!!]` styling and colors.
+- **`docmancer install`:** Summaries for every install target use the banner, colored status lines, and a single “Next:” line (Claude Desktop zip steps, Cursor restart, etc.).
+
+### Documentation
+
+- **README:** Major refresh — founder-style **Why I Built This** / **Who This Is For**, ASCII **Docmancer flow** diagram, deeper **How It Works** and **Why It Works** (hybrid dense + BM25, skills vs MCP servers, one index for every agent, file lock on Qdrant); **What It Solves** and **What It Does** sections; updated hero and table of contents; **Upgrade** subsection for `pipx upgrade` / `pipx reinstall`; explicit local-first and cross-platform install note; existing install/troubleshooting guidance retained where relevant.
+
+### Fixed
+
+- **`llms-full.txt` / `llms.txt`:** Ignore responses that are HTML (e.g. error pages) via `Content-Type` and content heuristics instead of treating them as valid llms text.
+- **Pages linked from `llms.txt`:** When a URL returns a full HTML document, extract main content and record `format` metadata appropriately; skip empty results after extraction.
+
+## [0.1.2] - 2026-03-30
+
+### Documentation
+
+- README aligned with the current CLI: install targets (including Gemini and Codex aliases), `--project`, and ingest providers.
+- PyPI-friendly badges; clarified defaults for `fetch` output directory, `query` preview limit, and `inspect` output.
+- Replaced a broken project-overview link with `CONTRIBUTING.md`.
 
 ## [0.1.1] - 2026-03-29
 
 ### Added
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
+
+[0.1.3]: https://github.com/docmancer/docmancer/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/docmancer/docmancer/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/docmancer/docmancer/releases/tag/v0.1.1
