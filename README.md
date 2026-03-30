@@ -471,3 +471,39 @@ arch -arm64 pipx install docmancer --python /opt/homebrew/bin/python3.13
 ```
 
 If you are using a virtual environment instead of `pipx`, create that virtualenv with the same Python binary you intend to use at runtime.
+
+### `docmancer doctor` crashes with `pydantic_core` or an incompatible architecture error
+
+This usually means your virtual environment was created with a Python or wheel set from the wrong architecture.
+
+On Apple Silicon, the failure often looks like:
+
+```text
+ImportError: ... pydantic_core ... incompatible architecture (have 'x86_64', need 'arm64')
+```
+
+That means an `arm64` Python process is trying to load an `x86_64` compiled dependency from the virtualenv.
+
+Checks:
+
+```bash
+uname -m
+which python3.13
+file "$(which python3.13)"
+```
+
+Fix by recreating the environment with a native `arm64` interpreter:
+
+```bash
+deactivate
+rm -rf .venv
+arch -arm64 /opt/homebrew/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+```
+
+Then retry:
+
+```bash
+docmancer doctor
+```

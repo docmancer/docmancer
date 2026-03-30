@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from docmancer.cli.help import DocmancerCommand, HELP_CONTEXT_SETTINGS, format_examples
+from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, color_enabled, style
 
 INSTALL_TARGETS = [
     "claude-code",
@@ -96,6 +97,58 @@ def _describe_vector_store(config) -> str:
     if config.vector_store.url:
         return f"remote Qdrant at {config.vector_store.url}"
     return f"local embedded Qdrant at {config.vector_store.local_path}"
+
+
+def _color_enabled() -> bool:
+    return color_enabled()
+
+
+def _style(text: str, **styles: str | bool) -> str:
+    return style(text, **styles)
+
+
+def _emit_brand_header(command: str, subtitle: str) -> None:
+    click.echo()
+    for line in BANNER_LINES:
+        click.echo(_style(line, fg=BANNER_COLOR, bold=True))
+    click.echo(_style(f"  {command}", fg="white", bold=True) + _style(f"  {subtitle}", fg="bright_black"))
+    click.echo()
+
+
+def _emit_status_line(message: str, state: str = "ok", indent: int = 2) -> None:
+    palette = {
+        "ok": ("[OK]", "bright_green"),
+        "info": ("[--]", "bright_cyan"),
+        "warn": ("[--]", "yellow"),
+        "error": ("[!!]", "red"),
+    }
+    label, color = palette[state]
+    click.echo(" " * indent + _style(label, fg=color, bold=True) + f" {message}")
+
+
+def _emit_next_step(text: str) -> None:
+    click.echo()
+    click.echo(_style("  Next:", fg="bright_green", bold=True) + f" {text}")
+
+
+def _emit_install_summary(
+    heading: str,
+    installed_paths: list[tuple[str, Path]],
+    created_user_config: bool,
+    effective_config_path: Path | None,
+    next_step: str,
+    extra_lines: list[str] | None = None,
+) -> None:
+    _emit_brand_header("docmancer install", heading)
+    for label, path in installed_paths:
+        _emit_status_line(f"{label}: {path}")
+    if created_user_config:
+        _emit_status_line(f"Created user config at {_get_user_config_path()}")
+    elif effective_config_path is not None:
+        _emit_status_line(f"Skill uses config {effective_config_path}")
+    for line in extra_lines or []:
+        _emit_status_line(line, state="info")
+    _emit_next_step(next_step)
 
 
 # ---------------------------------------------------------------------------
@@ -325,13 +378,14 @@ def doctor_cmd(config_path: str | None):
     """Check environment, connectivity, and installed skill status."""
     config = _load_config(config_path)
     home = Path.home()
+    _emit_brand_header("docmancer doctor", "Check binary, config, archive, and installed skills.")
 
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
     if resolved_bin:
-        click.echo(f"  [OK] docmancer binary: {resolved_bin}")
+        _emit_status_line(f"docmancer binary: {resolved_bin}")
     else:
-        click.echo("  [--] docmancer not found on PATH (install with: pipx install docmancer)")
+        _emit_status_line("docmancer not found on PATH (install with: pipx install docmancer --python python3.13)", state="warn")
 
     # Effective config
     if config_path:
@@ -340,28 +394,29 @@ def doctor_cmd(config_path: str | None):
         effective_config = Path("docmancer.yaml")
     else:
         effective_config = _get_user_config_path()
-    click.echo(f"  [OK] Config: {effective_config}")
+    _emit_status_line(f"Config: {effective_config}")
 
     # Vector store
-    click.echo(f"  [OK] Vector store: {_describe_vector_store(config)}")
+    _emit_status_line(f"Vector store: {_describe_vector_store(config)}")
 
     if config.vector_store.url:
         try:
             QdrantClient = _get_qdrant_client_class()
             client = QdrantClient(url=config.vector_store.url, timeout=3)
             client.get_collections()
-            click.echo(f"  [OK] Qdrant reachable at {config.vector_store.url}")
+            _emit_status_line(f"Qdrant reachable at {config.vector_store.url}")
         except Exception:
-            click.echo(f"  [--] Qdrant not reachable at {config.vector_store.url}")
+            _emit_status_line(f"Qdrant not reachable at {config.vector_store.url}", state="warn")
     else:
         qdrant_path = Path(config.vector_store.local_path)
         if qdrant_path.exists():
-            click.echo(f"  [OK] Embedded Qdrant data at {qdrant_path}")
+            _emit_status_line(f"Embedded Qdrant data at {qdrant_path}")
         else:
-            click.echo(f"  [--] No Qdrant data yet at {qdrant_path} (run: docmancer ingest)")
+            _emit_status_line(f"No Qdrant data yet at {qdrant_path} (run: docmancer ingest)", state="warn")
 
     # Skill install status
-    click.echo("  Installed skills:")
+    click.echo()
+    click.echo(_style("  Installed skills", fg="white", bold=True))
     skill_locations = [
         ("claude-code", "claude-code", home / ".claude" / "skills" / "docmancer" / "SKILL.md"),
         ("cursor", "cursor", home / ".cursor" / "skills" / "docmancer" / "SKILL.md"),
@@ -373,9 +428,9 @@ def doctor_cmd(config_path: str | None):
     ]
     for label, install_target, path in skill_locations:
         if path.exists():
-            click.echo(f"    [OK] {label}: {path}")
+            _emit_status_line(f"{label}: {path}", indent=4)
         else:
-            click.echo(f"    [--] {label}: not installed (run: docmancer install {install_target})")
+            _emit_status_line(f"{label}: not installed (run: docmancer install {install_target})", state="warn", indent=4)
 
 
 @click.command(
@@ -497,17 +552,19 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
 
     if normalized == "claude-desktop":
         zip_path = _create_claude_desktop_zip(effective_config_path)
-        click.echo(f"Created docmancer skill package at {zip_path}")
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill package uses config {effective_config_path}")
-        click.echo("")
-        click.echo("To install in Claude Desktop:")
-        click.echo("  1. Open Claude Desktop")
-        click.echo("  2. Go to Customize > Skills")
-        click.echo('  3. Click "+" and select "Upload a skill"')
-        click.echo(f"  4. Upload: {zip_path}")
+        _emit_install_summary(
+            "Package skill for Claude Desktop.",
+            [("Created docmancer skill package at", zip_path)],
+            created_user_config,
+            effective_config_path,
+            f"Upload {zip_path} in Claude Desktop > Customize > Skills.",
+            extra_lines=[
+                "1. Open Claude Desktop",
+                "2. Go to Customize > Skills",
+                '3. Click "+" and select "Upload a skill"',
+                f"4. Upload: {zip_path}",
+            ],
+        )
         return
 
     if normalized == "claude-code":
@@ -517,13 +574,14 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             dest = home / ".claude" / "skills" / "docmancer" / "SKILL.md"
         content = _build_skill_content("claude_code_skill.md", effective_config_path)
         _install_skill_file(content, dest)
-        click.echo(f"Installed docmancer skill at {dest}")
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill uses config {effective_config_path}")
-        click.echo("  Claude Code will automatically use docmancer commands.")
-        click.echo("  No restart needed.")
+        _emit_install_summary(
+            "Install skill for Claude Code.",
+            [("Installed docmancer skill at", dest)],
+            created_user_config,
+            effective_config_path,
+            "Claude Code can use docmancer immediately. No restart needed.",
+            extra_lines=["Claude Code will automatically use docmancer commands."],
+        )
         return
 
     if normalized in {"codex", "codex-app", "codex-desktop"}:
@@ -532,20 +590,23 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
         content = _build_skill_content("skill.md", effective_config_path)
         _install_skill_file(content, dest)
         _install_skill_file(content, shared_dest)
-        click.echo(f"Installed docmancer skill at {dest}")
-        click.echo(f"  Also installed shared compatibility skill at {shared_dest}")
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill uses config {effective_config_path}")
-        click.echo("  Codex will automatically use docmancer commands.")
+        _emit_install_summary(
+            "Install skill for Codex.",
+            [
+                ("Installed docmancer skill at", dest),
+                ("Also installed shared compatibility skill at", shared_dest),
+            ],
+            created_user_config,
+            effective_config_path,
+            'Run `docmancer query "your question"` to verify retrieval from the CLI.',
+            extra_lines=["Codex will automatically use docmancer commands."],
+        )
         return
 
     if normalized == "cursor":
         dest = home / ".cursor" / "skills" / "docmancer" / "SKILL.md"
         content = _build_skill_content("skill.md", effective_config_path)
         _install_skill_file(content, dest)
-        click.echo(f"Installed docmancer skill at {dest}")
 
         # Also write AGENTS.md fallback while Cursor's skill discovery matures
         agents_md = home / ".cursor" / "AGENTS.md"
@@ -553,12 +614,16 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             "{{DOCS_KIT_CMD}}", _resolve_skill_command(effective_config_path)
         )
         _install_or_append_agents_md(agents_md, agents_body)
-        click.echo(f"  Updated fallback at {agents_md}")
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill uses config {effective_config_path}")
-        click.echo("  Restart Cursor for changes to take effect.")
+        _emit_install_summary(
+            "Install skill for Cursor.",
+            [
+                ("Installed docmancer skill at", dest),
+                ("Updated fallback at", agents_md),
+            ],
+            created_user_config,
+            effective_config_path,
+            "Restart Cursor for changes to take effect.",
+        )
         return
 
     if normalized == "gemini":
@@ -568,36 +633,42 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             dest = home / ".gemini" / "skills" / "docmancer" / "SKILL.md"
         content = _build_skill_content("skill.md", effective_config_path)
         _install_skill_file(content, dest)
-        click.echo(f"Installed docmancer skill at {dest}")
 
         # Also write to shared ~/.agents/skills/ path if not already installed
         shared_dest = _get_shared_agent_skill_path()
+        installed_paths = [("Installed docmancer skill at", dest)]
         if not shared_dest.exists():
             _install_skill_file(content, shared_dest)
-            click.echo(f"  Also installed at shared path {shared_dest}")
+            installed_paths.append(("Also installed at shared path", shared_dest))
 
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill uses config {effective_config_path}")
-        click.echo("  Gemini CLI will automatically use docmancer commands.")
+        _emit_install_summary(
+            "Install skill for Gemini CLI.",
+            installed_paths,
+            created_user_config,
+            effective_config_path,
+            'Run `docmancer query "your question"` or restart Gemini if it does not pick up the skill immediately.',
+            extra_lines=["Gemini CLI will automatically use docmancer commands."],
+        )
         return
 
     if normalized == "opencode":
         dest = home / ".config" / "opencode" / "skills" / "docmancer" / "SKILL.md"
         content = _build_skill_content("skill.md", effective_config_path)
         _install_skill_file(content, dest)
-        click.echo(f"Installed docmancer skill at {dest}")
 
         # Also write to shared ~/.agents/skills/ path if not already installed by codex
         shared_dest = _get_shared_agent_skill_path()
+        installed_paths = [("Installed docmancer skill at", dest)]
         if not shared_dest.exists():
             _install_skill_file(content, shared_dest)
-            click.echo(f"  Also installed at shared path {shared_dest}")
+            installed_paths.append(("Also installed at shared path", shared_dest))
 
-        if created_user_config:
-            click.echo(f"  Created user config at {_get_user_config_path()}")
-        elif effective_config_path is not None:
-            click.echo(f"  Skill uses config {effective_config_path}")
-        click.echo("  OpenCode will automatically use docmancer commands.")
+        _emit_install_summary(
+            "Install skill for OpenCode.",
+            installed_paths,
+            created_user_config,
+            effective_config_path,
+            'Run `docmancer query "your question"` to verify retrieval from the CLI.',
+            extra_lines=["OpenCode will automatically use docmancer commands."],
+        )
         return

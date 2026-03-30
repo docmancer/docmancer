@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import inspect
-import os
-import sys
 import textwrap
 
 import click
+from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, TAGLINE, color_enabled, style
 
 
 TERM_WIDTH = 100
@@ -24,28 +23,12 @@ class _FormattedHelpMixin:
     _term_width = 20
     _desc_start = 22
     _rule_width = TERM_WIDTH
-    # FIGlet font "slant" for "docmancer" (hardcoded; no runtime figlet dependency).
-    _banner_lines = [
-        "       __                      __   _ __ ",
-        "  ____/ /___  __________      / /__(_) /_",
-        " / __  / __ \\/ ___/ ___/_____/ //_/ / __/",
-        "/ /_/ / /_/ / /__(__  )_____/ ,< / / /_  ",
-        "\\__,_/\\____/\\___/____/     /_/|_/_/\\__/  ",
-    ]
 
     def _color_enabled(self) -> bool:
-        if os.getenv("NO_COLOR"):
-            return False
-        if os.getenv("CLICOLOR_FORCE") not in {None, "", "0"}:
-            return True
-        if os.getenv("FORCE_COLOR") not in {None, "", "0"}:
-            return True
-        return sys.stdout.isatty()
+        return color_enabled()
 
     def _style(self, ctx: click.Context, text: str, **styles: str | bool) -> str:
-        if self._color_enabled():
-            return click.style(text, **styles)
-        return text
+        return style(text, **styles)
 
     def _rule(self, ctx: click.Context, char: str = "─") -> str:
         text = char * self._rule_width
@@ -55,10 +38,9 @@ class _FormattedHelpMixin:
 
     def _write_banner(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         formatter.write(f"{self._rule(ctx)}\n")
-        for line in self._banner_lines:
-            formatter.write(f"{self._style(ctx, line, fg='magenta', bold=True)}\n")
-        tagline = "Turn docs into agent-ready context."
-        formatter.write(f"{self._style(ctx, tagline, fg='bright_black', italic=True)}\n")
+        for line in BANNER_LINES:
+            formatter.write(f"{self._style(ctx, line, fg=BANNER_COLOR, bold=True)}\n")
+        formatter.write(f"{self._style(ctx, TAGLINE, fg='bright_black', italic=True)}\n")
         formatter.write(f"{self._rule(ctx)}\n")
 
     def _write_section(self, ctx: click.Context, formatter: click.HelpFormatter, heading: str) -> None:
