@@ -6,6 +6,10 @@
 
 **Ingest docs once, index them locally, retrieve only the relevant sections when you need them.**
 
+<p align="center">
+  <em>Ground coding agents in up-to-date documentation.</em>
+</p>
+
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
