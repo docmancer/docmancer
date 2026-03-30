@@ -4,6 +4,8 @@ import importlib
 import logging
 from pathlib import Path
 
+import httpx
+
 from docmancer.core.config import DocmancerConfig
 from docmancer.core.models import Chunk, Document, RetrievedChunk
 
@@ -128,32 +130,112 @@ class DocmancerAgent:
             logger.info("Ingested %d chunks from %s", count, file_path)
         return total
 
-    def _get_fetcher(self, provider: str | None, fetcher):
+    def _get_fetcher(
+        self,
+        provider: str | None,
+        fetcher=None,
+        max_pages: int = 500,
+        strategy: str | None = None,
+        browser: bool = False,
+        url: str | None = None,
+    ):
         if fetcher is not None:
             return fetcher
         if provider == "gitbook":
             from docmancer.connectors.fetchers.gitbook import GitBookFetcher
             return GitBookFetcher()
-        # "mintlify" or "auto" or None — MintlifyFetcher is the superset fetcher:
-        # it tries llms-full.txt → llms.txt → sitemap.xml, so it works for both.
-        from docmancer.connectors.fetchers.mintlify import MintlifyFetcher
-        return MintlifyFetcher()
+        if provider == "mintlify":
+            from docmancer.connectors.fetchers.mintlify import MintlifyFetcher
+            return MintlifyFetcher()
+        if provider == "web":
+            from docmancer.connectors.fetchers.web import WebFetcher
+            return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
 
-    def ingest_url(self, url: str, recreate: bool = False, fetcher=None, provider: str | None = None) -> int:
+        # Auto-detect: probe the site to determine the best fetcher.
+        if url:
+            detected = self._auto_detect_provider(url)
+            if detected == "gitbook":
+                from docmancer.connectors.fetchers.gitbook import GitBookFetcher
+                return GitBookFetcher()
+            if detected == "mintlify":
+                from docmancer.connectors.fetchers.mintlify import MintlifyFetcher
+                return MintlifyFetcher()
+            if detected == "web":
+                from docmancer.connectors.fetchers.web import WebFetcher
+                return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
+
+        # Fallback when no URL provided for auto-detection:
+        # Use WebFetcher which has the full discovery chain.
+        from docmancer.connectors.fetchers.web import WebFetcher
+        return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
+
+    def _auto_detect_provider(self, url: str) -> str:
+        """Detect the documentation platform and return the best provider name.
+
+        Returns "gitbook", "mintlify", or "web".
+        """
+        from docmancer.connectors.fetchers.pipeline.detection import Platform, detect_platform
+
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                resp = client.get(url)
+                platform = detect_platform(resp.text, url, dict(resp.headers))
+        except Exception:
+            return "web"  # Safe fallback: WebFetcher has full discovery chain
+
+        if platform == Platform.GITBOOK:
+            logger.info("Auto-detected platform: GitBook")
+            return "gitbook"
+        if platform == Platform.MINTLIFY:
+            logger.info("Auto-detected platform: Mintlify")
+            return "mintlify"
+
+        # All other platforms (Docusaurus, MkDocs, Sphinx, Next.js, generic, etc.)
+        # use the WebFetcher which has the full discovery chain including nav crawl.
+        logger.info("Auto-detected platform: %s → using web fetcher", platform.value)
+        return "web"
+
+    def ingest_url(
+        self,
+        url: str,
+        recreate: bool = False,
+        fetcher=None,
+        provider: str | None = None,
+        max_pages: int = 500,
+        strategy: str | None = None,
+        browser: bool = False,
+    ) -> int:
         """Fetch documents from a URL and ingest them.
 
         Args:
             url: The base URL of the documentation site.
             recreate: Drop and recreate the collection before ingesting.
             fetcher: Optional custom fetcher instance (overrides provider).
-            provider: One of "auto" (default), "gitbook", or "mintlify".
+            provider: One of "auto" (default), "gitbook", "mintlify", or "web".
+            max_pages: Maximum pages to fetch (web provider only).
+            strategy: Force a specific discovery strategy (web provider only).
+            browser: Enable Playwright fallback (web provider only).
         """
-        documents = self._get_fetcher(provider, fetcher).fetch(url)
+        f = self._get_fetcher(
+            provider, fetcher, max_pages=max_pages, strategy=strategy, browser=browser, url=url,
+        )
+        documents = f.fetch(url)
         return self.ingest_documents(documents, recreate=recreate)
 
-    def fetch_documents(self, url: str, fetcher=None, provider: str | None = None) -> list[Document]:
+    def fetch_documents(
+        self,
+        url: str,
+        fetcher=None,
+        provider: str | None = None,
+        max_pages: int = 500,
+        strategy: str | None = None,
+        browser: bool = False,
+    ) -> list[Document]:
         """Fetch documents from a URL without ingesting."""
-        return self._get_fetcher(provider, fetcher).fetch(url)
+        f = self._get_fetcher(
+            provider, fetcher, max_pages=max_pages, strategy=strategy, browser=browser, url=url,
+        )
+        return f.fetch(url)
 
     def query(self, text: str, limit: int | None = None) -> list[RetrievedChunk]:
         effective_limit = limit if limit is not None else self.config.vector_store.retrieval_limit

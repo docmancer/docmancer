@@ -270,15 +270,31 @@ def init_cmd(directory: str):
         "docmancer ingest ./docs",
         "docmancer ingest https://docs.example.com",
         "docmancer ingest ./docs --recreate",
+        "docmancer ingest https://docs.example.com --provider web",
+        "docmancer ingest https://docs.example.com --provider web --max-pages 200",
     ),
 )
 @click.argument("path")
 @click.option("--recreate", is_flag=True, help="Recreate the collection first.")
 @click.option("--provider", default="auto", show_default=True,
-              type=click.Choice(["auto", "gitbook", "mintlify"], case_sensitive=False),
-              help="Docs platform. auto tries llms.txt then sitemap.xml.")
+              type=click.Choice(["auto", "gitbook", "mintlify", "web"], case_sensitive=False),
+              help="Docs platform. auto tries llms.txt then sitemap.xml. web uses generic pipeline.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def ingest_cmd(path: str, recreate: bool, provider: str, config_path: str | None):
+@click.option("--max-pages", default=500, show_default=True, type=int,
+              help="Maximum pages to fetch (web provider).")
+@click.option("--strategy", default=None, type=str,
+              help="Force a discovery strategy (e.g. llms-full.txt, sitemap.xml, nav-crawl).")
+@click.option("--browser", is_flag=True, default=False,
+              help="Enable Playwright browser fallback for JS-heavy sites.")
+def ingest_cmd(
+    path: str,
+    recreate: bool,
+    provider: str,
+    config_path: str | None,
+    max_pages: int,
+    strategy: str | None,
+    browser: bool,
+):
     """Ingest documents from a file, directory, or URL."""
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
@@ -289,7 +305,14 @@ def ingest_cmd(path: str, recreate: bool, provider: str, config_path: str | None
     try:
         if path.startswith("http://") or path.startswith("https://"):
             click.echo(f"Fetching docs from {path}...")
-            total = agent.ingest_url(path, recreate=recreate, provider=provider if provider != "auto" else None)
+            total = agent.ingest_url(
+                path,
+                recreate=recreate,
+                provider=provider if provider != "auto" else None,
+                max_pages=max_pages,
+                strategy=strategy,
+                browser=browser,
+            )
         else:
             total = agent.ingest(path, recreate=recreate)
         click.echo(f"Total: {total} chunks ingested")
@@ -301,7 +324,7 @@ def ingest_cmd(path: str, recreate: bool, provider: str, config_path: str | None
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Download GitBook docs to Markdown files.",
+    short_help="Download docs to Markdown files.",
     epilog=format_examples(
         "docmancer fetch https://docs.example.com",
         "docmancer fetch https://docs.example.com --output ./downloaded-docs",

@@ -18,9 +18,15 @@ dependencies = [
     "click>=8.0.0",
     "pyyaml>=6.0",
     "filelock>=3.0.0",
+    "trafilatura>=2.0.0",
+    "markdownify>=0.13.0",
+    "w3lib>=2.0.0",
+    "ultimate-sitemap-parser>=0.12",
+    "beautifulsoup4>=4.12.0",
 ]
 
 [project.optional-dependencies]
+browser = ["playwright>=1.40.0"]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [project.scripts]

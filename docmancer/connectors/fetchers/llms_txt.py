@@ -4,6 +4,7 @@ import logging
 import re
 import httpx
 
+from docmancer.connectors.fetchers.pipeline.redirect import RedirectTracker
 from docmancer.core.html_utils import extract_main_content, looks_like_html
 from docmancer.core.models import Document
 
@@ -76,9 +77,33 @@ class LlmsTxtFetcher:
         if not resp.text.strip():
             return None
         urls = self._parse_llms_txt(resp.text)
+        redirect_tracker = RedirectTracker()
+        seen_final_urls: set[str] = set()
         documents = []
         for url in urls:
-            page_resp = client.get(url)
+            # Apply learned redirect patterns to skip redirect chains.
+            predicted_url = redirect_tracker.predict_final_url(url)
+            fetch_url = predicted_url if predicted_url else url
+
+            if fetch_url in seen_final_urls:
+                logger.debug("Skipped %s (final URL already fetched)", url)
+                continue
+
+            page_resp = client.get(fetch_url)
+
+            # Fall back to original URL if prediction returned 404.
+            if page_resp.status_code == 404 and predicted_url:
+                logger.debug("Predicted URL %s returned 404, retrying %s", predicted_url, url)
+                page_resp = client.get(url)
+                fetch_url = url
+
+            final_url = str(page_resp.url)
+            seen_final_urls.add(final_url)
+
+            # Learn redirect patterns from observed redirects.
+            if final_url != url:
+                redirect_tracker.record_redirect(url, final_url)
+
             if page_resp.status_code == 200 and page_resp.text.strip():
                 raw = page_resp.text
                 if looks_like_html(raw):

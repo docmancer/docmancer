@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - Unreleased
+
+### Added
+
+- **`web` ingest provider** and **`WebFetcher`:** generic pipeline for public doc sites that are not GitBook/Mintlify: homepage platform detection, discovery (`llms-full.txt`, `llms.txt`, sitemap, nav strategies), URL normalization and doc filtering, **robots.txt** checks, rate limiting and redirect tracking, HTML extraction via **trafilatura** and **markdownify**, content deduplication, and rich metadata. Optional **Playwright** fallback for JS-heavy pages (`docmancer ingest --browser`); install with **`pip install docmancer[browser]`** (or equivalent extras).
+- **`docmancer ingest` flags:** `--provider web` (and **`auto`** now probes the site and chooses **gitbook**, **mintlify**, or **web**), **`--max-pages`**, **`--strategy`**, **`--browser`**.
+- **Pipeline package** under `docmancer/connectors/fetchers/pipeline/` (detection, discovery, extraction, filtering, robots, sitemap, rate limit, redirect, browser helper).
+- **Tests** covering auto-detection, browser integration, discovery, extraction, filtering, robots, sitemap, rate limit, redirects, and web fetcher behavior.
+
+### Changed
+
+- **Dependencies:** `trafilatura`, `markdownify`, `w3lib`, `ultimate-sitemap-parser`, `beautifulsoup4`; optional extra **`browser`** → `playwright`.
+- **`DocmancerAgent`:** routes URL ingest through auto-detection and **`web`** when appropriate; integrates the new fetcher stack.
+- **`llms_txt`:** aligned with shared HTML/text validation used by the broader fetch pipeline.
+- **README:** Updated for **`auto` / `web`** ingest, new CLI options, optional browser extra, and dependency/stack notes (structure trimmed vs. earlier long-form hero).
+
 ## [0.1.4] - 2026-03-30
 ### Changed
 
@@ -46,7 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.4]: https://github.com/docmancer/docmancer/compare/v0.1.3...HEAD
+[0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/docmancer/docmancer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/docmancer/docmancer/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/docmancer/docmancer/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/docmancer/docmancer/releases/tag/v0.1.1
