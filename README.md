@@ -1,65 +1,94 @@
 # docmancer
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer)](https://pypi.org/project/docmancer/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/docmancer)](https://pypi.org/project/docmancer/)
-[![CI](https://github.com/docmancer/docmancer/actions/workflows/ci.yml/badge.svg)](https://github.com/docmancer/docmancer/actions/workflows/ci.yml)
+[![License](https://img.shields.io/pypi/l/docmancer)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
+[![Python versions](https://img.shields.io/pypi/pyversions/docmancer)](https://pypi.org/project/docmancer/)
+[![CI](https://github.com/docmancer/docmancer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/docmancer/docmancer/actions/workflows/ci.yml)
 
-Fetch docs from GitBook, Mintlify, or local files, embed them locally, and teach AI agents to search them via installed **skills** (CLI commands). No API keys for the default embedding path. No background server—agents run `docmancer` from the terminal.
+**docmancer** gives coding agents a **fast, consistent** path to **up-to-date documentation**: ingest sources into a **local vector index**, retrieve **only the passages** that match a question (smaller prompts, less noise than pasting whole doc sites), and install **skills** so each agent runs the **`docmancer` CLI** when it needs specs or API details. That **grounds** answers in text you indexed instead of relying on stale training data alone.
+
+Fetch from **GitBook**, **Mintlify**, or **local files**; the default embedding stack is **local** (**FastEmbed** + on-disk **Qdrant**), with **no API keys** required for that path and **no background server**—agents call `docmancer` from the terminal.
 
 ## What it does
 
-- Fetches public docs from **GitBook** and **Mintlify** sites via `/llms-full.txt` and `/llms.txt`, with a **sitemap.xml** fallback on Mintlify when those endpoints are missing
-- **`docmancer ingest`:** `--provider auto` (default) uses a combined strategy (llms endpoints → sitemap). **`--provider gitbook`** uses the GitBook-only fetcher; **`--provider mintlify`** uses the same pipeline as `auto`
+- Fetches public documentation URLs via `/llms-full.txt` and `/llms.txt`, with a **`sitemap.xml`** fallback when those endpoints are not enough (typical for **Mintlify** and many public doc sites)
+- **`docmancer ingest`:** `--provider` is `auto` (default), `gitbook`, or `mintlify` (case-insensitive). **`gitbook`** uses the GitBook fetcher only. **`auto`** and **`mintlify`** both use the Mintlify-style pipeline (`/llms-full.txt` → `/llms.txt` → `/sitemap.xml`)
 - Ingests local `.md` and `.txt` files
 - Stores vectors in **embedded Qdrant** on disk — typically `~/.docmancer/qdrant` when using the auto-created user config, or `.docmancer/qdrant` (resolved relative to your `docmancer.yaml`) for a project-local config from `docmancer init`
-- **Hybrid retrieval** (dense embeddings + sparse / BM25-style vectors) for `docmancer query` and agent-driven queries
-- Installs **skill files** into Claude Code, Cursor, Codex, OpenCode, and Claude Desktop so agents run `docmancer` over the shell
+- **Hybrid retrieval** (dense embeddings + sparse / BM25-style vectors) for `docmancer query` and agent-driven queries, so retrieval behaves like focused **RAG** over your index
+- **`docmancer install`** writes **skill files** into Claude Code, Cursor, Codex, OpenCode, Gemini CLI, Claude Desktop, and related targets so **one ingested index** is shared across tools
 - Concurrent CLI runs coordinate with a **file lock** on the local Qdrant path
 
 ## Install
 
-Recommended: **`pipx`** so `docmancer` is on your PATH:
-
-```bash
-pipx install docmancer
-```
-
-Install `pipx` if needed:
+Recommended for most users: install **`pipx`** with Homebrew, then install `docmancer` with `pipx`.
 
 ```bash
 brew install pipx
 pipx ensurepath
 ```
 
-Or **`pip`** inside a virtual environment:
+Open a new shell, then install `docmancer`:
 
 ```bash
-pip install docmancer
+pipx install docmancer
 ```
+
+If your default `python3` is 3.14, tell `pipx` to use Python 3.13 explicitly:
+
+```bash
+pipx install docmancer --python python3.13
+```
+
+On Apple Silicon, prefer the Homebrew Python at `/opt/homebrew/bin/python3.13` so `pipx`, Python, and native wheels all use the same `arm64` architecture:
+
+```bash
+pipx install docmancer --python /opt/homebrew/bin/python3.13
+```
+
+If you already have `pipx`, you only need:
+
+```bash
+pipx install docmancer
+```
+
+If you prefer `pip`, use a virtual environment so the CLI stays local to that environment and does not depend on your user-level script path:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install docmancer
+docmancer doctor
+```
+
+Avoid relying on bare `pip install docmancer` outside a virtual environment unless you have already configured your Python user scripts directory on `PATH`.
 
 ## Quickstart
 
 ```bash
-# 1. Install (once)
-pipx install docmancer
+# 1. Install pipx (once)
+brew install pipx
+pipx ensurepath
 
-# 2. Ingest docs
+# 2. Open a new shell, then install docmancer
+pipx install docmancer --python python3.13
+
+# 3. Ingest docs
 docmancer ingest https://docs.example.com
 
-# 3. Install skill into your agent
-docmancer install claude-code   # or: cursor, codex, opencode, claude-desktop
+# 4. Install skill into your agent
+docmancer install claude-code   # or: cursor, codex, opencode, claude-desktop, gemini
 
-# 4. Use the agent — it can run docmancer query / list / ingest when relevant
+# 5. Use the agent — it can run docmancer query / list / ingest when relevant
 ```
 
 No server to start. On first use, config and the default vector store path are created under **`~/.docmancer/`** unless you use a project-local `docmancer.yaml`.
 
 ## How it works
 
-docmancer installs a **skill** (Markdown + YAML frontmatter) into each tool’s skills directory. The skill tells the agent when to use docmancer and which commands to run (`query`, `list`, `ingest`, `remove`, `inspect`, `doctor`, …). Agents execute **`docmancer`** via their normal terminal integration.
+docmancer installs a **skill** (Markdown + YAML frontmatter) into each tool’s skills directory. The skill describes when to use docmancer and which commands to run. Subcommands include **`init`**, **`fetch`**, **`ingest`**, **`query`**, **`list`**, **`remove`**, **`inspect`**, **`doctor`**, and **`install`** (run **`docmancer --help`** for the canonical list). Agents run **`docmancer`** through their usual terminal integration.
 
-For more architecture detail (config resolution, layout, security posture), see [docs/project-overview.md](docs/project-overview.md).
+For development setup and contributing, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install targets
 
@@ -69,11 +98,12 @@ For more architecture detail (config resolution, layout, security posture), see 
 | `docmancer install codex` | `~/.codex/skills/docmancer/SKILL.md` (also mirrors to `~/.agents/skills/docmancer/SKILL.md` for compatibility) |
 | `docmancer install cursor` | `~/.cursor/skills/docmancer/SKILL.md` + marked block in `~/.cursor/AGENTS.md` when needed |
 | `docmancer install opencode` | `~/.config/opencode/skills/docmancer/SKILL.md` (and may mirror under `~/.agents/skills/` if absent) |
+| `docmancer install gemini` | `~/.gemini/skills/docmancer/SKILL.md` (and may mirror under `~/.agents/skills/` if absent) |
 | `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip` — upload via Claude Desktop **Customize → Skills** |
 
-`codex-app` and `codex-desktop` are accepted aliases for the Codex install path.
+`codex-app` and `codex-desktop` are accepted aliases for the Codex install path (same paths as **`codex`**).
 
-Use **`--project`** with `claude-code` for `.claude/skills/docmancer/SKILL.md` in the current repo.
+Use **`--project`** with **`claude-code`** or **`gemini`** to install under **`.claude/skills/...`** or **`.gemini/skills/...`** in the current working directory instead of your home directory.
 
 ## Commands
 
@@ -86,16 +116,20 @@ docmancer install claude-code
 docmancer install cursor
 docmancer install codex
 docmancer install opencode
+docmancer install gemini
 docmancer install claude-desktop
 docmancer install claude-code --project
+docmancer install gemini --project
 docmancer install cursor --config ./docmancer.yaml
 ```
 
-If no config is found, **`~/.docmancer/docmancer.yaml`** is created automatically (non-project installs).
+**`AGENT`** must be one of: **`claude-code`**, **`claude-desktop`**, **`cursor`**, **`codex`**, **`codex-app`**, **`codex-desktop`**, **`gemini`**, **`opencode`**.
+
+On the first **non-project** **`docmancer install`** when you omit **`--config`** and **`~/.docmancer/docmancer.yaml`** does not exist yet, that user config file is created automatically.
 
 ### `docmancer ingest <path-or-url>`
 
-Ingest a local file, directory, or documentation URL.
+Index a local file, directory, or documentation URL into the vector store.
 
 ```bash
 docmancer ingest ./docs
@@ -104,11 +138,11 @@ docmancer ingest https://docs.example.com --provider gitbook
 docmancer ingest ./docs --recreate
 ```
 
-`--provider`: `auto` (default), `gitbook`, or `mintlify`.
+`--provider`: `auto` (default), `gitbook`, or `mintlify` (case-insensitive).
 
 ### `docmancer query <text>`
 
-Run hybrid retrieval from the CLI.
+Run retrieval from the CLI against the local index.
 
 ```bash
 docmancer query "How do I authenticate?"
@@ -117,7 +151,7 @@ docmancer query "season 5 end date" --full
 docmancer query "..." --config ./docmancer.yaml
 ```
 
-Use `--full` when you want the entire chunk body instead of the default preview.
+Use **`--full`** for the entire chunk body. Without it, preview text is truncated at **1500** characters per chunk.
 
 ### `docmancer list`
 
@@ -130,10 +164,10 @@ docmancer list --config ./docmancer.yaml
 
 ### `docmancer fetch <url>`
 
-Download **GitBook** docs as Markdown files only (does not embed). For Mintlify or mixed hosting, use **`docmancer ingest`** or copy files locally first.
+Download **GitBook** docs as Markdown files only (does not embed or update the vector store). For Mintlify or other hosts, use **`docmancer ingest`** or copy files locally first.
 
 ```bash
-docmancer fetch https://docs.example.com
+docmancer fetch https://docs.example.com                    # writes to ./docmancer-docs/ (default)
 docmancer fetch https://docs.example.com --output ./downloaded-docs
 ```
 
@@ -148,7 +182,7 @@ docmancer remove ./docs/getting-started.md
 
 ### `docmancer inspect`
 
-Show collection stats and embedding settings.
+Show collection stats, existence/point counts, and embedding provider/model from the active config.
 
 ```bash
 docmancer inspect
@@ -157,7 +191,7 @@ docmancer inspect --config ./docmancer.yaml
 
 ### `docmancer doctor`
 
-Check `docmancer` on PATH, effective config, Qdrant path / connectivity, and which skills are installed.
+Check that `docmancer` is on your PATH, effective config, Qdrant path / connectivity, and which skills are installed.
 
 For Codex installs, `doctor` reports both the native `~/.codex/skills/...` install and the shared compatibility mirror under `~/.agents/skills/...` when present.
 
@@ -205,8 +239,8 @@ The auto-created **user** config under `~/.docmancer/` sets `local_path` to an a
 
 | Source | Strategy |
 |--------|----------|
-| GitBook sites | `/llms-full.txt` → `/llms.txt` (GitBook fetcher); `auto` / `mintlify` use the broader pipeline below |
-| Mintlify & typical llms.txt sites | `/llms-full.txt` → `/llms.txt` → `/sitemap.xml` |
+| GitBook sites | With **`--provider gitbook`**: GitBook fetcher (`/llms-full.txt` → `/llms.txt`). With **`auto`** or **`mintlify`**: same Mintlify-style pipeline as the row below |
+| Mintlify & many llms.txt sites | `/llms-full.txt` → `/llms.txt` → `/sitemap.xml` |
 | Local `.md` / `.txt` | Read from disk |
 
 ## Requirements
@@ -219,6 +253,125 @@ If your default `python` is 3.14:
 ```bash
 pipx install docmancer --python python3.13
 ```
+
+## Troubleshooting
+
+### `pip install` succeeds, but `docmancer` is `command not found`
+
+This usually means `pip` installed the package into your user site, but the scripts directory is not on your shell `PATH`.
+
+Typical install output looks like:
+
+```text
+WARNING: The script docmancer is installed in '/Users/your-user/Library/Python/3.13/bin' which is not on PATH.
+```
+
+Then running:
+
+```bash
+docmancer doctor
+```
+
+fails with:
+
+```text
+-bash: docmancer: command not found
+```
+
+Why this happens:
+
+- `pip install docmancer` installs into the current Python environment
+- if global site-packages is not writable, `pip` often falls back to a user install
+- on macOS, the generated CLI script may land in `~/Library/Python/<python-version>/bin`
+- if that directory is not on `PATH`, the package is installed but the `docmancer` command is not discoverable
+
+Recommended fix:
+
+```bash
+brew install pipx
+pipx ensurepath
+pipx install docmancer
+```
+
+If you want to keep using `pip`, either:
+
+- use a virtual environment and run `docmancer` from inside that environment
+- add the scripts directory for your Python version to `PATH`, then restart your shell
+
+You can also confirm the install by running the script directly:
+
+```bash
+~/Library/Python/3.13/bin/docmancer doctor
+```
+
+### `pipx install docmancer` says `No matching distribution found`
+
+This often means `pipx` is using an unsupported Python version.
+
+For example, `docmancer 0.1.1` requires:
+
+```text
+Python >=3.11,<3.14
+```
+
+If your machine defaults to Python 3.14, `pipx install docmancer` can fail with output like:
+
+```text
+ERROR: Ignored the following versions that require a different python version: 0.1.1 Requires-Python >=3.11,<3.14
+ERROR: Could not find a version that satisfies the requirement docmancer
+ERROR: No matching distribution found for docmancer
+```
+
+Fix:
+
+```bash
+pipx install docmancer --python python3.13
+```
+
+You can confirm which Python versions are available with:
+
+```bash
+python3 --version
+command -v python3.13
+```
+
+If `python3.13` is not installed yet on macOS with Homebrew:
+
+```bash
+brew install python@3.13
+pipx install docmancer --python python3.13
+```
+
+### `pipx install` fails because of Apple Silicon / Rosetta / x86_64 mismatch
+
+On macOS, `pipx`, Homebrew, and Python can end up mixed across two architectures:
+
+- `arm64` native Apple Silicon tools, typically under `/opt/homebrew`
+- `x86_64` tools running through Rosetta, often under `/usr/local`
+
+If `pipx` is running under one architecture but the selected Python or native dependencies come from the other, installation can fail or produce confusing wheel / interpreter errors.
+
+Checks:
+
+```bash
+uname -m
+python3 --version
+command -v python3.13
+```
+
+On Apple Silicon, the safest path is to use the native Homebrew Python explicitly:
+
+```bash
+pipx install docmancer --python /opt/homebrew/bin/python3.13
+```
+
+If you know you need to force an `arm64` shell for the install, run:
+
+```bash
+arch -arm64 pipx install docmancer --python /opt/homebrew/bin/python3.13
+```
+
+If you are using a virtual environment instead of `pipx`, create that virtualenv with the same Python binary you intend to use at runtime.
 
 ## Migration from v0.1.x
 
