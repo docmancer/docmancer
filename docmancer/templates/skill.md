@@ -3,10 +3,10 @@ name: docmancer
 description: Search and manage documentation knowledge bases using docmancer CLI. Use when the user asks about third-party library docs, API references, vendor documentation, version-specific API behavior, GitBook or Mintlify public docs, offline or local doc search, or wants to ingest a doc URL before answering a question.
 ---
 
-# docmancer — Documentation Knowledge Base
+# docmancer: Documentation Knowledge Base
 
 docmancer is a globally installed CLI tool that fetches, embeds, and searches documentation locally.
-All configuration and data are stored under `~/.docmancer/` — no extra setup required.
+All configuration and data are stored under `~/.docmancer/`: no extra setup required.
 
 Executable: `{{DOCS_KIT_CMD}}`
 

@@ -1,14 +1,14 @@
 <div align="center">
 
-# docmancer
+<h1><img src="https://raw.githubusercontent.com/docmancer/docmancer/main/readme-assets/wizard-logo.png" width="56" height="56" alt="docmancer logo" style="vertical-align: middle; margin-right: 10px;" /> docmancer</h1>
 
 **Stop AI hallucinations. Ground your coding agents in real documentation.**
 
 **Fetch docs, embed locally, retrieve only the relevant chunks, and install skills into Claude Code, Codex, Cursor, OpenCode, Gemini, and Claude Desktop.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
-[![License](https://img.shields.io/pypi/l/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
-[![Python versions](https://img.shields.io/pypi/pyversions/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
+[![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
+[![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 [![CI](https://img.shields.io/github/actions/workflow/status/docmancer/docmancer/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/docmancer/docmancer/actions/workflows/ci.yml)
 
 <br>
@@ -29,15 +29,15 @@ pipx install docmancer --python python3.13
 
 ## Why I Built This
 
-I use Claude Code every day. It's incredible — until it hallucinates an API response, invents a CLI flag that doesn't exist, or confidently gives me a payload format from two versions ago.
+I use Claude Code every day. It's incredible, until it hallucinates an API response, invents a CLI flag that doesn't exist, or confidently gives me a payload format from two versions ago.
 
 I've been burned by this more times than I can count. Claude doesn't read docs fully when I point it to a link. It skims, guesses, and moves on. The results look plausible but are wrong in ways that waste hours of debugging.
 
 So I tried the obvious fix: download entire doc sites manually and stuff them into context. It worked, sort of. But it wasn't scalable. Hundreds of pages crammed into a context window means:
 
-- **Polluted context** — the agent drowns in irrelevant text and output quality degrades
-- **Massive token bills** — you're sending 180,000 tokens when you need 300
-- **Manual maintenance** — docs change, your local copies go stale, and you're back to hallucinations
+- **Polluted context**: the agent drowns in irrelevant text and output quality degrades
+- **Massive token bills**: you're sending 180,000 tokens when you need 300
+- **Manual maintenance**: docs change, your local copies go stale, and you're back to hallucinations
 
 I built Docmancer to solve all three. The idea is simple: ingest docs once into a local vector index, retrieve only the relevant chunks when an agent needs them, and install a skill file so the agent calls `docmancer query` automatically.
 
@@ -56,7 +56,7 @@ Developers who use AI coding agents and are tired of:
 - Paying for tokens wasted on irrelevant context
 - Re-configuring documentation access for every AI tool they use
 
-If you use Claude Code, Cursor, Codex, or any other coding agent with third-party APIs — Docmancer is for you.
+If you use Claude Code, Cursor, Codex, or any other coding agent with third-party APIs, Docmancer is for you.
 
 ---
 
@@ -89,9 +89,9 @@ If you use Claude Code, Cursor, Codex, or any other coding agent with third-part
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **`docmancer ingest`** — fetches docs from GitBook, Mintlify, or local files. Chunks and embeds them locally with FastEmbed. Stores vectors in on-disk Qdrant.
-2. **`docmancer install`** — drops a `SKILL.md` into your agent's skills directory. The skill teaches the agent when and how to call the CLI.
-3. **Agent queries automatically** — when your agent needs docs, it runs `docmancer query` and gets back only the relevant chunks. No browsing, no guessing, no context stuffing.
+1. **`docmancer ingest`:** fetches docs from GitBook, Mintlify, or local files. Chunks and embeds them locally with FastEmbed. Stores vectors in on-disk Qdrant.
+2. **`docmancer install`:** drops a `SKILL.md` into your agent's skills directory. The skill teaches the agent when and how to call the CLI.
+3. **Agent queries automatically:** when your agent needs docs, it runs `docmancer query` and gets back only the relevant chunks. No browsing, no guessing, no context stuffing.
 
 The main CLI surface: `init`, `fetch`, `ingest`, `query`, `list`, `remove`, `inspect`, `doctor`, and `install`.
 
@@ -125,11 +125,11 @@ Multiple CLI invocations (from parallel agents or different terminals) are seria
 
 ### Eliminate AI hallucinations
 
-LLMs often guess or rely on stale training data for changing APIs, CLI flags, and vendor docs. Docmancer grounds the agent in documentation you actually ingested — it retrieves the relevant passage instead of inventing syntax.
+LLMs often guess or rely on stale training data for changing APIs, CLI flags, and vendor docs. Docmancer grounds the agent in documentation you actually ingested; it retrieves the relevant passage instead of inventing syntax.
 
 ### Stop polluting agent context
 
-Dumping entire doc sites into context is the worst of both worlds: your agent drowns in irrelevant text and you burn through tokens. Docmancer returns only the chunks that match — a few hundred tokens instead of tens of thousands. Cleaner context means better answers _and_ dramatically lower costs.
+Dumping entire doc sites into context is the worst of both worlds: your agent drowns in irrelevant text and you burn through tokens. Docmancer returns only the chunks that match: a few hundred tokens instead of tens of thousands. Cleaner context means better answers _and_ dramatically lower costs.
 
 ### Unify fragmented AI knowledge
 
@@ -362,7 +362,7 @@ docmancer init --dir ./sandbox
 | `docmancer install cursor`         | `~/.cursor/skills/docmancer/SKILL.md` + marked block in `~/.cursor/AGENTS.md` when needed                      |
 | `docmancer install opencode`       | `~/.config/opencode/skills/docmancer/SKILL.md` (and may mirror under `~/.agents/skills/` if absent)            |
 | `docmancer install gemini`         | `~/.gemini/skills/docmancer/SKILL.md` (and may mirror under `~/.agents/skills/` if absent)                     |
-| `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip` — upload via Claude Desktop **Customize → Skills**         |
+| `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip`: upload via Claude Desktop **Customize → Skills**         |
 
 `codex-app` and `codex-desktop` are accepted aliases for the Codex install path (same paths as **`codex`**).
 

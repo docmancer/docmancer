@@ -1,9 +1,9 @@
 > Prefer `~/.cursor/skills/docmancer/SKILL.md` when present; this block is a fallback.
 
-# docmancer — Documentation Knowledge Base
+# docmancer: Documentation Knowledge Base
 
 docmancer is a globally installed CLI tool for searching and managing local documentation embeddings.
-All configuration and data are stored under `~/.docmancer/` — no extra setup required.
+All configuration and data are stored under `~/.docmancer/`: no extra setup required.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -23,11 +23,11 @@ Use docmancer when the user:
 
 ## Commands
 
-- `{{DOCS_KIT_CMD}} query "search terms" --limit 10` — search ingested documentation (add `--full` for untruncated text)
-- `{{DOCS_KIT_CMD}} list` — list all ingested sources with dates
-- `{{DOCS_KIT_CMD}} ingest <url-or-path>` — ingest docs from a URL or local path (add `--recreate` to re-ingest)
-- `{{DOCS_KIT_CMD}} fetch <url> --output <dir>` — download docs to local Markdown files
-- `{{DOCS_KIT_CMD}} remove <source>` — remove a previously ingested source
-- `{{DOCS_KIT_CMD}} inspect` — show collection stats
-- `{{DOCS_KIT_CMD}} init` — create project-local config
-- `{{DOCS_KIT_CMD}} doctor` — diagnose issues
+- `{{DOCS_KIT_CMD}} query "search terms" --limit 10`: search ingested documentation (add `--full` for untruncated text)
+- `{{DOCS_KIT_CMD}} list`: list all ingested sources with dates
+- `{{DOCS_KIT_CMD}} ingest <url-or-path>`: ingest docs from a URL or local path (add `--recreate` to re-ingest)
+- `{{DOCS_KIT_CMD}} fetch <url> --output <dir>`: download docs to local Markdown files
+- `{{DOCS_KIT_CMD}} remove <source>`: remove a previously ingested source
+- `{{DOCS_KIT_CMD}} inspect`: show collection stats
+- `{{DOCS_KIT_CMD}} init`: create project-local config
+- `{{DOCS_KIT_CMD}} doctor`: diagnose issues

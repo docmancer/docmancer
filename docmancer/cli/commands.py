@@ -259,7 +259,7 @@ def init_cmd(directory: str):
     with open(config_path, "w") as f:
         _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     click.echo(f"Created config at {config_path}")
-    click.echo("No API keys required — embeddings run fully locally.")
+    click.echo("No API keys required; embeddings run fully locally.")
 
 
 @click.command(
@@ -533,7 +533,7 @@ def list_cmd(config_path: str | None):
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
-    Teaches the agent to call docmancer CLI commands directly — no server
+    Teaches the agent to call docmancer CLI commands directly. No server
     required. Run 'docmancer ingest <url>' first to populate the knowledge base.
 
     AGENT must be one of: claude-code, claude-desktop, cursor, codex,

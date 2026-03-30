@@ -6,10 +6,10 @@ allowed-tools:
   - Bash({{DOCS_KIT_CMD}} *)
 ---
 
-# docmancer — Documentation Knowledge Base
+# docmancer: Documentation Knowledge Base
 
 docmancer is a globally installed CLI tool that fetches, embeds, and searches documentation locally.
-All configuration and data are stored under `~/.docmancer/` — no extra setup required.
+All configuration and data are stored under `~/.docmancer/`: no extra setup required.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
