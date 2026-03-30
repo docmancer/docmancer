@@ -4,6 +4,7 @@ import logging
 import re
 import httpx
 
+from docmancer.core.html_utils import extract_main_content, looks_like_html
 from docmancer.core.models import Document
 
 logger = logging.getLogger(__name__)
@@ -33,35 +34,67 @@ class LlmsTxtFetcher:
                     return docs
                 raise ValueError(
                     f"Could not fetch docs from {base_url!r}: "
-                    "no /llms-full.txt or /llms.txt found, or all discovered pages failed."
+                    "this site does not appear to support the llms.txt standard. "
+                    "No valid /llms-full.txt or /llms.txt endpoint was found "
+                    "(the server may have returned an HTML error page instead of plain text)."
                 )
         except httpx.RequestError as exc:
             raise ValueError(f"Network error fetching {base_url!r}: {exc}") from exc
 
     def _try_llms_full_txt(self, base_url: str, client: httpx.Client) -> list[Document] | None:
-        resp = client.get(f"{base_url}/llms-full.txt")
-        if resp.status_code == 200 and resp.text.strip():
-            return [Document(
-                source=f"{base_url}/llms-full.txt",
-                content=resp.text,
-                metadata={"format": "markdown", "fetch_method": "llms-full.txt"},
-            )]
-        return None
+        url = f"{base_url}/llms-full.txt"
+        resp = client.get(url)
+        if resp.status_code != 200 or not resp.text.strip():
+            return None
+        if not self._is_valid_text_response(resp):
+            logger.warning("Skipped %s (response is HTML, not plain text)", url)
+            return None
+        return [Document(
+            source=url,
+            content=resp.text,
+            metadata={"format": "markdown", "fetch_method": "llms-full.txt"},
+        )]
+
+    @staticmethod
+    def _is_valid_text_response(resp: httpx.Response) -> bool:
+        """Check that the response is actual plain text / markdown, not an HTML page."""
+        content_type = resp.headers.get("content-type", "").lower()
+        if "text/html" in content_type:
+            return False
+        if looks_like_html(resp.text):
+            return False
+        return True
 
     def _try_llms_txt(self, base_url: str, client: httpx.Client) -> list[Document] | None:
-        resp = client.get(f"{base_url}/llms.txt")
+        url = f"{base_url}/llms.txt"
+        resp = client.get(url)
         if resp.status_code != 200:
+            return None
+        if not self._is_valid_text_response(resp):
+            logger.warning("Skipped %s (response is HTML, not plain text)", url)
+            return None
+        if not resp.text.strip():
             return None
         urls = self._parse_llms_txt(resp.text)
         documents = []
         for url in urls:
             page_resp = client.get(url)
             if page_resp.status_code == 200 and page_resp.text.strip():
-                documents.append(Document(
-                    source=url,
-                    content=page_resp.text,
-                    metadata={"format": "markdown", "fetch_method": "llms.txt"},
-                ))
+                raw = page_resp.text
+                if looks_like_html(raw):
+                    content = extract_main_content(raw)
+                    fmt = "html"
+                else:
+                    content = raw
+                    fmt = "markdown"
+                if content.strip():
+                    documents.append(Document(
+                        source=url,
+                        content=content,
+                        metadata={"format": fmt, "fetch_method": "llms.txt"},
+                    ))
+                else:
+                    logger.warning("Skipped %s (empty after HTML extraction)", url)
             else:
                 logger.warning("Skipped %s (status %d)", url, page_resp.status_code)
         return documents if documents else None

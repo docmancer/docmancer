@@ -4,6 +4,10 @@ import re
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+_STRIP_BLOCKS_RE = re.compile(
+    r"<(?:script|style|head|nav|footer|header|noscript|svg)\b[^>]*>.*?</(?:script|style|head|nav|footer|header|noscript|svg)>",
+    re.DOTALL | re.IGNORECASE,
+)
 _HTML_ENTITIES = {
     "&amp;": "&", "&lt;": "<", "&gt;": ">",
     "&quot;": '"', "&#39;": "'", "&nbsp;": " ",
@@ -45,6 +49,9 @@ def clean_html(content: str) -> str:
     if "<" not in content:
         return content
 
+    # Remove blocks whose entire content is noise (CSS, JS, nav, etc.)
+    content = _STRIP_BLOCKS_RE.sub("", content)
+
     # Replace <table> blocks with text representation first
     content = re.sub(
         r"<table[^>]*>.*?</table>",
@@ -63,6 +70,12 @@ def clean_html(content: str) -> str:
     content = _MULTI_NEWLINE_RE.sub("\n\n", content)
 
     return content.strip()
+
+
+def looks_like_html(content: str) -> bool:
+    """Return True if content appears to be a full HTML page rather than markdown/plain text."""
+    prefix = content[:500].lstrip().lower()
+    return prefix.startswith("<!doctype") or prefix.startswith("<html") or "<head>" in prefix
 
 
 def extract_main_content(html: str) -> str:

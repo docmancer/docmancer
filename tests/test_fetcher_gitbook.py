@@ -157,3 +157,62 @@ class TestParseLlmsTxt:
         content = "http://docs.example.com/page\n"
         urls = GitBookFetcher._parse_llms_txt(content)
         assert urls == ["http://docs.example.com/page"]
+
+
+class TestLlmsTxtHtmlHandling:
+    def test_html_page_is_cleaned(self):
+        """Pages returning full HTML should be cleaned via extract_main_content."""
+        html_page = (
+            '<!DOCTYPE html><html><head><title>Page</title>'
+            '<style>:root { --color: red; }</style></head>'
+            '<body><nav>Menu</nav>'
+            '<article><p>Actual documentation content here.</p></article>'
+            '<footer>Copyright</footer></body></html>'
+        )
+        responses = {
+            "https://docs.example.com/llms-full.txt": _make_response(404),
+            "https://docs.example.com/llms.txt": _make_response(
+                200, "https://docs.example.com/page1\n"
+            ),
+            "https://docs.example.com/page1": _make_response(200, html_page),
+        }
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = lambda url: responses[url]
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            fetcher = GitBookFetcher()
+            docs = fetcher.fetch("https://docs.example.com")
+
+        assert len(docs) == 1
+        assert "Actual documentation content" in docs[0].content
+        assert "--color" not in docs[0].content
+        assert "Menu" not in docs[0].content
+        assert "Copyright" not in docs[0].content
+        assert docs[0].metadata["format"] == "html"
+
+    def test_markdown_page_unchanged(self):
+        """Pages returning markdown should be stored as-is."""
+        md_content = "# Guide\n\nThis is a markdown page."
+        responses = {
+            "https://docs.example.com/llms-full.txt": _make_response(404),
+            "https://docs.example.com/llms.txt": _make_response(
+                200, "https://docs.example.com/page1\n"
+            ),
+            "https://docs.example.com/page1": _make_response(200, md_content),
+        }
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = lambda url: responses[url]
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            fetcher = GitBookFetcher()
+            docs = fetcher.fetch("https://docs.example.com")
+
+        assert len(docs) == 1
+        assert docs[0].content == md_content
+        assert docs[0].metadata["format"] == "markdown"
