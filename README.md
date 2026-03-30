@@ -36,7 +36,7 @@ pipx ensurepath
 pipx install docmancer --python python3.13
 
 # 3. Ingest a docs source
-docmancer ingest https://docs.example.com --provider web
+docmancer ingest https://docs.example.com
 
 # 4. Install the skill into your agents
 docmancer install claude-code
@@ -53,11 +53,11 @@ No server to start. Config and the default vector store are created under **`~/.
 
 ## The Problem
 
-Claude Code sessions have a context limit. Every time you paste docs into a session — or let the agent browse and re-fetch the same pages — you're burning that budget on setup instead of actual work. Once the session gets noisy enough, the agent starts guessing: made-up CLI flags, stale API shapes, behaviors from old versions.
+Claude Code sessions have a context limit. Every time you paste docs into a session, or let the agent browse and re-fetch the same pages, you're burning that budget on setup instead of actual work. Once the session gets noisy enough, the agent starts guessing: made-up CLI flags, stale API shapes, behaviors from old versions.
 
 The obvious fix (dumping whole doc sites into context) makes it worse. You burn thousands of tokens on irrelevant text and bury the one paragraph that actually matters.
 
-Docmancer solves this differently. You ingest docs once, they're chunked and indexed locally, and the agent retrieves only the matching sections when it needs them — a few hundred tokens instead of tens of thousands.
+Docmancer solves this differently. You ingest docs once, they're chunked and indexed locally, and the agent retrieves only the matching sections when it needs them: a few hundred tokens instead of tens of thousands.
 
 ---
 
@@ -65,26 +65,26 @@ Docmancer solves this differently. You ingest docs once, they're chunked and ind
 
 Docmancer installs a skill file into each agent that teaches it to call the CLI directly. One local index, one ingest step, every agent covered.
 
-| Agent | Install command |
-|-------|----------------|
-| Claude Code | `docmancer install claude-code` |
-| Codex | `docmancer install codex` |
-| Cursor | `docmancer install cursor` |
-| Gemini CLI | `docmancer install gemini` |
-| OpenCode | `docmancer install opencode` |
+| Agent          | Install command                    |
+| -------------- | ---------------------------------- |
+| Claude Code    | `docmancer install claude-code`    |
+| Codex          | `docmancer install codex`          |
+| Cursor         | `docmancer install cursor`         |
+| Gemini CLI     | `docmancer install gemini`         |
+| OpenCode       | `docmancer install opencode`       |
 | Claude Desktop | `docmancer install claude-desktop` |
 
-Skills are plain markdown files — no background daemon, no MCP server, no ports.
+Skills are plain markdown files. No background daemon, no MCP server, no ports.
 
 ---
 
 ## How Docmancer Fixes It
 
-**Chunk and embed locally.** Docmancer splits docs into 800-token chunks and embeds them with FastEmbed — fully on your machine. No embedding API costs, no data leaving your system.
+**Chunk and embed locally.** Docmancer splits docs into 800-token chunks and embeds them with FastEmbed, fully on your machine. No embedding API costs, no data leaving your system.
 
 **Hybrid retrieval.** Queries run dense + sparse (BM25) retrieval in parallel and merge results with reciprocal rank fusion. Dense vectors catch semantic meaning; BM25 catches exact terms like flag names, error codes, and method signatures.
 
-**Return only what matches.** A query returns 5 chunks by default — a few hundred tokens. The whole site stays indexed; only the relevant slice lands in context.
+**Return only what matches.** A query returns 5 chunks by default (a few hundred tokens). The whole site stays indexed; only the relevant slice lands in context.
 
 **Concurrent-safe.** Multiple CLI calls from parallel agents or different terminals are serialized with a file lock. No corruption.
 
@@ -126,17 +126,17 @@ Skills are plain markdown files — no background daemon, no MCP server, no port
 
 ## Commands
 
-| Command | What it does |
-|---------|-------------|
-| `docmancer ingest <url-or-path>` | Fetch, chunk, embed, and index docs locally |
-| `docmancer query <text>` | Retrieve relevant chunks from the local index |
-| `docmancer install <agent>` | Install skill file for a supported agent |
-| `docmancer list` | List ingested sources with timestamps |
-| `docmancer fetch <url>` | Download GitBook docs as markdown (no embedding) |
-| `docmancer remove <source>` | Remove an ingested source from the index |
-| `docmancer inspect` | Show collection stats and config |
-| `docmancer doctor` | Health check: PATH, config, Qdrant, installed skills |
-| `docmancer init` | Create a project-local `docmancer.yaml` |
+| Command                          | What it does                                         |
+| -------------------------------- | ---------------------------------------------------- |
+| `docmancer ingest <url-or-path>` | Fetch, chunk, embed, and index docs locally          |
+| `docmancer query <text>`         | Retrieve relevant chunks from the local index        |
+| `docmancer install <agent>`      | Install skill file for a supported agent             |
+| `docmancer list`                 | List ingested sources with timestamps                |
+| `docmancer fetch <url>`          | Download GitBook docs as markdown (no embedding)     |
+| `docmancer remove <source>`      | Remove an ingested source from the index             |
+| `docmancer inspect`              | Show collection stats and config                     |
+| `docmancer doctor`               | Health check: PATH, config, Qdrant, installed skills |
+| `docmancer init`                 | Create a project-local `docmancer.yaml`              |
 
 Use `--full` with `docmancer query` to return the entire chunk body (default truncates at 1500 characters). Use `--limit N` to change how many chunks are returned.
 
@@ -157,7 +157,7 @@ Open a new shell, then install `docmancer`:
 pipx install docmancer --python python3.13
 ```
 
-Supports Python 3.11–3.13. Pass the version explicitly — `pipx` may pick the wrong interpreter on some machines.
+Supports Python 3.11-3.13. Pass the version explicitly: `pipx` may pick the wrong interpreter on some machines.
 
 On Apple Silicon, prefer the native Homebrew Python:
 
@@ -181,14 +181,14 @@ pipx reinstall docmancer --python python3.13
 
 ## Install Targets
 
-| Command | Where the skill lands |
-|---------|----------------------|
-| `docmancer install claude-code` | `~/.claude/skills/docmancer/SKILL.md` |
-| `docmancer install codex` | `~/.codex/skills/docmancer/SKILL.md` (also mirrors to `~/.agents/skills/docmancer/SKILL.md`) |
-| `docmancer install cursor` | `~/.cursor/skills/docmancer/SKILL.md` + marked block in `~/.cursor/AGENTS.md` when needed |
-| `docmancer install opencode` | `~/.config/opencode/skills/docmancer/SKILL.md` |
-| `docmancer install gemini` | `~/.gemini/skills/docmancer/SKILL.md` |
-| `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip`: upload via **Customize → Skills** |
+| Command                            | Where the skill lands                                                                        |
+| ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `docmancer install claude-code`    | `~/.claude/skills/docmancer/SKILL.md`                                                        |
+| `docmancer install codex`          | `~/.codex/skills/docmancer/SKILL.md` (also mirrors to `~/.agents/skills/docmancer/SKILL.md`) |
+| `docmancer install cursor`         | `~/.cursor/skills/docmancer/SKILL.md` + marked block in `~/.cursor/AGENTS.md` when needed    |
+| `docmancer install opencode`       | `~/.config/opencode/skills/docmancer/SKILL.md`                                               |
+| `docmancer install gemini`         | `~/.gemini/skills/docmancer/SKILL.md`                                                        |
+| `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip`: upload via **Customize → Skills**       |
 
 Use `--project` with `claude-code` or `gemini` to install under `.claude/skills/...` or `.gemini/skills/...` in the current working directory.
 
@@ -200,19 +200,19 @@ Use `--project` with `claude-code` or `gemini` to install under `.claude/skills/
 
 ### Configuration Reference
 
-| Section | Key | Default | What it controls |
-|---------|-----|---------|-----------------|
-| `embedding` | `provider` | `fastembed` | Embedding provider |
-| `embedding` | `model` | `BAAI/bge-small-en-v1.5` | Embedding model name |
-| `vector_store` | `provider` | `qdrant` | Vector store backend |
-| `vector_store` | `local_path` | `~/.docmancer/qdrant` | On-disk storage path |
-| `vector_store` | `url` | _(unset)_ | Remote Qdrant URL (overrides `local_path`) |
-| `vector_store` | `collection_name` | `knowledge_base` | Qdrant collection name |
-| `vector_store` | `retrieval_limit` | `5` | Max chunks returned per query |
-| `vector_store` | `score_threshold` | `0.35` | Minimum similarity score |
-| `ingestion` | `chunk_size` | `800` | Tokens per chunk |
-| `ingestion` | `chunk_overlap` | `120` | Overlap between chunks |
-| `ingestion` | `bm25_model` | `Qdrant/bm25` | Sparse retrieval model |
+| Section        | Key               | Default                  | What it controls                           |
+| -------------- | ----------------- | ------------------------ | ------------------------------------------ |
+| `embedding`    | `provider`        | `fastembed`              | Embedding provider                         |
+| `embedding`    | `model`           | `BAAI/bge-small-en-v1.5` | Embedding model name                       |
+| `vector_store` | `provider`        | `qdrant`                 | Vector store backend                       |
+| `vector_store` | `local_path`      | `~/.docmancer/qdrant`    | On-disk storage path                       |
+| `vector_store` | `url`             | _(unset)_                | Remote Qdrant URL (overrides `local_path`) |
+| `vector_store` | `collection_name` | `knowledge_base`         | Qdrant collection name                     |
+| `vector_store` | `retrieval_limit` | `5`                      | Max chunks returned per query              |
+| `vector_store` | `score_threshold` | `0.35`                   | Minimum similarity score                   |
+| `ingestion`    | `chunk_size`      | `800`                    | Tokens per chunk                           |
+| `ingestion`    | `chunk_overlap`   | `120`                    | Overlap between chunks                     |
+| `ingestion`    | `bm25_model`      | `Qdrant/bm25`            | Sparse retrieval model                     |
 
 ### Example `docmancer.yaml`
 
@@ -238,12 +238,12 @@ ingestion:
 
 ## Supported Sources
 
-| Source | Strategy |
-|--------|----------|
-| GitBook sites | `--provider gitbook`: `/llms-full.txt` → `/llms.txt` |
-| Mintlify sites | `--provider mintlify` or `auto`: `/llms-full.txt` → `/llms.txt` → `/sitemap.xml` |
-| Generic web docs | `--provider web`: generic crawler for non-GitBook / non-Mintlify sites |
-| Local `.md` / `.txt` | Read from disk |
+| Source               | Strategy                                                                         |
+| -------------------- | -------------------------------------------------------------------------------- |
+| GitBook sites        | `--provider gitbook`: `/llms-full.txt` → `/llms.txt`                             |
+| Mintlify sites       | `--provider mintlify` or `auto`: `/llms-full.txt` → `/llms.txt` → `/sitemap.xml` |
+| Generic web docs     | `--provider web`: generic crawler for non-GitBook / non-Mintlify sites           |
+| Local `.md` / `.txt` | Read from disk                                                                   |
 
 ---
 
@@ -286,7 +286,7 @@ brew install python@3.13
 pipx install docmancer --python python3.13
 ```
 
-### `pipx install` fails — Apple Silicon / architecture mismatch
+### `pipx install` fails: Apple Silicon / architecture mismatch
 
 On macOS, `pipx` and Python can end up on different architectures (`arm64` vs `x86_64`). Use the native Homebrew Python explicitly:
 
