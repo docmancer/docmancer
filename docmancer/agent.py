@@ -92,19 +92,44 @@ class DocmancerAgent:
             for index, text in enumerate(text_chunks)
         ]
 
+    @staticmethod
+    def _display_source(doc: Document) -> str:
+        return str(doc.metadata.get("docset_root") or doc.source)
+
     def ingest_documents(self, documents: list[Document], recreate: bool = False) -> int:
         total = 0
         should_recreate = recreate
+        processed = 0
+        total_docs = len(documents)
         for doc in documents:
+            display_source = self._display_source(doc)
+            logger.info("Chunking %s...", display_source)
             chunks = self._build_chunks(doc)
             if not chunks:
+                logger.info("Skipped %s (no chunks generated)", display_source)
                 continue
+            logger.info("Built %d chunks from %s", len(chunks), display_source)
+            if len(chunks) >= 1000:
+                logger.info(
+                    "Large document detected for %s. Local embedding and indexing may take a while.",
+                    display_source,
+                )
+            logger.info("Embedding %d chunks from %s...", len(chunks), display_source)
             dense_vecs = self._dense_embedder.embed([chunk.text for chunk in chunks])
             sparse_vecs = self._sparse_embedder.embed([chunk.text for chunk in chunks])
+            logger.info("Upserting %d chunks from %s...", len(chunks), display_source)
             count = self._vector_store.upsert(chunks, dense_vecs, sparse_vecs, recreate=should_recreate)
-            self._vector_store.upsert_document(doc.source, doc.content, recreate=should_recreate)
+            self._vector_store.upsert_document(
+                doc.source,
+                doc.content,
+                recreate=should_recreate,
+                docset_root=doc.metadata.get("docset_root"),
+            )
             should_recreate = False
             total += count
+            processed += 1
+            logger.info("Stored source %s", doc.source)
+            logger.info("Processed %d/%d documents (total chunks so far: %d)", processed, total_docs, total)
         return total
 
     def ingest(self, path: str | Path, recreate: bool = False) -> int:
@@ -220,6 +245,7 @@ class DocmancerAgent:
             provider, fetcher, max_pages=max_pages, strategy=strategy, browser=browser, url=url,
         )
         documents = f.fetch(url)
+        logger.info("Fetched %d document(s); starting ingest", len(documents))
         return self.ingest_documents(documents, recreate=recreate)
 
     def fetch_documents(
@@ -263,10 +289,22 @@ class DocmancerAgent:
         """Return the exact stored source document content."""
         return self._vector_store.get_document_content(source)
 
-    def remove_source(self, source: str) -> bool:
-        """Remove all chunks and the document for a given source. Returns True if anything was deleted."""
-        return self._vector_store.delete_source(source)
+    def remove_source(self, source: str) -> tuple[bool, str]:
+        """Remove either a grouped docset root or an exact source."""
+        if self._vector_store.delete_docset(source):
+            return True, "docset"
+        if self._vector_store.delete_source(source):
+            return True, "source"
+        return False, "missing"
+
+    def remove_all_sources(self) -> bool:
+        """Remove the entire knowledge base."""
+        return self._vector_store.delete_all()
 
     def list_sources_with_dates(self) -> list[dict]:
         """List all ingested document sources with their ingestion timestamps."""
         return self._vector_store.list_sources_with_dates()
+
+    def list_grouped_sources_with_dates(self) -> list[dict]:
+        """List ingested sources collapsed by URL docset root when available."""
+        return self._vector_store.list_grouped_sources_with_dates()

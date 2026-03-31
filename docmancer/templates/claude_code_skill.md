@@ -42,6 +42,7 @@ Returns relevant chunks with source attribution and relevance scores.
 ### List ingested sources
 ```bash
 {{DOCS_KIT_CMD}} list
+{{DOCS_KIT_CMD}} list --all
 ```
 
 ### Ingest documentation
@@ -63,6 +64,7 @@ Returns relevant chunks with source attribution and relevance scores.
 
 ### Remove a source
 ```bash
+{{DOCS_KIT_CMD}} remove --all
 {{DOCS_KIT_CMD}} remove https://docs.example.com
 {{DOCS_KIT_CMD}} remove ./docs/getting-started.md
 ```

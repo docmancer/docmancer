@@ -170,6 +170,7 @@ class WebFetcher:
                 metadata={
                     "format": "markdown",
                     "fetch_method": "llms-full.txt",
+                    "docset_root": discovered.url.removesuffix("/llms-full.txt"),
                     "platform": platform.value,
                     "word_count": len(content.split()),
                     "content_hash": ContentDeduplicator.content_hash(content),
@@ -297,6 +298,7 @@ class WebFetcher:
                 metadata={
                     "format": fmt,
                     "fetch_method": disc.strategy.value,
+                    "docset_root": normalize_url(base_url),
                     "platform": platform.value,
                     "canonical_url": canonical,
                     "content_hash": content_hash,

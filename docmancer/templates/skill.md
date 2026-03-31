@@ -38,6 +38,7 @@ Use `--full` to return untruncated passage text.
 ### List ingested sources
 ```bash
 {{DOCS_KIT_CMD}} list
+{{DOCS_KIT_CMD}} list --all
 ```
 
 ### Ingest documentation
@@ -54,7 +55,9 @@ Use `--full` to return untruncated passage text.
 
 ### Remove a source
 ```bash
+{{DOCS_KIT_CMD}} remove --all
 {{DOCS_KIT_CMD}} remove https://docs.example.com
+{{DOCS_KIT_CMD}} remove https://docs.example.com/page
 ```
 
 ### Show collection stats

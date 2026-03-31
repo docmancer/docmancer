@@ -53,7 +53,11 @@ class LlmsTxtFetcher:
         return [Document(
             source=url,
             content=resp.text,
-            metadata={"format": "markdown", "fetch_method": "llms-full.txt"},
+            metadata={
+                "format": "markdown",
+                "fetch_method": "llms-full.txt",
+                "docset_root": base_url,
+            },
         )]
 
     @staticmethod
@@ -116,7 +120,11 @@ class LlmsTxtFetcher:
                     documents.append(Document(
                         source=url,
                         content=content,
-                        metadata={"format": fmt, "fetch_method": "llms.txt"},
+                        metadata={
+                            "format": fmt,
+                            "fetch_method": "llms.txt",
+                            "docset_root": base_url,
+                        },
                     ))
                 else:
                     logger.warning("Skipped %s (empty after HTML extraction)", url)

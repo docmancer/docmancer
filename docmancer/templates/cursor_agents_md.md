@@ -24,10 +24,12 @@ Use docmancer when the user:
 ## Commands
 
 - `{{DOCS_KIT_CMD}} query "search terms" --limit 10`: search ingested documentation (add `--full` for untruncated text)
-- `{{DOCS_KIT_CMD}} list`: list all ingested sources with dates
+- `{{DOCS_KIT_CMD}} list`: list ingested docsets/sources with dates
+- `{{DOCS_KIT_CMD}} list --all`: list every stored page/file source with dates
 - `{{DOCS_KIT_CMD}} ingest <url-or-path>`: ingest docs from a URL or local path (add `--recreate` to re-ingest)
 - `{{DOCS_KIT_CMD}} fetch <url> --output <dir>`: download docs to local Markdown files
-- `{{DOCS_KIT_CMD}} remove <source>`: remove a previously ingested source
+- `{{DOCS_KIT_CMD}} remove --all`: remove the entire knowledge base
+- `{{DOCS_KIT_CMD}} remove <source>`: remove a previously ingested docset root or exact source
 - `{{DOCS_KIT_CMD}} inspect`: show collection stats
 - `{{DOCS_KIT_CMD}} init`: create project-local config
 - `{{DOCS_KIT_CMD}} doctor`: diagnose issues

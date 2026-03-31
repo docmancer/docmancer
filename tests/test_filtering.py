@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from docmancer.connectors.fetchers.pipeline.filtering import (
     ContentDeduplicator,
+    infer_docset_root,
     is_docs_url,
     normalize_url,
     resolve_url,
@@ -43,6 +44,20 @@ class TestNormalizeUrl:
     def test_handles_no_query(self):
         url = normalize_url("https://example.com/docs")
         assert "?" not in url
+
+
+class TestInferDocsetRoot:
+    def test_docs_subdomain_collapses_to_host(self):
+        assert infer_docset_root("https://docs.railway.com/cli/deploy") == "https://docs.railway.com"
+
+    def test_docs_path_collapses_to_docs_root(self):
+        assert infer_docset_root("https://ionicframework.com/docs/v7/api/button") == "https://ionicframework.com/docs"
+
+    def test_llms_full_strips_suffix(self):
+        assert infer_docset_root("https://docs.polymarket.com/llms-full.txt") == "https://docs.polymarket.com"
+
+    def test_non_url_returns_none(self):
+        assert infer_docset_root("./docs/intro.md") is None
 
 
 # ---------------------------------------------------------------------------

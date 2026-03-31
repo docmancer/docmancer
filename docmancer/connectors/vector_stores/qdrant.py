@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -7,9 +8,11 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import FieldCondition, Filter, Fusion, FusionQuery, MatchValue, Prefetch, SparseVector
+from docmancer.connectors.fetchers.pipeline.filtering import infer_docset_root
 from docmancer.core.models import Chunk, RetrievedChunk
 
 _DEFAULT_LOCK_PATH = Path.home() / ".docmancer" / "qdrant.lock"
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -22,6 +25,8 @@ def _qdrant_lock(lock_path: Path):
 
 
 class QdrantStore:
+    _UPSERT_BATCH_SIZE = 256
+
     def __init__(self, client: QdrantClient | None = None, collection_name: str = "knowledge_base",
                  url: str = "", local_path: str = ".qdrant",
                  dense_prefetch_limit: int = 20, sparse_prefetch_limit: int = 20):
@@ -101,6 +106,7 @@ class QdrantStore:
         if not chunks:
             return 0
         with self._lock():
+            logger.info("Preparing vector store collections...")
             if recreate:
                 if self._client.collection_exists(self._collection_name):
                     self._client.delete_collection(self._collection_name)
@@ -115,14 +121,45 @@ class QdrantStore:
                 vector: dict = {"dense": dense_vectors[i]}
                 if sparse_vectors:
                     vector["bm25"] = sparse_vectors[i]
+                payload = {
+                    "source": chunk.source,
+                    "chunk_index": chunk.chunk_index,
+                    "text": chunk.text,
+                    "ingested_at": ingested_at,
+                }
+                docset_root = chunk.metadata.get("docset_root")
+                if docset_root:
+                    payload["docset_root"] = str(docset_root)
                 points.append(rest.PointStruct(
                     id=str(uuid.uuid4()), vector=vector,
-                    payload={"source": chunk.source, "chunk_index": chunk.chunk_index, "text": chunk.text, "ingested_at": ingested_at},
+                    payload=payload,
                 ))
-            self._client.upsert(collection_name=self._collection_name, points=points)
+            if len(points) > self._UPSERT_BATCH_SIZE:
+                logger.info(
+                    "Large local write detected (%d chunks). Persisting in %d batches...",
+                    len(points),
+                    (len(points) + self._UPSERT_BATCH_SIZE - 1) // self._UPSERT_BATCH_SIZE,
+                )
+            total_batches = (len(points) + self._UPSERT_BATCH_SIZE - 1) // self._UPSERT_BATCH_SIZE
+            for batch_index, start in enumerate(range(0, len(points), self._UPSERT_BATCH_SIZE), start=1):
+                batch = points[start:start + self._UPSERT_BATCH_SIZE]
+                logger.info(
+                    "Persisting batch %d/%d to Qdrant (%d chunks)...",
+                    batch_index,
+                    total_batches,
+                    len(batch),
+                )
+                self._client.upsert(collection_name=self._collection_name, points=batch)
+            logger.info("Vector store write complete.")
             return len(points)
 
-    def upsert_document(self, source: str, content: str, recreate: bool = False) -> None:
+    def upsert_document(
+        self,
+        source: str,
+        content: str,
+        recreate: bool = False,
+        docset_root: str | None = None,
+    ) -> None:
         with self._lock():
             if recreate and self._client.collection_exists(self._documents_collection_name):
                 self._client.delete_collection(self._documents_collection_name)
@@ -133,10 +170,17 @@ class QdrantStore:
                     must=[FieldCondition(key="source", match=MatchValue(value=source))]
                 ),
             )
+            payload = {
+                "source": source,
+                "content": content,
+                "ingested_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if docset_root:
+                payload["docset_root"] = docset_root
             point = rest.PointStruct(
                 id=str(uuid.uuid4()),
                 vector={"doc": [1.0]},
-                payload={"source": source, "content": content, "ingested_at": datetime.now(timezone.utc).isoformat()},
+                payload=payload,
             )
             self._client.upsert(collection_name=self._documents_collection_name, points=[point])
 
@@ -256,24 +300,38 @@ class QdrantStore:
             return None
         return str(content)
 
+    def _filter_has_matches(self, collection_name: str, scroll_filter: Filter) -> bool:
+        result = self._client.scroll(
+            collection_name=collection_name,
+            scroll_filter=scroll_filter,
+            limit=1,
+            with_payload=False,
+            with_vectors=False,
+        )
+        if isinstance(result, tuple):
+            points = result[0]
+        else:
+            points = getattr(result, "points", result)
+        return bool(points)
+
     def delete_source(self, source: str) -> bool:
         """Delete all chunks and the document for a given source. Returns True if anything was deleted."""
         with self._lock():
             deleted_any = False
             source_filter = Filter(must=[FieldCondition(key="source", match=MatchValue(value=source))])
             if self._client.collection_exists(self._collection_name):
-                result = self._client.delete(
-                    collection_name=self._collection_name,
-                    points_selector=source_filter,
-                )
-                if getattr(result, "status", None) is not None:
+                if self._filter_has_matches(self._collection_name, source_filter):
+                    self._client.delete(
+                        collection_name=self._collection_name,
+                        points_selector=source_filter,
+                    )
                     deleted_any = True
             if self._client.collection_exists(self._documents_collection_name):
-                result = self._client.delete(
-                    collection_name=self._documents_collection_name,
-                    points_selector=source_filter,
-                )
-                if getattr(result, "status", None) is not None:
+                if self._filter_has_matches(self._documents_collection_name, source_filter):
+                    self._client.delete(
+                        collection_name=self._documents_collection_name,
+                        points_selector=source_filter,
+                    )
                     deleted_any = True
             return deleted_any
 
@@ -303,6 +361,108 @@ class QdrantStore:
                 break
             offset = next_offset
         return sorted(entries, key=lambda e: e["source"])
+
+    def list_grouped_sources_with_dates(self) -> list[dict]:
+        """List URL docsets collapsed by docset_root, falling back to raw source."""
+        if not self._client.collection_exists(self._documents_collection_name):
+            return []
+        grouped: dict[str, dict] = {}
+        offset = None
+        while True:
+            points, next_offset = self._client.scroll(
+                collection_name=self._documents_collection_name,
+                limit=100,
+                offset=offset,
+                with_payload=["source", "docset_root", "ingested_at"],
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                source = payload.get("source")
+                if source is None:
+                    continue
+                display = str(payload.get("docset_root") or infer_docset_root(str(source)) or source)
+                ingested_at = str(payload.get("ingested_at", "unknown"))
+                current = grouped.get(display)
+                if current is None or ingested_at < current["ingested_at"]:
+                    grouped[display] = {"source": display, "ingested_at": ingested_at}
+            if next_offset is None:
+                break
+            offset = next_offset
+        return sorted(grouped.values(), key=lambda e: e["source"])
+
+    def delete_docset(self, docset_root: str) -> bool:
+        """Delete all chunks and documents for a given docset root."""
+        with self._lock():
+            deleted_any = False
+            docset_filter = Filter(must=[FieldCondition(key="docset_root", match=MatchValue(value=docset_root))])
+            if self._client.collection_exists(self._collection_name):
+                if self._filter_has_matches(self._collection_name, docset_filter):
+                    self._client.delete(
+                        collection_name=self._collection_name,
+                        points_selector=docset_filter,
+                    )
+                    deleted_any = True
+            if self._client.collection_exists(self._documents_collection_name):
+                if self._filter_has_matches(self._documents_collection_name, docset_filter):
+                    self._client.delete(
+                        collection_name=self._documents_collection_name,
+                        points_selector=docset_filter,
+                    )
+                    deleted_any = True
+            if deleted_any or not self._client.collection_exists(self._documents_collection_name):
+                return deleted_any
+
+            matching_sources: list[str] = []
+            offset = None
+            while True:
+                points, next_offset = self._client.scroll(
+                    collection_name=self._documents_collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=["source"],
+                    with_vectors=False,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    source = payload.get("source")
+                    if source is None:
+                        continue
+                    if infer_docset_root(str(source)) == docset_root:
+                        matching_sources.append(str(source))
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            for source in sorted(set(matching_sources)):
+                source_filter = Filter(must=[FieldCondition(key="source", match=MatchValue(value=source))])
+                if self._client.collection_exists(self._collection_name):
+                    if self._filter_has_matches(self._collection_name, source_filter):
+                        self._client.delete(
+                            collection_name=self._collection_name,
+                            points_selector=source_filter,
+                        )
+                        deleted_any = True
+                if self._client.collection_exists(self._documents_collection_name):
+                    if self._filter_has_matches(self._documents_collection_name, source_filter):
+                        self._client.delete(
+                            collection_name=self._documents_collection_name,
+                            points_selector=source_filter,
+                        )
+                        deleted_any = True
+            return deleted_any
+
+    def delete_all(self) -> bool:
+        """Delete the entire knowledge base and stored documents collection."""
+        with self._lock():
+            deleted_any = False
+            if self._client.collection_exists(self._collection_name):
+                self._client.delete_collection(self._collection_name)
+                deleted_any = True
+            if self._client.collection_exists(self._documents_collection_name):
+                self._client.delete_collection(self._documents_collection_name)
+                deleted_any = True
+            return deleted_any
 
     def close(self) -> None:
         self._client.close()

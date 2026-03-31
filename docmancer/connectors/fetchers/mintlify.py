@@ -66,7 +66,11 @@ class MintlifyFetcher(LlmsTxtFetcher):
                     documents.append(Document(
                         source=url,
                         content=content,
-                        metadata={"format": "markdown", "fetch_method": "sitemap.xml"},
+                        metadata={
+                            "format": "markdown",
+                            "fetch_method": "sitemap.xml",
+                            "docset_root": base_url,
+                        },
                     ))
             else:
                 logger.warning("Skipped %s (status %d)", url, page_resp.status_code)

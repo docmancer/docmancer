@@ -13,9 +13,13 @@ from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_exa
     ),
 )
 @click.version_option(package_name="docmancer")
-def cli():
+@click.option("--config", "config_path", default=None, hidden=True,
+              help="Path to docmancer.yaml (passed through to subcommands).")
+@click.pass_context
+def cli(ctx, config_path: str | None):
     """Fetch docs, embed them locally, and expose them to AI agents via skills."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["config_path"] = config_path
 
 
 cli.add_command(init_cmd, "init")

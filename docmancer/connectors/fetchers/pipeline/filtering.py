@@ -80,6 +80,36 @@ def normalize_url(url: str) -> str:
     return url
 
 
+_ROOT_HINT_SEGMENTS = {"docs", "doc", "documentation", "api", "reference", "sdk", "cli"}
+
+
+def infer_docset_root(url: str) -> str | None:
+    """Infer a high-level docs root for legacy URL records without explicit docset metadata."""
+    if not url.startswith(("http://", "https://")):
+        return None
+
+    normalized = normalize_url(url)
+    parsed = urlparse(normalized)
+    host_root = f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path or ""
+
+    if path.endswith("/llms-full.txt"):
+        return host_root + path.removesuffix("/llms-full.txt")
+    if path.endswith("/llms.txt"):
+        return host_root + path.removesuffix("/llms.txt")
+
+    # Dedicated docs hosts usually represent a single doc library.
+    host = parsed.netloc.lower()
+    if host.startswith("docs.") or host.startswith("doc.") or host.startswith("api."):
+        return host_root
+
+    parts = [part for part in path.split("/") if part]
+    if parts and parts[0].lower() in _ROOT_HINT_SEGMENTS:
+        return f"{host_root}/{parts[0]}"
+
+    return host_root
+
+
 def is_docs_url(url: str, base_url: str) -> bool:
     """Check if a URL is within the documentation scope.
 

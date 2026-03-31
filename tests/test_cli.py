@@ -164,6 +164,23 @@ def test_ingest_shows_total_and_calls_agent(tmp_path):
         mock_agent.ingest.assert_called_once_with(str(tmp_path), recreate=False)
 
 
+def test_ingest_url_shows_fetch_message_and_calls_ingest_url():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.ingest_url.return_value = 42
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["ingest", "https://docs.example.com"])
+
+        assert result.exit_code == 0
+        assert "Fetching docs from https://docs.example.com..." in result.output
+        assert "Total: 42 chunks" in result.output
+        mock_agent.ingest_url.assert_called_once()
+
+
 def test_query_command_exists():
     runner = CliRunner()
     result = runner.invoke(cli, ["query", "--help"])
@@ -171,6 +188,103 @@ def test_query_command_exists():
     assert "--config" in result.output
     assert "--limit" in result.output
     assert "--full" in result.output
+
+
+def test_list_command_defaults_to_grouped_entries():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.list_grouped_sources_with_dates.return_value = [
+            {"ingested_at": "2026-03-31T00:00:00+00:00", "source": "https://docs.example.com"}
+        ]
+        mock_agent.list_sources_with_dates.return_value = []
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["list"])
+
+        assert result.exit_code == 0
+        assert "https://docs.example.com" in result.output
+        mock_agent.list_grouped_sources_with_dates.assert_called_once()
+        mock_agent.list_sources_with_dates.assert_not_called()
+
+
+def test_list_command_all_uses_raw_entries():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.list_sources_with_dates.return_value = [
+            {"ingested_at": "2026-03-31T00:00:00+00:00", "source": "https://docs.example.com/page"}
+        ]
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["list", "--all"])
+
+        assert result.exit_code == 0
+        assert "https://docs.example.com/page" in result.output
+        mock_agent.list_sources_with_dates.assert_called_once()
+
+
+def test_remove_command_reports_docset_removal():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.remove_source.return_value = (True, "docset")
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["remove", "https://docs.example.com"])
+
+        assert result.exit_code == 0
+        assert "Removed docset: https://docs.example.com" in result.output
+
+
+def test_remove_command_all_removes_everything():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.remove_all_sources.return_value = True
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["remove", "--all"])
+
+        assert result.exit_code == 0
+        assert "Removed all sources." in result.output
+        mock_agent.remove_all_sources.assert_called_once()
+
+
+def test_remove_command_all_rejects_source_argument():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["remove", "--all", "https://docs.example.com"])
+
+        assert result.exit_code == 1
+        assert "Do not pass a source when using --all." in result.output
+
+
+def test_remove_command_requires_source_without_all():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["remove"])
+
+        assert result.exit_code == 1
+        assert "Missing argument 'SOURCE'." in result.output
 
 
 def test_query_command_registered():

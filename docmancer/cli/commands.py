@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import shlex
 import shutil
 import sys
@@ -11,6 +12,16 @@ import click
 
 from docmancer.cli.help import DocmancerCommand, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, color_enabled, style
+
+
+def _effective_config(config_path: str | None) -> str | None:
+    """Merge subcommand --config with group-level --config."""
+    if config_path is not None:
+        return config_path
+    ctx = click.get_current_context(silent=True)
+    if ctx and ctx.parent and ctx.parent.obj:
+        return ctx.parent.obj.get("config_path")
+    return None
 
 INSTALL_TARGETS = [
     "claude-code",
@@ -129,6 +140,38 @@ def _emit_status_line(message: str, state: str = "ok", indent: int = 2) -> None:
 def _emit_next_step(text: str) -> None:
     click.echo()
     click.echo(_style("  Next:", fg="bright_green", bold=True) + f" {text}")
+
+
+class _IngestLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        lower = message.lower()
+
+        if lower.startswith("http request:"):
+            return _style("[http] ", fg="bright_black") + message
+        if "auto-detected platform" in lower or lower.startswith("detected platform:"):
+            return _style("[site] ", fg="bright_cyan", bold=True) + message
+        if lower.startswith("fetched ") and "starting ingest" in lower:
+            return _style("[fetch] ", fg="bright_green", bold=True) + message
+        if lower.startswith("chunking ") or lower.startswith("built "):
+            return _style("[chunk] ", fg="yellow", bold=True) + message
+        if lower.startswith("embedding "):
+            return _style("[embed] ", fg="magenta", bold=True) + message
+        if lower.startswith("upserting ") or lower.startswith("persisting batch ") or "vector store write complete" in lower or "preparing vector store collections" in lower:
+            return _style("[store] ", fg="bright_blue", bold=True) + message
+        if lower.startswith("stored source ") or lower.startswith("processed "):
+            return _style("[done] ", fg="bright_green", bold=True) + message
+        if "large local write detected" in lower or "this step can take a while" in lower:
+            return _style("[hint] ", fg="bright_yellow", bold=True) + message
+        return message
+
+
+def _configure_ingest_logging() -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(_IngestLogFormatter())
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
 
 
 def _emit_install_summary(
@@ -296,8 +339,8 @@ def ingest_cmd(
     browser: bool,
 ):
     """Ingest documents from a file, directory, or URL."""
-    import logging
-    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+    config_path = _effective_config(config_path)
+    _configure_ingest_logging()
 
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
@@ -377,6 +420,7 @@ def fetch_cmd(url: str, output_dir: str):
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def inspect_cmd(config_path: str | None):
     """Show collection stats and configuration."""
+    config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
 
@@ -399,6 +443,7 @@ def inspect_cmd(config_path: str | None):
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def doctor_cmd(config_path: str | None):
     """Check environment, connectivity, and installed skill status."""
+    config_path = _effective_config(config_path)
     config = _load_config(config_path)
     home = Path.home()
     _emit_brand_header("docmancer doctor", "Check binary, config, archive, and installed skills.")
@@ -472,6 +517,7 @@ def doctor_cmd(config_path: str | None):
 @click.option("--full", is_flag=True, default=False, help="Show full chunk text without truncation.")
 def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool):
     """Run a retrieval query against the vector store (no server required)."""
+    config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
     chunks = agent.query(text, limit=limit)
@@ -495,19 +541,40 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool)
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Remove an ingested source.",
     epilog=format_examples(
+        "docmancer remove --all",
+        "docmancer remove https://docs.example.com",
         "docmancer remove https://docs.example.com/page",
         "docmancer remove ./docs/getting-started.md",
     ),
 )
-@click.argument("source")
+@click.argument("source", required=False)
+@click.option("--all", "remove_all", is_flag=True, default=False, help="Remove every stored source and docset.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def remove_cmd(source: str, config_path: str | None):
+def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
     """Remove an ingested source (URL or file path) from the knowledge base."""
+    config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
-    deleted = agent.remove_source(source)
+    if remove_all:
+        if source:
+            click.echo("Do not pass a source when using --all.", err=True)
+            sys.exit(1)
+        deleted = agent.remove_all_sources()
+        if deleted:
+            click.echo("Removed all sources.")
+        else:
+            click.echo("No data found to remove.", err=True)
+            sys.exit(1)
+        return
+    if not source:
+        click.echo("Missing argument 'SOURCE'.", err=True)
+        sys.exit(1)
+    deleted, removed_kind = agent.remove_source(source)
     if deleted:
-        click.echo(f"Removed source: {source}")
+        if removed_kind == "docset":
+            click.echo(f"Removed docset: {source}")
+        else:
+            click.echo(f"Removed source: {source}")
     else:
         click.echo(f"No data found for source: {source}", err=True)
         sys.exit(1)
@@ -519,15 +586,18 @@ def remove_cmd(source: str, config_path: str | None):
     short_help="List ingested sources.",
     epilog=format_examples(
         "docmancer list",
+        "docmancer list --all",
         "docmancer list --config ./docmancer.yaml",
     ),
 )
+@click.option("--all", "show_all", is_flag=True, default=False, help="Show every stored page/file source.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def list_cmd(config_path: str | None):
+def list_cmd(show_all: bool, config_path: str | None):
     """List all ingested sources with their ingestion dates."""
+    config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
-    entries = agent.list_sources_with_dates()
+    entries = agent.list_sources_with_dates() if show_all else agent.list_grouped_sources_with_dates()
     if not entries:
         click.echo("No sources ingested yet.")
         return
@@ -562,6 +632,7 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     AGENT must be one of: claude-code, claude-desktop, cursor, codex,
     codex-app, codex-desktop, gemini, opencode
     """
+    config_path = _effective_config(config_path)
     normalized = agent.lower()
     home = Path.home()
     user_config_exists_before = _get_user_config_path().exists()

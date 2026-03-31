@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - Unreleased
+
+### Added
+
+- **Docset grouping:** `docset_root` metadata on ingested URL documents (GitBook/Mintlify `llms.txt` paths, web fetcher) stored in Qdrant payloads; **`docmancer list`** defaults to **one row per doc site** (newest ingest time). Use **`docmancer list --all`** for every stored page/file source.
+- **`docmancer remove --all`:** drops the entire knowledge base (both chunk and document collections).
+- **Grouped remove:** `docmancer remove <docset-or-source>` deletes a full **docset** when the argument matches stored `docset_root`, otherwise removes a single **exact source**; legacy rows without `docset_root` use **`infer_docset_root()`** heuristics for grouping and deletion.
+- **Root-level `--config`:** `docmancer --config path/to/docmancer.yaml <subcommand>` merges with per-command `--config` (hidden on the top-level group, passed through to subcommands).
+- **Ingest progress UX:** styled, stage-prefixed logging (`[site]`, `[chunk]`, `[embed]`, `[store]`, etc.) via `_IngestLogFormatter`; **`DocmancerAgent.ingest_documents`** logs chunking, embedding, and per-document progress (including a warning for very large documents).
+
+### Changed
+
+- **Qdrant upserts:** large ingests persist in **batches** (256 points) with progress logs to reduce memory spikes and clarify long writes.
+- **`DocmancerAgent.remove_source`:** now returns `(bool, kind)` internally; **`remove_all_sources`** added for full wipe.
+- **`VectorStore` protocol:** extended with `list_grouped_sources_with_dates`, `delete_docset`, `delete_all`, and `docset_root` on `upsert_document`.
+- **Skills / templates:** document **`list --all`**, **`remove --all`**, and grouped default **`list`** behavior.
+
+### Fixed
+
+- **Qdrant deletes:** use a **scroll probe** before `delete` so “no matches” no longer reports success when nothing was removed.
+
 ## [0.1.5] - 2026-03-30
 ### Added
 
@@ -61,7 +82,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...HEAD
+[0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/docmancer/docmancer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/docmancer/docmancer/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/docmancer/docmancer/compare/v0.1.1...v0.1.2
