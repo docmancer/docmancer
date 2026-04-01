@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.7] - Unreleased
-
+## [0.1.7] - 2026-04-01
 ### Documentation
 
 - **README:** Refreshed hero (tighter value proposition, benefit checklist, table-of-contents link); expanded **The Problem** with contrast to cloud doc tools; new **Why Local** section with a table on local-first indexing versus common concerns; updated closing line.
