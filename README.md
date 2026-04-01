@@ -25,7 +25,7 @@
 
 <pre align="center"><code>pipx install docmancer --python python3.13</code></pre>
 
-[The Problem](#the-problem) · [How It Works](#how-it-works) · [Why Local?](#why-local) · [Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
+[Quickstart](#quickstart) · [The Problem](#the-problem) · [Works With Every Agent](#works-with-every-agent) · [How It Works](#how-it-works) · [Why Local?](#why-local) · [Commands](#commands) · [Install](#install) · [Troubleshooting](#troubleshooting)
 
 </div>
 
