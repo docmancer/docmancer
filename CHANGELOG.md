@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - Unreleased
+
+### Documentation
+
+- **README:** Refreshed hero (tighter value proposition, benefit checklist, table-of-contents link); expanded **The Problem** with contrast to cloud doc tools; new **Why Local** section with a table on local-first indexing versus common concerns; updated closing line.
+
 ## [0.1.6] - 2026-03-31
 ### Added
 
@@ -81,7 +87,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...HEAD
+[0.1.7]: https://github.com/docmancer/docmancer/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/docmancer/docmancer/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/docmancer/docmancer/compare/v0.1.2...v0.1.3
