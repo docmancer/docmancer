@@ -2,18 +2,28 @@
 
 <h1><img src="https://raw.githubusercontent.com/docmancer/docmancer/main/readme-assets/wizard-logo.png" width="56" height="56" alt="docmancer logo" style="vertical-align: middle; margin-right: 10px;" /> docmancer</h1>
 
-**Stop wasting Claude Code sessions on bloated docs context.**
+**Stop your AI from hallucinating APIs. Ground it in real docs, locally.**
 
-**Ingest docs once, index them locally, retrieve only the relevant sections when you need them.**
-
-<p align="center">
-  <em>Ground coding agents in up-to-date documentation.</em>
-</p>
+**Ingest docs once, index them on your machine, retrieve only what matters. No server. No API key. No rate limits.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 [![CI](https://img.shields.io/github/actions/workflow/status/docmancer/docmancer/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/docmancer/docmancer/actions/workflows/ci.yml)
+
+<br>
+
+<table><tr><td>
+
+✅ Up-to-date, version-specific documentation<br>
+✅ Only the chunks your agent needs, not the whole doc site<br>
+✅ Completely free. No rate limits, no quotas, no tiers.<br>
+✅ Private and internal docs work out of the box<br>
+✅ No MCP server. Installs as a skill, runs as a CLI.<br>
+✅ 100% local. Embeddings, storage, retrieval all on your machine.<br>
+✅ Works offline once ingested
+
+</td></tr></table>
 
 <br>
 
@@ -23,7 +33,7 @@
 
 <br>
 
-[The Problem](#the-problem) · [How It Works](#how-it-works) · [Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
+[The Problem](#the-problem) · [How It Works](#how-it-works) · [Why Local?](#why-local) · [Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -60,6 +70,8 @@ No server to start. Config and the default vector store are created under **`~/.
 Claude Code sessions have a context limit. Every time you paste docs into a session, or let the agent browse and re-fetch the same pages, you're burning that budget on setup instead of actual work. Once the session gets noisy enough, the agent starts guessing: made-up CLI flags, stale API shapes, behaviors from old versions.
 
 The obvious fix (dumping whole doc sites into context) makes it worse. You burn thousands of tokens on irrelevant text and bury the one paragraph that actually matters.
+
+Cloud-based doc tools add rate limits, privacy exposure, and server dependencies you don't need.
 
 Docmancer solves this differently. You ingest docs once, they're chunked and indexed locally, and the agent retrieves only the matching sections when it needs them: a few hundred tokens instead of tens of thousands.
 
@@ -125,6 +137,20 @@ Skills are plain markdown files. No background daemon, no MCP server, no ports.
 1. **`docmancer ingest`:** fetches docs from GitBook, Mintlify, generic web docs, or local files. Chunks and embeds them locally with FastEmbed. Stores vectors in on-disk Qdrant.
 2. **`docmancer install`:** drops a `SKILL.md` into your agent's skills directory. The skill teaches the agent when and how to call the CLI.
 3. **Agent queries automatically:** when your agent needs docs, it runs `docmancer query` and gets back only the relevant chunks.
+
+---
+
+## Why Local?
+
+| | DocMancer |
+|---|---|
+| **Cost** | Free, always. No tiers, no quotas. |
+| **Rate limits** | None. Query as much as you want. |
+| **Private docs** | Supported free. No paid plan required. |
+| **Data privacy** | Nothing leaves your machine. |
+| **Infrastructure** | No server. CLI + local storage. |
+| **Offline use** | Yes, after ingestion. |
+| **Embedding** | Local FastEmbed. No API key needed. |
 
 ---
 
@@ -332,6 +358,6 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Your agents are guessing. Docmancer makes them look it up.**
+**Your agents are guessing. Fix that in two commands.**
 
 </div>
