@@ -91,6 +91,27 @@ def test_cli_doctor_runs():
     assert result.exit_code == 0
 
 
+def test_cli_doctor_warns_for_large_local_collection(tmp_path):
+    runner = CliRunner()
+    qdrant_path = tmp_path / "qdrant"
+    qdrant_path.mkdir()
+    fake_config = MagicMock()
+    fake_config.vector_store.url = ""
+    fake_config.vector_store.local_path = str(qdrant_path)
+
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.collection_stats.return_value = {"points_count": 20000}
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Chunks indexed: 20000" in result.output
+    assert "docmancer remove --all" in result.output
+
+
 def test_cli_init_creates_config(tmp_path):
     runner = CliRunner()
     fake_config = MagicMock()

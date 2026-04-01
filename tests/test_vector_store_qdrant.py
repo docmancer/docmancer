@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 from docmancer.connectors.vector_stores.qdrant import QdrantStore
 from docmancer.core.models import Chunk
+from qdrant_client.http import models as rest
 from qdrant_client.models import SparseVector
 
 def test_ensure_collection_creates():
@@ -11,6 +12,24 @@ def test_ensure_collection_creates():
     store = QdrantStore(client=client, collection_name="test")
     store.ensure_collection(1536)
     client.create_collection.assert_called_once()
+    kwargs = client.create_collection.call_args.kwargs
+    dense_config = kwargs["vectors_config"]["dense"]
+    assert dense_config.size == 1536
+    assert dense_config.distance.value == "Cosine"
+    assert dense_config.on_disk is True
+    assert kwargs["hnsw_config"].on_disk is True
+    assert kwargs["optimizers_config"].memmap_threshold == 10000
+    assert client.create_payload_index.call_count == 2
+    client.create_payload_index.assert_any_call(
+        collection_name="test",
+        field_name="source",
+        field_schema=rest.PayloadSchemaType.KEYWORD,
+    )
+    client.create_payload_index.assert_any_call(
+        collection_name="test",
+        field_name="docset_root",
+        field_schema=rest.PayloadSchemaType.KEYWORD,
+    )
 
 def test_ensure_collection_raises_old_schema():
     client = MagicMock()
@@ -98,6 +117,28 @@ class TestQdrantStoreGetBySource:
 
 
 class TestQdrantStoreDocumentStore:
+    def test_ensure_documents_collection_creates_payload_indexes(self):
+        client = MagicMock()
+        client.get_collections.return_value = SimpleNamespace(collections=[])
+        store = QdrantStore(client=client, collection_name="test")
+
+        store.ensure_documents_collection()
+
+        client.create_collection.assert_called_once()
+        kwargs = client.create_collection.call_args.kwargs
+        assert kwargs["collection_name"] == "test__documents"
+        assert kwargs["vectors_config"]["doc"].size == 1
+        client.create_payload_index.assert_any_call(
+            collection_name="test__documents",
+            field_name="source",
+            field_schema=rest.PayloadSchemaType.KEYWORD,
+        )
+        client.create_payload_index.assert_any_call(
+            collection_name="test__documents",
+            field_name="docset_root",
+            field_schema=rest.PayloadSchemaType.KEYWORD,
+        )
+
     def test_upsert_document_creates_collection_and_stores_content(self):
         client = MagicMock()
         client.get_collections.return_value = SimpleNamespace(collections=[])

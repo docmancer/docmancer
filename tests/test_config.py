@@ -1,3 +1,5 @@
+import pytest
+from pydantic import ValidationError
 from docmancer.core.config import EmbeddingConfig, DocmancerConfig, VectorStoreConfig
 
 
@@ -63,3 +65,11 @@ vector_store:
 def test_settings_do_not_auto_load_dotenv():
     assert EmbeddingConfig.model_config.get("env_file") is None
     assert VectorStoreConfig.model_config.get("env_file") is None
+
+
+def test_embedding_batch_size_must_be_positive():
+    with pytest.raises(ValidationError):
+        EmbeddingConfig(batch_size=0)
+
+    with pytest.raises(ValidationError):
+        EmbeddingConfig(batch_size=-1)

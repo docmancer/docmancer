@@ -4,8 +4,6 @@
 
 **Stop your AI from hallucinating APIs. Ground it in real docs, locally.**
 
-**Ingest docs once, index them on your machine, retrieve only what matters. No server. No API key. No rate limits.**
-
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
@@ -25,13 +23,7 @@
 
 </td></tr></table>
 
-<br>
-
 <pre align="center"><code>pipx install docmancer --python python3.13</code></pre>
-
-**Local-first by default. No API keys. No server to run.**
-
-<br>
 
 [The Problem](#the-problem) · [How It Works](#how-it-works) · [Why Local?](#why-local) · [Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
@@ -142,15 +134,15 @@ Skills are plain markdown files. No background daemon, no MCP server, no ports.
 
 ## Why Local?
 
-| | DocMancer |
-|---|---|
-| **Cost** | Free, always. No tiers, no quotas. |
-| **Rate limits** | None. Query as much as you want. |
-| **Private docs** | Supported free. No paid plan required. |
-| **Data privacy** | Nothing leaves your machine. |
-| **Infrastructure** | No server. CLI + local storage. |
-| **Offline use** | Yes, after ingestion. |
-| **Embedding** | Local FastEmbed. No API key needed. |
+|                    | DocMancer                              |
+| ------------------ | -------------------------------------- |
+| **Cost**           | Free, always. No tiers, no quotas.     |
+| **Rate limits**    | None. Query as much as you want.       |
+| **Private docs**   | Supported free. No paid plan required. |
+| **Data privacy**   | Nothing leaves your machine.           |
+| **Infrastructure** | No server. CLI + local storage.        |
+| **Offline use**    | Yes, after ingestion.                  |
+| **Embedding**      | Local FastEmbed. No API key needed.    |
 
 ---
 
@@ -234,6 +226,9 @@ Use `--project` with `claude-code` or `gemini` to install under `.claude/skills/
 | -------------- | ----------------- | ------------------------ | ------------------------------------------ |
 | `embedding`    | `provider`        | `fastembed`              | Embedding provider                         |
 | `embedding`    | `model`           | `BAAI/bge-small-en-v1.5` | Embedding model name                       |
+| `embedding`    | `batch_size`      | `256`                    | Chunks embedded per local batch            |
+| `embedding`    | `parallel`        | `0`                      | FastEmbed worker count (`0` = all cores)   |
+| `embedding`    | `lazy_load`       | `true`                   | Defer model loading for worker processes   |
 | `vector_store` | `provider`        | `qdrant`                 | Vector store backend                       |
 | `vector_store` | `local_path`      | `~/.docmancer/qdrant`    | On-disk storage path                       |
 | `vector_store` | `url`             | _(unset)_                | Remote Qdrant URL (overrides `local_path`) |
@@ -250,6 +245,9 @@ Use `--project` with `claude-code` or `gemini` to install under `.claude/skills/
 embedding:
   provider: fastembed
   model: BAAI/bge-small-en-v1.5
+  batch_size: 256
+  parallel: 0
+  lazy_load: true
 
 vector_store:
   provider: qdrant
@@ -263,6 +261,8 @@ ingestion:
   chunk_overlap: 120
   bm25_model: Qdrant/bm25
 ```
+
+`embedding.batch_size` must be at least `1`. For large local ingests, increase `batch_size` cautiously and use `parallel: 0` to let FastEmbed use all available CPU cores.
 
 ---
 

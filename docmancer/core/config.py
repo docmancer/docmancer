@@ -10,6 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class EmbeddingConfig(BaseSettings):
     provider: str = "fastembed"
     model: str = "BAAI/bge-small-en-v1.5"
+    batch_size: int = Field(default=256, ge=1)
+    parallel: int = Field(default=0, ge=0)
+    lazy_load: bool = True
     model_config = SettingsConfigDict(env_prefix="EMBEDDING_", extra="ignore")
 
 

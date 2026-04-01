@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - Unreleased
+
+### Added
+
+- **`embedding` config:** `batch_size` (default `256`), `parallel` (default `0` for all cores), and `lazy_load` (default `true`), overridable via `docmancer.yaml` / `EMBEDDING_*` env vars; passed through **FastEmbed** dense and sparse embedders.
+- **`scripts/live_cli_integration.sh`:** optional repo smoke script using an isolated `HOME` and temp project (fetch/ingest/query/install paths); removes its temp dir on exit unless `DOCMANCER_KEEP_TMP=1`.
+
+### Changed
+
+- **Ingest:** Per-document **embedding and upsert** run in **batches** of `embedding.batch_size` with **one Qdrant file lock per document**, reducing contention and matching FastEmbed batching; `QdrantStore` exposes **`document_lock`** and **`upsert` / `upsert_document`** accept **`already_locked`** for nested calls.
+- **Qdrant (new collections):** **On-disk** dense vectors and **HNSW**, **memmap** optimizer threshold, and **keyword payload indexes** on `source` and `docset_root` (indexes apply on server Qdrant; local embedded mode unchanged for index effect).
+- **`docmancer doctor`:** When local embedded Qdrant data exists, reports **chunk count**; warns at **20000+** chunks that **`remove --all`** and **re-ingest** applies on-disk layout optimizations.
+- **README:** Documents new embedding keys, example YAML, and brief guidance for large local ingests; hero/table polish.
+- **Skills / templates:** Note **`embedding.batch_size` / `parallel` / `lazy_load`** for large ingests and expanded **`doctor`** behavior.
+
 ## [0.1.7] - 2026-04-01
 ### Documentation
 
@@ -86,7 +101,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.7]: https://github.com/docmancer/docmancer/compare/v0.1.6...HEAD
+[0.1.8]: https://github.com/docmancer/docmancer/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/docmancer/docmancer/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/docmancer/docmancer/compare/v0.1.3...v0.1.4

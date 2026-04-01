@@ -479,6 +479,19 @@ def doctor_cmd(config_path: str | None):
         qdrant_path = Path(config.vector_store.local_path)
         if qdrant_path.exists():
             _emit_status_line(f"Embedded Qdrant data at {qdrant_path}")
+            try:
+                agent = _get_agent_class()(config=config)
+                stats = agent.collection_stats()
+                count = stats.get("points_count") or 0
+                _emit_status_line(f"Chunks indexed: {count}")
+                if count >= 20000:
+                    _emit_status_line(
+                        f"Large collection ({count} chunks). For best performance, run "
+                        "'docmancer remove --all' and re-ingest to apply on-disk storage optimizations.",
+                        state="warn",
+                    )
+            except Exception:
+                pass
         else:
             _emit_status_line(f"No Qdrant data yet at {qdrant_path} (run: docmancer ingest)", state="warn")
 

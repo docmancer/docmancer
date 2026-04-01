@@ -47,6 +47,7 @@ Use `--full` to return untruncated passage text.
 {{DOCS_KIT_CMD}} ingest ./path/to/docs
 {{DOCS_KIT_CMD}} ingest https://docs.example.com --recreate
 ```
+For large local ingests, `docmancer.yaml` can tune `embedding.batch_size`, `embedding.parallel`, and `embedding.lazy_load`.
 
 ### Download docs to local Markdown files
 ```bash
@@ -75,3 +76,4 @@ Creates a project-local `docmancer.yaml` config file.
 ```bash
 {{DOCS_KIT_CMD}} doctor
 ```
+`doctor` reports embedded Qdrant chunk counts and warns when a local collection is large enough to benefit from a remove-and-reingest rebuild.

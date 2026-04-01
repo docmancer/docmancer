@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import contextmanager
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from qdrant_client import QdrantClient
@@ -26,6 +27,7 @@ def _qdrant_lock(lock_path: Path):
 
 class QdrantStore:
     _UPSERT_BATCH_SIZE = 256
+    _INDEXED_PAYLOAD_FIELDS = ("source", "docset_root")
 
     def __init__(self, client: QdrantClient | None = None, collection_name: str = "knowledge_base",
                  url: str = "", local_path: str = ".qdrant",
@@ -52,6 +54,11 @@ class QdrantStore:
             lock_path = Path(self._local_path).parent / "qdrant.lock"
             with _qdrant_lock(lock_path):
                 yield
+
+    @contextmanager
+    def document_lock(self):
+        with self._lock():
+            yield
 
     def ensure_collection(self, vector_size: int) -> None:
         collections = self._client.get_collections().collections
@@ -88,9 +95,18 @@ class QdrantStore:
             return
         self._client.create_collection(
             collection_name=self._collection_name,
-            vectors_config={"dense": rest.VectorParams(size=vector_size, distance=rest.Distance.COSINE)},
+            vectors_config={
+                "dense": rest.VectorParams(
+                    size=vector_size,
+                    distance=rest.Distance.COSINE,
+                    on_disk=True,
+                )
+            },
             sparse_vectors_config={"bm25": rest.SparseVectorParams(modifier=rest.Modifier.IDF)},
+            hnsw_config=rest.HnswConfigDiff(on_disk=True),
+            optimizers_config=rest.OptimizersConfigDiff(memmap_threshold=10000),
         )
+        self._create_payload_indexes(self._collection_name)
 
     def ensure_documents_collection(self) -> None:
         collections = self._client.get_collections().collections
@@ -100,12 +116,23 @@ class QdrantStore:
             collection_name=self._documents_collection_name,
             vectors_config={"doc": rest.VectorParams(size=1, distance=rest.Distance.COSINE)},
         )
+        self._create_payload_indexes(self._documents_collection_name)
+
+    def _create_payload_indexes(self, collection_name: str) -> None:
+        for field_name in self._INDEXED_PAYLOAD_FIELDS:
+            self._client.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=rest.PayloadSchemaType.KEYWORD,
+            )
 
     def upsert(self, chunks: list[Chunk], dense_vectors: list[list[float]],
-               sparse_vectors: list[SparseVector] | None = None, recreate: bool = False) -> int:
+               sparse_vectors: list[SparseVector] | None = None, recreate: bool = False,
+               already_locked: bool = False) -> int:
         if not chunks:
             return 0
-        with self._lock():
+        lock = nullcontext() if already_locked else self._lock()
+        with lock:
             logger.info("Preparing vector store collections...")
             if recreate:
                 if self._client.collection_exists(self._collection_name):
@@ -159,8 +186,10 @@ class QdrantStore:
         content: str,
         recreate: bool = False,
         docset_root: str | None = None,
+        already_locked: bool = False,
     ) -> None:
-        with self._lock():
+        lock = nullcontext() if already_locked else self._lock()
+        with lock:
             if recreate and self._client.collection_exists(self._documents_collection_name):
                 self._client.delete_collection(self._documents_collection_name)
             self.ensure_documents_collection()

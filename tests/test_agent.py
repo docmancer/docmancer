@@ -1,4 +1,5 @@
 import logging
+from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 from docmancer.agent import DocmancerAgent
@@ -26,6 +27,7 @@ def test_agent_ingest_documents_uses_markdown_chunking_metadata() -> None:
     agent._dense_embedder.embed.return_value = [[0.1]]
     agent._sparse_embedder.embed.return_value = [MagicMock()]
     agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
 
     count = agent.ingest_documents(
         [
@@ -42,6 +44,7 @@ def test_agent_ingest_documents_uses_markdown_chunking_metadata() -> None:
     upsert_chunks = agent._vector_store.upsert.call_args.args[0]
     assert upsert_chunks[0].text.startswith("[# Intro]")
     assert agent._vector_store.upsert.call_args.kwargs["recreate"] is True
+    assert agent._vector_store.upsert.call_args.kwargs["already_locked"] is True
 
 
 def test_ingest_preserves_recreate_until_non_empty_file(tmp_path) -> None:
@@ -58,11 +61,13 @@ def test_ingest_preserves_recreate_until_non_empty_file(tmp_path) -> None:
     agent._dense_embedder.embed.return_value = [[0.1]]
     agent._sparse_embedder.embed.return_value = [MagicMock()]
     agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
 
     count = agent.ingest(tmp_path, recreate=True)
 
     assert count == 1
     assert agent._vector_store.upsert.call_args.kwargs["recreate"] is True
+    assert agent._vector_store.upsert.call_args.kwargs["already_locked"] is True
 
 
 def test_ingest_documents_persists_exact_document_content() -> None:
@@ -74,6 +79,7 @@ def test_ingest_documents_persists_exact_document_content() -> None:
     agent._dense_embedder.embed.return_value = [[0.1]]
     agent._sparse_embedder.embed.return_value = [MagicMock()]
     agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
 
     document = Document(
         source="https://docs.example.com/page",
@@ -88,6 +94,7 @@ def test_ingest_documents_persists_exact_document_content() -> None:
         "# Heading\n\nOriginal body text.",
         recreate=True,
         docset_root=None,
+        already_locked=True,
     )
 
 
@@ -100,6 +107,7 @@ def test_ingest_documents_persists_docset_root_and_logs_progress(caplog) -> None
     agent._dense_embedder.embed.return_value = [[0.1]]
     agent._sparse_embedder.embed.return_value = [MagicMock()]
     agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
 
     document = Document(
         source="https://docs.example.com/page",
@@ -115,9 +123,10 @@ def test_ingest_documents_persists_docset_root_and_logs_progress(caplog) -> None
         "# Heading\n\nOriginal body text.",
         recreate=True,
         docset_root="https://docs.example.com",
+        already_locked=True,
     )
     assert "Chunking https://docs.example.com..." in caplog.text
-    assert "Embedding 1 chunks from https://docs.example.com..." in caplog.text
+    assert "Embedding and upserting 1 chunks from https://docs.example.com in 1 batch(es)..." in caplog.text
     assert "Processed 1/1 documents" in caplog.text
 
 
@@ -135,11 +144,51 @@ def test_ingest_url_logs_post_fetch_summary(caplog) -> None:
     agent._dense_embedder.embed.return_value = [[0.1]]
     agent._sparse_embedder.embed.return_value = [MagicMock()]
     agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
 
     with caplog.at_level(logging.INFO):
         agent.ingest_url("https://docs.example.com")
 
     assert "Fetched 1 document(s); starting ingest" in caplog.text
+
+
+def test_ingest_documents_holds_one_lock_across_all_batches() -> None:
+    config = DocmancerConfig()
+    config.ingestion.chunk_size = 10
+    config.ingestion.chunk_overlap = 0
+    config.embedding.batch_size = 1
+
+    agent = DocmancerAgent(config=config, _lazy_init=True)
+    agent._dense_embedder = MagicMock()
+    agent._sparse_embedder = MagicMock()
+    agent._vector_store = MagicMock()
+
+    agent._dense_embedder.embed.return_value = [[0.1]]
+    agent._sparse_embedder.embed.return_value = [MagicMock()]
+    agent._vector_store.upsert.return_value = 1
+    agent._vector_store.document_lock.return_value = nullcontext()
+
+    count = agent.ingest_documents(
+        [
+            Document(
+                source="https://docs.example.com/page",
+                content="# Intro\n\nOne two three four.\n\nFive six seven eight.\n\nNine ten eleven twelve.",
+                metadata={"content_type": "text/markdown", "format": "markdown"},
+            )
+        ],
+        recreate=True,
+    )
+
+    assert count >= 2
+    agent._vector_store.document_lock.assert_called_once_with()
+    assert agent._vector_store.upsert.call_count == count
+    first_call = agent._vector_store.upsert.call_args_list[0]
+    second_call = agent._vector_store.upsert.call_args_list[1]
+    assert first_call.kwargs["recreate"] is True
+    assert second_call.kwargs["recreate"] is False
+    assert first_call.kwargs["already_locked"] is True
+    assert second_call.kwargs["already_locked"] is True
+    agent._vector_store.upsert_document.assert_called_once()
 
 
 def test_get_document_returns_exact_content() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 
 import httpx
@@ -49,8 +50,19 @@ class DocmancerAgent:
                 f"Unsupported embedding provider '{self.config.embedding.provider}'. Supported: fastembed."
             )
         from docmancer.connectors.embeddings.fastembed import FastEmbedDenseEmbedding, FastEmbedSparseEmbedding
-        self._dense_embedder = FastEmbedDenseEmbedding(model=self.config.embedding.model)
-        self._sparse_embedder = FastEmbedSparseEmbedding(model=self.config.ingestion.bm25_model)
+        embed_cfg = self.config.embedding
+        self._dense_embedder = FastEmbedDenseEmbedding(
+            model=embed_cfg.model,
+            batch_size=embed_cfg.batch_size,
+            parallel=embed_cfg.parallel,
+            lazy_load=embed_cfg.lazy_load,
+        )
+        self._sparse_embedder = FastEmbedSparseEmbedding(
+            model=self.config.ingestion.bm25_model,
+            batch_size=embed_cfg.batch_size,
+            parallel=embed_cfg.parallel,
+            lazy_load=embed_cfg.lazy_load,
+        )
 
         if self.config.vector_store.provider != "qdrant":
             raise ValueError(
@@ -101,6 +113,7 @@ class DocmancerAgent:
         should_recreate = recreate
         processed = 0
         total_docs = len(documents)
+        embed_batch_size = self.config.embedding.batch_size
         for doc in documents:
             display_source = self._display_source(doc)
             logger.info("Chunking %s...", display_source)
@@ -114,19 +127,42 @@ class DocmancerAgent:
                     "Large document detected for %s. Local embedding and indexing may take a while.",
                     display_source,
                 )
-            logger.info("Embedding %d chunks from %s...", len(chunks), display_source)
-            dense_vecs = self._dense_embedder.embed([chunk.text for chunk in chunks])
-            sparse_vecs = self._sparse_embedder.embed([chunk.text for chunk in chunks])
-            logger.info("Upserting %d chunks from %s...", len(chunks), display_source)
-            count = self._vector_store.upsert(chunks, dense_vecs, sparse_vecs, recreate=should_recreate)
-            self._vector_store.upsert_document(
-                doc.source,
-                doc.content,
-                recreate=should_recreate,
-                docset_root=doc.metadata.get("docset_root"),
+            num_batches = (len(chunks) + embed_batch_size - 1) // embed_batch_size
+            logger.info(
+                "Embedding and upserting %d chunks from %s in %d batch(es)...",
+                len(chunks), display_source, num_batches,
             )
-            should_recreate = False
-            total += count
+            doc_recreate = should_recreate
+            doc_count = 0
+            lock_factory = getattr(self._vector_store, "document_lock", None)
+            doc_lock = lock_factory() if callable(lock_factory) else nullcontext()
+            with doc_lock:
+                for batch_idx in range(0, len(chunks), embed_batch_size):
+                    batch_chunks = chunks[batch_idx:batch_idx + embed_batch_size]
+                    batch_num = batch_idx // embed_batch_size + 1
+                    texts = [chunk.text for chunk in batch_chunks]
+                    logger.info("Batch %d/%d: embedding %d chunks (dense)...", batch_num, num_batches, len(batch_chunks))
+                    dense_vecs = self._dense_embedder.embed(texts)
+                    logger.info("Batch %d/%d: embedding %d chunks (sparse)...", batch_num, num_batches, len(batch_chunks))
+                    sparse_vecs = self._sparse_embedder.embed(texts)
+                    logger.info("Batch %d/%d: upserting %d chunks...", batch_num, num_batches, len(batch_chunks))
+                    count = self._vector_store.upsert(
+                        batch_chunks,
+                        dense_vecs,
+                        sparse_vecs,
+                        recreate=should_recreate,
+                        already_locked=True,
+                    )
+                    should_recreate = False
+                    doc_count += count
+                self._vector_store.upsert_document(
+                    doc.source,
+                    doc.content,
+                    recreate=doc_recreate,
+                    docset_root=doc.metadata.get("docset_root"),
+                    already_locked=True,
+                )
+            total += doc_count
             processed += 1
             logger.info("Stored source %s", doc.source)
             logger.info("Processed %d/%d documents (total chunks so far: %d)", processed, total_docs, total)
