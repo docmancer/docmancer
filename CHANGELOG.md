@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - Unreleased
+
+### Added
+
+- **`display_path()`** in **`docmancer/cli/ui.py`:** formats paths for CLI output using **`~/...`** under the user home directory, **`./...`** when under the current working directory, and sensible fallbacks for relative paths and URLs.
+
+### Changed
+
+- **`doctor`**, **`install`**, **`init`**, and **`fetch`** use **`display_path`** for config, Qdrant, skill, zip, and saved-file lines so long absolute paths are easier to read in the terminal.
+- **Ingest logging** uses each document’s **`source`** (page or file path) for chunk/embed/store progress lines instead of preferring **`docset_root`**, so multi-page ingests show the concrete URL or path being processed.
+
 ## [0.1.8] - 2026-04-01
 ### Added
 
@@ -100,7 +111,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.8]: https://github.com/docmancer/docmancer/compare/v0.1.7...HEAD
+[0.1.9]: https://github.com/docmancer/docmancer/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/docmancer/docmancer/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/docmancer/docmancer/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/docmancer/docmancer/compare/v0.1.4...v0.1.5

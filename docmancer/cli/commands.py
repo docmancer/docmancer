@@ -11,7 +11,7 @@ from pathlib import Path
 import click
 
 from docmancer.cli.help import DocmancerCommand, HELP_CONTEXT_SETTINGS, format_examples
-from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, color_enabled, style
+from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, color_enabled, display_path, style
 
 
 def _effective_config(config_path: str | None) -> str | None:
@@ -107,7 +107,7 @@ def _load_config(config_path: str | None):
 def _describe_vector_store(config) -> str:
     if config.vector_store.url:
         return f"remote Qdrant at {config.vector_store.url}"
-    return f"local embedded Qdrant at {config.vector_store.local_path}"
+    return f"local embedded Qdrant at {display_path(config.vector_store.local_path)}"
 
 
 def _color_enabled() -> bool:
@@ -184,11 +184,11 @@ def _emit_install_summary(
 ) -> None:
     _emit_brand_header("docmancer install", heading)
     for label, path in installed_paths:
-        _emit_status_line(f"{label}: {path}")
+        _emit_status_line(f"{label}: {display_path(path)}")
     if created_user_config:
-        _emit_status_line(f"Created user config at {_get_user_config_path()}")
+        _emit_status_line(f"Created user config at {display_path(_get_user_config_path())}")
     elif effective_config_path is not None:
-        _emit_status_line(f"Skill uses config {effective_config_path}")
+        _emit_status_line(f"Skill uses config {display_path(effective_config_path)}")
     for line in extra_lines or []:
         _emit_status_line(line, state="info")
     _emit_next_step(next_step)
@@ -294,14 +294,14 @@ def init_cmd(directory: str):
     dir_path.mkdir(parents=True, exist_ok=True)
     config_path = dir_path / "docmancer.yaml"
     if config_path.exists():
-        click.echo(f"Config already exists at {config_path}")
+        click.echo(f"Config already exists at {display_path(config_path)}")
         return
     DocmancerConfig = _get_config_class()
     config = DocmancerConfig()
     data = config.model_dump()
     with open(config_path, "w") as f:
         _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-    click.echo(f"Created config at {config_path}")
+    click.echo(f"Created config at {display_path(config_path)}")
     click.echo("No API keys required; embeddings run fully locally.")
 
 
@@ -403,7 +403,7 @@ def fetch_cmd(url: str, output_dir: str):
         filename = f"{slug}.md"
         file_path = out_path / filename
         file_path.write_text(doc.content, encoding="utf-8")
-        click.echo(f"  Saved {file_path}")
+        click.echo(f"  Saved {display_path(file_path)}")
 
     click.echo(f"Downloaded {len(documents)} document(s) to {output_dir}/")
 
@@ -451,7 +451,7 @@ def doctor_cmd(config_path: str | None):
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
     if resolved_bin:
-        _emit_status_line(f"docmancer binary: {resolved_bin}")
+        _emit_status_line(f"docmancer binary: {display_path(resolved_bin)}")
     else:
         _emit_status_line("docmancer not found on PATH (install with: pipx install docmancer --python python3.13)", state="warn")
 
@@ -462,7 +462,7 @@ def doctor_cmd(config_path: str | None):
         effective_config = Path("docmancer.yaml")
     else:
         effective_config = _get_user_config_path()
-    _emit_status_line(f"Config: {effective_config}")
+    _emit_status_line(f"Config: {display_path(effective_config)}")
 
     # Vector store
     _emit_status_line(f"Vector store: {_describe_vector_store(config)}")
@@ -478,7 +478,7 @@ def doctor_cmd(config_path: str | None):
     else:
         qdrant_path = Path(config.vector_store.local_path)
         if qdrant_path.exists():
-            _emit_status_line(f"Embedded Qdrant data at {qdrant_path}")
+            _emit_status_line(f"Embedded Qdrant data at {display_path(qdrant_path)}")
             try:
                 agent = _get_agent_class()(config=config)
                 stats = agent.collection_stats()
@@ -493,7 +493,7 @@ def doctor_cmd(config_path: str | None):
             except Exception:
                 pass
         else:
-            _emit_status_line(f"No Qdrant data yet at {qdrant_path} (run: docmancer ingest)", state="warn")
+            _emit_status_line(f"No Qdrant data yet at {display_path(qdrant_path)} (run: docmancer ingest)", state="warn")
 
     # Skill install status
     click.echo()
@@ -509,7 +509,7 @@ def doctor_cmd(config_path: str | None):
     ]
     for label, install_target, path in skill_locations:
         if path.exists():
-            _emit_status_line(f"{label}: {path}", indent=4)
+            _emit_status_line(f"{label}: {display_path(path)}", indent=4)
         else:
             _emit_status_line(f"{label}: not installed (run: docmancer install {install_target})", state="warn", indent=4)
 
@@ -664,12 +664,12 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             [("Created docmancer skill package at", zip_path)],
             created_user_config,
             effective_config_path,
-            f"Upload {zip_path} in Claude Desktop > Customize > Skills.",
+            f"Upload {display_path(zip_path)} in Claude Desktop > Customize > Skills.",
             extra_lines=[
                 "1. Open Claude Desktop",
                 "2. Go to Customize > Skills",
                 '3. Click "+" and select "Upload a skill"',
-                f"4. Upload: {zip_path}",
+                f"4. Upload: {display_path(zip_path)}",
             ],
         )
         return

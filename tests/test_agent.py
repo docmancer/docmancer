@@ -125,8 +125,9 @@ def test_ingest_documents_persists_docset_root_and_logs_progress(caplog) -> None
         docset_root="https://docs.example.com",
         already_locked=True,
     )
-    assert "Chunking https://docs.example.com..." in caplog.text
-    assert "Embedding and upserting 1 chunks from https://docs.example.com in 1 batch(es)..." in caplog.text
+    assert "Chunking https://docs.example.com/page..." in caplog.text
+    assert "Embedding and upserting 1 chunks from https://docs.example.com/page in 1 batch(es)..." in caplog.text
+    assert "Stored source https://docs.example.com/page" in caplog.text
     assert "Processed 1/1 documents" in caplog.text
 
 

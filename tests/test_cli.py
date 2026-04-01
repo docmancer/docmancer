@@ -6,6 +6,7 @@ from click.testing import CliRunner
 from unittest.mock import MagicMock, patch
 
 from docmancer.cli.__main__ import cli
+from docmancer.cli.ui import display_path
 
 
 class FakeDocmancerConfig:
@@ -122,6 +123,29 @@ def test_cli_init_creates_config(tmp_path):
     config_file = tmp_path / "docmancer.yaml"
     assert config_file.exists()
     assert "local_path" in config_file.read_text()
+
+
+def test_init_shows_compact_config_path(tmp_path):
+    runner = CliRunner()
+    fake_config = MagicMock()
+    fake_config.model_dump.return_value = {"vector_store": {"local_path": ".docmancer/qdrant"}}
+    with patch("docmancer.cli.commands._get_config_class", return_value=MagicMock(return_value=fake_config)):
+        result = runner.invoke(cli, ["init", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert f"Created config at {display_path(tmp_path / 'docmancer.yaml')}" in result.output
+
+
+def test_display_path_shortens_home_and_cwd(tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    with patch("docmancer.cli.ui.Path.home", return_value=fake_home), \
+         patch("docmancer.cli.ui.Path.cwd", return_value=project_dir):
+        assert display_path(fake_home / ".docmancer" / "docmancer.yaml") == "~/.docmancer/docmancer.yaml"
+        assert display_path(project_dir / "docmancer.yaml") == "./docmancer.yaml"
+        assert display_path(tmp_path / "outside" / "docmancer.yaml") == str(tmp_path / "outside" / "docmancer.yaml")
 
 
 def test_load_config_bootstraps_user_config_when_no_local_config(tmp_path):
@@ -328,7 +352,7 @@ def test_doctor_reports_local_embedded_qdrant(tmp_path):
     assert result.exit_code == 0
     assert "local embedded Qdrant at .docmancer/qdrant" in result.output
     assert "[OK] Config:" in result.output
-    assert str(config_path.resolve()) in result.output
+    assert display_path(config_path) in result.output
 
 
 def test_doctor_checks_remote_qdrant_when_url_is_set(tmp_path):
@@ -350,3 +374,23 @@ def test_doctor_checks_remote_qdrant_when_url_is_set(tmp_path):
     assert result.exit_code == 0
     assert "remote Qdrant at http://example.com:6333" in result.output
     assert "Qdrant reachable at http://example.com:6333" in result.output
+
+
+def test_fetch_shows_compact_saved_paths():
+    runner = CliRunner()
+
+    class FakeDocument:
+        def __init__(self, source: str, content: str):
+            self.source = source
+            self.content = content
+
+    fake_documents = [
+        FakeDocument("https://docs.example.com/getting-started", "# Getting Started"),
+    ]
+
+    with runner.isolated_filesystem():
+        with patch("docmancer.connectors.fetchers.gitbook.GitBookFetcher.fetch", return_value=fake_documents):
+            result = runner.invoke(cli, ["fetch", "https://docs.example.com", "--output", "downloaded-docs"])
+
+        assert result.exit_code == 0
+        assert "Saved ./downloaded-docs/getting-started.md" in result.output

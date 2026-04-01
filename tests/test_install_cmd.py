@@ -4,6 +4,7 @@ from pathlib import Path
 from click.testing import CliRunner
 from unittest.mock import patch
 from docmancer.cli.__main__ import cli
+from docmancer.cli.ui import display_path
 
 
 class FakeDocmancerConfig:
@@ -135,7 +136,7 @@ class TestInstallClaudeCode(unittest.TestCase):
                 skill_file = fake_home / ".claude" / "skills" / "docmancer" / "SKILL.md"
                 content = skill_file.read_text()
                 self.assertIn(_quoted_config_flag(config_file), content)
-                self.assertIn(str(config_file.resolve()), result.output)
+                self.assertIn(f"Skill uses config ./{config_file.name}", result.output)
 
     def test_install_claude_code_with_config_does_not_bootstrap_user_config(self):
         runner = CliRunner()
@@ -215,7 +216,7 @@ class TestInstallCodex(unittest.TestCase):
                  patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
                 result = runner.invoke(cli, ["doctor"])
                 self.assertEqual(result.exit_code, 0, result.output)
-                self.assertIn(f"[OK] codex: {native_skill}", result.output)
+                self.assertIn(f"[OK] codex: {display_path(native_skill)}", result.output)
 
     def test_doctor_reports_codex_shared_compatibility_skill(self):
         runner = CliRunner()
@@ -231,7 +232,7 @@ class TestInstallCodex(unittest.TestCase):
                  patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
                 result = runner.invoke(cli, ["doctor"])
                 self.assertEqual(result.exit_code, 0, result.output)
-                self.assertIn(f"[OK] codex-shared: {shared_skill}", result.output)
+                self.assertIn(f"[OK] codex-shared: {display_path(shared_skill)}", result.output)
 
 
 class TestInstallCursor(unittest.TestCase):
@@ -363,7 +364,7 @@ class TestInstallClaudeDesktop(unittest.TestCase):
                 with zipfile.ZipFile(zip_path) as zf:
                     content = zf.read("docmancer/Skill.md").decode("utf-8")
                 self.assertIn(_quoted_config_flag(config_file), content)
-                self.assertIn(str(config_file.resolve()), result.output)
+                self.assertIn(f"Skill uses config ./{config_file.name}", result.output)
 
 
 class TestInstallOpenCode(unittest.TestCase):
@@ -513,7 +514,7 @@ class TestInstallGemini(unittest.TestCase):
                  patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
                 result = runner.invoke(cli, ["doctor"])
                 self.assertEqual(result.exit_code, 0, result.output)
-                self.assertIn(f"[OK] gemini: {gemini_skill}", result.output)
+                self.assertIn(f"[OK] gemini: {display_path(gemini_skill)}", result.output)
 
 
 class TestInstallInvalidTarget(unittest.TestCase):

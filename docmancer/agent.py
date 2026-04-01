@@ -104,10 +104,6 @@ class DocmancerAgent:
             for index, text in enumerate(text_chunks)
         ]
 
-    @staticmethod
-    def _display_source(doc: Document) -> str:
-        return str(doc.metadata.get("docset_root") or doc.source)
-
     def ingest_documents(self, documents: list[Document], recreate: bool = False) -> int:
         total = 0
         should_recreate = recreate
@@ -115,7 +111,7 @@ class DocmancerAgent:
         total_docs = len(documents)
         embed_batch_size = self.config.embedding.batch_size
         for doc in documents:
-            display_source = self._display_source(doc)
+            display_source = doc.source
             logger.info("Chunking %s...", display_source)
             chunks = self._build_chunks(doc)
             if not chunks:
