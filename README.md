@@ -17,12 +17,12 @@
 
 <table><tr><td>
 
-Up-to-date, version-specific documentation straight from the source<br>
-Only the chunks your agent needs, not the whole doc site<br>
-100% local. Embeddings, storage, retrieval all on your machine.<br>
-Completely free. No rate limits, no quotas, no API keys.<br>
-Works offline once ingested. Private and internal docs supported.<br>
-No MCP server. Installs as a skill, runs as a CLI.
+&#x2714; Up-to-date, version-specific documentation straight from the source<br>
+&#x2714; Only the chunks your agent needs, not the whole doc site<br>
+&#x2714; 100% local. Embeddings, storage, retrieval all on your machine.<br>
+&#x2714; Completely free. No rate limits, no quotas, no API keys.<br>
+&#x2714; Works offline once ingested. Private and internal docs supported.<br>
+&#x2714; No MCP server. Installs as a skill, runs as a CLI.
 
 </td></tr></table>
 
