@@ -140,7 +140,7 @@ Upgrade with `pipx upgrade docmancer`.
 
 ## Documentation
 
-For configuration, troubleshooting, architecture details, and more, see the **[GitHub Wiki](https://github.com/docmancer/docmancer/wiki)**.
+For configuration, troubleshooting, architecture details, and more, see the **[GitHub Wiki](https://github.com/docmancer/docmancer/blob/main/wiki/Home.md)**.
 
 ---
 
