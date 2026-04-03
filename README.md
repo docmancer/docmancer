@@ -77,13 +77,14 @@ Docmancer installs a skill file into each agent that teaches it to call the CLI 
 | Agent          | Install command                    |
 | -------------- | ---------------------------------- |
 | Claude Code    | `docmancer install claude-code`    |
+| Cline          | `docmancer install cline`          |
 | Codex          | `docmancer install codex`          |
 | Cursor         | `docmancer install cursor`         |
 | Gemini CLI     | `docmancer install gemini`         |
 | OpenCode       | `docmancer install opencode`       |
 | Claude Desktop | `docmancer install claude-desktop` |
 
-Skills are plain markdown files. No background daemon, no MCP server, no ports. Use `--project` with `claude-code` or `gemini` to install into the current working directory instead of globally.
+Skills are plain markdown files. No background daemon, no MCP server, no ports. Use `--project` with `claude-code`, `gemini`, or `cline` to install into the current working directory instead of globally.
 
 ---
 

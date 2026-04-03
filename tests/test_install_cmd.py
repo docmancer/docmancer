@@ -517,6 +517,58 @@ class TestInstallGemini(unittest.TestCase):
                 self.assertIn(f"[OK] gemini: {display_path(gemini_skill)}", result.output)
 
 
+class TestInstallCline(unittest.TestCase):
+
+    def test_install_cline_creates_skill_file(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem() as tmp_dir:
+            fake_home = _make_runner_with_home(tmp_dir)
+            with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+                 patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+                result = runner.invoke(cli, ["install", "cline"])
+                self.assertEqual(result.exit_code, 0, result.output)
+                skill_file = fake_home / ".cline" / "skills" / "docmancer" / "SKILL.md"
+                self.assertTrue(skill_file.exists(), f"SKILL.md not found: {result.output}")
+
+    def test_install_cline_project_flag(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem() as tmp_dir:
+            with patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+                result = runner.invoke(cli, ["install", "cline", "--project"])
+                self.assertEqual(result.exit_code, 0, result.output)
+                skill_file = Path(tmp_dir) / ".cline" / "skills" / "docmancer" / "SKILL.md"
+                self.assertTrue(skill_file.exists())
+
+    def test_install_cline_skill_has_frontmatter(self):
+        """Cline expects name/description frontmatter; avoid Claude Code-only allowed-tools."""
+        runner = CliRunner()
+        with runner.isolated_filesystem() as tmp_dir:
+            fake_home = _make_runner_with_home(tmp_dir)
+            with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+                 patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+                runner.invoke(cli, ["install", "cline"])
+                skill_file = fake_home / ".cline" / "skills" / "docmancer" / "SKILL.md"
+                content = skill_file.read_text()
+                self.assertNotIn("allowed-tools", content)
+                self.assertIn("name: docmancer", content)
+
+    def test_doctor_reports_cline_skill(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem() as tmp_dir:
+            fake_home = _make_runner_with_home(tmp_dir)
+            cline_skill = fake_home / ".cline" / "skills" / "docmancer" / "SKILL.md"
+            cline_skill.parent.mkdir(parents=True)
+            cline_skill.write_text("# docmancer\n")
+            user_config = fake_home / ".docmancer" / "docmancer.yaml"
+            user_config.parent.mkdir(parents=True)
+            user_config.write_text("vector_store:\n  local_path: .docmancer/qdrant\n")
+            with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+                 patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+                result = runner.invoke(cli, ["doctor"])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertIn(f"[OK] cline: {display_path(cline_skill)}", result.output)
+
+
 class TestInstallInvalidTarget(unittest.TestCase):
 
     def test_invalid_agent_rejected(self):

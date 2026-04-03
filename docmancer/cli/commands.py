@@ -26,6 +26,7 @@ def _effective_config(config_path: str | None) -> str | None:
 INSTALL_TARGETS = [
     "claude-code",
     "claude-desktop",
+    "cline",
     "cursor",
     "codex",
     "codex-app",
@@ -71,6 +72,10 @@ def _get_shared_agent_skill_path() -> Path:
 
 def _get_gemini_skill_path() -> Path:
     return Path.home() / ".gemini" / "skills" / "docmancer" / "SKILL.md"
+
+
+def _get_cline_skill_path() -> Path:
+    return Path.home() / ".cline" / "skills" / "docmancer" / "SKILL.md"
 
 
 def _build_user_bootstrap_config():
@@ -515,6 +520,7 @@ def doctor_cmd(config_path: str | None):
     skill_locations = [
         ("claude-code", "claude-code", home / ".claude" / "skills" / "docmancer" / "SKILL.md"),
         ("cursor", "cursor", home / ".cursor" / "skills" / "docmancer" / "SKILL.md"),
+        ("cline", "cline", _get_cline_skill_path()),
         ("codex", "codex", _get_codex_skill_path()),
         ("codex-shared", "codex", _get_shared_agent_skill_path()),
         ("gemini", "gemini", _get_gemini_skill_path()),
@@ -644,11 +650,12 @@ def list_cmd(show_all: bool, config_path: str | None):
         "docmancer install claude-desktop",
         "docmancer install gemini",
         "docmancer install opencode",
+        "docmancer install cline",
     ),
 )
 @click.argument("agent", type=click.Choice(INSTALL_TARGETS, case_sensitive=False))
 @click.option("--project", is_flag=True, default=False,
-              help="Install in project-level settings (claude-code only).")
+              help="Install in project-level settings (claude-code, gemini, or cline).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
@@ -656,7 +663,7 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     Teaches the agent to call docmancer CLI commands directly. No server
     required. Run 'docmancer ingest <url>' first to populate the knowledge base.
 
-    AGENT must be one of: claude-code, claude-desktop, cursor, codex,
+    AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
     codex-app, codex-desktop, gemini, opencode
     """
     config_path = _effective_config(config_path)
@@ -744,6 +751,25 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             created_user_config,
             effective_config_path,
             "Restart Cursor for changes to take effect.",
+        )
+        return
+
+    if normalized == "cline":
+        if project:
+            dest = Path(".cline") / "skills" / "docmancer" / "SKILL.md"
+        else:
+            dest = home / ".cline" / "skills" / "docmancer" / "SKILL.md"
+        content = _build_skill_content("skill.md", effective_config_path)
+        _install_skill_file(content, dest)
+        _emit_install_summary(
+            "Install skill for Cline.",
+            [("Installed docmancer skill at", dest)],
+            created_user_config,
+            effective_config_path,
+            "Enable Skills in Cline (Settings → Features) if you have not already. Restart VS Code if Cline does not pick up the skill.",
+            extra_lines=[
+                "Cline discovers skills from ~/.cline/skills/ or .cline/skills/ in the workspace.",
+            ],
         )
         return
 

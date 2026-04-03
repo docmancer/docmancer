@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from docmancer.cli.__main__ import cli
 from docmancer.cli.ui import display_path
+from docmancer._version import __version__
 
 
 class FakeDocmancerConfig:
@@ -90,21 +91,21 @@ def test_version_flag_outputs_compact_version():
     runner = CliRunner()
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert result.output.strip() == "docmancer 0.1.9"
+    assert result.output.strip() == f"docmancer {__version__}"
 
 
 def test_short_version_alias_outputs_compact_version():
     runner = CliRunner()
     result = runner.invoke(cli, ["-v"])
     assert result.exit_code == 0
-    assert result.output.strip() == "docmancer 0.1.9"
+    assert result.output.strip() == f"docmancer {__version__}"
 
 
 def test_long_v_alias_outputs_compact_version():
     runner = CliRunner()
     result = runner.invoke(cli, ["--v"])
     assert result.exit_code == 0
-    assert result.output.strip() == "docmancer 0.1.9"
+    assert result.output.strip() == f"docmancer {__version__}"
 
 
 def test_help_does_not_require_runtime_imports():

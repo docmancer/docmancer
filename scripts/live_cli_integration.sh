@@ -7,7 +7,7 @@ VENV_PIP="$ROOT_DIR/.venv/bin/pip"
 CLI_CMD=("$VENV_PYTHON" -m docmancer.cli)
 
 DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-http://docs.hedera.com/}"
-MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-5}"
+MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-2}"
 INGEST_WORKERS="${DOCMANCER_LIVE_INGEST_WORKERS:-4}"
 FETCH_WORKERS="${DOCMANCER_LIVE_FETCH_WORKERS:-8}"
 INGEST_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
@@ -134,8 +134,9 @@ run "${CLI_CMD[@]}" install claude-code --config "$CONFIG_PATH"
 (
   cd "$PROJECT_DIR"
   run "$VENV_PYTHON" -m docmancer.cli install claude-code --project --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer.cli install cline --project --config "$CONFIG_PATH"
 )
-for agent in claude-desktop cursor codex codex-app codex-desktop gemini opencode; do
+for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini opencode; do
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
 done
 
