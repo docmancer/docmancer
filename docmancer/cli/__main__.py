@@ -1,6 +1,14 @@
 import click
+from docmancer import __version__
 from docmancer.cli.commands import init_cmd, ingest_cmd, inspect_cmd, doctor_cmd, query_cmd, fetch_cmd, install_cmd, remove_cmd, list_cmd
 from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
+
+
+def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(f"docmancer {__version__}")
+    ctx.exit()
 
 
 @click.group(
@@ -12,7 +20,16 @@ from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_exa
         "docmancer install claude-code",
     ),
 )
-@click.version_option(package_name="docmancer")
+@click.option(
+    "--version",
+    "--v",
+    "-v",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_show_version,
+    help="Show the version and exit.",
+)
 @click.option("--config", "config_path", default=None, hidden=True,
               help="Path to docmancer.yaml (passed through to subcommands).")
 @click.pass_context

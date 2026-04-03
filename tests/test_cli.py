@@ -11,7 +11,7 @@ from docmancer.cli.ui import display_path
 
 class FakeDocmancerConfig:
     def __init__(self, data=None):
-        self._data = data or {
+        defaults = {
             "embedding": {"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"},
             "vector_store": {
                 "provider": "qdrant",
@@ -19,14 +19,37 @@ class FakeDocmancerConfig:
                 "collection_name": "knowledge_base",
                 "local_path": ".docmancer/qdrant",
             },
-            "ingestion": {"chunk_size": 800, "chunk_overlap": 120, "bm25_model": "Qdrant/bm25"},
+            "ingestion": {
+                "chunk_size": 800,
+                "chunk_overlap": 120,
+                "bm25_model": "Qdrant/bm25",
+                "workers": 4,
+                "embed_queue_size": 4,
+            },
+            "web_fetch": {"workers": 8},
+        }
+        self._data = defaults if data is None else {
+            **defaults,
+            **data,
+            "embedding": {**defaults["embedding"], **data.get("embedding", {})},
+            "vector_store": {**defaults["vector_store"], **data.get("vector_store", {})},
+            "ingestion": {**defaults["ingestion"], **data.get("ingestion", {})},
+            "web_fetch": {**defaults["web_fetch"], **data.get("web_fetch", {})},
         }
         vector_store = type("VectorStore", (), {})()
         vector_store.local_path = self._data["vector_store"]["local_path"]
         self.vector_store = vector_store
+        ingestion = type("Ingestion", (), {})()
+        ingestion.workers = self._data["ingestion"]["workers"]
+        self.ingestion = ingestion
+        web_fetch = type("WebFetch", (), {})()
+        web_fetch.workers = self._data["web_fetch"]["workers"]
+        self.web_fetch = web_fetch
 
     def model_dump(self):
         self._data["vector_store"]["local_path"] = self.vector_store.local_path
+        self._data["ingestion"]["workers"] = self.ingestion.workers
+        self._data["web_fetch"]["workers"] = self.web_fetch.workers
         return self._data
 
     @classmethod
@@ -61,6 +84,27 @@ def test_cli_help():
     assert "docmancer query" in result.output
     assert "How do" in result.output
     assert "authenticate?" in result.output
+
+
+def test_version_flag_outputs_compact_version():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "docmancer 0.1.9"
+
+
+def test_short_version_alias_outputs_compact_version():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["-v"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "docmancer 0.1.9"
+
+
+def test_long_v_alias_outputs_compact_version():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--v"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "docmancer 0.1.9"
 
 
 def test_help_does_not_require_runtime_imports():
@@ -224,6 +268,25 @@ def test_ingest_url_shows_fetch_message_and_calls_ingest_url():
         assert "Fetching docs from https://docs.example.com..." in result.output
         assert "Total: 42 chunks" in result.output
         mock_agent.ingest_url.assert_called_once()
+
+
+def test_ingest_applies_worker_overrides(tmp_path):
+    runner = CliRunner()
+    fake_config = MagicMock()
+    fake_config.ingestion = MagicMock()
+    fake_config.web_fetch = MagicMock()
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.ingest.return_value = 42
+        mock_agent_cls.return_value = lambda config: mock_agent
+
+        result = runner.invoke(cli, ["ingest", str(tmp_path), "--workers", "6", "--fetch-workers", "12"])
+
+        assert result.exit_code == 0
+        assert fake_config.ingestion.workers == 6
+        assert fake_config.web_fetch.workers == 12
+        mock_agent.ingest.assert_called_once_with(str(tmp_path), recreate=False)
 
 
 def test_query_command_exists():

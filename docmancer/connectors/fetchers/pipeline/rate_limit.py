@@ -7,6 +7,7 @@ and sleeping between requests. Supports exponential backoff on 429/503.
 from __future__ import annotations
 
 import random
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -24,6 +25,7 @@ class RateLimiter:
         self._jitter = jitter
         self._last_request: dict[str, float] = {}
         self._backoff_count: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def _host_key(self, url: str) -> str:
         parsed = urlparse(url)
@@ -36,26 +38,28 @@ class RateLimiter:
             url: The URL about to be requested.
         """
         host = self._host_key(url)
-        now = time.monotonic()
-        last = self._last_request.get(host, 0.0)
-        elapsed = now - last
+        while True:
+            remaining = 0.0
+            with self._lock:
+                now = time.monotonic()
+                last = self._last_request.get(host, 0.0)
+                elapsed = now - last
 
-        target_delay = self._delay + random.uniform(0, self._jitter)
+                target_delay = self._delay + random.uniform(0, self._jitter)
+                backoff = self._backoff_count.get(host, 0)
+                if backoff > 0:
+                    target_delay = min(target_delay * (2 ** backoff), 30.0)
 
-        # Apply backoff if host has been rate-limiting us
-        backoff = self._backoff_count.get(host, 0)
-        if backoff > 0:
-            target_delay = min(target_delay * (2 ** backoff), 30.0)
-
-        remaining = target_delay - elapsed
-        if remaining > 0:
+                remaining = target_delay - elapsed
+                if remaining <= 0:
+                    self._last_request[host] = now
+                    return
             time.sleep(remaining)
-
-        self._last_request[host] = time.monotonic()
 
     def set_delay(self, delay: float) -> None:
         """Override the base delay (e.g. from robots.txt Crawl-delay)."""
-        self._delay = delay
+        with self._lock:
+            self._delay = delay
 
     def record_rate_limit(self, url: str) -> None:
         """Record that a request to this host was rate-limited (429/503).
@@ -63,9 +67,11 @@ class RateLimiter:
         Increases the backoff multiplier for subsequent requests.
         """
         host = self._host_key(url)
-        self._backoff_count[host] = self._backoff_count.get(host, 0) + 1
+        with self._lock:
+            self._backoff_count[host] = self._backoff_count.get(host, 0) + 1
 
     def reset_backoff(self, url: str) -> None:
         """Reset the backoff counter for a host after a successful request."""
         host = self._host_key(url)
-        self._backoff_count.pop(host, None)
+        with self._lock:
+            self._backoff_count.pop(host, None)

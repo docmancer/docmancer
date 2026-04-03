@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -36,13 +37,21 @@ class IngestionConfig(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 120
     bm25_model: str = "Qdrant/bm25"
+    workers: int = Field(default_factory=lambda: max(1, min(4, os.cpu_count() or 1)), ge=1)
+    embed_queue_size: int = Field(default=4, ge=1)
     model_config = SettingsConfigDict(env_prefix="INGESTION_", extra="ignore")
+
+
+class WebFetchConfig(BaseSettings):
+    workers: int = Field(default=8, ge=1)
+    model_config = SettingsConfigDict(env_prefix="WEB_FETCH_", extra="ignore")
 
 
 class DocmancerConfig(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    web_fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

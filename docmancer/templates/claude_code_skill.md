@@ -56,7 +56,7 @@ Returns relevant chunks with source attribution and relevance scores.
 {{DOCS_KIT_CMD}} ingest ./path/to/docs
 {{DOCS_KIT_CMD}} ingest ./README.md
 ```
-For large local ingests, `docmancer.yaml` can tune `embedding.batch_size`, `embedding.parallel`, and `embedding.lazy_load`.
+For large local ingests, `docmancer.yaml` can tune `ingestion.workers`, `ingestion.embed_queue_size`, `web_fetch.workers`, `embedding.batch_size`, `embedding.parallel`, and `embedding.lazy_load`.
 
 ### Download docs to local Markdown files
 ```bash

@@ -117,6 +117,8 @@ Skills are plain markdown files. No background daemon, no MCP server, no ports. 
 
 Use `--full` with `docmancer query` to return the entire chunk body (default truncates at 1500 characters). Use `--limit N` to change how many chunks are returned.
 
+For large ingests, tune `ingestion.workers`, `ingestion.embed_queue_size`, `web_fetch.workers`, `embedding.batch_size`, and `embedding.parallel` in `docmancer.yaml`.
+
 ---
 
 ## Install

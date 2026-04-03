@@ -29,7 +29,7 @@ Use docmancer when the user:
 - `{{DOCS_KIT_CMD}} query "search terms" --limit 10`: search documentation (add `--full` for untruncated text)
 - `{{DOCS_KIT_CMD}} list`: list ingested docsets/sources
 - `{{DOCS_KIT_CMD}} list --all`: list every stored page/file source
-- `{{DOCS_KIT_CMD}} ingest <url-or-path>`: ingest new docs (add `--recreate` to re-ingest). For large local ingests, `docmancer.yaml` can tune `embedding.batch_size`, `embedding.parallel`, and `embedding.lazy_load`.
+- `{{DOCS_KIT_CMD}} ingest <url-or-path>`: ingest new docs (add `--recreate` to re-ingest). For large local ingests, `docmancer.yaml` can tune `ingestion.workers`, `ingestion.embed_queue_size`, `web_fetch.workers`, `embedding.batch_size`, `embedding.parallel`, and `embedding.lazy_load`.
 - `{{DOCS_KIT_CMD}} fetch <url> --output <dir>`: download docs to local files
 - `{{DOCS_KIT_CMD}} remove --all`: remove the entire knowledge base
 - `{{DOCS_KIT_CMD}} remove <source>`: remove a docset root or exact source

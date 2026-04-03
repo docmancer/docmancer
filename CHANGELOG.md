@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - Unreleased
+### Added
+
+- **`ingestion` config:** **`workers`** (default between 1 and 4, capped by **`os.cpu_count()`**), **`embed_queue_size`** (default **`4`**), overridable via **`docmancer.yaml`** / **`INGESTION_*`** env vars.
+- **`web_fetch` config:** **`workers`** (default **`8`**), overridable via **`docmancer.yaml`** / **`WEB_FETCH_*`** env vars.
+- **`docmancer ingest` flags:** **`--workers`** and **`--fetch-workers`** override the corresponding config for that run.
+- **`QdrantStore.prepare_ingest()`** and **`upsert(..., prepare=...)`** so the agent can create or recreate collections once, then upsert many prepared batches without repeating collection setup per batch.
+
+### Changed
+
+- **Ingest pipeline:** worker pool pipelines **chunk → embed → store** with a bounded queue; **`ingest(path)`** for a directory loads all supported files first, then runs a single **`ingest_documents`** pass.
+- **`WebFetcher`:** concurrent page fetches using **`ThreadPoolExecutor`** and **`workers`**; shared **`httpx`** client options factored for reuse.
+- **FastEmbed dense and sparse embedders:** **thread-local** model instances so parallel ingest threads do not share a single **`TextEmbedding`** / **`SparseTextEmbedding`**.
+- **`RateLimiter`:** per-host timing and backoff updated under a **lock** so concurrent web workers stay coherent.
+- **CLI:** **`--version`**, **`-v`**, and **`--v`** print **`docmancer <version>`** and exit (replacing **`click.version_option`**).
+- **README, example `docmancer.yaml`, and skill templates:** note **`ingestion.workers`**, **`ingestion.embed_queue_size`**, **`web_fetch.workers`**, and related **`embedding.*`** knobs for large ingests.
+- **`scripts/live_cli_integration.sh`:** extended coverage for the new ingest and fetch paths.
+
 ## [0.1.9] - 2026-04-01
 ### Added
 

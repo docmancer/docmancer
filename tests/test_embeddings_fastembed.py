@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from threading import Thread
 from unittest.mock import MagicMock, patch
 import numpy as np
 from docmancer.connectors.embeddings.fastembed import FastEmbedDenseEmbedding, FastEmbedSparseEmbedding
@@ -28,3 +29,29 @@ def test_sparse_embedding():
         assert len(vectors) == 1
         assert isinstance(vectors[0], SparseVector)
         assert vectors[0].indices == [0, 5, 10]
+
+
+def test_dense_embedding_uses_thread_local_embedder_instances():
+    created = []
+
+    def build_embedder(**kwargs):
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = iter([np.array([0.1, 0.2, 0.3])])
+        created.append(mock_embedder)
+        return mock_embedder
+
+    with patch("docmancer.connectors.embeddings.fastembed.TextEmbedding", side_effect=build_embedder):
+        embedder = FastEmbedDenseEmbedding(model="BAAI/bge-small-en-v1.5")
+        results = []
+
+        def run_embed():
+            results.append(embedder.embed(["hello"]))
+
+        threads = [Thread(target=run_embed) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert results == [[[0.1, 0.2, 0.3]], [[0.1, 0.2, 0.3]]]
+    assert len(created) == 2

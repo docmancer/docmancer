@@ -174,6 +174,13 @@ def _configure_ingest_logging() -> None:
     root.setLevel(logging.INFO)
 
 
+def _apply_ingest_overrides(config, workers: int | None, fetch_workers: int | None) -> None:
+    if workers is not None:
+        config.ingestion.workers = workers
+    if fetch_workers is not None:
+        config.web_fetch.workers = fetch_workers
+
+
 def _emit_install_summary(
     heading: str,
     installed_paths: list[tuple[str, Path]],
@@ -329,6 +336,10 @@ def init_cmd(directory: str):
               help="Force a discovery strategy (e.g. llms-full.txt, sitemap.xml, nav-crawl).")
 @click.option("--browser", is_flag=True, default=False,
               help="Enable Playwright browser fallback for JS-heavy sites.")
+@click.option("--workers", default=None, type=int,
+              help="Number of concurrent ingest workers for chunking and embedding.")
+@click.option("--fetch-workers", default=None, type=int,
+              help="Number of concurrent page fetch workers for the web provider.")
 def ingest_cmd(
     path: str,
     recreate: bool,
@@ -337,12 +348,15 @@ def ingest_cmd(
     max_pages: int,
     strategy: str | None,
     browser: bool,
+    workers: int | None,
+    fetch_workers: int | None,
 ):
     """Ingest documents from a file, directory, or URL."""
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
 
     config = _load_config(config_path)
+    _apply_ingest_overrides(config, workers=workers, fetch_workers=fetch_workers)
     agent = _get_agent_class()(config=config)
 
     try:

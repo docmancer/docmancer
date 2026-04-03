@@ -53,6 +53,17 @@ def test_upsert_returns_count():
     payload = client.upsert.call_args.kwargs["points"][0].payload
     assert payload["docset_root"] == "https://docs.example.com"
 
+def test_prepare_ingest_recreates_both_collections_once():
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collections.return_value = SimpleNamespace(collections=[])
+    store = QdrantStore(client=client, collection_name="test")
+
+    store.prepare_ingest(3, recreate=True)
+
+    client.delete_collection.assert_any_call("test")
+    client.delete_collection.assert_any_call("test__documents")
+
 def test_query_returns_chunks():
     client = MagicMock()
     client.query_points.return_value = SimpleNamespace(points=[SimpleNamespace(payload={"source": "doc.md", "chunk_index": 0, "text": "hello"}, score=0.9)])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from fastembed import SparseTextEmbedding, TextEmbedding
 from qdrant_client.models import SparseVector
 
@@ -14,6 +16,7 @@ class FastEmbedDenseEmbedding:
         parallel: int = 0,
         lazy_load: bool = True,
     ):
+        self._model = model
         self._batch_size = batch_size
         self._parallel = parallel
         self._lazy_load = lazy_load
@@ -21,12 +24,20 @@ class FastEmbedDenseEmbedding:
         # loading the model in the parent process (Qdrant FastEmbed docs).
         if self._parallel != 1:
             self._lazy_load = True
-        self._embedder = TextEmbedding(model_name=model, lazy_load=self._lazy_load)
+        self._embedder_local = threading.local()
+
+    def _get_embedder(self):
+        embedder = getattr(self._embedder_local, "embedder", None)
+        if embedder is None:
+            embedder = TextEmbedding(model_name=self._model, lazy_load=self._lazy_load)
+            self._embedder_local.embedder = embedder
+        return embedder
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        embedder = self._get_embedder()
         return [
             embedding.tolist()
-            for embedding in self._embedder.embed(
+            for embedding in embedder.embed(
                 texts,
                 batch_size=self._batch_size,
                 parallel=self._parallel,
@@ -44,15 +55,24 @@ class FastEmbedSparseEmbedding:
         parallel: int = 0,
         lazy_load: bool = True,
     ):
+        self._model = model
         self._batch_size = batch_size
         self._parallel = parallel
         self._lazy_load = lazy_load
         if self._parallel != 1:
             self._lazy_load = True
-        self._embedder = SparseTextEmbedding(model_name=model, lazy_load=self._lazy_load)
+        self._embedder_local = threading.local()
+
+    def _get_embedder(self):
+        embedder = getattr(self._embedder_local, "embedder", None)
+        if embedder is None:
+            embedder = SparseTextEmbedding(model_name=self._model, lazy_load=self._lazy_load)
+            self._embedder_local.embedder = embedder
+        return embedder
 
     def embed(self, texts: list[str]) -> list[SparseVector]:
-        results = list(self._embedder.embed(
+        embedder = self._get_embedder()
+        results = list(embedder.embed(
             texts,
             batch_size=self._batch_size,
             parallel=self._parallel,

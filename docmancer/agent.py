@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-from contextlib import nullcontext
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,23 @@ _PARSERS = {
     ".txt": "docmancer.connectors.parsers.text:TextLoader",
     ".md": "docmancer.connectors.parsers.markdown:MarkdownLoader",
 }
+
+
+@dataclass(slots=True)
+class _PreparedBatch:
+    chunks: list[Chunk]
+    dense_vectors: list[list[float]]
+    sparse_vectors: list
+
+
+@dataclass(slots=True)
+class _PreparedDocument:
+    document: Document
+    batches: list[_PreparedBatch]
+
+    @property
+    def chunk_count(self) -> int:
+        return sum(len(batch.chunks) for batch in self.batches)
 
 
 def _import_class(dotted_path: str) -> type:
@@ -109,60 +127,100 @@ class DocmancerAgent:
         should_recreate = recreate
         processed = 0
         total_docs = len(documents)
-        embed_batch_size = self.config.embedding.batch_size
-        for doc in documents:
-            display_source = doc.source
-            logger.info("Chunking %s...", display_source)
-            chunks = self._build_chunks(doc)
-            if not chunks:
-                logger.info("Skipped %s (no chunks generated)", display_source)
-                continue
-            logger.info("Built %d chunks from %s", len(chunks), display_source)
-            if len(chunks) >= 1000:
-                logger.info(
-                    "Large document detected for %s. Local embedding and indexing may take a while.",
-                    display_source,
-                )
-            num_batches = (len(chunks) + embed_batch_size - 1) // embed_batch_size
-            logger.info(
-                "Embedding and upserting %d chunks from %s in %d batch(es)...",
-                len(chunks), display_source, num_batches,
-            )
-            doc_recreate = should_recreate
-            doc_count = 0
-            lock_factory = getattr(self._vector_store, "document_lock", None)
-            doc_lock = lock_factory() if callable(lock_factory) else nullcontext()
-            with doc_lock:
-                for batch_idx in range(0, len(chunks), embed_batch_size):
-                    batch_chunks = chunks[batch_idx:batch_idx + embed_batch_size]
-                    batch_num = batch_idx // embed_batch_size + 1
-                    texts = [chunk.text for chunk in batch_chunks]
-                    logger.info("Batch %d/%d: embedding %d chunks (dense)...", batch_num, num_batches, len(batch_chunks))
-                    dense_vecs = self._dense_embedder.embed(texts)
-                    logger.info("Batch %d/%d: embedding %d chunks (sparse)...", batch_num, num_batches, len(batch_chunks))
-                    sparse_vecs = self._sparse_embedder.embed(texts)
-                    logger.info("Batch %d/%d: upserting %d chunks...", batch_num, num_batches, len(batch_chunks))
-                    count = self._vector_store.upsert(
-                        batch_chunks,
-                        dense_vecs,
-                        sparse_vecs,
-                        recreate=should_recreate,
-                        already_locked=True,
-                    )
-                    should_recreate = False
-                    doc_count += count
-                self._vector_store.upsert_document(
-                    doc.source,
-                    doc.content,
-                    recreate=doc_recreate,
-                    docset_root=doc.metadata.get("docset_root"),
-                    already_locked=True,
-                )
-            total += doc_count
-            processed += 1
-            logger.info("Stored source %s", doc.source)
-            logger.info("Processed %d/%d documents (total chunks so far: %d)", processed, total_docs, total)
+        workers = max(1, self.config.ingestion.workers)
+        max_in_flight = max(workers, workers + self.config.ingestion.embed_queue_size)
+        logger.info("Ingest workers: %d", workers)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            doc_iter = iter(documents)
+            pending = {
+                executor.submit(self._prepare_document_for_ingest, doc): doc
+                for doc in list(self._take_documents(doc_iter, max_in_flight))
+            }
+            collections_prepared = False
+
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    pending.pop(future)
+                    prepared = future.result()
+                    if prepared.chunk_count > 0:
+                        if not collections_prepared:
+                            vector_size = len(prepared.batches[0].dense_vectors[0])
+                            self._vector_store.prepare_ingest(vector_size, recreate=should_recreate)
+                            collections_prepared = True
+                        total += self._write_prepared_document(prepared, recreate=should_recreate)
+                        should_recreate = False
+                        processed += 1
+                        logger.info("Stored source %s", prepared.document.source)
+                        logger.info("Processed %d/%d documents (total chunks so far: %d)", processed, total_docs, total)
+                    next_doc = next(doc_iter, None)
+                    if next_doc is not None:
+                        pending[executor.submit(self._prepare_document_for_ingest, next_doc)] = next_doc
         return total
+
+    def _take_documents(self, doc_iter, limit: int):
+        for _ in range(limit):
+            doc = next(doc_iter, None)
+            if doc is None:
+                return
+            yield doc
+
+    def _prepare_document_for_ingest(self, doc: Document) -> _PreparedDocument:
+        display_source = doc.source
+        logger.info("Chunking %s...", display_source)
+        chunks = self._build_chunks(doc)
+        if not chunks:
+            logger.info("Skipped %s (no chunks generated)", display_source)
+            return _PreparedDocument(document=doc, batches=[])
+        logger.info("Built %d chunks from %s", len(chunks), display_source)
+        if len(chunks) >= 1000:
+            logger.info(
+                "Large document detected for %s. Local embedding and indexing may take a while.",
+                display_source,
+            )
+        embed_batch_size = self.config.embedding.batch_size
+        num_batches = (len(chunks) + embed_batch_size - 1) // embed_batch_size
+        logger.info(
+            "Embedding %d chunks from %s in %d batch(es)...",
+            len(chunks), display_source, num_batches,
+        )
+        prepared_batches: list[_PreparedBatch] = []
+        for batch_idx in range(0, len(chunks), embed_batch_size):
+            batch_chunks = chunks[batch_idx:batch_idx + embed_batch_size]
+            batch_num = batch_idx // embed_batch_size + 1
+            texts = [chunk.text for chunk in batch_chunks]
+            logger.info("Batch %d/%d: embedding %d chunks (dense)...", batch_num, num_batches, len(batch_chunks))
+            dense_vecs = self._dense_embedder.embed(texts)
+            logger.info("Batch %d/%d: embedding %d chunks (sparse)...", batch_num, num_batches, len(batch_chunks))
+            sparse_vecs = self._sparse_embedder.embed(texts)
+            prepared_batches.append(_PreparedBatch(batch_chunks, dense_vecs, sparse_vecs))
+        return _PreparedDocument(document=doc, batches=prepared_batches)
+
+    def _write_prepared_document(self, prepared: _PreparedDocument, recreate: bool) -> int:
+        doc_count = 0
+        for batch_index, batch in enumerate(prepared.batches, start=1):
+            logger.info(
+                "Upserting batch %d/%d from %s (%d chunks)...",
+                batch_index,
+                len(prepared.batches),
+                prepared.document.source,
+                len(batch.chunks),
+            )
+            doc_count += self._vector_store.upsert(
+                batch.chunks,
+                batch.dense_vectors,
+                batch.sparse_vectors,
+                recreate=False,
+                prepare=False,
+            )
+        self._vector_store.upsert_document(
+            prepared.document.source,
+            prepared.document.content,
+            recreate=recreate,
+            docset_root=prepared.document.metadata.get("docset_root"),
+        )
+        return doc_count
 
     def ingest(self, path: str | Path, recreate: bool = False) -> int:
         path = Path(path)
@@ -175,16 +233,13 @@ class DocmancerAgent:
             files = sorted(f for f in path.rglob("*") if f.suffix.lower() in supported)
         if not files:
             raise ValueError("No supported documents found.")
-        total = 0
-        should_recreate = recreate
+        documents = []
         for file_path in files:
             loader = self._get_loader(file_path.suffix.lower())
-            doc = loader.load(file_path)
-            count = self.ingest_documents([doc], recreate=should_recreate)
-            if count > 0:
-                should_recreate = False
-            total += count
-            logger.info("Ingested %d chunks from %s", count, file_path)
+            documents.append(loader.load(file_path))
+        total = self.ingest_documents(documents, recreate=recreate)
+        for doc in documents:
+            logger.info("Ingested source %s", doc.source)
         return total
 
     def _get_fetcher(
@@ -206,7 +261,12 @@ class DocmancerAgent:
             return MintlifyFetcher()
         if provider == "web":
             from docmancer.connectors.fetchers.web import WebFetcher
-            return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
+            return WebFetcher(
+                max_pages=max_pages,
+                strategy=strategy,
+                browser=browser,
+                workers=self.config.web_fetch.workers,
+            )
 
         # Auto-detect: probe the site to determine the best fetcher.
         if url:
@@ -219,12 +279,22 @@ class DocmancerAgent:
                 return MintlifyFetcher()
             if detected == "web":
                 from docmancer.connectors.fetchers.web import WebFetcher
-                return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
+                return WebFetcher(
+                    max_pages=max_pages,
+                    strategy=strategy,
+                    browser=browser,
+                    workers=self.config.web_fetch.workers,
+                )
 
         # Fallback when no URL provided for auto-detection:
         # Use WebFetcher which has the full discovery chain.
         from docmancer.connectors.fetchers.web import WebFetcher
-        return WebFetcher(max_pages=max_pages, strategy=strategy, browser=browser)
+        return WebFetcher(
+            max_pages=max_pages,
+            strategy=strategy,
+            browser=browser,
+            workers=self.config.web_fetch.workers,
+        )
 
     def _auto_detect_provider(self, url: str) -> str:
         """Detect the documentation platform and return the best provider name.

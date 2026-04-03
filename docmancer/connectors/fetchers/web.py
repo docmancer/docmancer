@@ -12,6 +12,9 @@ Implements the full ingestion pipeline:
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
@@ -45,6 +48,12 @@ _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_USER_AGENT = "docmancer/1.0 (+https://github.com/docmancer/docmancer)"
 
 
+@dataclass(slots=True)
+class _FetchedPage:
+    document: Document
+    final_url: str
+
+
 class WebFetcher:
     """Generic documentation fetcher that works with any docs site.
 
@@ -70,6 +79,7 @@ class WebFetcher:
         browser: bool = False,
         respect_robots: bool = True,
         delay: float = 0.5,
+        workers: int = 8,
     ):
         self._timeout = timeout
         self._max_pages = max_pages
@@ -77,6 +87,14 @@ class WebFetcher:
         self._browser = browser
         self._respect_robots = respect_robots
         self._delay = delay
+        self._workers = max(1, workers)
+
+    def _client_kwargs(self) -> dict:
+        return {
+            "timeout": self._timeout,
+            "follow_redirects": True,
+            "headers": {"User-Agent": _DEFAULT_USER_AGENT},
+        }
 
     def fetch(self, url: str) -> list[Document]:
         """Fetch documentation from a URL using the generic pipeline.
@@ -92,11 +110,7 @@ class WebFetcher:
         """
         base_url = url.rstrip("/")
 
-        with httpx.Client(
-            timeout=self._timeout,
-            follow_redirects=True,
-            headers={"User-Agent": _DEFAULT_USER_AGENT},
-        ) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             # Step 1: Fetch homepage and detect platform
             platform, root_html, root_headers = self._fetch_and_detect(base_url, client)
             logger.info("Detected platform: %s", platform.value)
@@ -191,128 +205,43 @@ class WebFetcher:
         rate_limiter = RateLimiter(delay=self._delay)
         deduplicator = ContentDeduplicator()
         redirect_tracker = RedirectTracker()
+        redirect_lock = threading.Lock()
         documents = []
-
+        unique_discovered: list[DiscoveredUrl] = []
         for disc in discovered:
-            url = normalize_url(disc.url)
-
-            # Skip URL duplicates
-            if deduplicator.is_url_duplicate(url):
+            normalized = normalize_url(disc.url)
+            if deduplicator.is_url_duplicate(normalized):
                 continue
+            unique_discovered.append(disc)
 
-            # Check robots.txt
-            if robots and not robots.can_fetch(url):
-                logger.debug("Skipped %s (blocked by robots.txt)", url)
-                continue
-
-            # Check docs scope
-            if not is_docs_url(url, base_url):
-                logger.debug("Skipped %s (out of docs scope)", url)
-                continue
-
-            # Apply learned redirect patterns to skip redirect chains.
-            predicted_url = redirect_tracker.predict_final_url(url)
-            if predicted_url:
-                norm_predicted = normalize_url(predicted_url)
-                if deduplicator.is_url_duplicate(norm_predicted):
-                    logger.debug(
-                        "Skipped %s (predicted redirect to already-seen %s)", url, predicted_url
-                    )
+        max_workers = min(self._workers, max(1, len(unique_discovered)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    self._fetch_page,
+                    disc,
+                    base_url,
+                    platform,
+                    robots,
+                    rate_limiter,
+                    redirect_tracker,
+                    redirect_lock,
+                )
+                for disc in unique_discovered
+            ]
+            deduplicator.reset()
+            for future in as_completed(futures):
+                page = future.result()
+                if page is None:
                     continue
-                fetch_url = predicted_url
-            else:
-                fetch_url = url
-
-            # Rate limit
-            rate_limiter.wait(fetch_url)
-
-            # Fetch page
-            try:
-                resp = client.get(fetch_url)
-            except httpx.RequestError as exc:
-                logger.warning("Failed to fetch %s: %s", fetch_url, exc)
-                continue
-
-            # If prediction returned 404, fall back to the original URL.
-            if resp.status_code == 404 and predicted_url and fetch_url == predicted_url:
-                logger.debug("Predicted URL %s returned 404, retrying original %s", predicted_url, url)
-                rate_limiter.wait(url)
-                try:
-                    resp = client.get(url)
-                except httpx.RequestError as exc:
-                    logger.warning("Failed to fetch %s: %s", url, exc)
+                if deduplicator.is_url_duplicate(page.final_url):
+                    logger.debug("Skipped %s (duplicate final URL)", page.document.source)
                     continue
-                fetch_url = url
-
-            if resp.status_code == 429 or resp.status_code == 503:
-                rate_limiter.record_rate_limit(fetch_url)
-                logger.warning("Rate limited on %s (status %d), skipping", fetch_url, resp.status_code)
-                continue
-            elif resp.status_code != 200:
-                logger.debug("Skipped %s (status %d)", fetch_url, resp.status_code)
-                continue
-
-            rate_limiter.reset_backoff(fetch_url)
-
-            # Learn redirect patterns and register final URL for dedup.
-            final_url = str(resp.url)
-            if normalize_url(final_url) != normalize_url(fetch_url):
-                redirect_tracker.record_redirect(url, normalize_url(final_url))
-                deduplicator.is_url_duplicate(normalize_url(final_url))
-            raw_html = resp.text
-
-            # Extract content
-            if looks_like_html(raw_html):
-                content = extract_content(raw_html, url=url)
-                meta = extract_metadata(raw_html)
-                section_path = extract_section_path(raw_html)
-                fmt = "markdown"
-            else:
-                # Plain text / markdown response
-                content = raw_html
-                meta = {"title": None, "description": None, "lang": None, "canonical_url": None}
-                section_path = []
-                fmt = "markdown"
-
-            if not content or not content.strip():
-                logger.debug("Skipped %s (empty after extraction)", url)
-                continue
-
-            # Browser fallback for JS-heavy sites
-            if self._browser and len(content.split()) < 100 and looks_like_html(raw_html):
-                browser_content = self._try_browser_fallback(url)
-                if browser_content:
-                    content = browser_content
-
-            # Content dedup
-            content_hash = ContentDeduplicator.content_hash(content)
-            if deduplicator.is_content_duplicate(content):
-                logger.debug("Skipped %s (duplicate content)", url)
-                continue
-
-            # Build document with rich metadata
-            canonical = meta.get("canonical_url") or url
-            doc = Document(
-                source=url,
-                content=content,
-                metadata={
-                    "format": fmt,
-                    "fetch_method": disc.strategy.value,
-                    "docset_root": normalize_url(base_url),
-                    "platform": platform.value,
-                    "canonical_url": canonical,
-                    "content_hash": content_hash,
-                    "word_count": len(content.split()),
-                    "title": meta.get("title"),
-                    "description": meta.get("description"),
-                    "section_path": section_path,
-                    "lang": meta.get("lang") or "en",
-                    "http_status": resp.status_code,
-                    "fetched_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            documents.append(doc)
-            logger.info("Fetched %s (%d words)", url, len(content.split()))
+                if deduplicator.is_content_duplicate(page.document.content):
+                    logger.debug("Skipped %s (duplicate content)", page.document.source)
+                    continue
+                documents.append(page.document)
+                logger.info("Fetched %s (%d words)", page.document.source, len(page.document.content.split()))
 
         if not documents:
             raise ValueError(
@@ -321,6 +250,108 @@ class WebFetcher:
             )
 
         return documents
+
+    def _fetch_page(
+        self,
+        disc: DiscoveredUrl,
+        base_url: str,
+        platform: Platform,
+        robots: RobotsChecker | None,
+        rate_limiter: RateLimiter,
+        redirect_tracker: RedirectTracker,
+        redirect_lock: threading.Lock,
+    ) -> _FetchedPage | None:
+        url = normalize_url(disc.url)
+        if robots and not robots.can_fetch(url):
+            logger.debug("Skipped %s (blocked by robots.txt)", url)
+            return None
+        if not is_docs_url(url, base_url):
+            logger.debug("Skipped %s (out of docs scope)", url)
+            return None
+
+        with redirect_lock:
+            predicted_url = redirect_tracker.predict_final_url(url)
+        fetch_url = predicted_url or url
+
+        with httpx.Client(**self._client_kwargs()) as client:
+            rate_limiter.wait(fetch_url)
+            try:
+                resp = client.get(fetch_url)
+            except httpx.RequestError as exc:
+                logger.warning("Failed to fetch %s: %s", fetch_url, exc)
+                return None
+
+            if resp.status_code == 404 and predicted_url and fetch_url == predicted_url:
+                logger.debug("Predicted URL %s returned 404, retrying original %s", predicted_url, url)
+                rate_limiter.wait(url)
+                try:
+                    resp = client.get(url)
+                except httpx.RequestError as exc:
+                    logger.warning("Failed to fetch %s: %s", url, exc)
+                    return None
+                fetch_url = url
+
+            if resp.status_code in {429, 503}:
+                rate_limiter.record_rate_limit(fetch_url)
+                logger.warning("Rate limited on %s (status %d), skipping", fetch_url, resp.status_code)
+                return None
+            if resp.status_code != 200:
+                logger.debug("Skipped %s (status %d)", fetch_url, resp.status_code)
+                return None
+
+            rate_limiter.reset_backoff(fetch_url)
+            resp_url = getattr(resp, "url", None)
+            if isinstance(resp_url, (str, httpx.URL)):
+                final_url = normalize_url(str(resp_url))
+            else:
+                final_url = normalize_url(fetch_url)
+            if final_url != normalize_url(fetch_url):
+                with redirect_lock:
+                    redirect_tracker.record_redirect(url, final_url)
+            raw_html = resp.text
+
+        if looks_like_html(raw_html):
+            content = extract_content(raw_html, url=url)
+            meta = extract_metadata(raw_html)
+            section_path = extract_section_path(raw_html)
+            fmt = "markdown"
+        else:
+            content = raw_html
+            meta = {"title": None, "description": None, "lang": None, "canonical_url": None}
+            section_path = []
+            fmt = "markdown"
+
+        if not content or not content.strip():
+            logger.debug("Skipped %s (empty after extraction)", url)
+            return None
+
+        if self._browser and len(content.split()) < 100 and looks_like_html(raw_html):
+            browser_content = self._try_browser_fallback(url)
+            if browser_content:
+                content = browser_content
+
+        content_hash = ContentDeduplicator.content_hash(content)
+        canonical = meta.get("canonical_url") or url
+        doc = Document(
+            source=url,
+            content=content,
+            metadata={
+                "format": fmt,
+                "fetch_method": disc.strategy.value,
+                "docset_root": normalize_url(base_url),
+                "platform": platform.value,
+                "canonical_url": canonical,
+                "content_hash": content_hash,
+                "word_count": len(content.split()),
+                "title": meta.get("title"),
+                "description": meta.get("description"),
+                "section_path": section_path,
+                "lang": meta.get("lang") or "en",
+                "http_status": resp.status_code,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return _FetchedPage(document=doc, final_url=final_url)
 
     def _try_browser_fallback(self, url: str) -> str | None:
         """Attempt to render a page with Playwright and extract content."""

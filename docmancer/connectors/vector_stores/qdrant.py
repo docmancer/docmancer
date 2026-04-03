@@ -60,6 +60,16 @@ class QdrantStore:
         with self._lock():
             yield
 
+    def prepare_ingest(self, vector_size: int, recreate: bool = False) -> None:
+        with self._lock():
+            logger.info("Preparing vector store collections...")
+            if recreate:
+                if self._client.collection_exists(self._collection_name):
+                    self._client.delete_collection(self._collection_name)
+                if self._client.collection_exists(self._documents_collection_name):
+                    self._client.delete_collection(self._documents_collection_name)
+            self.ensure_collection(vector_size)
+
     def ensure_collection(self, vector_size: int) -> None:
         collections = self._client.get_collections().collections
         if any(c.name == self._collection_name for c in collections):
@@ -128,19 +138,22 @@ class QdrantStore:
 
     def upsert(self, chunks: list[Chunk], dense_vectors: list[list[float]],
                sparse_vectors: list[SparseVector] | None = None, recreate: bool = False,
-               already_locked: bool = False) -> int:
+               already_locked: bool = False, prepare: bool = True) -> int:
         if not chunks:
             return 0
         lock = nullcontext() if already_locked else self._lock()
         with lock:
-            logger.info("Preparing vector store collections...")
-            if recreate:
-                if self._client.collection_exists(self._collection_name):
-                    self._client.delete_collection(self._collection_name)
-                if self._client.collection_exists(self._documents_collection_name):
-                    self._client.delete_collection(self._documents_collection_name)
-                self.ensure_collection(len(dense_vectors[0]))
-            else:
+            if prepare:
+                logger.info("Preparing vector store collections...")
+                if recreate:
+                    if self._client.collection_exists(self._collection_name):
+                        self._client.delete_collection(self._collection_name)
+                    if self._client.collection_exists(self._documents_collection_name):
+                        self._client.delete_collection(self._documents_collection_name)
+                    self.ensure_collection(len(dense_vectors[0]))
+                else:
+                    self.ensure_collection(len(dense_vectors[0]))
+            elif recreate:
                 self.ensure_collection(len(dense_vectors[0]))
             ingested_at = datetime.now(timezone.utc).isoformat()
             points = []

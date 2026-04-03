@@ -12,3 +12,8 @@ vector_store:
 ingestion:
   chunk_size: 800
   chunk_overlap: 120
+  workers: 4
+  embed_queue_size: 4
+
+web_fetch:
+  workers: 8

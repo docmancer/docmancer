@@ -142,7 +142,8 @@ class TestWebFetcherProtocol:
         assert fetcher._respect_robots is True
 
     def test_constructor_custom(self):
-        fetcher = WebFetcher(max_pages=100, strategy="llms-full.txt", browser=True)
+        fetcher = WebFetcher(max_pages=100, strategy="llms-full.txt", browser=True, workers=6)
         assert fetcher._max_pages == 100
         assert fetcher._strategy == "llms-full.txt"
         assert fetcher._browser is True
+        assert fetcher._workers == 6
