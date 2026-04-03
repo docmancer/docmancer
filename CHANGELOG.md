@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.11] - Unreleased
+## [0.1.11] - 2026-04-03
 ### Added
 
 - **`docmancer install cline`:** installs the shared **`skill.md`** template under **`~/.cline/skills/docmancer/SKILL.md`** for the Cline VS Code extension (Cline Skills); use **`--project`** for **`.cline/skills/docmancer/SKILL.md`** in the current directory.
