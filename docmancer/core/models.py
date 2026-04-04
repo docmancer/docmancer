@@ -24,5 +24,6 @@ class RetrievedChunk(BaseModel):
     chunk_index: int
     text: str
     score: float
+    vault_name: str | None = None
 
 

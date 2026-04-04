@@ -47,11 +47,36 @@ class WebFetchConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WEB_FETCH_", extra="ignore")
 
 
+class VaultConfig(BaseSettings):
+    enabled: bool = True
+    scan_dirs: list[str] = Field(default_factory=lambda: ["raw", "wiki", "outputs"])
+    registry_path: str = ""
+    model_config = SettingsConfigDict(env_prefix="VAULT_", extra="ignore")
+
+
+class EvalConfig(BaseSettings):
+    dataset_path: str = ".docmancer/eval_dataset.json"
+    output_dir: str = ".docmancer/eval"
+    judge_provider: str = ""
+    default_k: int = Field(default=5, ge=1)
+    model_config = SettingsConfigDict(env_prefix="EVAL_", extra="ignore")
+
+
+class TelemetryConfig(BaseSettings):
+    enabled: bool = False
+    provider: str = ""
+    endpoint: str = ""
+    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")
+
+
 class DocmancerConfig(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     web_fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
+    vault: VaultConfig | None = None
+    eval: EvalConfig | None = None
+    telemetry: TelemetryConfig | None = None
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

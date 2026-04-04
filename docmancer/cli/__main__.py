@@ -1,6 +1,8 @@
 import click
 from docmancer import __version__
 from docmancer.cli.commands import init_cmd, ingest_cmd, inspect_cmd, doctor_cmd, query_cmd, fetch_cmd, install_cmd, remove_cmd, list_cmd
+from docmancer.cli.vault_commands import vault_group
+from docmancer.cli.eval_commands import dataset_generate_cmd, eval_cmd
 from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 
 
@@ -48,6 +50,18 @@ cli.add_command(fetch_cmd, "fetch")
 cli.add_command(install_cmd, "install")
 cli.add_command(remove_cmd, "remove")
 cli.add_command(list_cmd, "list")
+cli.add_command(vault_group, "vault")
+
+
+@click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Manage eval datasets.")
+def dataset_group():
+    """Manage evaluation datasets."""
+    pass
+
+
+dataset_group.add_command(dataset_generate_cmd, "generate")
+cli.add_command(dataset_group, "dataset")
+cli.add_command(eval_cmd, "eval")
 
 
 if __name__ == "__main__":

@@ -376,6 +376,34 @@ class DocmancerAgent:
             score_threshold=self.config.vector_store.score_threshold,
         )
 
+    def query_with_trace(self, text: str, limit: int | None = None) -> tuple[list[RetrievedChunk], "QueryTrace"]:
+        from docmancer.telemetry.tracer import QueryTrace
+        trace = QueryTrace(query_text=text)
+        effective_limit = limit if limit is not None else self.config.vector_store.retrieval_limit
+
+        span = trace.start_span("dense_embed")
+        dense_vec = self._dense_embedder.embed([text])[0]
+        span.stop()
+
+        span = trace.start_span("sparse_embed")
+        sparse_vec = self._sparse_embedder.embed([text])[0]
+        span.stop()
+
+        span = trace.start_span("vector_search", limit=effective_limit)
+        results = self._vector_store.query(
+            dense_vector=dense_vec,
+            sparse_vector=sparse_vec,
+            limit=effective_limit,
+            score_threshold=self.config.vector_store.score_threshold,
+        )
+        span.stop()
+
+        trace.results = [
+            {"source": r.source, "chunk_index": r.chunk_index, "score": r.score, "text": r.text}
+            for r in results
+        ]
+        return results, trace
+
     def collection_stats(self) -> dict:
         return self._vector_store.collection_stats()
 

@@ -295,12 +295,27 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
     epilog=format_examples(
         "docmancer init",
         "docmancer init --dir ./sandbox",
+        "docmancer init --template vault",
     ),
 )
 @click.option("--dir", "directory", default=".", help="Target directory for the config file.")
-def init_cmd(directory: str):
+@click.option("--template", "template", default=None,
+              type=click.Choice(["vault"], case_sensitive=False),
+              help="Project template. 'vault' scaffolds a structured knowledge base.")
+def init_cmd(directory: str, template: str | None):
     """Initialize a docmancer project with a config file."""
     import yaml as _yaml
+
+    if template == "vault":
+        from docmancer.vault.operations import init_vault
+        dir_path = Path(directory)
+        config_path = init_vault(dir_path)
+        click.echo(f"Vault project initialized at {display_path(dir_path.resolve())}")
+        click.echo(f"  Config: {display_path(config_path)}")
+        click.echo("  Directories: raw/, wiki/, outputs/, .docmancer/")
+        click.echo()
+        click.echo("Next: add content with 'docmancer vault add-url <url>' or place files in raw/")
+        return
 
     dir_path = Path(directory)
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -548,12 +563,19 @@ def doctor_cmd(config_path: str | None):
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 @click.option("--limit", default=None, type=int, help="Maximum chunks to return.")
 @click.option("--full", is_flag=True, default=False, help="Show full chunk text without truncation.")
-def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool):
+@click.option("--trace", is_flag=True, default=False, help="Show execution trace with timing breakdown.")
+@click.option("--save-trace", is_flag=True, default=False, help="Save trace to .docmancer/traces/.")
+def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool):
     """Run a retrieval query against the vector store (no server required)."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
-    chunks = agent.query(text, limit=limit)
+
+    if trace or save_trace:
+        chunks, query_trace = agent.query_with_trace(text, limit=limit)
+    else:
+        chunks = agent.query(text, limit=limit)
+        query_trace = None
 
     if not chunks:
         click.echo("No results found.")
@@ -567,6 +589,16 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool)
         click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}")
         click.echo(body)
         click.echo("---")
+
+    if query_trace is not None:
+        if trace:
+            from docmancer.telemetry.tracer import format_trace_for_terminal
+            click.echo("")
+            click.echo(format_trace_for_terminal(query_trace))
+        if save_trace:
+            traces_dir = Path(".docmancer") / "traces"
+            saved_path = query_trace.save(traces_dir)
+            click.echo(f"Trace saved to {saved_path}")
 
 
 @click.command(
@@ -620,13 +652,33 @@ def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
     epilog=format_examples(
         "docmancer list",
         "docmancer list --all",
+        "docmancer list --vaults",
         "docmancer list --config ./docmancer.yaml",
     ),
 )
 @click.option("--all", "show_all", is_flag=True, default=False, help="Show every stored page/file source.")
+@click.option("--vaults", "show_vaults", is_flag=True, default=False, help="Show all registered vaults.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def list_cmd(show_all: bool, config_path: str | None):
+def list_cmd(show_all: bool, show_vaults: bool, config_path: str | None):
     """List all ingested sources with their ingestion dates."""
+    if show_vaults:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        vaults = registry.list_vaults()
+        if not vaults:
+            click.echo("No vaults registered.")
+            return
+        for v in vaults:
+            name = v["name"]
+            path = v["root_path"]
+            last_scan = v.get("last_scan") or "never"
+            status = v.get("status", "unknown")
+            click.echo(f"  {name}")
+            click.echo(f"    Path:      {path}")
+            click.echo(f"    Last scan: {last_scan}")
+            click.echo(f"    Status:    {status}")
+            click.echo()
+        return
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)

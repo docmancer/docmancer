@@ -73,3 +73,89 @@ def test_embedding_batch_size_must_be_positive():
 
     with pytest.raises(ValidationError):
         EmbeddingConfig(batch_size=-1)
+
+
+def test_default_config_vault_is_none():
+    config = DocmancerConfig()
+    assert config.vault is None
+
+
+def test_config_with_vault_from_dict():
+    config = DocmancerConfig(vault={"enabled": True, "scan_dirs": ["raw", "wiki"]})
+    assert config.vault is not None
+    assert config.vault.enabled is True
+    assert config.vault.scan_dirs == ["raw", "wiki"]
+
+
+def test_config_from_yaml_with_vault(tmp_path):
+    yaml_content = """
+vault:
+  enabled: true
+  scan_dirs:
+    - raw
+    - wiki
+    - outputs
+"""
+    config_file = tmp_path / "docmancer.yaml"
+    config_file.write_text(yaml_content)
+    config = DocmancerConfig.from_yaml(config_file)
+    assert config.vault is not None
+    assert config.vault.enabled is True
+    assert "raw" in config.vault.scan_dirs
+
+
+def test_vault_config_registry_path_default():
+    from docmancer.core.config import VaultConfig
+    vc = VaultConfig()
+    assert vc.registry_path == ""
+
+
+def test_vault_config_registry_path_custom():
+    from docmancer.core.config import VaultConfig
+    vc = VaultConfig(registry_path="/custom/registry.json")
+    assert vc.registry_path == "/custom/registry.json"
+
+
+def test_default_config_eval_is_none():
+    config = DocmancerConfig()
+    assert config.eval is None
+
+
+def test_default_config_telemetry_is_none():
+    config = DocmancerConfig()
+    assert config.telemetry is None
+
+
+def test_config_with_eval_from_dict():
+    config = DocmancerConfig(eval={"default_k": 10, "judge_provider": "anthropic"})
+    assert config.eval is not None
+    assert config.eval.default_k == 10
+    assert config.eval.judge_provider == "anthropic"
+    assert config.eval.dataset_path == ".docmancer/eval_dataset.json"
+
+
+def test_config_with_telemetry_from_dict():
+    config = DocmancerConfig(telemetry={"enabled": True, "provider": "langfuse"})
+    assert config.telemetry is not None
+    assert config.telemetry.enabled is True
+    assert config.telemetry.provider == "langfuse"
+
+
+def test_config_from_yaml_with_eval_and_telemetry(tmp_path):
+    yaml_content = """
+eval:
+  default_k: 8
+  judge_provider: openai
+telemetry:
+  enabled: true
+  provider: langfuse
+  endpoint: http://localhost:3000
+"""
+    config_file = tmp_path / "docmancer.yaml"
+    config_file.write_text(yaml_content)
+    config = DocmancerConfig.from_yaml(config_file)
+    assert config.eval is not None
+    assert config.eval.default_k == 8
+    assert config.telemetry is not None
+    assert config.telemetry.enabled is True
+    assert config.telemetry.endpoint == "http://localhost:3000"
