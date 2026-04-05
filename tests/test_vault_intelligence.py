@@ -260,3 +260,122 @@ class TestBuildContextBundle:
         # At least one result should match "api"
         total = len(bundle["raw"]) + len(bundle["wiki"]) + len(bundle["output"])
         assert total >= 1
+
+
+class TestRelatedSemantic:
+    def test_related_entries_returns_most_relevant_first(self, tmp_path):
+        """Entries with more shared tags should rank higher in related results."""
+        _scaffold_vault(tmp_path)
+        (tmp_path / "raw" / "target.md").write_text("# Target")
+        (tmp_path / "raw" / "high_overlap.md").write_text("# High overlap")
+        (tmp_path / "raw" / "low_overlap.md").write_text("# Low overlap")
+        (tmp_path / "raw" / "no_overlap.md").write_text("# No overlap")
+        _scan(tmp_path)
+
+        from docmancer.vault.manifest import VaultManifest
+        manifest = VaultManifest(tmp_path / ".docmancer" / "manifest.json")
+        manifest.load()
+        for entry in manifest.all_entries():
+            if "target" in entry.path:
+                manifest._entries[entry.id] = entry.model_copy(update={"tags": ["python", "api", "auth"]})
+            elif "high_overlap" in entry.path:
+                manifest._entries[entry.id] = entry.model_copy(update={"tags": ["python", "api"]})
+            elif "low_overlap" in entry.path:
+                manifest._entries[entry.id] = entry.model_copy(update={"tags": ["python"]})
+            elif "no_overlap" in entry.path:
+                manifest._entries[entry.id] = entry.model_copy(update={"tags": ["rust", "systems"]})
+        manifest.save()
+
+        from docmancer.vault.intelligence import related_entries
+        results = related_entries(tmp_path, "raw/target.md")
+
+        paths = [r["path"] for r in results]
+        assert "raw/high_overlap.md" in paths
+        assert "raw/low_overlap.md" in paths
+        assert "raw/no_overlap.md" not in paths
+
+        # High overlap (2 shared tags) should come before low overlap (1 shared tag)
+        high_idx = paths.index("raw/high_overlap.md")
+        low_idx = paths.index("raw/low_overlap.md")
+        assert high_idx < low_idx
+
+
+class TestSourceClusters:
+    def test_detect_source_clusters(self, tmp_path):
+        """Sources from same domain with 3+ entries should be clustered."""
+        _scaffold_vault(tmp_path)
+        for i in range(4):
+            (tmp_path / "raw" / f"stripe_{i}.md").write_text(f"# Stripe doc {i}")
+        _scan(tmp_path)
+
+        # Set source_url on entries
+        from docmancer.vault.manifest import VaultManifest
+        manifest = VaultManifest(tmp_path / ".docmancer" / "manifest.json")
+        manifest.load()
+        for entry in manifest.all_entries():
+            if "stripe" in entry.path:
+                manifest._entries[entry.id] = entry.model_copy(
+                    update={"source_url": f"https://docs.stripe.com/page_{entry.path}"}
+                )
+        manifest.save()
+
+        from docmancer.vault.intelligence import detect_source_clusters
+        clusters = detect_source_clusters(tmp_path)
+        assert len(clusters) == 1
+        assert clusters[0]["cluster_key"] == "docs.stripe.com"
+        assert clusters[0]["count"] == 4
+
+    def test_no_clusters_under_threshold(self, tmp_path):
+        """Fewer than 3 entries from same domain should not form a cluster."""
+        _scaffold_vault(tmp_path)
+        (tmp_path / "raw" / "a.md").write_text("# A")
+        (tmp_path / "raw" / "b.md").write_text("# B")
+        _scan(tmp_path)
+
+        from docmancer.vault.manifest import VaultManifest
+        manifest = VaultManifest(tmp_path / ".docmancer" / "manifest.json")
+        manifest.load()
+        for entry in manifest.all_entries():
+            manifest._entries[entry.id] = entry.model_copy(
+                update={"source_url": "https://example.com/page"}
+            )
+        manifest.save()
+
+        from docmancer.vault.intelligence import detect_source_clusters
+        clusters = detect_source_clusters(tmp_path)
+        assert len(clusters) == 0
+
+
+class TestEvalGapItems:
+    def test_eval_gap_items_no_dataset(self, tmp_path):
+        """Should return empty list when no eval dataset exists."""
+        _scaffold_vault(tmp_path)
+        from docmancer.vault.intelligence import eval_gap_items
+        items = eval_gap_items(tmp_path)
+        assert items == []
+
+    def test_eval_gap_items_with_low_metrics(self, tmp_path):
+        """Should return gap items when cached eval result has low metrics."""
+        _scaffold_vault(tmp_path)
+        import json
+
+        # Create dummy eval dataset
+        ds_path = tmp_path / ".docmancer" / "eval_dataset.json"
+        ds_path.write_text(json.dumps({
+            "entries": [{"question": "test?", "expected_answer": "yes", "expected_context": [], "source_refs": [], "tags": []}],
+            "metadata": {}
+        }))
+
+        # Create cached eval result with low metrics
+        eval_dir = tmp_path / ".docmancer" / "eval"
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        (eval_dir / "latest_result.json").write_text(json.dumps({
+            "mrr": 0.3,
+            "hit_rate": 0.5,
+        }))
+
+        from docmancer.vault.intelligence import eval_gap_items
+        items = eval_gap_items(tmp_path)
+        assert len(items) >= 2
+        categories = [i["category"] for i in items]
+        assert all(c == "eval_gap" for c in categories)

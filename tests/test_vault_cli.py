@@ -1,3 +1,6 @@
+import os
+from unittest.mock import patch
+
 from click.testing import CliRunner
 import pytest
 from docmancer.cli.__main__ import cli
@@ -12,7 +15,7 @@ def test_init_vault_template(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path / "my-vault")])
     assert result.exit_code == 0
-    assert "Vault project initialized" in result.output
+    assert "initialized at" in result.output
     assert (tmp_path / "my-vault" / "raw").is_dir()
     assert (tmp_path / "my-vault" / "wiki").is_dir()
     assert (tmp_path / "my-vault" / "outputs").is_dir()
@@ -299,6 +302,21 @@ def test_vault_inspect_shows_references(tmp_path):
     assert "./ref.md" in result.output
 
 
+def test_vault_inspect_shows_parent_sources(tmp_path):
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "raw" / "source.md").write_text("# Source material")
+    (tmp_path / "wiki" / "article.md").write_text(
+        "---\ntitle: Article\ntags: []\nsources: [raw/source.md]\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n"
+        "Article based on raw source."
+    )
+    runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+    result = runner.invoke(cli, ["vault", "inspect", "wiki/article.md", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "Parent sources:" in result.output
+    assert "raw/source.md" in result.output
+
+
 def test_list_vaults_flag(tmp_path):
     runner = CliRunner()
     import docmancer.vault.registry as reg_module
@@ -326,3 +344,233 @@ def test_list_vaults_empty(tmp_path):
         assert "No vaults registered" in result.output
     finally:
         reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_vault_context_output_is_grouped(tmp_path):
+    """vault context should produce grouped sections (Raw sources, Wiki pages, Outputs), not flat scored results."""
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "raw" / "api_auth.md").write_text("# API Auth\n\nAuthentication docs.")
+    (tmp_path / "wiki" / "auth_guide.md").write_text(
+        "---\ntitle: Auth Guide\ntags: [auth]\nsources: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n"
+        "Guide to auth."
+    )
+    (tmp_path / "outputs" / "auth_report.md").write_text(
+        "---\ntitle: Auth Report\ntags: [auth]\ncreated: 2026-01-01\n---\n"
+        "Report on auth."
+    )
+    runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+
+    result = runner.invoke(cli, ["vault", "context", "auth", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+
+    # Should have grouped sections, not flat scored results
+    assert "Raw sources:" in result.output
+    assert "Wiki pages:" in result.output
+    assert "Outputs:" in result.output
+
+    # Should NOT look like query output (no "score=" format)
+    assert "score=" not in result.output
+
+
+def test_vault_flag_resolves_from_registry(tmp_path):
+    """--vault flag should resolve vault root from registry."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        vault_path = tmp_path / "my-vault"
+        runner.invoke(cli, ["init", "--template", "vault", "--dir", str(vault_path)])
+        (vault_path / "raw" / "doc.md").write_text("# Doc")
+        runner.invoke(cli, ["vault", "scan", "--dir", str(vault_path)])
+
+        # Use --vault instead of --dir
+        result = runner.invoke(cli, ["vault", "status", "--vault", "my-vault"])
+        assert result.exit_code == 0
+        assert "Entries:" in result.output
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_vault_flag_unknown_vault(tmp_path):
+    """--vault with unknown name should error."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "empty_registry.json"
+    try:
+        result = runner.invoke(cli, ["vault", "status", "--vault", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_vault_context_shows_suggested_next(tmp_path):
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "raw" / "auth_api.md").write_text("# Auth API")
+    (tmp_path / "raw" / "auth_tokens.md").write_text("# Auth Tokens")
+    runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+    # Set tags on entries
+    from docmancer.vault.manifest import VaultManifest
+    manifest = VaultManifest(tmp_path / ".docmancer" / "manifest.json")
+    manifest.load()
+    for entry in manifest.all_entries():
+        if "auth_api" in entry.path:
+            manifest._entries[entry.id] = entry.model_copy(update={"tags": ["auth"]})
+        elif "auth_tokens" in entry.path:
+            manifest._entries[entry.id] = entry.model_copy(update={"tags": ["auth", "security"]})
+    manifest.save()
+
+    result = runner.invoke(cli, ["vault", "context", "auth_api", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    # auth_tokens shares the "auth" tag and should appear as suggested
+    assert "Suggested" in result.output or "auth_tokens" in result.output
+
+
+def test_vault_lint_deep_without_api_key(tmp_path):
+    """--deep without API key should fall back gracefully."""
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "raw" / "doc.md").write_text("# Doc")
+    runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = runner.invoke(cli, ["vault", "lint", "--deep", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "require an API key" in result.output or "No issues found" in result.output
+
+
+def test_init_vault_with_custom_name(tmp_path):
+    """--name flag should register the vault with the given name."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        vault_path = tmp_path / "some-dir"
+        result = runner.invoke(cli, ["init", "--template", "vault", "--dir", str(vault_path), "--name", "stripe-research"])
+        assert result.exit_code == 0
+        assert "stripe-research" in result.output
+
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry(registry_path=tmp_path / "test_registry.json")
+        v = registry.get_vault("stripe-research")
+        assert v is not None
+        assert v["root_path"] == str(vault_path.resolve())
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_init_vault_name_defaults_to_dir(tmp_path):
+    """Without --name, vault should use directory name."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        vault_path = tmp_path / "my-project"
+        result = runner.invoke(cli, ["init", "--template", "vault", "--dir", str(vault_path)])
+        assert result.exit_code == 0
+        assert "my-project" in result.output
+
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry(registry_path=tmp_path / "test_registry.json")
+        assert registry.get_vault("my-project") is not None
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_vault_tag_and_untag(tmp_path):
+    """vault tag and vault untag should modify vault tags."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        vault_path = tmp_path / "my-vault"
+        runner.invoke(cli, ["init", "--template", "vault", "--dir", str(vault_path)])
+
+        result = runner.invoke(cli, ["vault", "tag", "my-vault", "work", "research"])
+        assert result.exit_code == 0
+        assert "work" in result.output
+        assert "research" in result.output
+
+        result = runner.invoke(cli, ["vault", "untag", "my-vault", "work"])
+        assert result.exit_code == 0
+        assert "research" in result.output
+        assert "work" not in result.output.split("tags:")[-1] if "tags:" in result.output else True
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_vault_tag_nonexistent_vault(tmp_path):
+    """vault tag on unknown vault should error."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "empty_registry.json"
+    try:
+        result = runner.invoke(cli, ["vault", "tag", "ghost", "work"])
+        assert result.exit_code != 0
+        assert "not found" in result.output
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_list_vaults_with_tag_filter(tmp_path):
+    """list --vaults --tag should filter by tag."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path / "work-vault")])
+        runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path / "personal-vault")])
+        runner.invoke(cli, ["vault", "tag", "work-vault", "work"])
+        runner.invoke(cli, ["vault", "tag", "personal-vault", "personal"])
+
+        result = runner.invoke(cli, ["list", "--vaults", "--tag", "work"])
+        assert result.exit_code == 0
+        assert "work-vault" in result.output
+        assert "personal-vault" not in result.output
+
+        result = runner.invoke(cli, ["list", "--vaults", "--tag", "nonexistent"])
+        assert result.exit_code == 0
+        assert "No vaults with tag" in result.output
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_list_vaults_shows_tags(tmp_path):
+    """list --vaults should display tags."""
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path / "tagged")])
+        runner.invoke(cli, ["vault", "tag", "tagged", "research", "ml"])
+        result = runner.invoke(cli, ["list", "--vaults"])
+        assert result.exit_code == 0
+        assert "Tags:" in result.output
+        assert "research" in result.output
+        assert "ml" in result.output
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
+def test_dataset_generate_llm_without_api_key(tmp_path):
+    """--llm without API key should fall back to scaffold mode."""
+    runner = CliRunner()
+    source_dir = tmp_path / "docs"
+    source_dir.mkdir()
+    (source_dir / "doc.md").write_text("# Test\n\n" + "Content. " * 20)
+
+    with patch.dict(os.environ, {}, clear=True):
+        result = runner.invoke(cli, ["dataset", "generate", "--source", str(source_dir), "--llm",
+                                     "--output", str(tmp_path / "dataset.json")])
+    assert result.exit_code == 0
+    assert "require an API key" in result.output or "Generated" in result.output

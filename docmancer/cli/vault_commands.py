@@ -13,6 +13,32 @@ def _vault_root(directory: str) -> Path:
     return Path(directory).resolve()
 
 
+def _resolve_vault_root(directory: str, vault_name: str | None) -> Path:
+    """Resolve vault root from --dir or --vault flag."""
+    if vault_name:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        entry = registry.get_vault(vault_name)
+        if entry is None:
+            click.echo(f"Vault '{vault_name}' not found in registry. Run 'docmancer list --vaults' to see registered vaults.", err=True)
+            sys.exit(1)
+        return Path(entry["root_path"])
+    return Path(directory).resolve()
+
+
+def _parse_frontmatter(content: str) -> dict:
+    import yaml
+    if not content.startswith("---"):
+        return {}
+    end = content.find("---", 3)
+    if end == -1:
+        return {}
+    try:
+        return yaml.safe_load(content[3:end]) or {}
+    except yaml.YAMLError:
+        return {}
+
+
 @click.group(
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
@@ -30,19 +56,68 @@ def vault_group():
 
 
 @vault_group.command(
+    "tag",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Add tags to a vault.",
+    epilog=format_examples(
+        "docmancer vault tag my-vault work",
+        "docmancer vault tag stripe-research research api",
+    ),
+)
+@click.argument("vault_name")
+@click.argument("tags", nargs=-1, required=True)
+def vault_tag_cmd(vault_name: str, tags: tuple[str, ...]):
+    """Add one or more tags to a registered vault."""
+    from docmancer.vault.registry import VaultRegistry
+    registry = VaultRegistry()
+    if registry.get_vault(vault_name) is None:
+        click.echo(f"Vault '{vault_name}' not found. Run 'docmancer list --vaults' to see registered vaults.", err=True)
+        sys.exit(1)
+    registry.add_tags(vault_name, list(tags))
+    all_tags = registry.get_vault(vault_name).get("tags", [])
+    click.echo(f"  Vault '{vault_name}' tags: {', '.join(all_tags)}")
+
+
+@vault_group.command(
+    "untag",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Remove a tag from a vault.",
+    epilog=format_examples("docmancer vault untag my-vault work"),
+)
+@click.argument("vault_name")
+@click.argument("tag")
+def vault_untag_cmd(vault_name: str, tag: str):
+    """Remove a tag from a registered vault."""
+    from docmancer.vault.registry import VaultRegistry
+    registry = VaultRegistry()
+    if registry.get_vault(vault_name) is None:
+        click.echo(f"Vault '{vault_name}' not found. Run 'docmancer list --vaults' to see registered vaults.", err=True)
+        sys.exit(1)
+    registry.remove_tag(vault_name, tag)
+    all_tags = registry.get_vault(vault_name).get("tags", [])
+    if all_tags:
+        click.echo(f"  Vault '{vault_name}' tags: {', '.join(all_tags)}")
+    else:
+        click.echo(f"  Vault '{vault_name}' has no tags.")
+
+
+@vault_group.command(
     "scan",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Scan vault and reconcile manifest.",
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_scan_cmd(directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_scan_cmd(directory: str, vault_name: str | None):
     """Discover files, reconcile the manifest, and report changes."""
     from docmancer.vault.manifest import VaultManifest
     from docmancer.vault.scanner import scan_vault
     from docmancer.vault.operations import sync_vault_index
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     manifest_path = vault_root / ".docmancer" / "manifest.json"
 
     if not manifest_path.parent.exists():
@@ -118,11 +193,12 @@ def vault_scan_cmd(directory: str):
     short_help="Show vault status summary.",
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_status_cmd(directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_status_cmd(directory: str, vault_name: str | None):
     """Show a compact operational summary of the vault."""
     from docmancer.vault.manifest import ContentKind, IndexState, VaultManifest
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     manifest_path = vault_root / ".docmancer" / "manifest.json"
 
     if not manifest_path.exists():
@@ -227,11 +303,12 @@ def vault_add_url_cmd(url: str, directory: str):
 )
 @click.argument("id_or_path")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_inspect_cmd(id_or_path: str, directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
     """Show manifest metadata for a vault entry by ID or path."""
     from docmancer.vault.operations import inspect_entry
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     entry = inspect_entry(vault_root, id_or_path)
 
     if entry is None:
@@ -272,6 +349,23 @@ def vault_inspect_cmd(id_or_path: str, directory: str):
         except Exception:
             pass
 
+    # Show parent sources from frontmatter
+    if file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            fm = _parse_frontmatter(content)
+            sources = fm.get("sources", [])
+            if isinstance(sources, list):
+                parents = [s for s in sources if isinstance(s, str) and not s.startswith(("http://", "https://"))]
+                if parents:
+                    click.echo("  Parent sources:")
+                    for p in parents:
+                        parent_entry = inspect_entry(vault_root, p)
+                        label = f" ({parent_entry.title})" if parent_entry and parent_entry.title else ""
+                        click.echo(f"    {p}{label}")
+        except Exception:
+            pass
+
 
 @vault_group.command(
     "search",
@@ -284,11 +378,12 @@ def vault_inspect_cmd(id_or_path: str, directory: str):
               help="Filter by content kind.")
 @click.option("--limit", default=10, type=int, help="Max results.")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str, vault_name: str | None):
     """Search vault entries by keyword against paths, titles, and tags."""
     from docmancer.vault.operations import search_vault
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -317,17 +412,40 @@ def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str):
     epilog=format_examples("docmancer vault lint", "docmancer vault lint --fix"),
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
 @click.option("--fix", is_flag=True, default=False, help="Auto-fix by re-syncing manifest.")
-def vault_lint_cmd(directory: str, fix: bool):
+@click.option("--deep", is_flag=True, default=False, help="LLM-assisted deep checks (requires API key).")
+@click.option("--eval", "eval_flag", is_flag=True, default=False, help="Include eval metrics if golden dataset exists.")
+def vault_lint_cmd(directory: str, vault_name: str | None, fix: bool, deep: bool, eval_flag: bool):
     """Validate vault integrity and report issues."""
     from docmancer.vault.lint import lint_vault
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
 
     issues = lint_vault(vault_root, fix=fix)
+
+    if deep:
+        from docmancer.connectors.llm.provider import get_llm_provider
+        from docmancer.core.config import DocmancerConfig
+
+        config = DocmancerConfig()
+        config_file = vault_root / "docmancer.yaml"
+        if config_file.exists():
+            config = DocmancerConfig.from_yaml(config_file)
+
+        provider = get_llm_provider(config)
+        if provider is None:
+            click.echo("  LLM features require an API key.")
+            click.echo("  Run 'docmancer setup' to configure, or set ANTHROPIC_API_KEY.")
+            click.echo("  Showing deterministic lint results only.")
+            click.echo()
+        else:
+            from docmancer.vault.lint import lint_vault_deep
+            deep_issues = lint_vault_deep(vault_root, provider)
+            issues.extend(deep_issues)
 
     if not issues:
         click.echo("  No issues found.")
@@ -345,6 +463,38 @@ def vault_lint_cmd(directory: str, fix: bool):
 
     click.echo(f"\n  {errors} error(s), {warnings} warning(s).")
 
+    if eval_flag:
+        from pathlib import Path as _Path
+        from docmancer.core.config import DocmancerConfig
+
+        config_file = vault_root / "docmancer.yaml"
+        eval_dataset_path = vault_root / ".docmancer" / "eval_dataset.json"
+
+        if not eval_dataset_path.exists():
+            click.echo("\n  No golden dataset found at .docmancer/eval_dataset.json")
+            click.echo("  Run 'docmancer dataset generate --source <path>' to create one.")
+        else:
+            try:
+                from docmancer.eval.dataset import EvalDataset
+                from docmancer.eval.runner import run_eval
+                from docmancer.cli.commands import _load_config, _get_agent_class
+
+                config = DocmancerConfig.from_yaml(config_file) if config_file.exists() else DocmancerConfig()
+                agent = _get_agent_class()(config=config)
+                ds = EvalDataset.load(eval_dataset_path)
+                filled = [e for e in ds.entries if e.question]
+
+                if not filled:
+                    click.echo("\n  Golden dataset has no filled questions. Complete the scaffold first.")
+                else:
+                    result = run_eval(ds, query_fn=agent.query, k=5)
+                    click.echo(f"\n  Eval metrics (from {len(filled)} queries):")
+                    click.echo(f"    MRR:            {result.mrr:.4f}")
+                    click.echo(f"    Hit Rate:       {result.hit_rate:.4f}")
+                    click.echo(f"    Chunk Overlap:  {result.chunk_overlap:.4f}")
+            except Exception as e:
+                click.echo(f"\n  Could not run eval: {e}")
+
 
 @vault_group.command(
     "context",
@@ -356,11 +506,12 @@ def vault_lint_cmd(directory: str, fix: bool):
 @click.argument("query")
 @click.option("--limit", default=5, type=int, help="Max results per group.")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_context_cmd(query: str, limit: int, directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_context_cmd(query: str, limit: int, directory: str, vault_name: str | None):
     """Get grouped research context for a query."""
     from docmancer.vault.intelligence import build_context_bundle
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -398,6 +549,13 @@ def vault_context_cmd(query: str, limit: int, directory: str):
     if tags:
         click.echo(f"  Related tags: {', '.join(tags)}")
 
+    from docmancer.vault.intelligence import suggested_next_paths
+    next_paths = suggested_next_paths(vault_root, bundle, limit=limit)
+    if next_paths:
+        click.echo(f"\n  Suggested next:")
+        for item in next_paths:
+            click.echo(f"    [{item['kind']}] {item['path']}")
+
 
 @vault_group.command(
     "related",
@@ -407,12 +565,13 @@ def vault_context_cmd(query: str, limit: int, directory: str):
 )
 @click.argument("id_or_path")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_related_cmd(id_or_path: str, directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_related_cmd(id_or_path: str, directory: str, vault_name: str | None):
     """Find related vault entries by shared tags."""
     from docmancer.vault.intelligence import related_entries
     from docmancer.vault.operations import inspect_entry
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -439,11 +598,12 @@ def vault_related_cmd(id_or_path: str, directory: str):
     short_help="Show vault maintenance backlog.",
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_backlog_cmd(directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_backlog_cmd(directory: str, vault_name: str | None):
     """Show vault maintenance backlog with prioritized actions."""
     from docmancer.vault.intelligence import build_backlog
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -469,11 +629,12 @@ def vault_backlog_cmd(directory: str):
 )
 @click.option("--limit", default=5, type=int, help="Max suggestions.")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_suggest_cmd(limit: int, directory: str):
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_suggest_cmd(limit: int, directory: str, vault_name: str | None):
     """Suggest next vault actions based on current state."""
     from docmancer.vault.intelligence import build_suggestions
 
-    vault_root = _vault_root(directory)
+    vault_root = _resolve_vault_root(directory, vault_name)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)

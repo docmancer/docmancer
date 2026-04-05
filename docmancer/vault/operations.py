@@ -103,8 +103,12 @@ def sync_vault_index(
             manifest.set_index_state(entry_id, IndexState.failed)
 
 
-def init_vault(directory: Path) -> Path:
-    """Scaffold a vault project. Returns path to created docmancer.yaml."""
+def init_vault(directory: Path, name: str | None = None) -> Path:
+    """Scaffold a vault project. Returns path to created docmancer.yaml.
+
+    If *name* is provided it is used as the vault's registry name,
+    otherwise the directory basename is used.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     for subdir in ("raw", "wiki", "outputs", ".docmancer"):
         (directory / subdir).mkdir(exist_ok=True)
@@ -126,7 +130,7 @@ def init_vault(directory: Path) -> Path:
     try:
         from docmancer.vault.registry import VaultRegistry
         registry = VaultRegistry()
-        vault_name = directory.name
+        vault_name = name or directory.resolve().name
         registry.register(vault_name, directory, config_path)
     except Exception:
         pass  # Registry is optional; don't fail init if it errors
@@ -215,6 +219,54 @@ def inspect_entry(vault_root: Path, id_or_path: str) -> ManifestEntry | None:
     if entry is not None:
         return entry
     return manifest.get_by_path(id_or_path)
+
+
+def cross_vault_query(
+    query_text: str,
+    vault_names: list[str] | None = None,
+    tag: str | None = None,
+    limit: int = 10,
+) -> list:
+    """Query across multiple registered vaults, merging results by score.
+
+    If *vault_names* is None and *tag* is None, queries all registered vaults.
+    If *tag* is provided, only vaults with that tag are queried.
+    Populates vault_name on each RetrievedChunk for provenance.
+    """
+    from docmancer.agent import DocmancerAgent
+    from docmancer.core.config import DocmancerConfig
+    from docmancer.vault.registry import VaultRegistry
+
+    registry = VaultRegistry()
+    if tag:
+        all_vaults = registry.list_vaults_by_tag(tag)
+    else:
+        all_vaults = registry.list_vaults()
+
+    if vault_names:
+        all_vaults = [v for v in all_vaults if v["name"] in vault_names]
+
+    if not all_vaults:
+        return []
+
+    all_results = []
+    for vault in all_vaults:
+        vault_root = Path(vault["root_path"])
+        config_path = vault_root / "docmancer.yaml"
+        if not config_path.exists():
+            continue
+        try:
+            config = DocmancerConfig.from_yaml(config_path)
+            agent = DocmancerAgent(config=config)
+            results = agent.query(query_text, limit=limit)
+            for chunk in results:
+                chunk.vault_name = vault["name"]
+            all_results.extend(results)
+        except Exception:
+            continue
+
+    all_results.sort(key=lambda c: c.score, reverse=True)
+    return all_results[:limit]
 
 
 def search_vault(vault_root: Path, query: str, kind: str | None = None, limit: int = 10) -> list[dict]:

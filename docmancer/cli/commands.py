@@ -296,21 +296,24 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
         "docmancer init",
         "docmancer init --dir ./sandbox",
         "docmancer init --template vault",
+        "docmancer init --template vault --name stripe-research",
     ),
 )
 @click.option("--dir", "directory", default=".", help="Target directory for the config file.")
 @click.option("--template", "template", default=None,
               type=click.Choice(["vault"], case_sensitive=False),
               help="Project template. 'vault' scaffolds a structured knowledge base.")
-def init_cmd(directory: str, template: str | None):
+@click.option("--name", "vault_name", default=None, help="Custom vault name (vault template only). Defaults to directory name.")
+def init_cmd(directory: str, template: str | None, vault_name: str | None):
     """Initialize a docmancer project with a config file."""
     import yaml as _yaml
 
     if template == "vault":
         from docmancer.vault.operations import init_vault
         dir_path = Path(directory)
-        config_path = init_vault(dir_path)
-        click.echo(f"Vault project initialized at {display_path(dir_path.resolve())}")
+        config_path = init_vault(dir_path, name=vault_name)
+        effective_name = vault_name or dir_path.resolve().name
+        click.echo(f"Vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
         click.echo(f"  Config: {display_path(config_path)}")
         click.echo("  Directories: raw/, wiki/, outputs/, .docmancer/")
         click.echo()
@@ -565,17 +568,29 @@ def doctor_cmd(config_path: str | None):
 @click.option("--full", is_flag=True, default=False, help="Show full chunk text without truncation.")
 @click.option("--trace", is_flag=True, default=False, help="Show execution trace with timing breakdown.")
 @click.option("--save-trace", is_flag=True, default=False, help="Save trace to .docmancer/traces/.")
-def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool):
+@click.option("--cross-vault", "cross_vault", is_flag=True, default=False, help="Query across all registered vaults.")
+@click.option("--tag", "filter_tag", default=None, help="Filter cross-vault query to vaults with this tag.")
+def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool, cross_vault: bool, filter_tag: str | None):
     """Run a retrieval query against the vector store (no server required)."""
-    config_path = _effective_config(config_path)
-    config = _load_config(config_path)
-    agent = _get_agent_class()(config=config)
+    effective_limit = limit if limit is not None else 5
 
-    if trace or save_trace:
-        chunks, query_trace = agent.query_with_trace(text, limit=limit)
-    else:
-        chunks = agent.query(text, limit=limit)
+    if filter_tag and not cross_vault:
+        cross_vault = True  # --tag implies --cross-vault
+
+    if cross_vault:
+        from docmancer.vault.operations import cross_vault_query
+        chunks = cross_vault_query(text, tag=filter_tag, limit=effective_limit)
         query_trace = None
+    else:
+        config_path = _effective_config(config_path)
+        config = _load_config(config_path)
+        agent = _get_agent_class()(config=config)
+
+        if trace or save_trace:
+            chunks, query_trace = agent.query_with_trace(text, limit=limit)
+        else:
+            chunks = agent.query(text, limit=limit)
+            query_trace = None
 
     if not chunks:
         click.echo("No results found.")
@@ -586,7 +601,8 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool,
             body = chunk.text
         else:
             body = chunk.text[:1500] + "..." if len(chunk.text) > 1500 else chunk.text
-        click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}")
+        vault_label = f"  vault={chunk.vault_name}" if chunk.vault_name else ""
+        click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}{vault_label}")
         click.echo(body)
         click.echo("---")
 
@@ -653,30 +669,41 @@ def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
         "docmancer list",
         "docmancer list --all",
         "docmancer list --vaults",
+        "docmancer list --vaults --tag research",
         "docmancer list --config ./docmancer.yaml",
     ),
 )
 @click.option("--all", "show_all", is_flag=True, default=False, help="Show every stored page/file source.")
 @click.option("--vaults", "show_vaults", is_flag=True, default=False, help="Show all registered vaults.")
+@click.option("--tag", "filter_tag", default=None, help="Filter vaults by tag (use with --vaults).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def list_cmd(show_all: bool, show_vaults: bool, config_path: str | None):
+def list_cmd(show_all: bool, show_vaults: bool, filter_tag: str | None, config_path: str | None):
     """List all ingested sources with their ingestion dates."""
     if show_vaults:
         from docmancer.vault.registry import VaultRegistry
         registry = VaultRegistry()
-        vaults = registry.list_vaults()
+        if filter_tag:
+            vaults = registry.list_vaults_by_tag(filter_tag)
+        else:
+            vaults = registry.list_vaults()
         if not vaults:
-            click.echo("No vaults registered.")
+            if filter_tag:
+                click.echo(f"No vaults with tag '{filter_tag}'.")
+            else:
+                click.echo("No vaults registered.")
             return
         for v in vaults:
             name = v["name"]
             path = v["root_path"]
             last_scan = v.get("last_scan") or "never"
             status = v.get("status", "unknown")
+            tags = v.get("tags", [])
             click.echo(f"  {name}")
             click.echo(f"    Path:      {path}")
             click.echo(f"    Last scan: {last_scan}")
             click.echo(f"    Status:    {status}")
+            if tags:
+                click.echo(f"    Tags:      {', '.join(tags)}")
             click.echo()
         return
     config_path = _effective_config(config_path)

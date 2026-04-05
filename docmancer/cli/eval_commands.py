@@ -21,7 +21,8 @@ from docmancer.cli.help import DocmancerCommand, HELP_CONTEXT_SETTINGS, format_e
 @click.option("--source", required=True, help="Source directory to generate dataset from.")
 @click.option("--output", default=None, help="Output path (default: .docmancer/eval_dataset.json).")
 @click.option("--count", default=50, type=int, help="Max entries to generate.")
-def dataset_generate_cmd(source: str, output: str | None, count: int):
+@click.option("--llm", is_flag=True, default=False, help="Use LLM to generate Q&A pairs (requires API key).")
+def dataset_generate_cmd(source: str, output: str | None, count: int, llm: bool):
     """Generate a golden dataset scaffold from source documents."""
     from docmancer.eval.dataset import generate_scaffold
 
@@ -29,6 +30,31 @@ def dataset_generate_cmd(source: str, output: str | None, count: int):
     if not source_path.is_dir():
         click.echo(f"Error: source directory not found: {source}", err=True)
         sys.exit(1)
+
+    if llm:
+        from docmancer.connectors.llm.provider import get_llm_provider
+        from docmancer.core.config import DocmancerConfig
+
+        # Try to load config for LLM settings
+        config = DocmancerConfig()
+        config_file = Path("docmancer.yaml")
+        if config_file.exists():
+            config = DocmancerConfig.from_yaml(config_file)
+
+        provider = get_llm_provider(config)
+        if provider is None:
+            click.echo("  LLM features require an API key.")
+            click.echo("  Run 'docmancer setup' to configure, or set ANTHROPIC_API_KEY.")
+            click.echo("  Falling back to manual scaffold mode.")
+            click.echo()
+        else:
+            from docmancer.eval.dataset import generate_with_llm
+            dataset = generate_with_llm(source_path, provider, max_entries=count)
+            output_path = Path(output) if output else Path(".docmancer/eval_dataset.json")
+            dataset.save(output_path)
+            click.echo(f"  Generated {len(dataset.entries)} Q&A pairs via LLM")
+            click.echo(f"  Saved to: {output_path}")
+            return
 
     dataset = generate_scaffold(source_path, max_entries=count)
 

@@ -32,6 +32,7 @@ class VaultRegistry:
             if config_path is not None
             else (resolved_root / "docmancer.yaml")
         )
+        existing = self._data["vaults"].get(name, {})
         self._data["vaults"][name] = {
             "name": name,
             "root_path": str(resolved_root),
@@ -39,6 +40,7 @@ class VaultRegistry:
             "registered_at": datetime.now(timezone.utc).isoformat(),
             "last_scan": None,
             "status": "active",
+            "tags": existing.get("tags", []),
         }
         self._save()
 
@@ -65,6 +67,32 @@ class VaultRegistry:
                 timezone.utc
             ).isoformat()
             self._save()
+
+    def add_tags(self, name: str, tags: list[str]) -> bool:
+        """Add tags to a vault. Returns *True* if the vault exists."""
+        if name not in self._data["vaults"]:
+            return False
+        existing = self._data["vaults"][name].get("tags", [])
+        merged = list(dict.fromkeys(existing + tags))  # dedupe, preserve order
+        self._data["vaults"][name]["tags"] = merged
+        self._save()
+        return True
+
+    def remove_tag(self, name: str, tag: str) -> bool:
+        """Remove a tag from a vault. Returns *True* if the vault exists."""
+        if name not in self._data["vaults"]:
+            return False
+        tags = self._data["vaults"][name].get("tags", [])
+        self._data["vaults"][name]["tags"] = [t for t in tags if t != tag]
+        self._save()
+        return True
+
+    def list_vaults_by_tag(self, tag: str) -> list[dict]:
+        """Return vaults that have the given tag."""
+        return [
+            v for v in self._data["vaults"].values()
+            if tag in v.get("tags", [])
+        ]
 
     def find_by_path(self, root_path: Path) -> dict | None:
         """Find a vault whose *root_path* matches the given path (resolved)."""

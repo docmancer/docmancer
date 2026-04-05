@@ -1,5 +1,7 @@
 # Troubleshooting
 
+Common issues when installing or running docmancer. For architecture and configuration context, see [Architecture](./Architecture.md) and [Configuration](./Configuration.md).
+
 ## `pip install` succeeds, but `docmancer` is `command not found`
 
 This usually means the scripts directory is not on your `PATH`. The install output will show the path:
@@ -24,7 +26,7 @@ Or confirm the install by running the script directly:
 
 ## `pipx install docmancer` says `No matching distribution found`
 
-This means `pipx` picked an unsupported Python version. `docmancer` requires Python 3.11-3.13.
+This means `pipx` picked an unsupported Python version. docmancer requires Python 3.11-3.13.
 
 ```bash
 pipx install docmancer --python python3.13
@@ -62,3 +64,23 @@ arch -arm64 /opt/homebrew/bin/python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 ```
+
+## Vault-specific issues
+
+### `vault scan` reports stale or failed index states
+
+Run `docmancer vault status` to see which files are affected. Common causes:
+
+- Files were added outside docmancer and have not been scanned yet. Run `vault scan` again.
+- A previous scan was interrupted. Re-running `vault scan` will pick up where it left off.
+- Content hash mismatches usually mean files changed on disk since the last scan.
+
+For persistent issues, `vault lint --fix` re-runs manifest reconciliation before checking.
+
+### Eval dataset is empty or missing
+
+`docmancer dataset generate --source <dir>` creates a scaffolded dataset. If it produces no entries, check that the source directory contains markdown files with enough content to extract passages. See [Evals and Observability](./Evals-and-Observability.md) for the full eval workflow.
+
+### Agent does not know about vault commands
+
+Re-run `docmancer install <target>` to update the skill file. Older skill installations may not include vault workflow instructions. See [Install Targets](./Install-Targets.md) for where skills land.

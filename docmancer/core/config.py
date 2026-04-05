@@ -69,6 +69,13 @@ class TelemetryConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")
 
 
+class LLMConfig(BaseSettings):
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-4-20250514"
+    api_key: str = ""
+    model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")
+
+
 class DocmancerConfig(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
@@ -77,6 +84,7 @@ class DocmancerConfig(BaseModel):
     vault: VaultConfig | None = None
     eval: EvalConfig | None = None
     telemetry: TelemetryConfig | None = None
+    llm: LLMConfig | None = None
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

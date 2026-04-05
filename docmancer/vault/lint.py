@@ -196,3 +196,69 @@ def lint_vault(vault_root: Path, fix: bool = False) -> list[LintIssue]:
                 ))
 
     return issues
+
+
+def lint_vault_deep(vault_root: Path, llm_provider) -> list[LintIssue]:
+    """Run LLM-assisted deep checks on vault content."""
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+
+    issues: list[LintIssue] = []
+    wiki_entries = [e for e in manifest.all_entries() if e.kind.value == "wiki"]
+
+    # Check each wiki article for quality issues
+    for entry in wiki_entries:
+        file_path = vault_root / entry.path
+        if not file_path.exists():
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        if len(content.strip()) < 100:
+            continue
+
+        prompt = (
+            f"Analyze this wiki article for quality issues. Look for:\n"
+            f"1. Factual inconsistencies within the text\n"
+            f"2. Claims without clear provenance or source references\n"
+            f"3. Gaps where important information seems missing\n"
+            f"4. Connections to other topics that should be linked\n\n"
+            f"Article ({entry.path}):\n{content[:3000]}\n\n"
+            f"List any issues found, one per line, in this format:\n"
+            f"TYPE: DESCRIPTION\n"
+            f"Where TYPE is one of: INCONSISTENCY, MISSING_PROVENANCE, GAP, MISSING_LINK\n"
+            f"If no issues found, respond with: NONE"
+        )
+
+        try:
+            response = llm_provider.complete(prompt, max_tokens=1000)
+            if response.strip().upper() == "NONE":
+                continue
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if ":" not in line:
+                    continue
+                issue_type, description = line.split(":", 1)
+                issue_type = issue_type.strip().upper()
+                description = description.strip()
+
+                check_map = {
+                    "INCONSISTENCY": "deep_inconsistency",
+                    "MISSING_PROVENANCE": "deep_missing_provenance",
+                    "GAP": "deep_content_gap",
+                    "MISSING_LINK": "deep_missing_link",
+                }
+                check = check_map.get(issue_type, "deep_other")
+                issues.append(LintIssue(
+                    severity="warning",
+                    check=check,
+                    path=entry.path,
+                    message=description,
+                ))
+        except Exception:
+            continue
+
+    return issues

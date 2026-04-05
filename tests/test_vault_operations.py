@@ -141,6 +141,94 @@ def test_sync_vault_index_removes_old_updated_sources_before_reindex(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# scan + sync combined tests
+# ---------------------------------------------------------------------------
+
+
+def test_scan_then_sync_updates_manifest_and_index(tmp_path):
+    """Full scan + sync flow: scan detects new files, sync indexes them."""
+    from docmancer.vault.scanner import scan_vault
+
+    vault = tmp_path / "vault"
+    init_vault(vault)
+    (vault / "raw" / "doc.md").write_text("# Test doc\n\nContent about auth.")
+
+    manifest = VaultManifest(vault / ".docmancer" / "manifest.json")
+    manifest.load()
+    result = scan_vault(vault, manifest, ["raw", "wiki", "outputs"])
+    manifest.save()
+
+    assert len(result.added) == 1
+    assert "raw/doc.md" in result.added
+
+    # Verify entry is pending before sync
+    entry = manifest.get_by_path("raw/doc.md")
+    assert entry is not None
+    assert entry.index_state == IndexState.pending
+
+    # Mock the agent to avoid real embedding/Qdrant
+    with patch("docmancer.agent.DocmancerAgent") as MockAgent:
+        mock_agent = MagicMock()
+        MockAgent.return_value = mock_agent
+        mock_agent.ingest_documents.return_value = 1
+
+        sync_vault_index(vault, manifest, added_paths=result.added)
+
+    # Verify manifest entry is now indexed (save then reload to confirm persistence)
+    manifest.save()
+    manifest.load()
+    entry = manifest.get_by_path("raw/doc.md")
+    assert entry.index_state == IndexState.indexed
+
+    # Verify agent was called
+    mock_agent.ingest_documents.assert_called_once()
+
+
+def test_scan_then_sync_reindexes_changed_files(tmp_path):
+    """Modified files are removed from index and re-ingested."""
+    from docmancer.vault.scanner import scan_vault
+
+    vault = tmp_path / "vault"
+    init_vault(vault)
+    (vault / "raw" / "doc.md").write_text("# Original content")
+
+    manifest = VaultManifest(vault / ".docmancer" / "manifest.json")
+    manifest.load()
+    scan_vault(vault, manifest, ["raw", "wiki", "outputs"])
+
+    # Mark as indexed to simulate previous sync
+    entry = manifest.get_by_path("raw/doc.md")
+    manifest.set_index_state(entry.id, IndexState.indexed)
+    manifest.save()
+
+    # Modify file and rescan
+    (vault / "raw" / "doc.md").write_text("# Updated content with new info")
+    manifest.load()
+    result = scan_vault(vault, manifest, ["raw", "wiki", "outputs"])
+    manifest.save()
+
+    assert len(result.updated) == 1
+
+    # Mock agent and sync
+    with patch("docmancer.agent.DocmancerAgent") as MockAgent:
+        mock_agent = MagicMock()
+        MockAgent.return_value = mock_agent
+        mock_agent.ingest_documents.return_value = 1
+
+        sync_vault_index(vault, manifest, updated_paths=result.updated)
+
+    # Verify old source was removed and new content ingested
+    mock_agent.remove_source.assert_called_once_with("raw/doc.md")
+    mock_agent.ingest_documents.assert_called_once()
+
+    # Verify entry is indexed (save then reload to confirm persistence)
+    manifest.save()
+    manifest.load()
+    entry = manifest.get_by_path("raw/doc.md")
+    assert entry.index_state == IndexState.indexed
+
+
+# ---------------------------------------------------------------------------
 # inspect_entry tests
 # ---------------------------------------------------------------------------
 

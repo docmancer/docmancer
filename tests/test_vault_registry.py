@@ -85,6 +85,83 @@ def test_get_vault_nonexistent(tmp_path: Path) -> None:
     assert reg.get_vault("nope") is None
 
 
+def test_add_tags(tmp_path: Path) -> None:
+    """add_tags should add tags to a vault entry."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    reg.register("v1", tmp_path / "v1")
+    assert reg.add_tags("v1", ["work", "research"]) is True
+    vault = reg.get_vault("v1")
+    assert vault["tags"] == ["work", "research"]
+
+
+def test_add_tags_deduplicates(tmp_path: Path) -> None:
+    """add_tags should not duplicate existing tags."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    reg.register("v1", tmp_path / "v1")
+    reg.add_tags("v1", ["work"])
+    reg.add_tags("v1", ["work", "research"])
+    vault = reg.get_vault("v1")
+    assert vault["tags"] == ["work", "research"]
+
+
+def test_add_tags_nonexistent_vault(tmp_path: Path) -> None:
+    """add_tags on missing vault returns False."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    assert reg.add_tags("ghost", ["work"]) is False
+
+
+def test_remove_tag(tmp_path: Path) -> None:
+    """remove_tag should remove a specific tag."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    reg.register("v1", tmp_path / "v1")
+    reg.add_tags("v1", ["work", "research"])
+    assert reg.remove_tag("v1", "work") is True
+    assert reg.get_vault("v1")["tags"] == ["research"]
+
+
+def test_remove_tag_nonexistent_vault(tmp_path: Path) -> None:
+    """remove_tag on missing vault returns False."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    assert reg.remove_tag("ghost", "work") is False
+
+
+def test_list_vaults_by_tag(tmp_path: Path) -> None:
+    """list_vaults_by_tag filters correctly."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    reg.register("alpha", tmp_path / "a")
+    reg.register("beta", tmp_path / "b")
+    reg.add_tags("alpha", ["work"])
+    reg.add_tags("beta", ["personal"])
+
+    work_vaults = reg.list_vaults_by_tag("work")
+    assert len(work_vaults) == 1
+    assert work_vaults[0]["name"] == "alpha"
+
+    assert reg.list_vaults_by_tag("nonexistent") == []
+
+
+def test_tags_preserved_on_re_register(tmp_path: Path) -> None:
+    """Re-registering a vault should preserve its tags."""
+    reg = VaultRegistry(registry_path=tmp_path / "registry.json")
+    reg.register("v1", tmp_path / "v1")
+    reg.add_tags("v1", ["work", "research"])
+    reg.register("v1", tmp_path / "v1-new-path")
+    vault = reg.get_vault("v1")
+    assert vault["tags"] == ["work", "research"]
+    assert vault["root_path"] == str((tmp_path / "v1-new-path").resolve())
+
+
+def test_tags_persist_across_loads(tmp_path: Path) -> None:
+    """Tags should survive registry reload from disk."""
+    reg_path = tmp_path / "registry.json"
+    reg = VaultRegistry(registry_path=reg_path)
+    reg.register("v1", tmp_path / "v1")
+    reg.add_tags("v1", ["ml", "research"])
+
+    reg2 = VaultRegistry(registry_path=reg_path)
+    assert reg2.get_vault("v1")["tags"] == ["ml", "research"]
+
+
 def test_empty_registry(tmp_path: Path) -> None:
     """Fresh registry with no file has empty list_vaults."""
     reg = VaultRegistry(registry_path=tmp_path / "nonexistent" / "registry.json")

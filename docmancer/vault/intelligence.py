@@ -168,6 +168,58 @@ def sparse_concept_areas(vault_root: Path) -> list[dict]:
     return sparse
 
 
+def eval_gap_items(vault_root: Path) -> list[dict]:
+    """Surface backlog items from eval gaps (queries scoring below threshold).
+
+    Requires a golden dataset at .docmancer/eval_dataset.json.
+    Returns empty list if no dataset exists or eval can't run.
+    """
+    eval_dataset_path = vault_root / ".docmancer" / "eval_dataset.json"
+    if not eval_dataset_path.exists():
+        return []
+
+    try:
+        from docmancer.eval.dataset import EvalDataset
+
+        ds = EvalDataset.load(eval_dataset_path)
+        filled = [e for e in ds.entries if e.question]
+        if not filled:
+            return []
+
+        # We can't easily run the full eval without an agent here,
+        # so we check for a cached eval result instead
+        eval_result_path = vault_root / ".docmancer" / "eval" / "latest_result.json"
+        if not eval_result_path.exists():
+            return []
+
+        import json
+        result_data = json.loads(eval_result_path.read_text(encoding="utf-8"))
+
+        items = []
+        # If overall MRR is below threshold, flag it
+        mrr = result_data.get("mrr", 1.0)
+        if mrr < 0.5:
+            items.append({
+                "category": "eval_gap",
+                "priority": "high",
+                "path": ".docmancer/eval_dataset.json",
+                "action": f"Overall MRR is {mrr:.2f} (below 0.5 threshold). Wiki coverage may need improvement.",
+            })
+
+        hit = result_data.get("hit_rate", 1.0)
+        if hit < 0.7:
+            items.append({
+                "category": "eval_gap",
+                "priority": "medium",
+                "path": ".docmancer/eval_dataset.json",
+                "action": f"Hit rate is {hit:.2f} (below 0.7 threshold). Some queries return no relevant results.",
+            })
+
+        return items
+    except Exception:
+        return []
+
+
 def related_entries(vault_root: Path, id_or_path: str) -> list[dict]:
     """Find entries sharing tags with the target. Sorted by shared tag count descending."""
     manifest = _load_manifest(vault_root)
@@ -247,6 +299,10 @@ def build_backlog(vault_root: Path) -> list[dict]:
             "action": f"Tag '{area['tag']}' has {area['raw_count']} raw source(s) but only {area['wiki_count']} wiki article(s)",
         })
 
+    # Eval-driven gaps (if dataset + cached results exist)
+    for gap in eval_gap_items(vault_root):
+        backlog.append(gap)
+
     priority_order = {"high": 0, "medium": 1, "low": 2}
     backlog.sort(key=lambda b: priority_order.get(b["priority"], 9))
     return backlog
@@ -289,6 +345,14 @@ def build_suggestions(vault_root: Path, limit: int = 5) -> list[dict]:
             "source_refs": [],
         })
 
+    # Suggest consolidating source clusters
+    for cluster in detect_source_clusters(vault_root):
+        suggestions.append({
+            "action": f"Write consolidated wiki article for {cluster['cluster_key']} ({cluster['count']} raw sources)",
+            "reason": "Multiple raw sources from same domain could be consolidated",
+            "source_refs": cluster["entries"][:5],
+        })
+
     issues = lint_vault(vault_root, fix=False)
     errors = [i for i in issues if i.severity == "error"]
     if errors:
@@ -298,7 +362,87 @@ def build_suggestions(vault_root: Path, limit: int = 5) -> list[dict]:
             "source_refs": [e.path for e in errors[:limit]],
         })
 
+    # Prioritize based on eval gaps if available
+    gaps = eval_gap_items(vault_root)
+    if gaps:
+        # Boost priority of suggestions that address eval gaps
+        suggestions.insert(0, {
+            "action": "Improve retrieval quality: run 'docmancer eval' and address low-scoring queries",
+            "reason": f"{len(gaps)} eval gap(s) detected",
+            "source_refs": [".docmancer/eval_dataset.json"],
+        })
+
     return suggestions[:limit]
+
+
+def suggested_next_paths(vault_root: Path, context_bundle: dict, limit: int = 5) -> list[dict]:
+    """Find entries related to context results but not already shown.
+
+    Collects tags from context results, finds additional entries sharing those
+    tags but not already in the context bundle.
+    """
+    manifest = _load_manifest(vault_root)
+
+    # Collect paths already in the bundle
+    shown_paths = set()
+    for kind_key in ("raw", "wiki", "output"):
+        for item in context_bundle.get(kind_key, []):
+            shown_paths.add(item.get("path", ""))
+
+    # Collect tags from context bundle
+    context_tags = set(context_bundle.get("tags", []))
+    if not context_tags:
+        return []
+
+    # Find entries sharing those tags but not already shown
+    suggestions = []
+    for entry in manifest.all_entries():
+        if entry.path in shown_paths:
+            continue
+        shared = context_tags & set(entry.tags)
+        if shared:
+            suggestions.append({
+                "path": entry.path,
+                "kind": entry.kind.value,
+                "shared_tags": sorted(shared),
+            })
+
+    suggestions.sort(key=lambda s: len(s["shared_tags"]), reverse=True)
+    return suggestions[:limit]
+
+
+def detect_source_clusters(vault_root: Path) -> list[dict]:
+    """Group raw sources by shared URL domain or tag sets.
+
+    Clusters with 3+ entries are candidates for wiki consolidation.
+    Returns list of dicts with: cluster_key, entries (list of paths), count.
+    """
+    from urllib.parse import urlparse
+    manifest = _load_manifest(vault_root)
+
+    domain_groups: dict[str, list[str]] = {}
+    for entry in manifest.all_entries():
+        if entry.kind != ContentKind.raw or not entry.source_url:
+            continue
+        try:
+            domain = urlparse(entry.source_url).netloc
+        except Exception:
+            continue
+        if domain:
+            domain_groups.setdefault(domain, []).append(entry.path)
+
+    clusters = []
+    for domain, paths in sorted(domain_groups.items()):
+        if len(paths) >= 3:
+            clusters.append({
+                "cluster_key": domain,
+                "entries": sorted(paths),
+                "count": len(paths),
+                "category": "source_cluster",
+            })
+
+    clusters.sort(key=lambda c: c["count"], reverse=True)
+    return clusters
 
 
 def build_context_bundle(vault_root: Path, query: str) -> dict:

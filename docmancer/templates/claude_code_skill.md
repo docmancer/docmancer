@@ -155,3 +155,5 @@ Use these commands for vault maintenance and exploration:
 - `{{DOCS_KIT_CMD}} vault backlog` — see prioritized maintenance tasks (coverage gaps, stale articles, unfiled outputs)
 - `{{DOCS_KIT_CMD}} vault suggest` — get specific next actions for improving vault quality
 - `{{DOCS_KIT_CMD}} vault lint` — check for broken links, missing frontmatter, and manifest mismatches
+- `{{DOCS_KIT_CMD}} vault status --vault <name>` — target a specific registered vault
+- `{{DOCS_KIT_CMD}} query "question" --cross-vault` — query across all registered vaults

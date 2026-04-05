@@ -402,6 +402,14 @@ class DocmancerAgent:
             {"source": r.source, "chunk_index": r.chunk_index, "score": r.score, "text": r.text}
             for r in results
         ]
+
+        # Optionally send to Langfuse
+        try:
+            from docmancer.telemetry.langfuse_sink import try_send_to_langfuse
+            try_send_to_langfuse(trace, self.config)
+        except Exception:
+            pass
+
         return results, trace
 
     def collection_stats(self) -> dict:
