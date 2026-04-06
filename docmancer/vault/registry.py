@@ -94,6 +94,22 @@ class VaultRegistry:
             if tag in v.get("tags", [])
         ]
 
+    def register_installed(
+        self,
+        name: str,
+        root_path: Path,
+        config_path: Path | None = None,
+        installed_from: str = "",
+        installed_version: str = "",
+    ) -> None:
+        """Register an installed vault package."""
+        self.register(name, root_path, config_path)
+        entry = self._data["vaults"][name]
+        entry["installed_from"] = installed_from
+        entry["installed_version"] = installed_version
+        entry["package_type"] = "github"
+        self._save()
+
     def find_by_path(self, root_path: Path) -> dict | None:
         """Find a vault whose *root_path* matches the given path (resolved)."""
         resolved = str(root_path.resolve())

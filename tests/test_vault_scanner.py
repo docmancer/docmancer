@@ -281,6 +281,30 @@ def test_scan_hydrates_manifest_metadata_from_frontmatter(tmp_path: Path) -> Non
     assert entry.title == "API Guide"
     assert entry.tags == ["api", "auth"]
     assert entry.source_url == "https://docs.example.com/auth"
+    assert entry.canonical_source_url == "https://docs.example.com/auth"
+
+
+def test_scan_hydrates_relationship_metadata(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    _write_file(
+        vault / "wiki" / "guide.md",
+        "---\n"
+        "title: API Guide\n"
+        "tags: [api]\n"
+        "sources: [raw/auth.md, https://docs.example.com/auth]\n"
+        "created: 2026-01-01\n"
+        "updated: 2026-01-01\n"
+        "---\n\n"
+        "# API Guide\n\nSee [[Auth]] and [details](outputs/report.md).",
+    )
+
+    manifest = _make_manifest(tmp_path)
+    scan_vault(vault, manifest, ["wiki"])
+
+    entry = manifest.get_by_path("wiki/guide.md")
+    assert entry is not None
+    assert entry.parent_ref == "raw/auth.md"
+    assert entry.outbound_refs == ["Auth", "outputs/report.md"]
 
 
 def test_scan_does_not_remove_entries_outside_selected_roots(tmp_path: Path) -> None:

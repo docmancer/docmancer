@@ -21,7 +21,7 @@ _REQUIRED_FRONTMATTER: dict[str, list[str]] = {
     "output": ["title", "tags", "created"],
 }
 
-_TRACKED_DIRS = ["raw", "wiki", "outputs"]
+_TRACKED_DIRS = ["raw", "wiki", "outputs", "assets"]
 
 
 @dataclass

@@ -32,6 +32,13 @@ class EvalDataset(BaseModel):
         return cls.model_validate(data)
 
 
+def _source_ref_for_file(source_dir: Path, file_path: Path) -> str:
+    vault_root = source_dir.parent
+    if (vault_root / ".docmancer").exists():
+        return str(file_path.relative_to(vault_root))
+    return str(file_path)
+
+
 def generate_scaffold(source_dir: Path, max_entries: int = 50) -> EvalDataset:
     """Generate a dataset scaffold from markdown files in source_dir.
 
@@ -62,7 +69,7 @@ def generate_scaffold(source_dir: Path, max_entries: int = 50) -> EvalDataset:
             question="",  # To be filled by developer
             expected_answer="",  # To be filled by developer
             expected_context=[context_passage],
-            source_refs=[str(md_file)],
+            source_refs=[_source_ref_for_file(source_dir, md_file)],
         ))
 
     return EvalDataset(

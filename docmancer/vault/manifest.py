@@ -44,10 +44,15 @@ class ManifestEntry(BaseModel):
     content_hash: str = ""
     index_state: IndexState = IndexState.pending
     added_at: str = Field(default_factory=_utc_now)
+    created_at: str | None = None
+    fetched_at: str | None = None
     updated_at: str = Field(default_factory=_utc_now)
     source_url: str | None = None
+    canonical_source_url: str | None = None
     title: str | None = None
     tags: list[str] = Field(default_factory=list)
+    parent_ref: str | None = None
+    outbound_refs: list[str] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

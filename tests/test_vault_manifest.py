@@ -75,6 +75,36 @@ def test_save_and_load_round_trip(tmp_path: Path):
     assert loaded.index_state == IndexState.pending
 
 
+def test_save_and_load_extended_provenance_fields(tmp_path: Path):
+    manifest_path = tmp_path / "vault" / "manifest.json"
+    vm = VaultManifest(manifest_path)
+
+    entry = ManifestEntry(
+        path="raw/page.md",
+        kind=ContentKind.raw,
+        source_type=SourceType.web,
+        source_url="https://example.com/page",
+        canonical_source_url="https://example.com/page",
+        created_at="2026-01-01T00:00:00+00:00",
+        fetched_at="2026-01-02T00:00:00+00:00",
+        parent_ref="raw/index.md",
+        outbound_refs=["wiki/guide.md", "Auth"],
+    )
+    vm.add(entry)
+    vm.save()
+
+    vm2 = VaultManifest(manifest_path)
+    vm2.load()
+    loaded = vm2.get_by_id(entry.id)
+
+    assert loaded is not None
+    assert loaded.canonical_source_url == "https://example.com/page"
+    assert loaded.created_at == "2026-01-01T00:00:00+00:00"
+    assert loaded.fetched_at == "2026-01-02T00:00:00+00:00"
+    assert loaded.parent_ref == "raw/index.md"
+    assert loaded.outbound_refs == ["wiki/guide.md", "Auth"]
+
+
 def test_saved_json_has_version_field(tmp_path: Path):
     manifest_path = tmp_path / "manifest.json"
     vm = VaultManifest(manifest_path)

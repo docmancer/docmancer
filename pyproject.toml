@@ -29,6 +29,7 @@ dependencies = [
 browser = ["playwright>=1.40.0"]
 llm = ["anthropic>=0.40.0"]
 langfuse = ["langfuse>=2.0.0"]
+ragas = ["ragas>=0.2.0"]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [project.scripts]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +34,9 @@ _SOURCE_TYPE_BY_EXT: dict[str, SourceType] = {
     ".gif": SourceType.image,
     ".svg": SourceType.image,
 }
+
+_WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]*?)?\]\]")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 
 
 def _sha256(file_path: Path) -> str:
@@ -89,6 +93,25 @@ def _manifest_metadata_for_file(file_path: Path) -> dict:
             if isinstance(source, str) and source.startswith(("http://", "https://")):
                 metadata["source_url"] = source
                 break
+        for source in sources:
+            if isinstance(source, str) and not source.startswith(("http://", "https://")):
+                metadata["parent_ref"] = source
+                break
+
+    outbound_refs: list[str] = []
+    for match in _WIKILINK_RE.finditer(content):
+        target = match.group(1).strip()
+        if target:
+            outbound_refs.append(target)
+    for _label, href in _MD_LINK_RE.findall(content):
+        href = href.strip()
+        if href and not href.startswith(("http://", "https://", "mailto:", "#")):
+            outbound_refs.append(href)
+    if outbound_refs:
+        metadata["outbound_refs"] = list(dict.fromkeys(outbound_refs))
+
+    if metadata.get("source_url"):
+        metadata["canonical_source_url"] = metadata["source_url"]
 
     return metadata
 
@@ -131,6 +154,9 @@ def scan_vault(vault_root: Path, manifest: VaultManifest, scan_dirs: list[str]) 
                     title=metadata.get("title"),
                     tags=metadata.get("tags", []),
                     source_url=metadata.get("source_url"),
+                    canonical_source_url=metadata.get("canonical_source_url"),
+                    parent_ref=metadata.get("parent_ref"),
+                    outbound_refs=metadata.get("outbound_refs", []),
                 )
                 manifest.add(entry)
                 result.added.append(relative)
@@ -143,6 +169,9 @@ def scan_vault(vault_root: Path, manifest: VaultManifest, scan_dirs: list[str]) 
                         "title": metadata.get("title"),
                         "tags": metadata.get("tags", []),
                         "source_url": metadata.get("source_url", existing.source_url),
+                        "canonical_source_url": metadata.get("canonical_source_url", existing.canonical_source_url),
+                        "parent_ref": metadata.get("parent_ref"),
+                        "outbound_refs": metadata.get("outbound_refs", []),
                     }
                 )
                 result.updated.append(relative)

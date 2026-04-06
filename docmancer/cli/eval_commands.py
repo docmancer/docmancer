@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import click
 
 from docmancer.cli.help import DocmancerCommand, HELP_CONTEXT_SETTINGS, format_examples
+
+
+def _default_eval_cache_path(dataset_path: Path, config_path: str | None) -> Path:
+    if dataset_path.parent.name == ".docmancer":
+        return dataset_path.parent / "eval" / "latest_result.json"
+    if config_path:
+        return Path(config_path).resolve().parent / ".docmancer" / "eval" / "latest_result.json"
+    return Path(".docmancer") / "eval" / "latest_result.json"
 
 
 @click.command(
@@ -82,7 +91,8 @@ def dataset_generate_cmd(source: str, output: str | None, count: int, llm: bool)
 @click.option("--output", default=None, help="Output path for report (.md or .csv).")
 @click.option("--limit", "k", default=5, type=int, help="Top-K results to evaluate.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None):
+@click.option("--judge", is_flag=True, default=False, help="Enable LLM-as-judge scoring (requires API key).")
+def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None, judge: bool):
     """Run evaluation pipeline against a golden dataset."""
     from docmancer.cli.commands import _effective_config, _load_config, _get_agent_class
     from docmancer.eval.dataset import EvalDataset
@@ -116,16 +126,57 @@ def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None):
         "retrieval_limit": k,
     }
 
-    click.echo(format_terminal(result, config_snapshot=config_snap))
+    # LLM-as-judge scoring
+    judge_result = None
+    if judge:
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY") or ""
+        if not api_key and config.llm:
+            api_key = config.llm.api_key
+        judge_provider = "openai"
+        if config.eval and config.eval.judge_provider:
+            judge_provider = config.eval.judge_provider
+
+        if not api_key:
+            click.echo("  LLM-as-judge requires an API key.")
+            click.echo("  Run 'docmancer setup' to configure, or set OPENAI_API_KEY.")
+            click.echo("  Showing deterministic metrics only.")
+            click.echo()
+        else:
+            from docmancer.eval.judge import ragas_available, run_judge_eval
+            if not ragas_available():
+                click.echo("  Ragas not installed. Run: pip install docmancer[ragas]")
+                click.echo("  Showing deterministic metrics only.")
+                click.echo()
+            else:
+                click.echo("  Running LLM-as-judge scoring...")
+                judge_result = run_judge_eval(
+                    ds, query_fn=agent.query, k=k,
+                    api_key=api_key, provider=judge_provider,
+                )
+
+    click.echo(format_terminal(result, config_snapshot=config_snap, judge_result=judge_result))
+
+    cache_path = _default_eval_cache_path(dataset_path, config_path)
+    cache_payload = {
+        **result.to_dict(),
+        "config_snapshot": config_snap,
+    }
+    if judge_result is not None:
+        cache_payload["judge_result"] = judge_result.to_dict()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache_payload, indent=2), encoding="utf-8")
 
     if output:
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.suffix == ".csv":
-            output_path.write_text(format_csv(result), encoding="utf-8")
+            output_path.write_text(
+                format_csv(result, judge_result=judge_result), encoding="utf-8",
+            )
         else:
             output_path.write_text(
-                format_markdown(result, config_snapshot=config_snap),
+                format_markdown(result, config_snapshot=config_snap, judge_result=judge_result),
                 encoding="utf-8",
             )
         click.echo(f"\n  Report saved to: {output_path}")

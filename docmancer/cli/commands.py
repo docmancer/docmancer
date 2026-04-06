@@ -315,7 +315,7 @@ def init_cmd(directory: str, template: str | None, vault_name: str | None):
         effective_name = vault_name or dir_path.resolve().name
         click.echo(f"Vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
         click.echo(f"  Config: {display_path(config_path)}")
-        click.echo("  Directories: raw/, wiki/, outputs/, .docmancer/")
+        click.echo("  Directories: raw/, wiki/, outputs/, assets/, .docmancer/")
         click.echo()
         click.echo("Next: add content with 'docmancer vault add-url <url>' or place files in raw/")
         return

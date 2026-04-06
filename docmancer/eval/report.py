@@ -8,7 +8,7 @@ from typing import Any
 from docmancer.eval.metrics import EvalResult
 
 
-def format_terminal(result: EvalResult, config_snapshot: dict[str, Any] | None = None) -> str:
+def format_terminal(result: EvalResult, config_snapshot: dict[str, Any] | None = None, judge_result=None) -> str:
     lines = [
         "Eval Results",
         "=" * 40,
@@ -21,6 +21,12 @@ def format_terminal(result: EvalResult, config_snapshot: dict[str, Any] | None =
         f"  Latency p95:      {result.latency_p95:.1f}ms",
         f"  Latency p99:      {result.latency_p99:.1f}ms",
     ]
+    if judge_result is not None:
+        lines.append("")
+        lines.append("LLM-as-Judge Scores")
+        lines.append("-" * 40)
+        lines.append(f"  Context Precision: {judge_result.context_precision:.4f}")
+        lines.append(f"  Context Recall:    {judge_result.context_recall:.4f}")
     if config_snapshot:
         lines.append("")
         lines.append("Config:")
@@ -33,6 +39,7 @@ def format_markdown(
     result: EvalResult,
     config_snapshot: dict[str, Any] | None = None,
     previous: EvalResult | None = None,
+    judge_result=None,
 ) -> str:
     now = datetime.now(timezone.utc).isoformat()
     lines = [
@@ -53,6 +60,17 @@ def format_markdown(
         f"| Latency p95 | {result.latency_p95:.1f}ms |",
         f"| Latency p99 | {result.latency_p99:.1f}ms |",
     ]
+
+    if judge_result is not None:
+        lines.extend([
+            "",
+            "## LLM-as-Judge Scores",
+            "",
+            "| Metric | Value |",
+            "|--------|-------|",
+            f"| Context Precision | {judge_result.context_precision:.4f} |",
+            f"| Context Recall | {judge_result.context_recall:.4f} |",
+        ])
 
     if previous:
         lines.extend([
@@ -79,7 +97,7 @@ def format_markdown(
     return "\n".join(lines)
 
 
-def format_csv(result: EvalResult) -> str:
+def format_csv(result: EvalResult, judge_result=None) -> str:
     header = "metric,value"
     rows = [
         f"num_queries,{result.num_queries}",
@@ -91,4 +109,7 @@ def format_csv(result: EvalResult) -> str:
         f"latency_p95_ms,{result.latency_p95:.1f}",
         f"latency_p99_ms,{result.latency_p99:.1f}",
     ]
+    if judge_result is not None:
+        rows.append(f"context_precision,{judge_result.context_precision:.4f}")
+        rows.append(f"context_recall,{judge_result.context_recall:.4f}")
     return header + "\n" + "\n".join(rows)

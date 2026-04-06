@@ -22,6 +22,7 @@ def test_init_vault_creates_subdirectories(tmp_path):
     assert (vault / "raw").is_dir()
     assert (vault / "wiki").is_dir()
     assert (vault / "outputs").is_dir()
+    assert (vault / "assets").is_dir()
     assert (vault / ".docmancer").is_dir()
 
 
@@ -226,6 +227,34 @@ def test_scan_then_sync_reindexes_changed_files(tmp_path):
     manifest.load()
     entry = manifest.get_by_path("raw/doc.md")
     assert entry.index_state == IndexState.indexed
+
+
+def test_sync_vault_index_indexes_pdf_entries(tmp_path):
+    vault = tmp_path / "vault"
+    init_vault(vault)
+    file_path = vault / "raw" / "paper.pdf"
+    file_path.write_bytes(b"%PDF-1.4\nResearch findings about auth tokens.\n%%EOF")
+
+    manifest = VaultManifest(vault / ".docmancer" / "manifest.json")
+    manifest.load()
+    entry = ManifestEntry(
+        path="raw/paper.pdf",
+        kind=ContentKind.raw,
+        source_type=SourceType.pdf,
+        content_hash="hash",
+        index_state=IndexState.pending,
+    )
+    manifest.add(entry)
+
+    with patch("docmancer.agent.DocmancerAgent") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+        sync_vault_index(vault, manifest, added_paths=["raw/paper.pdf"])
+
+    mock_agent.ingest_documents.assert_called_once()
+    indexed_entry = manifest.get_by_path("raw/paper.pdf")
+    assert indexed_entry is not None
+    assert indexed_entry.index_state == IndexState.indexed
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,6 @@ telemetry:
 
 - Relative `vector_store.local_path` values are resolved relative to the location of `docmancer.yaml`, not the current shell directory.
 - `vault.scan_dirs` controls which roots are reconciled by `docmancer vault scan`. See the scan loop in [Vaults](./Vaults.md) for details.
-- `vault.registry_path` overrides the default location (`~/.docmancer/vault_registry.json`) for the local vault registry described in [Cross-Vault Workflows](./Cross-Vault-Workflows.md).
+- `vault.registry_path` overrides the default location (`~/.docmancer/vault_registry.json`) for the local vault registry described in [Cross-Vault Workflows](./Cross-Vault-Workflows.md). Vault names and tags are stored in the registry, not in `docmancer.yaml`. Use `docmancer init --template vault --name <name>` to set a custom vault name and `docmancer vault tag` to manage tags.
 - The `eval` and `telemetry` sections are part of the config surface today. The fully hosted observability integrations and judge-based scoring described in [Evals and Observability](./Evals-and-Observability.md) are still future work.
 - For large local ingests, increase `embedding.batch_size` cautiously and use `parallel: 0` to let FastEmbed use all available CPU cores.

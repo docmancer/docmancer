@@ -41,14 +41,48 @@ def _document_for_entry(vault_root: Path, entry: ManifestEntry) -> Document | No
     if not file_path.exists():
         return None
     suffix = file_path.suffix.lower()
-    if suffix not in {".md", ".txt"}:
-        return None
-    content = file_path.read_text(encoding="utf-8")
-    metadata: dict[str, str] = {}
+    metadata: dict[str, str | int] = {}
     if suffix == ".md":
+        content = file_path.read_text(encoding="utf-8")
         metadata["format"] = "markdown"
         metadata["content_type"] = "text/markdown"
-    return Document(source=entry.path, content=content, metadata=metadata)
+        return Document(source=entry.path, content=content, metadata=metadata)
+    if suffix == ".txt":
+        content = file_path.read_text(encoding="utf-8")
+        metadata["format"] = "text"
+        metadata["content_type"] = "text/plain"
+        return Document(source=entry.path, content=content, metadata=metadata)
+    if suffix == ".pdf":
+        content, pdf_metadata = _extract_pdf_content(file_path)
+        if not content:
+            return None
+        metadata.update(pdf_metadata)
+        metadata["format"] = "pdf"
+        metadata["content_type"] = "application/pdf"
+        return Document(source=entry.path, content=content, metadata=metadata)
+    return None
+
+
+def _extract_pdf_content(file_path: Path) -> tuple[str, dict[str, int]]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(file_path))
+        pages: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(text.strip())
+        if pages:
+            return "\n\n".join(pages), {"page_count": len(reader.pages)}
+    except Exception:
+        pass
+
+    raw_text = file_path.read_bytes().decode("latin-1", errors="ignore")
+    normalized = re.sub(r"\s+", " ", raw_text).strip()
+    if any(ch.isalpha() for ch in normalized):
+        return normalized, {}
+    return "", {}
 
 
 def sync_vault_index(
@@ -83,6 +117,8 @@ def sync_vault_index(
             continue
         document = _document_for_entry(vault_root, entry)
         if document is None:
+            if entry.source_type == SourceType.pdf:
+                entry_ids_to_mark_failed.append(entry.id)
             continue
         docs_to_index.append(document)
         entry_ids_to_mark_indexed.append(entry.id)
@@ -110,7 +146,7 @@ def init_vault(directory: Path, name: str | None = None) -> Path:
     otherwise the directory basename is used.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    for subdir in ("raw", "wiki", "outputs", ".docmancer"):
+    for subdir in ("raw", "wiki", "outputs", "assets", ".docmancer"):
         (directory / subdir).mkdir(exist_ok=True)
 
     config_path = directory / "docmancer.yaml"
@@ -198,8 +234,12 @@ def add_url(vault_root: Path, url: str) -> ManifestEntry:
         content_hash=content_hash_val,
         index_state=IndexState.pending,
         source_url=url,
+        canonical_source_url=url,
         title=title if title else None,
-        extra={"fetched_at": datetime.now(timezone.utc).isoformat()},
+        created_at=now_iso,
+        fetched_at=now_iso,
+        outbound_refs=[],
+        extra={"fetched_at": now_iso},
     )
     manifest.add(entry)
     try:

@@ -130,7 +130,7 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
         from docmancer.core.config import DocmancerConfig
         config = DocmancerConfig.from_yaml(config_path)
         if config.vault is not None:
-            scan_dirs = config.vault.scan_dirs
+            scan_dirs = config.vault.effective_scan_dirs()
 
     manifest = VaultManifest(manifest_path)
     manifest.load()
@@ -322,18 +322,39 @@ def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
     click.echo(f"  Index state:  {entry.index_state.value}")
     click.echo(f"  Content hash: {entry.content_hash[:16]}..." if entry.content_hash else "  Content hash: (none)")
     click.echo(f"  Added at:     {entry.added_at}")
+    if entry.created_at:
+        click.echo(f"  Created at:   {entry.created_at}")
+    if entry.fetched_at:
+        click.echo(f"  Fetched at:   {entry.fetched_at}")
     click.echo(f"  Updated at:   {entry.updated_at}")
     if entry.source_url:
         click.echo(f"  Source URL:   {entry.source_url}")
+    if entry.canonical_source_url and entry.canonical_source_url != entry.source_url:
+        click.echo(f"  Canonical:    {entry.canonical_source_url}")
     if entry.title:
         click.echo(f"  Title:        {entry.title}")
     if entry.tags:
         click.echo(f"  Tags:         {', '.join(entry.tags)}")
+    if entry.parent_ref:
+        click.echo(f"  Parent ref:   {entry.parent_ref}")
+    if entry.outbound_refs:
+        click.echo("  References:")
+        for ref in entry.outbound_refs:
+            rendered = f"[[{ref}]]" if "/" not in ref and not ref.startswith(".") else ref
+            click.echo(f"    {rendered}")
+        click.echo("  Outbound refs:")
+        for ref in entry.outbound_refs:
+            click.echo(f"    {ref}")
+    if entry.parent_ref:
+        click.echo("  Parent sources:")
+        parent_entry = inspect_entry(vault_root, entry.parent_ref)
+        label = f" ({parent_entry.title})" if parent_entry and parent_entry.title else ""
+        click.echo(f"    {entry.parent_ref}{label}")
 
-    # Show outbound references
+    # Show outbound references if the manifest is missing them for older entries.
     import re
     file_path = vault_root / entry.path
-    if file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
+    if not entry.outbound_refs and file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
         try:
             content = file_path.read_text(encoding="utf-8")
             wikilinks = re.findall(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", content)
@@ -350,7 +371,7 @@ def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
             pass
 
     # Show parent sources from frontmatter
-    if file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
+    if not entry.parent_ref and file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
         try:
             content = file_path.read_text(encoding="utf-8")
             fm = _parse_frontmatter(content)
@@ -650,3 +671,381 @@ def vault_suggest_cmd(limit: int, directory: str, vault_name: str | None):
         click.echo(f"     Reason: {s['reason']}")
         if s.get("source_refs"):
             click.echo(f"     Refs: {', '.join(s['source_refs'])}")
+
+
+@vault_group.command(
+    "install",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Install a vault package.",
+    epilog=format_examples(
+        "docmancer vault install my-vault --repo owner/repo",
+        "docmancer vault install owner/repo",
+        "docmancer vault install --local ./vault-package.tar.gz",
+    ),
+)
+@click.argument("name")
+@click.option("--repo", default=None, help="GitHub repo (owner/repo).")
+@click.option("--version", "version", default=None, help="Specific version to install.")
+@click.option("--local", "local_path", default=None, type=click.Path(exists=True), help="Install from local .tar.gz file.")
+@click.option("--skip-index", is_flag=True, default=False, help="Skip re-indexing after install.")
+def vault_install_cmd(name: str, repo: str | None, version: str | None, local_path: str | None, skip_index: bool):
+    """Install a vault package from GitHub or a local archive."""
+    import os
+    from docmancer.vault.installer import VaultInstaller
+
+    installer = VaultInstaller()
+
+    try:
+        if local_path:
+            vault_root = installer.install_local(Path(local_path), name=name)
+            click.echo(f"  Installed vault '{name}' from local package.")
+        else:
+            token = os.environ.get("GITHUB_TOKEN")
+            if not token:
+                click.echo("  Note: GITHUB_TOKEN not set. Rate limits may apply for GitHub API.")
+                click.echo()
+
+            vault_root = installer.install(
+                name, repo=repo, version=version, skip_index=skip_index, token=token,
+            )
+            click.echo(f"  Installed vault '{name}'.")
+
+        click.echo(f"  Location: {display_path(vault_root)}")
+
+        # Show vault card summary if available
+        from docmancer.vault.packaging import load_vault_card
+        card = load_vault_card(vault_root)
+        if card:
+            click.echo(f"  Version: {card.version}")
+            click.echo(f"  Entries: {card.content_stats.total_entries}")
+            if card.description:
+                click.echo(f"  Description: {card.description}")
+
+    except (ValueError, RuntimeError, FileNotFoundError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@vault_group.command(
+    "uninstall",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Remove an installed vault.",
+    epilog=format_examples("docmancer vault uninstall my-vault"),
+)
+@click.argument("name")
+def vault_uninstall_cmd(name: str):
+    """Remove an installed vault package."""
+    from docmancer.vault.installer import VaultInstaller
+
+    installer = VaultInstaller()
+    if installer.uninstall(name):
+        click.echo(f"  Uninstalled vault '{name}'.")
+    else:
+        click.echo(f"  Vault '{name}' not found.", err=True)
+        sys.exit(1)
+
+
+@vault_group.command(
+    "publish",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Publish vault to GitHub.",
+    epilog=format_examples(
+        "docmancer vault publish --repo owner/my-vault",
+        "docmancer vault publish --repo owner/my-vault --draft",
+    ),
+)
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--repo", required=True, help="GitHub repo (owner/repo).")
+@click.option("--force", is_flag=True, default=False, help="Publish even with lint errors.")
+@click.option("--draft", is_flag=True, default=False, help="Create a draft release.")
+def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
+    """Package and publish vault to a GitHub release."""
+    import os
+    import tempfile
+    from docmancer.vault.gates import run_pre_publish_gates
+    from docmancer.vault.packaging import package_vault, build_vault_card, QualityReport
+    from docmancer.vault.github import GitHubPublisher
+    from docmancer.core.config import DocmancerConfig
+
+    vault_root = _vault_root(directory)
+    if not (vault_root / ".docmancer").exists():
+        click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
+        sys.exit(1)
+
+    # Load config for version
+    config_path = vault_root / "docmancer.yaml"
+    config = DocmancerConfig.from_yaml(config_path) if config_path.exists() else DocmancerConfig()
+    version = config.vault.version if config.vault else "0.1.0"
+
+    click.echo(f"  Publishing {vault_root.name} v{version} to {repo}...")
+    click.echo()
+
+    # Run quality gates
+    click.echo("  Running quality gates...")
+    gate_result = run_pre_publish_gates(vault_root, block_on_errors=not force)
+
+    errors = [i for i in gate_result.lint_issues if i.severity == "error"]
+    warnings = [i for i in gate_result.lint_issues if i.severity == "warning"]
+
+    if errors:
+        click.echo(f"  Lint: {len(errors)} error(s)")
+        for e in errors[:5]:
+            click.echo(f"    [{e.check}] {e.path} — {e.message}")
+    if warnings:
+        click.echo(f"  Lint: {len(warnings)} warning(s)")
+
+    for w in gate_result.warnings:
+        click.echo(f"  Warning: {w}")
+
+    if not gate_result.passed:
+        click.echo()
+        click.echo("  Publish blocked by quality gates. Use --force to override.", err=True)
+        sys.exit(1)
+
+    click.echo("  Quality gates: passed.")
+    click.echo()
+
+    # Package
+    click.echo("  Packaging vault...")
+    quality_report = QualityReport(
+        lint_errors=len(errors),
+        lint_warnings=len(warnings),
+        eval_mrr=gate_result.eval_result.get("mrr") if gate_result.eval_result else None,
+        eval_hit_rate=gate_result.eval_result.get("hit_rate") if gate_result.eval_result else None,
+        passed=gate_result.passed,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = package_vault(
+            vault_root, Path(tmp), quality_report=quality_report,
+        )
+        click.echo(f"  Package: {archive.name}")
+
+        # Get GitHub token
+        token = os.environ.get("GITHUB_TOKEN")
+        if not token:
+            click.echo()
+            click.echo("  GITHUB_TOKEN not set. Set it in your environment to publish.", err=True)
+            click.echo("  export GITHUB_TOKEN=your_token_here")
+            sys.exit(1)
+
+        # Publish
+        click.echo("  Uploading to GitHub...")
+        publisher = GitHubPublisher(token=token, repo=repo)
+
+        card = build_vault_card(vault_root, config)
+        try:
+            release_url = publisher.publish_vault(archive, card, draft=draft)
+            click.echo()
+            click.echo(f"  Published: {release_url}")
+        except RuntimeError as e:
+            click.echo(f"  Publish failed: {e}", err=True)
+            sys.exit(1)
+
+
+@vault_group.command(
+    "browse",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Search published vaults.",
+    epilog=format_examples(
+        "docmancer vault browse",
+        "docmancer vault browse react",
+    ),
+)
+@click.argument("query", required=False, default=None)
+def vault_browse_cmd(query: str | None):
+    """Search for published vaults on GitHub."""
+    from docmancer.vault.discovery import VaultDiscovery
+
+    discovery = VaultDiscovery()
+    results = discovery.search(query)
+
+    if not results:
+        click.echo("  No vaults found.")
+        return
+
+    for r in results:
+        stars = f" ({r.stars} stars)" if r.stars else ""
+        click.echo(f"  {r.repository}{stars}")
+        if r.description:
+            click.echo(f"    {r.description}")
+        click.echo()
+
+
+@vault_group.command(
+    "info",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Show details of a published vault.",
+    epilog=format_examples("docmancer vault info owner/vault-name"),
+)
+@click.argument("repo")
+def vault_info_cmd(repo: str):
+    """Show details of a published vault from its GitHub repository."""
+    from docmancer.vault.discovery import VaultDiscovery
+
+    discovery = VaultDiscovery()
+    card = discovery.get_details(repo)
+
+    if card is None:
+        click.echo(f"  No vault card found in {repo}.", err=True)
+        click.echo("  The repo may not be a published docmancer vault.")
+        sys.exit(1)
+
+    click.echo(f"  Name:        {card.name}")
+    click.echo(f"  Version:     {card.version}")
+    if card.description:
+        click.echo(f"  Description: {card.description}")
+    if card.author:
+        click.echo(f"  Author:      {card.author}")
+
+    stats = card.content_stats
+    click.echo(f"  Content:     {stats.raw_count} raw, {stats.wiki_count} wiki, {stats.output_count} outputs ({stats.total_entries} total)")
+
+    if card.eval_scores:
+        click.echo("  Eval scores:")
+        for metric, value in card.eval_scores.items():
+            click.echo(f"    {metric}: {value:.4f}")
+
+    if card.dependencies:
+        click.echo("  Dependencies:")
+        for dep in card.dependencies:
+            click.echo(f"    {dep.name} ({dep.version})")
+
+    click.echo()
+    click.echo(f"  Install: docmancer vault install {card.name} --repo {repo}")
+
+
+@vault_group.command(
+    "deps",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="List or install vault dependencies.",
+    epilog=format_examples(
+        "docmancer vault deps",
+        "docmancer vault deps --install",
+    ),
+)
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+@click.option("--install", "do_install", is_flag=True, default=False, help="Install missing dependencies.")
+def vault_deps_cmd(directory: str, vault_name: str | None, do_install: bool):
+    """List or install vault dependencies."""
+    from docmancer.vault.composition import list_dependencies, resolve_dependencies
+
+    vault_root = _resolve_vault_root(directory, vault_name)
+
+    deps = list_dependencies(vault_root)
+
+    if not deps:
+        click.echo("  No dependencies declared.")
+        return
+
+    for dep in deps:
+        status = "installed" if dep["installed"] else "missing"
+        version = dep["version"] if dep["version"] != "*" else "any"
+        click.echo(f"  {dep['name']} ({version}) — {status}")
+
+    missing = [d for d in deps if not d["installed"]]
+
+    if do_install and missing:
+        import os
+        from docmancer.vault.installer import VaultInstaller
+
+        click.echo()
+        click.echo(f"  Installing {len(missing)} missing dependencies...")
+        installer = VaultInstaller()
+        token = os.environ.get("GITHUB_TOKEN")
+        installed = resolve_dependencies(vault_root, installer, token=token)
+        click.echo(f"  Installed: {', '.join(installed) if installed else '(none)'}")
+    elif missing:
+        click.echo(f"\n  {len(missing)} missing. Use --install to install them.")
+
+
+@vault_group.command(
+    "create-reference",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Scaffold a reference vault from a docs URL.",
+    epilog=format_examples(
+        "docmancer vault create-reference https://docs.example.com --name example-docs",
+    ),
+)
+@click.argument("url")
+@click.option("--name", required=True, help="Vault name.")
+@click.option("--output-dir", default=".", help="Parent directory for the vault.")
+def vault_create_reference_cmd(url: str, name: str, output_dir: str):
+    """Scaffold a reference vault from a documentation site.
+
+    Initializes a vault, fetches docs from URL into raw/,
+    scans and indexes, generates an eval dataset scaffold, and runs lint.
+    """
+    from docmancer.vault.operations import init_vault, add_url
+    from docmancer.vault.manifest import VaultManifest
+    from docmancer.vault.scanner import scan_vault
+    from docmancer.vault.operations import sync_vault_index
+    from docmancer.vault.lint import lint_vault
+
+    vault_root = Path(output_dir).resolve() / name
+
+    click.echo(f"  Creating reference vault '{name}'...")
+    click.echo()
+
+    # 1. Init vault
+    init_vault(vault_root, name=name)
+    click.echo(f"  Initialized vault at: {display_path(vault_root)}")
+
+    # 2. Fetch docs from URL into raw/
+    click.echo(f"  Fetching from: {url}")
+    try:
+        entry = add_url(vault_root, url)
+        click.echo(f"  Added: {entry.path}")
+    except Exception as e:
+        click.echo(f"  Warning: Could not fetch URL: {e}")
+        click.echo("  You can add pages later with 'docmancer vault add-url'.")
+
+    # 3. Scan and index
+    click.echo("  Scanning vault...")
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+    scan_dirs = ["raw", "wiki", "outputs", "assets"]
+    result = scan_vault(vault_root, manifest, scan_dirs)
+    manifest.save()
+
+    if result.added:
+        try:
+            sync_vault_index(vault_root, manifest, added_paths=result.added)
+            manifest.save()
+        except Exception:
+            click.echo("  Warning: Indexing failed. You can re-run 'docmancer vault scan'.")
+
+    click.echo(f"  Scan: {len(result.added)} added, {len(result.updated)} updated.")
+
+    # 4. Generate eval dataset scaffold
+    click.echo("  Generating eval dataset scaffold...")
+    try:
+        from docmancer.eval.dataset import generate_scaffold
+        ds = generate_scaffold(vault_root / "raw")
+        ds.save(vault_root / ".docmancer" / "eval_dataset.json")
+        click.echo(f"  Eval dataset: {len(ds.entries)} entries (fill in questions).")
+    except Exception as e:
+        click.echo(f"  Warning: Could not generate eval dataset: {e}")
+
+    # 5. Run lint
+    click.echo("  Running lint...")
+    issues = lint_vault(vault_root)
+    errors = [i for i in issues if i.severity == "error"]
+    warnings = [i for i in issues if i.severity == "warning"]
+    click.echo(f"  Lint: {len(errors)} error(s), {len(warnings)} warning(s).")
+
+    click.echo()
+    click.echo("  Reference vault scaffolded. Next steps:")
+    click.echo("    1. Add more pages: docmancer vault add-url <url>")
+    click.echo("    2. Fill eval dataset: edit .docmancer/eval_dataset.json")
+    click.echo("    3. Run eval: docmancer eval --dataset .docmancer/eval_dataset.json")
+    click.echo("    4. Publish: docmancer vault publish --repo owner/vault-name")

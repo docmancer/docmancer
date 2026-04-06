@@ -19,6 +19,7 @@ def test_init_vault_template(tmp_path):
     assert (tmp_path / "my-vault" / "raw").is_dir()
     assert (tmp_path / "my-vault" / "wiki").is_dir()
     assert (tmp_path / "my-vault" / "outputs").is_dir()
+    assert (tmp_path / "my-vault" / "assets").is_dir()
     assert (tmp_path / "my-vault" / ".docmancer").is_dir()
     assert (tmp_path / "my-vault" / "docmancer.yaml").exists()
 

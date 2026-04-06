@@ -75,3 +75,30 @@ def run_eval(
         latency_p99=pcts["p99"],
         num_queries=n,
     )
+
+
+def run_eval_with_judge(
+    dataset: EvalDataset,
+    query_fn,
+    k: int = 5,
+    api_key: str | None = None,
+    judge_provider: str = "openai",
+) -> tuple[EvalResult, Any]:
+    """Run deterministic eval, then attempt LLM-as-judge scoring.
+
+    Always returns deterministic results. Judge result may be None
+    if ragas is not installed or API key is missing.
+
+    Returns:
+        (eval_result, judge_result) where judge_result is JudgeResult | None
+    """
+    eval_result = run_eval(dataset, query_fn, k=k)
+
+    judge_result = None
+    if api_key:
+        from docmancer.eval.judge import run_judge_eval
+        judge_result = run_judge_eval(
+            dataset, query_fn, k=k, api_key=api_key, provider=judge_provider,
+        )
+
+    return eval_result, judge_result

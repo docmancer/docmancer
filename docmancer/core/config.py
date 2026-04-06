@@ -49,9 +49,27 @@ class WebFetchConfig(BaseSettings):
 
 class VaultConfig(BaseSettings):
     enabled: bool = True
+    raw_dir: str = "raw"
+    wiki_dir: str = "wiki"
+    outputs_dir: str = "outputs"
+    assets_dir: str = "assets"
+    manifest_path: str = ".docmancer/manifest.json"
+    index_roots: list[str] = Field(default_factory=list)
     scan_dirs: list[str] = Field(default_factory=lambda: ["raw", "wiki", "outputs"])
     registry_path: str = ""
+    version: str = "0.1.0"
+    description: str = ""
+    author: str = ""
+    repository: str = ""
+    dependencies: list[dict] = Field(default_factory=list)
     model_config = SettingsConfigDict(env_prefix="VAULT_", extra="ignore")
+
+    def effective_scan_dirs(self) -> list[str]:
+        if self.index_roots:
+            return list(self.index_roots)
+        if self.scan_dirs:
+            return list(self.scan_dirs)
+        return [self.raw_dir, self.wiki_dir, self.outputs_dir]
 
 
 class EvalConfig(BaseSettings):

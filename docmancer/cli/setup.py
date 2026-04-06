@@ -85,6 +85,27 @@ def setup_cmd(config_path: str | None):
     else:
         click.echo("  Langfuse: skipped.")
 
+    click.echo()
+
+    # Eval LLM-as-judge configuration
+    enable_judge = click.confirm("  Enable eval LLM-as-judge scoring?", default=False)
+    if enable_judge:
+        judge_provider = click.prompt(
+            "  Judge provider",
+            type=click.Choice(["openai", "anthropic"], case_sensitive=False),
+            default="openai",
+        )
+        if "eval" not in existing:
+            existing["eval"] = {}
+        existing["eval"]["judge_provider"] = judge_provider
+        if judge_provider == "openai":
+            click.echo("  Set OPENAI_API_KEY in your environment.")
+        else:
+            click.echo("  The Anthropic API key from LLM config above will be used.")
+        click.echo("  Judge: configured.")
+    else:
+        click.echo("  Judge: skipped. You can enable later via 'docmancer setup'.")
+
     # Write config
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cfg_path, "w") as f:

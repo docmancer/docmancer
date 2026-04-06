@@ -131,7 +131,18 @@ Both commands use the same underlying vector index and work together. An agent m
 
 ## Working with multiple vaults
 
-You can have separate vaults for different knowledge domains (project docs, personal research, client work). Each vault has its own manifest and config, but they share the local Qdrant store by default. See [Cross-Vault Workflows](./Cross-Vault-Workflows.md) for the vault registry and multi-vault patterns.
+You can have separate vaults for different knowledge domains. Give each vault a descriptive name at init and use tags to organize them into groups:
+
+```bash
+docmancer init --template vault --name stripe-docs --dir ./vaults/stripe
+docmancer init --template vault --name ml-research --dir ./vaults/ml
+docmancer vault tag stripe-docs work api
+docmancer vault tag ml-research personal research
+```
+
+Each vault has its own manifest and config, but they share the local Qdrant store by default. Use `docmancer list --vaults` to see all registered vaults with their tags, or filter by tag with `docmancer list --vaults --tag work`.
+
+You can query across vaults with `docmancer query --cross-vault`, or target a specific group with `docmancer query --tag research "your question"`. See [Cross-Vault Workflows](./Cross-Vault-Workflows.md) for the full multi-vault model.
 
 ## Current boundary
 
