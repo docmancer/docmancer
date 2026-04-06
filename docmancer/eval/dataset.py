@@ -7,6 +7,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+_AUTO_GENERATED_EVAL_FILES = {"_graph.md", "_index.md"}
+
+
 class DatasetEntry(BaseModel):
     question: str
     expected_answer: str = ""
@@ -47,7 +50,11 @@ def generate_scaffold(source_dir: Path, max_entries: int = 50) -> EvalDataset:
     and expected_answer blank for the developer to complete.
     """
     entries = []
-    md_files = sorted(source_dir.rglob("*.md"))[:max_entries]
+    md_files = [
+        file_path
+        for file_path in sorted(source_dir.rglob("*.md"))
+        if file_path.name not in _AUTO_GENERATED_EVAL_FILES
+    ][:max_entries]
 
     for md_file in md_files:
         try:
@@ -74,7 +81,11 @@ def generate_scaffold(source_dir: Path, max_entries: int = 50) -> EvalDataset:
 
     return EvalDataset(
         entries=entries,
-        metadata={"generated_from": str(source_dir), "mode": "scaffold"},
+        metadata={
+            "generated_from": str(source_dir),
+            "mode": "scaffold",
+            "excluded_auto_generated_files": sorted(_AUTO_GENERATED_EVAL_FILES),
+        },
     )
 
 

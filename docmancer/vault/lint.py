@@ -179,12 +179,15 @@ def lint_vault(vault_root: Path, fix: bool = False) -> list[LintIssue]:
                 ))
 
     # --- Check 6: untracked files ---
+    from docmancer.vault.scanner import _AUTO_GENERATED_FILES
     for dir_name in _TRACKED_DIRS:
         scan_path = vault_root / dir_name
         if not scan_path.is_dir():
             continue
         for file_path in sorted(scan_path.rglob("*")):
             if not file_path.is_file():
+                continue
+            if file_path.name in _AUTO_GENERATED_FILES:
                 continue
             relative = str(file_path.relative_to(vault_root))
             if relative not in manifest_paths:

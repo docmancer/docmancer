@@ -129,6 +129,8 @@ class QdrantStore:
         self._create_payload_indexes(self._documents_collection_name)
 
     def _create_payload_indexes(self, collection_name: str) -> None:
+        if not self._url:
+            return
         for field_name in self._INDEXED_PAYLOAD_FIELDS:
             self._client.create_payload_index(
                 collection_name=collection_name,
@@ -167,6 +169,9 @@ class QdrantStore:
                     "text": chunk.text,
                     "ingested_at": ingested_at,
                 }
+                for key, value in chunk.metadata.items():
+                    if value is not None:
+                        payload[key] = value
                 docset_root = chunk.metadata.get("docset_root")
                 if docset_root:
                     payload["docset_root"] = str(docset_root)
@@ -252,7 +257,13 @@ class QdrantStore:
                 results.append(RetrievedChunk(
                     source=str(payload.get("source", "unknown")),
                     chunk_index=int(payload.get("chunk_index", 0)),
-                    text=text, score=float(getattr(point, "score", 0.0)),
+                    text=text,
+                    score=float(getattr(point, "score", 0.0)),
+                    metadata={
+                        key: value
+                        for key, value in payload.items()
+                        if key not in {"source", "chunk_index", "text"}
+                    },
                 ))
         return results
 
@@ -316,6 +327,11 @@ class QdrantStore:
                         chunk_index=int(payload.get("chunk_index", 0)),
                         text=text,
                         score=1.0,
+                        metadata={
+                            key: value
+                            for key, value in payload.items()
+                            if key not in {"source", "chunk_index", "text"}
+                        },
                     ))
             if next_offset is None:
                 break

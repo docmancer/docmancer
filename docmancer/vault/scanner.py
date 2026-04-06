@@ -38,6 +38,8 @@ _SOURCE_TYPE_BY_EXT: dict[str, SourceType] = {
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|[^\]]*?)?\]\]")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 
+_AUTO_GENERATED_FILES = {"_index.md", "_graph.md"}
+
 
 def _sha256(file_path: Path) -> str:
     h = hashlib.sha256()
@@ -137,6 +139,8 @@ def scan_vault(vault_root: Path, manifest: VaultManifest, scan_dirs: list[str]) 
             if not file_path.is_file():
                 continue
             if file_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+                continue
+            if file_path.name in _AUTO_GENERATED_FILES:
                 continue
             relative = str(file_path.relative_to(vault_root))
             seen_paths.add(relative)

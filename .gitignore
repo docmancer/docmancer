@@ -15,3 +15,4 @@ downloaded-docs/
 /release-patch-pypi.sh
 /repush-release-tag.sh
 docs/
+scripts/*.log

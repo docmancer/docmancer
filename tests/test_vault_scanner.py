@@ -113,6 +113,19 @@ def test_scan_correct_source_type_for_images(tmp_path: Path) -> None:
         assert entry.source_type == SourceType.image
 
 
+def test_scan_assets_directory_maps_to_asset_kind(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    _write_file(vault / "assets" / "diagram.png", "fake-image-data")
+
+    manifest = _make_manifest(tmp_path)
+    result = scan_vault(vault, manifest, ["assets"])
+
+    assert result.added == ["assets/diagram.png"]
+    entry = manifest.get_by_path("assets/diagram.png")
+    assert entry is not None
+    assert entry.kind == ContentKind.asset
+
+
 def test_scan_pdf_source_type(tmp_path: Path) -> None:
     vault = tmp_path / "vault"
     _write_file(vault / "raw" / "doc.pdf", "%PDF-1.4")

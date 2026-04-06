@@ -221,31 +221,67 @@ def eval_gap_items(vault_root: Path) -> list[dict]:
 
 
 def related_entries(vault_root: Path, id_or_path: str) -> list[dict]:
-    """Find entries sharing tags with the target. Sorted by shared tag count descending."""
+    """Find adjacent entries using tags, explicit links, and backlink graph signals."""
     manifest = _load_manifest(vault_root)
+    from docmancer.vault.graph import build_graph
 
     # Find target entry
     target = manifest.get_by_id(id_or_path)
     if target is None:
         target = manifest.get_by_path(id_or_path)
-    if target is None or not target.tags:
+    if target is None:
         return []
 
+    graph = build_graph(vault_root)
     target_tags = set(target.tags)
+    target_domain = ""
+    if target.source_url:
+        from urllib.parse import urlparse
+        target_domain = urlparse(target.source_url).netloc
+
+    target_node = graph.nodes.get(target.path)
+    explicit_neighbors = set()
+    if target_node is not None:
+        explicit_neighbors.update(target_node.outbound)
+        explicit_neighbors.update(target_node.backlinks)
+
     related = []
     for entry in manifest.all_entries():
         if entry.id == target.id:
             continue
+        reasons: list[str] = []
+        score = 0
+
         shared = target_tags & set(entry.tags)
         if shared:
+            reasons.append(f"shares {len(shared)} tag(s): {', '.join(sorted(shared))}")
+            score += len(shared) * 3
+        if entry.path in explicit_neighbors:
+            relation = "linked from/to target"
+            reasons.append(relation)
+            score += 4
+        if target.parent_ref and target.parent_ref == entry.path:
+            reasons.append("is parent source")
+            score += 4
+        if entry.parent_ref and entry.parent_ref == target.path:
+            reasons.append("references target as parent source")
+            score += 4
+        if target_domain and entry.source_url:
+            from urllib.parse import urlparse
+            if urlparse(entry.source_url).netloc == target_domain:
+                reasons.append(f"same source domain: {target_domain}")
+                score += 1
+
+        if score > 0:
             related.append({
                 "path": entry.path,
                 "kind": entry.kind.value,
                 "shared_tags": sorted(shared),
-                "relevance_reason": f"shares {len(shared)} tag(s): {', '.join(sorted(shared))}",
+                "relevance_reason": "; ".join(reasons),
+                "score": score,
             })
 
-    related.sort(key=lambda r: len(r["shared_tags"]), reverse=True)
+    related.sort(key=lambda r: (-r["score"], r["path"]))
     return related
 
 

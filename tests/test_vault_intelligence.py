@@ -158,6 +158,22 @@ class TestRelatedEntries:
         assert "kind" in b_entry
         assert "relevance_reason" in b_entry
 
+    def test_related_by_explicit_links(self, tmp_path: Path) -> None:
+        _scaffold_vault(tmp_path)
+        _write_raw(tmp_path, "source.md", "# Source")
+        _write_wiki(
+            tmp_path,
+            "article.md",
+            "---\ntitle: Article\ntags: []\nsources:\n  - raw/source.md\ncreated: 2025-01-01\nupdated: 2025-01-01\n---\nSee [[source]] for details.",
+        )
+        _scan(tmp_path)
+
+        from docmancer.vault.intelligence import related_entries
+        related = related_entries(tmp_path, "wiki/article.md")
+
+        related_paths = [r["path"] for r in related]
+        assert "raw/source.md" in related_paths
+
 
 class TestBuildBacklog:
     def test_build_backlog(self, tmp_path: Path) -> None:

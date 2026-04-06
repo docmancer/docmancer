@@ -62,8 +62,10 @@ class _FormattedHelpMixin:
                 break_long_words=False,
                 break_on_hyphens=False,
             ) or [""]
-            styled_term = self._style(ctx, term.ljust(self._term_width), fg="bright_green", bold=True)
-            formatter.write(f"  {styled_term}{wrapped[0]}\n")
+            padded_term = term.ljust(self._term_width) if len(term) < self._term_width else f"{term} "
+            styled_term = self._style(ctx, padded_term, fg="bright_green", bold=True)
+            spacer = "" if len(term) < self._term_width else ""
+            formatter.write(f"  {styled_term}{spacer}{wrapped[0]}\n")
             for line in wrapped[1:]:
                 formatter.write(" " * self._desc_start + f"{line}\n")
 

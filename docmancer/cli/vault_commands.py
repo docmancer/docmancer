@@ -107,12 +107,12 @@ def vault_untag_cmd(vault_name: str, tag: str):
     "scan",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Scan vault and reconcile manifest.",
+    short_help="Scan vault, reconcile manifest, and refresh index state.",
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
 def vault_scan_cmd(directory: str, vault_name: str | None):
-    """Discover files, reconcile the manifest, and report changes."""
+    """Discover files, reconcile the manifest, refresh retrieval state, and report changes."""
     from docmancer.vault.manifest import VaultManifest
     from docmancer.vault.scanner import scan_vault
     from docmancer.vault.operations import sync_vault_index
@@ -125,7 +125,7 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
         sys.exit(1)
 
     config_path = vault_root / "docmancer.yaml"
-    scan_dirs = ["raw", "wiki", "outputs"]
+    scan_dirs = ["raw", "wiki", "outputs", "assets"]
     if config_path.exists():
         from docmancer.core.config import DocmancerConfig
         config = DocmancerConfig.from_yaml(config_path)
@@ -177,6 +177,26 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
         f"Total: {total} entries."
     )
 
+    # Auto-update index and graph when content changed
+    if result.added or result.updated or result.removed:
+        try:
+            from docmancer.vault.index_compiler import compile_index, write_index
+            write_index(vault_root, compile_index(vault_root))
+        except Exception:
+            pass
+        try:
+            import json as json_mod
+            from docmancer.vault.graph import build_graph, render_graph_markdown, render_graph_json
+            graph = build_graph(vault_root)
+            wiki_dir = vault_root / "wiki"
+            wiki_dir.mkdir(parents=True, exist_ok=True)
+            (wiki_dir / "_graph.md").write_text(render_graph_markdown(graph), encoding="utf-8")
+            (vault_root / ".docmancer" / "graph.json").write_text(
+                json_mod.dumps(render_graph_json(graph), indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
     # Report frontmatter warnings for wiki/output files
     from docmancer.vault.lint import lint_vault
     issues = lint_vault(vault_root)
@@ -190,7 +210,7 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
     "status",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Show vault status summary.",
+    short_help="Show vault status and health summary.",
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
@@ -243,6 +263,21 @@ def vault_status_cmd(directory: str, vault_name: str | None):
     if changed_count > 0:
         click.echo(f"  Changed: {changed_count} file(s) modified since last scan")
 
+    from docmancer.vault.lint import lint_vault
+    lint_issues = lint_vault(vault_root)
+    lint_errors = sum(1 for issue in lint_issues if issue.severity == "error")
+    lint_warnings = sum(1 for issue in lint_issues if issue.severity != "error")
+    missing_links = sum(
+        1
+        for issue in lint_issues
+        if issue.check in {"broken_wikilink", "broken_local_link", "broken_image_ref"}
+    )
+    if lint_issues:
+        click.echo(
+            f"  Health: {lint_errors} error(s), {lint_warnings} warning(s), "
+            f"{missing_links} broken link/image reference(s)"
+        )
+
     # Vault size
     total_files = 0
     total_bytes = 0
@@ -269,12 +304,14 @@ def vault_status_cmd(directory: str, vault_name: str | None):
     "add-url",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Fetch a web page into the vault.",
+    short_help="Fetch or refresh a web page in the vault.",
 )
 @click.argument("url")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
-def vault_add_url_cmd(url: str, directory: str):
-    """Fetch a single web page into raw/ with provenance tracking."""
+@click.option("--browser", is_flag=True, default=False,
+              help="Enable Playwright browser fallback for JS-heavy sites.")
+def vault_add_url_cmd(url: str, directory: str, browser: bool):
+    """Fetch a single web page into raw/ with provenance tracking, updating existing entries when possible."""
     from docmancer.vault.operations import add_url
 
     vault_root = _vault_root(directory)
@@ -283,7 +320,7 @@ def vault_add_url_cmd(url: str, directory: str):
         sys.exit(1)
 
     try:
-        entry = add_url(vault_root, url)
+        entry = add_url(vault_root, url, browser=browser)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -392,7 +429,7 @@ def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
     "search",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Search vault by keyword.",
+    short_help="Search vault metadata and file content.",
 )
 @click.argument("query")
 @click.option("--kind", default=None, type=click.Choice(["raw", "wiki", "output", "asset"], case_sensitive=False),
@@ -401,7 +438,7 @@ def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
 def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str, vault_name: str | None):
-    """Search vault entries by keyword against paths, titles, and tags."""
+    """Search vault entries by keyword against paths, titles, tags, and indexed file content."""
     from docmancer.vault.operations import search_vault
 
     vault_root = _resolve_vault_root(directory, vault_name)
@@ -588,7 +625,7 @@ def vault_context_cmd(query: str, limit: int, directory: str, vault_name: str | 
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
 def vault_related_cmd(id_or_path: str, directory: str, vault_name: str | None):
-    """Find related vault entries by shared tags."""
+    """Find related vault entries using tags, explicit links, and graph relationships."""
     from docmancer.vault.intelligence import related_entries
     from docmancer.vault.operations import inspect_entry
 
@@ -1001,9 +1038,11 @@ def vault_create_reference_cmd(url: str, name: str, output_dir: str):
 
     # 2. Fetch docs from URL into raw/
     click.echo(f"  Fetching from: {url}")
+    fetch_succeeded = False
     try:
         entry = add_url(vault_root, url)
         click.echo(f"  Added: {entry.path}")
+        fetch_succeeded = True
     except Exception as e:
         click.echo(f"  Warning: Could not fetch URL: {e}")
         click.echo("  You can add pages later with 'docmancer vault add-url'.")
@@ -1044,8 +1083,306 @@ def vault_create_reference_cmd(url: str, name: str, output_dir: str):
     click.echo(f"  Lint: {len(errors)} error(s), {len(warnings)} warning(s).")
 
     click.echo()
-    click.echo("  Reference vault scaffolded. Next steps:")
+    if fetch_succeeded and result.added:
+        click.echo("  Reference vault scaffolded successfully. Next steps:")
+    else:
+        click.echo("  Reference vault scaffolded partially. No source content was ingested yet. Next steps:")
     click.echo("    1. Add more pages: docmancer vault add-url <url>")
     click.echo("    2. Fill eval dataset: edit .docmancer/eval_dataset.json")
     click.echo("    3. Run eval: docmancer eval --dataset .docmancer/eval_dataset.json")
     click.echo("    4. Publish: docmancer vault publish --repo owner/vault-name")
+
+
+@vault_group.command(
+    "compile-index",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Generate or update the vault index.",
+    epilog=format_examples(
+        "docmancer vault compile-index",
+        "docmancer vault compile-index --llm",
+    ),
+)
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+@click.option("--llm", is_flag=True, default=False, help="Use LLM for richer summaries (requires API key).")
+def vault_compile_index_cmd(directory: str, vault_name: str | None, llm: bool):
+    """Generate wiki/_index.md with summaries of all vault content."""
+    from docmancer.vault.index_compiler import compile_index, write_index
+
+    vault_root = _resolve_vault_root(directory, vault_name)
+    if not (vault_root / ".docmancer").exists():
+        click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
+        sys.exit(1)
+
+    llm_provider = None
+    if llm:
+        from docmancer.connectors.llm.provider import get_llm_provider
+        from docmancer.core.config import DocmancerConfig
+
+        config = DocmancerConfig()
+        config_file = vault_root / "docmancer.yaml"
+        if config_file.exists():
+            config = DocmancerConfig.from_yaml(config_file)
+        llm_provider = get_llm_provider(config)
+        if llm_provider is None:
+            click.echo("  LLM features require an API key.")
+            click.echo("  Run 'docmancer setup' to configure, or set ANTHROPIC_API_KEY.")
+            click.echo("  Falling back to extracted summaries.")
+            click.echo()
+
+    content = compile_index(vault_root, use_llm=llm and llm_provider is not None, llm_provider=llm_provider)
+    path = write_index(vault_root, content)
+    click.echo(f"  Index written to: {display_path(path)}")
+
+
+@vault_group.command(
+    "graph",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Generate the backlink graph.",
+    epilog=format_examples(
+        "docmancer vault graph",
+        "docmancer vault graph --format json",
+        "docmancer vault graph --format terminal",
+    ),
+)
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+@click.option("--format", "output_format", default="all",
+              type=click.Choice(["all", "markdown", "json", "terminal"]),
+              help="Output format.")
+def vault_graph_cmd(directory: str, vault_name: str | None, output_format: str):
+    """Generate and display the vault backlink graph."""
+    import json as json_mod
+    from docmancer.vault.graph import build_graph, render_graph_markdown, render_graph_json, render_graph_terminal
+
+    vault_root = _resolve_vault_root(directory, vault_name)
+    if not (vault_root / ".docmancer").exists():
+        click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
+        sys.exit(1)
+
+    graph = build_graph(vault_root)
+
+    if output_format in ("all", "markdown"):
+        md_content = render_graph_markdown(graph)
+        md_path = vault_root / "wiki" / "_graph.md"
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(md_content, encoding="utf-8")
+        click.echo(f"  Graph markdown: {display_path(md_path)}")
+
+    if output_format in ("all", "json"):
+        json_data = render_graph_json(graph)
+        json_path = vault_root / ".docmancer" / "graph.json"
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json_mod.dumps(json_data, indent=2), encoding="utf-8")
+        click.echo(f"  Graph JSON: {display_path(json_path)}")
+
+    if output_format in ("all", "terminal"):
+        click.echo(render_graph_terminal(graph))
+
+
+@vault_group.command(
+    "add-arxiv",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Fetch an arxiv paper into the vault.",
+    epilog=format_examples(
+        "docmancer vault add-arxiv 2301.00001",
+        "docmancer vault add-arxiv https://arxiv.org/abs/2301.00001",
+    ),
+)
+@click.argument("paper_id")
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+def vault_add_arxiv_cmd(paper_id: str, directory: str, vault_name: str | None):
+    """Fetch an arxiv paper into raw/ by paper ID or URL."""
+    import hashlib
+    from datetime import datetime, timezone
+    from docmancer.connectors.fetchers.arxiv import ArxivFetcher
+    from docmancer.vault.manifest import ContentKind, IndexState, ManifestEntry, SourceType, VaultManifest
+    from docmancer.vault.operations import sync_vault_index
+
+    vault_root = _resolve_vault_root(directory, vault_name)
+    if not (vault_root / ".docmancer").exists():
+        click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
+        sys.exit(1)
+
+    fetcher = ArxivFetcher()
+    try:
+        docs = fetcher.fetch(paper_id)
+    except (ValueError, Exception) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if not docs:
+        click.echo("Error: no content returned from arxiv.", err=True)
+        sys.exit(1)
+
+    doc = docs[0]
+    raw_dir = vault_root / "raw"
+    raw_dir.mkdir(exist_ok=True)
+
+    slug = doc.metadata.get("paper_id", "paper").replace("/", "_").replace(".", "_")
+    filename = f"arxiv_{slug}.md"
+    dest = raw_dir / filename
+    counter = 1
+    while dest.exists():
+        dest = raw_dir / f"arxiv_{slug}_{counter}.md"
+        counter += 1
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    title = doc.metadata.get("title", slug)
+    tags = doc.metadata.get("categories", [])
+    source_url = f"https://arxiv.org/abs/{doc.metadata.get('paper_id', paper_id)}"
+
+    frontmatter = (
+        f"---\n"
+        f"title: \"{title}\"\n"
+        f"tags: {tags}\n"
+        f"sources: [{source_url}]\n"
+        f"created: {now_iso}\n"
+        f"updated: {now_iso}\n"
+        f"---\n\n"
+    )
+    content_with_fm = frontmatter + doc.content
+    dest.write_text(content_with_fm, encoding="utf-8")
+
+    content_hash = hashlib.sha256(content_with_fm.encode("utf-8")).hexdigest()
+    relative_path = str(dest.relative_to(vault_root))
+
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+
+    entry = ManifestEntry(
+        path=relative_path,
+        kind=ContentKind.raw,
+        source_type=SourceType.arxiv,
+        content_hash=content_hash,
+        index_state=IndexState.pending,
+        source_url=source_url,
+        canonical_source_url=source_url,
+        title=title,
+        tags=tags if isinstance(tags, list) else [],
+        created_at=now_iso,
+        fetched_at=now_iso,
+    )
+    manifest.add(entry)
+
+    try:
+        sync_vault_index(vault_root, manifest, added_paths=[relative_path])
+    finally:
+        manifest.save()
+
+    click.echo(f"  Saved: {relative_path}")
+    click.echo(f"  ID: {entry.id}")
+    click.echo(f"  Source: {source_url}")
+    click.echo(f"  Title: {title}")
+    click.echo("  Index: ready")
+
+
+@vault_group.command(
+    "add-github",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Fetch GitHub repo docs into the vault.",
+    epilog=format_examples(
+        "docmancer vault add-github https://github.com/owner/repo",
+        "docmancer vault add-github https://github.com/owner/repo --pattern '*.md'",
+    ),
+)
+@click.argument("repo_url")
+@click.option("--dir", "directory", default=".", help="Vault root directory.")
+@click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
+@click.option("--pattern", multiple=True, help="File patterns to fetch (default: README + docs/).")
+def vault_add_github_cmd(repo_url: str, directory: str, vault_name: str | None, pattern: tuple):
+    """Fetch GitHub repo documentation into raw/."""
+    import hashlib
+    import re
+    from datetime import datetime, timezone
+    from docmancer.connectors.fetchers.github import GitHubFetcher
+    from docmancer.vault.manifest import ContentKind, IndexState, ManifestEntry, SourceType, VaultManifest
+    from docmancer.vault.operations import sync_vault_index
+
+    vault_root = _resolve_vault_root(directory, vault_name)
+    if not (vault_root / ".docmancer").exists():
+        click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
+        sys.exit(1)
+
+    file_patterns = list(pattern) if pattern else None
+    fetcher = GitHubFetcher(file_patterns=file_patterns)
+    try:
+        docs = fetcher.fetch(repo_url)
+    except (ValueError, Exception) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if not docs:
+        click.echo("Error: no documents fetched from repository.", err=True)
+        sys.exit(1)
+
+    raw_dir = vault_root / "raw"
+    raw_dir.mkdir(exist_ok=True)
+
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    added_paths = []
+    repo_name = docs[0].metadata.get("repo", "repo").replace("/", "_")
+
+    for doc in docs:
+        file_path = doc.metadata.get("file_path", "README.md")
+        slug = f"github_{repo_name}_{file_path}".replace("/", "_").replace(" ", "_")
+        slug = re.sub(r"[^a-zA-Z0-9_\-.]", "_", slug)
+        if not slug.endswith(".md"):
+            slug += ".md"
+        dest = raw_dir / slug
+        counter = 1
+        base_slug = slug.rsplit(".", 1)[0]
+        while dest.exists():
+            dest = raw_dir / f"{base_slug}_{counter}.md"
+            counter += 1
+
+        title = file_path
+        frontmatter = (
+            f"---\n"
+            f"title: \"{title}\"\n"
+            f"tags: []\n"
+            f"sources: [{repo_url}]\n"
+            f"created: {now_iso}\n"
+            f"updated: {now_iso}\n"
+            f"---\n\n"
+        )
+        content_with_fm = frontmatter + doc.content
+        dest.write_text(content_with_fm, encoding="utf-8")
+
+        content_hash = hashlib.sha256(content_with_fm.encode("utf-8")).hexdigest()
+        relative_path = str(dest.relative_to(vault_root))
+
+        entry = ManifestEntry(
+            path=relative_path,
+            kind=ContentKind.raw,
+            source_type=SourceType.github,
+            content_hash=content_hash,
+            index_state=IndexState.pending,
+            source_url=repo_url,
+            canonical_source_url=repo_url,
+            title=title,
+            created_at=now_iso,
+            fetched_at=now_iso,
+        )
+        manifest.add(entry)
+        added_paths.append(relative_path)
+
+    try:
+        sync_vault_index(vault_root, manifest, added_paths=added_paths)
+    finally:
+        manifest.save()
+
+    click.echo(f"  Fetched {len(docs)} file(s) from {repo_url}")
+    for p in added_paths:
+        click.echo(f"    {p}")
+    click.echo("  Index: ready")

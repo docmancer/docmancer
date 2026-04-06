@@ -267,6 +267,12 @@ class DocmancerAgent:
                 browser=browser,
                 workers=self.config.web_fetch.workers,
             )
+        if provider == "arxiv":
+            from docmancer.connectors.fetchers.arxiv import ArxivFetcher
+            return ArxivFetcher()
+        if provider == "github":
+            from docmancer.connectors.fetchers.github import GitHubFetcher
+            return GitHubFetcher()
 
         # Auto-detect: probe the site to determine the best fetcher.
         if url:
@@ -301,6 +307,14 @@ class DocmancerAgent:
 
         Returns "gitbook", "mintlify", or "web".
         """
+        # Check URL patterns for specialized sources before HTTP probe.
+        if "arxiv.org" in url:
+            logger.info("Detected arxiv URL")
+            return "arxiv"
+        if "github.com" in url and not url.endswith((".md", ".txt")):
+            logger.info("Detected GitHub URL")
+            return "github"
+
         from docmancer.connectors.fetchers.pipeline.detection import Platform, detect_platform
 
         try:

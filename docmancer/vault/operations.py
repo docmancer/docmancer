@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,6 +9,16 @@ from urllib.parse import urlparse
 
 import httpx
 import yaml
+
+logger = logging.getLogger(__name__)
+
+_USER_AGENT = "docmancer/1.0 (+https://github.com/docmancer/docmancer)"
+_FETCH_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+_RETRYABLE_STATUSES = {403, 429, 503}
 
 from docmancer.connectors.fetchers.pipeline.extraction import (
     extract_content,
@@ -29,6 +40,13 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _find_entry_by_source_url(manifest: VaultManifest, url: str) -> ManifestEntry | None:
+    for entry in manifest.all_entries():
+        if entry.source_url == url or entry.canonical_source_url == url:
+            return entry
+    return None
+
+
 def _load_vault_config(vault_root: Path) -> DocmancerConfig:
     config_path = vault_root / "docmancer.yaml"
     if config_path.exists():
@@ -41,7 +59,16 @@ def _document_for_entry(vault_root: Path, entry: ManifestEntry) -> Document | No
     if not file_path.exists():
         return None
     suffix = file_path.suffix.lower()
-    metadata: dict[str, str | int] = {}
+    metadata: dict[str, str | int | list[str]] = {
+        "kind": entry.kind.value,
+        "source_type": entry.source_type.value,
+        "path": entry.path,
+        "canonical_source": entry.canonical_source_url or "",
+        "content_hash": entry.content_hash,
+        "manifest_id": entry.id,
+        "tags": list(entry.tags),
+        "parent_ref": entry.parent_ref or "",
+    }
     if suffix == ".md":
         content = file_path.read_text(encoding="utf-8")
         metadata["format"] = "markdown"
@@ -174,12 +201,48 @@ def init_vault(directory: Path, name: str | None = None) -> Path:
     return config_path
 
 
-def add_url(vault_root: Path, url: str) -> ManifestEntry:
-    """Fetch a single web page into raw/ with provenance tracking."""
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
+def _fetch_url(url: str, browser: bool = False) -> str:
+    """Fetch URL with progressive fallback: headers -> retry -> Playwright."""
+    with httpx.Client(timeout=30, follow_redirects=True, headers=_FETCH_HEADERS) as client:
         resp = client.get(url)
-        resp.raise_for_status()
-        raw_html = resp.text
+        if resp.status_code == 200:
+            return resp.text
+        first_status = resp.status_code
+
+    # Retry once for retryable statuses (some WAFs unblock on second attempt)
+    if first_status in _RETRYABLE_STATUSES:
+        logger.debug("GET %s returned %d, retrying", url, first_status)
+        with httpx.Client(timeout=30, follow_redirects=True, headers=_FETCH_HEADERS) as client:
+            resp = client.get(url)
+            if resp.status_code == 200:
+                return resp.text
+
+    # Browser fallback for retryable statuses when --browser is set
+    if browser and first_status in _RETRYABLE_STATUSES:
+        logger.debug("Retrying %s via Playwright browser renderer", url)
+        try:
+            from docmancer.connectors.fetchers.pipeline.browser import BrowserRenderer
+            renderer = BrowserRenderer()
+            html = renderer.render(url)
+            if html:
+                return html
+        except ImportError:
+            raise ImportError(
+                "Playwright is not installed. Install it with:\n"
+                "  pip install docmancer[browser]\n"
+                "  playwright install chromium"
+            )
+
+    hint = ""
+    if not browser and first_status == 403:
+        hint = " This site may require JavaScript rendering. Try: docmancer vault add-url --browser <url>"
+    msg = f"Client error '{first_status}' for url '{url}'.{hint}"
+    raise httpx.HTTPStatusError(message=msg, request=resp.request, response=resp)
+
+
+def add_url(vault_root: Path, url: str, browser: bool = False) -> ManifestEntry:
+    """Fetch a single web page into raw/ with provenance tracking."""
+    raw_html = _fetch_url(url, browser=browser)
 
     if looks_like_html(raw_html):
         content = extract_content(raw_html, url=url)
@@ -218,32 +281,65 @@ def add_url(vault_root: Path, url: str) -> ManifestEntry:
         f"---\n\n"
     )
     content_with_fm = frontmatter + content
-    dest.write_text(content_with_fm, encoding="utf-8")
-
     content_hash_val = _content_hash(content_with_fm)
-    relative_path = str(dest.relative_to(vault_root))
 
     manifest_path = vault_root / ".docmancer" / "manifest.json"
     manifest = VaultManifest(manifest_path)
     manifest.load()
+    existing_entry = _find_entry_by_source_url(manifest, url)
 
-    entry = ManifestEntry(
-        path=relative_path,
-        kind=ContentKind.raw,
-        source_type=SourceType.web,
-        content_hash=content_hash_val,
-        index_state=IndexState.pending,
-        source_url=url,
-        canonical_source_url=url,
-        title=title if title else None,
-        created_at=now_iso,
-        fetched_at=now_iso,
-        outbound_refs=[],
-        extra={"fetched_at": now_iso},
-    )
-    manifest.add(entry)
+    if existing_entry is not None:
+        existing_path = vault_root / existing_entry.path
+        if existing_path.exists() and existing_path != dest:
+            existing_path.unlink()
+        dest = vault_root / existing_entry.path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        relative_path = existing_entry.path
+    else:
+        relative_path = str(dest.relative_to(vault_root))
+
+    dest.write_text(content_with_fm, encoding="utf-8")
+
+    if existing_entry is not None:
+        entry = existing_entry.model_copy(
+            update={
+                "path": relative_path,
+                "kind": ContentKind.raw,
+                "source_type": SourceType.web,
+                "content_hash": content_hash_val,
+                "index_state": IndexState.pending,
+                "source_url": url,
+                "canonical_source_url": url,
+                "title": title if title else None,
+                "fetched_at": now_iso,
+                "updated_at": now_iso,
+                "outbound_refs": [],
+                "extra": {"fetched_at": now_iso},
+            }
+        )
+        manifest._entries[entry.id] = entry
+        updated_paths = [relative_path]
+        added_paths: list[str] = []
+    else:
+        entry = ManifestEntry(
+            path=relative_path,
+            kind=ContentKind.raw,
+            source_type=SourceType.web,
+            content_hash=content_hash_val,
+            index_state=IndexState.pending,
+            source_url=url,
+            canonical_source_url=url,
+            title=title if title else None,
+            created_at=now_iso,
+            fetched_at=now_iso,
+            outbound_refs=[],
+            extra={"fetched_at": now_iso},
+        )
+        manifest.add(entry)
+        updated_paths = []
+        added_paths = [relative_path]
     try:
-        sync_vault_index(vault_root, manifest, added_paths=[relative_path])
+        sync_vault_index(vault_root, manifest, added_paths=added_paths, updated_paths=updated_paths)
     finally:
         manifest.save()
     return manifest.get_by_id(entry.id) or entry
@@ -319,6 +415,7 @@ def search_vault(vault_root: Path, query: str, kind: str | None = None, limit: i
     manifest.load()
 
     query_lower = query.lower()
+    terms = [term for term in query_lower.split() if term]
     results = []
 
     for entry in manifest.all_entries():
@@ -328,26 +425,28 @@ def search_vault(vault_root: Path, query: str, kind: str | None = None, limit: i
         # Simple keyword relevance scoring
         score = 0.0
         searchable = f"{entry.path} {entry.title or ''} {' '.join(entry.tags)}".lower()
+        body = ""
+        preview = ""
+        file_path = vault_root / entry.path
+        if file_path.exists() and file_path.suffix.lower() in {".md", ".txt", ".pdf"}:
+            try:
+                raw_content = file_path.read_text(encoding="utf-8", errors="ignore")
+                body = raw_content.lower()
+                preview = raw_content[:200].replace("\n", " ").strip()
+            except Exception:
+                body = ""
 
-        for term in query_lower.split():
+        for term in terms:
             if term in searchable:
                 score += 1.0
             if entry.title and term in entry.title.lower():
                 score += 0.5  # boost title matches
             if term in entry.path.lower():
                 score += 0.3  # boost path matches
+            if body and term in body:
+                score += 0.2
 
         if score > 0:
-            # Read preview from file
-            preview = ""
-            file_path = vault_root / entry.path
-            if file_path.exists() and file_path.suffix.lower() in {".md", ".txt"}:
-                try:
-                    content = file_path.read_text(encoding="utf-8")
-                    preview = content[:200].replace("\n", " ").strip()
-                except Exception:
-                    pass
-
             results.append({
                 "path": entry.path,
                 "kind": entry.kind.value,

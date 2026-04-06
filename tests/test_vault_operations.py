@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from docmancer.vault.manifest import ContentKind, IndexState, ManifestEntry, SourceType, VaultManifest
-from docmancer.vault.operations import add_url, init_vault, inspect_entry, sync_vault_index
+from docmancer.vault.operations import add_url, init_vault, inspect_entry, sync_vault_index, search_vault
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,11 @@ def test_sync_vault_index_indexes_text_entries_and_marks_them_indexed(tmp_path):
     indexed_entry = manifest.get_by_path("raw/doc.md")
     assert indexed_entry is not None
     assert indexed_entry.index_state == IndexState.indexed
+    docs = mock_agent.ingest_documents.call_args.args[0]
+    assert docs[0].metadata["kind"] == "raw"
+    assert docs[0].metadata["source_type"] == "markdown"
+    assert docs[0].metadata["path"] == "raw/doc.md"
+    assert docs[0].metadata["manifest_id"] == entry.id
 
 
 def test_sync_vault_index_removes_old_updated_sources_before_reindex(tmp_path):
@@ -257,6 +262,60 @@ def test_sync_vault_index_indexes_pdf_entries(tmp_path):
     assert indexed_entry.index_state == IndexState.indexed
 
 
+def test_search_vault_matches_body_content(tmp_path):
+    vault = tmp_path / "vault"
+    init_vault(vault)
+    (vault / "raw" / "notes.md").write_text("# Notes\n\nThis file discusses webhook signature verification.", encoding="utf-8")
+
+    manifest = VaultManifest(vault / ".docmancer" / "manifest.json")
+    manifest.load()
+    entry = ManifestEntry(
+        path="raw/notes.md",
+        kind=ContentKind.raw,
+        source_type=SourceType.markdown,
+        content_hash="hash",
+        index_state=IndexState.pending,
+    )
+    manifest.add(entry)
+    manifest.save()
+
+    results = search_vault(vault, "signature")
+    assert results
+    assert results[0]["path"] == "raw/notes.md"
+
+
+def test_add_url_updates_existing_entry_for_same_source_url(tmp_path):
+    vault = tmp_path / "vault"
+    init_vault(vault)
+
+    first = MagicMock()
+    first.text = "<html><head><title>Alpha</title></head><body>First version</body></html>"
+    first.status_code = 200
+    first.raise_for_status.return_value = None
+    second = MagicMock()
+    second.text = "<html><head><title>Alpha</title></head><body>Second version</body></html>"
+    second.status_code = 200
+    second.raise_for_status.return_value = None
+
+    with patch("docmancer.vault.operations.httpx.Client") as mock_client_cls, \
+         patch("docmancer.vault.operations.sync_vault_index"):
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.get.side_effect = [first, second]
+        mock_client_cls.return_value = mock_client
+
+        first_entry = add_url(vault, "https://example.com/page")
+        second_entry = add_url(vault, "https://example.com/page")
+
+    manifest = VaultManifest(vault / ".docmancer" / "manifest.json")
+    manifest.load()
+    entries = manifest.all_entries()
+    assert len(entries) == 1
+    assert first_entry.id == second_entry.id
+    saved = vault / entries[0].path
+    assert "Second version" in saved.read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # inspect_entry tests
 # ---------------------------------------------------------------------------
@@ -333,6 +392,7 @@ def test_add_url_creates_entry(mock_httpx, mock_sync_index, tmp_path):
 
     mock_response = MagicMock()
     mock_response.text = "<html><body><h1>Title</h1><p>Content here</p></body></html>"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -374,6 +434,7 @@ def test_add_url_persists_to_manifest(mock_httpx, mock_sync_index, tmp_path):
 
     mock_response = MagicMock()
     mock_response.text = "plain text content"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -407,6 +468,7 @@ def test_add_url_deduplicates_filename(mock_httpx, mock_sync_index, tmp_path):
 
     mock_response = MagicMock()
     mock_response.text = "plain text"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -434,6 +496,7 @@ def test_add_url_raises_on_empty_content(mock_httpx, mock_sync_index, tmp_path):
 
     mock_response = MagicMock()
     mock_response.text = "<html></html>"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -460,6 +523,7 @@ def test_add_url_includes_fetched_at_in_extra(mock_httpx, mock_sync_index, tmp_p
 
     mock_response = MagicMock()
     mock_response.text = "some content"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -486,6 +550,7 @@ def test_add_url_generates_frontmatter(mock_httpx, mock_sync_index, tmp_path):
 
     mock_response = MagicMock()
     mock_response.text = "<html><body><h1>My Page</h1><p>Body text</p></body></html>"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -522,6 +587,7 @@ def test_add_url_frontmatter_uses_slug_when_no_title(mock_httpx, mock_sync_index
 
     mock_response = MagicMock()
     mock_response.text = "plain text content"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -550,6 +616,7 @@ def test_add_url_no_title_when_meta_empty(mock_httpx, mock_sync_index, tmp_path)
 
     mock_response = MagicMock()
     mock_response.text = "<html><body><p>Content</p></body></html>"
+    mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)

@@ -1,5 +1,5 @@
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 import pytest
@@ -50,6 +50,16 @@ def test_vault_scan_finds_files(tmp_path):
     assert "+1 added" in result.output
 
 
+def test_vault_scan_tracks_assets_by_default(tmp_path):
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "assets" / "diagram.png").write_text("image-data")
+
+    result = runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "Added: assets/diagram.png" in result.output
+
+
 def test_vault_scan_warns_missing_frontmatter(tmp_path):
     runner = CliRunner()
     runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
@@ -77,6 +87,17 @@ def test_vault_status_shows_summary(tmp_path):
     result = runner.invoke(cli, ["vault", "status", "--dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "Entries: 1" in result.output
+
+
+def test_vault_status_shows_health_summary(tmp_path):
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    (tmp_path / "wiki" / "bad.md").write_text("No frontmatter, [[broken_link]]")
+    runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
+
+    result = runner.invoke(cli, ["vault", "status", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "Health:" in result.output
 
 
 def test_vault_status_no_vault(tmp_path):
@@ -265,6 +286,17 @@ def test_skill_templates_contain_vault_commands():
         assert "vault backlog" in content, f"{template_name} missing vault backlog command"
 
 
+def test_help_format_has_spacing_for_long_option_labels():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["vault", "search", "--help"])
+    assert result.exit_code == 0
+    assert "--kind [raw|wiki|output|asset] Filter by content kind." in result.output
+
+    result = runner.invoke(cli, ["vault", "graph", "--help"])
+    assert result.exit_code == 0
+    assert "--format [all|markdown|json|terminal] Output format." in result.output
+
+
 def test_vault_status_shows_size(tmp_path):
     runner = CliRunner()
     runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
@@ -442,6 +474,24 @@ def test_vault_lint_deep_without_api_key(tmp_path):
         result = runner.invoke(cli, ["vault", "lint", "--deep", "--dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "require an API key" in result.output or "No issues found" in result.output
+
+
+def test_vault_create_reference_reports_partial_success_when_fetch_fails(tmp_path):
+    runner = CliRunner()
+    with patch("docmancer.vault.operations.add_url", side_effect=ValueError("403 Forbidden")), \
+         patch("docmancer.eval.dataset.generate_scaffold") as mock_generate:
+        mock_dataset = MagicMock()
+        mock_dataset.entries = []
+        mock_generate.return_value = mock_dataset
+
+        result = runner.invoke(
+            cli,
+            ["vault", "create-reference", "https://example.com/page", "--name", "ref-vault", "--output-dir", str(tmp_path)],
+        )
+
+    assert result.exit_code == 0
+    assert "Reference vault scaffolded partially" in result.output
+    assert "No source content was ingested yet" in result.output
 
 
 def test_init_vault_with_custom_name(tmp_path):

@@ -27,6 +27,8 @@ class SourceType(str, Enum):
     pdf = "pdf"
     local_file = "local_file"
     image = "image"
+    arxiv = "arxiv"
+    github = "github"
 
 
 class IndexState(str, Enum):

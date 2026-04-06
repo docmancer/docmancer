@@ -24,6 +24,6 @@ class RetrievedChunk(BaseModel):
     chunk_index: int
     text: str
     score: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
     vault_name: str | None = None
-
 

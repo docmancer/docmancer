@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="$SCRIPT_DIR/live_cli_integration.log"
+exec > >(tee "$LOG_FILE") 2>&1
+
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 VENV_PIP="$ROOT_DIR/.venv/bin/pip"
 CLI_CMD=("$VENV_PYTHON" -m docmancer.cli)

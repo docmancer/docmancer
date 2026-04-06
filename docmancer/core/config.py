@@ -55,7 +55,7 @@ class VaultConfig(BaseSettings):
     assets_dir: str = "assets"
     manifest_path: str = ".docmancer/manifest.json"
     index_roots: list[str] = Field(default_factory=list)
-    scan_dirs: list[str] = Field(default_factory=lambda: ["raw", "wiki", "outputs"])
+    scan_dirs: list[str] = Field(default_factory=lambda: ["raw", "wiki", "outputs", "assets"])
     registry_path: str = ""
     version: str = "0.1.0"
     description: str = ""
@@ -69,7 +69,7 @@ class VaultConfig(BaseSettings):
             return list(self.index_roots)
         if self.scan_dirs:
             return list(self.scan_dirs)
-        return [self.raw_dir, self.wiki_dir, self.outputs_dir]
+        return [self.raw_dir, self.wiki_dir, self.outputs_dir, self.assets_dir]
 
 
 class EvalConfig(BaseSettings):

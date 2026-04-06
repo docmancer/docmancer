@@ -145,5 +145,10 @@ Use these commands for vault maintenance and exploration:
 - `{{DOCS_KIT_CMD}} vault backlog` — see prioritized maintenance tasks (coverage gaps, stale articles, unfiled outputs)
 - `{{DOCS_KIT_CMD}} vault suggest` — get specific next actions for improving vault quality
 - `{{DOCS_KIT_CMD}} vault lint` — check for broken links, missing frontmatter, and manifest mismatches
+- `{{DOCS_KIT_CMD}} vault compile-index` — generate or update `wiki/_index.md` with summaries of all vault content (use `--llm` for richer summaries)
+- `{{DOCS_KIT_CMD}} vault graph` — generate backlink graph as markdown (`wiki/_graph.md`), JSON (`.docmancer/graph.json`), and terminal output
+- `{{DOCS_KIT_CMD}} vault add-arxiv <paper-id>` — fetch an arxiv paper into `raw/` by paper ID or URL
+- `{{DOCS_KIT_CMD}} vault add-github <repo-url>` — fetch GitHub repo documentation (README + docs/) into `raw/`
 - `{{DOCS_KIT_CMD}} vault status --vault <name>` — target a specific registered vault
 - `{{DOCS_KIT_CMD}} query "question" --cross-vault` — query across all registered vaults
+- `{{DOCS_KIT_CMD}} dataset generate-training --source ./wiki` — generate fine-tuning training data from vault content (supports `--format jsonl|alpaca|conversation`)
