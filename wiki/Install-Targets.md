@@ -9,6 +9,8 @@
 | `docmancer install claude-code` | `~/.claude/skills/docmancer/SKILL.md` |
 | `docmancer install cline` | `~/.cline/skills/docmancer/SKILL.md` |
 | `docmancer install codex` | `~/.codex/skills/docmancer/SKILL.md` (also mirrors to `~/.agents/skills/docmancer/SKILL.md`) |
+| `docmancer install codex-app` | `~/.codex/skills/docmancer/SKILL.md` (Codex app variant) |
+| `docmancer install codex-desktop` | `~/.codex/skills/docmancer/SKILL.md` (Codex desktop variant) |
 | `docmancer install cursor` | `~/.cursor/skills/docmancer/SKILL.md` + marked block in `~/.cursor/AGENTS.md` when needed |
 | `docmancer install opencode` | `~/.config/opencode/skills/docmancer/SKILL.md` |
 | `docmancer install gemini` | `~/.gemini/skills/docmancer/SKILL.md` |

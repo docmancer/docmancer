@@ -28,7 +28,9 @@ Current checks include:
 
 `docmancer vault lint --fix` re-runs manifest reconciliation before checking, which is useful when files were added or moved outside docmancer.
 
-The roadmap describes a future LLM-assisted linting mode (`--deep`) for higher-order checks like inconsistent data across articles, suspicious gaps between raw material and wiki coverage, and possible connections worth linking.
+`docmancer vault lint --deep` enables LLM-assisted checks that go beyond deterministic validation. Deep lint looks for inconsistent data across articles, suspicious gaps between raw material and wiki coverage, and possible connections worth linking. This mode requires an API key, which you can configure via `docmancer setup`.
+
+`docmancer vault lint --eval` includes eval metric checks if a golden dataset exists, surfacing retrieval quality issues alongside structural ones.
 
 ## `docmancer vault context "<query>"`
 

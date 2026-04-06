@@ -26,12 +26,11 @@ This is useful for understanding retrieval latency, debugging odd results, and c
 
 `docmancer dataset generate --source <dir>` creates a scaffolded eval dataset from markdown files.
 
-Current behavior:
+In scaffold mode (the default), the generator walks markdown files under the source directory, extracts a small source passage for each entry, writes `.docmancer/eval_dataset.json` (configurable via `eval.dataset_path` in [Configuration](./Configuration.md)), and leaves `question` and `expected_answer` blank for you to fill in.
 
-- walks markdown files under the source directory
-- extracts a small source passage for each
-- writes `.docmancer/eval_dataset.json` by default (configurable via `eval.dataset_path` in [Configuration](./Configuration.md))
-- leaves `question` and `expected_answer` blank for you to fill in
+With `--llm`, docmancer uses an LLM to generate question-and-answer pairs automatically from the source content, producing a richer dataset without manual editing. This requires an API key configured via `docmancer setup`.
+
+The `--count` flag controls how many entries are generated (default 50).
 
 The output schema contains:
 
@@ -41,13 +40,22 @@ The output schema contains:
 - `source_refs`
 - `tags`
 
-This is manual/template mode. LLM-assisted dataset generation is still planned work.
+## Training data generation
+
+`docmancer dataset generate-training --source <dir>` produces fine-tuning datasets from your documentation. It generates question-answer pairs in multiple formats:
+
+- `--format jsonl` (default), `alpaca`, or `conversation`
+- `--count` controls the number of training examples (default 100)
+- `--question-types` lets you specify a mix of question styles: `factual`, `comparison`, `reasoning`, `summarization`
+- `--llm` uses an LLM for more diverse and natural Q&A generation (requires an API key via `docmancer setup`)
+
+Output defaults to `.docmancer/training_data.jsonl`.
 
 ## Running evals
 
 `docmancer eval --dataset .docmancer/eval_dataset.json`
 
-Current evals are deterministic and local. They compute:
+By default, evals are deterministic and local. They compute:
 
 - **MRR** (Mean Reciprocal Rank): where does the first relevant chunk land in the ranked results?
 - **Hit Rate / Recall@K**: did the relevant chunk appear in the top K results at all?
@@ -60,6 +68,8 @@ You can also write a report:
 - `docmancer eval --dataset ... --output report.csv`
 
 Markdown reports include a configuration snapshot so you can compare runs after changing chunk size, overlap, or retrieval settings in [Configuration](./Configuration.md).
+
+`docmancer eval --judge` enables LLM-as-judge scoring on top of the deterministic metrics. This adds semantic relevance and answer quality assessments that go beyond chunk overlap and hit rate. The judge requires an API key configured via `docmancer setup`.
 
 ## The compiled-vs-raw experiment
 
@@ -109,14 +119,15 @@ Relevant config sections in [Configuration](./Configuration.md):
 
 What is shipped today:
 
-- local query tracing
+- local query tracing with `--trace` and `--save-trace`
 - JSON trace persistence
-- scaffold dataset generation
-- deterministic retrieval metrics
+- scaffold and LLM-assisted dataset generation (`--llm`)
+- training data generation for fine-tuning (`dataset generate-training`)
+- deterministic retrieval metrics (MRR, hit rate, chunk overlap, latency)
+- LLM-as-judge scoring (`eval --judge`)
 - terminal, Markdown, and CSV reporting
 
 What is still future work:
 
-- LLM-assisted dataset generation
-- judge-based evals (Ragas integration)
+- Ragas integration for standardized eval benchmarks
 - Langfuse or similar hosted telemetry export

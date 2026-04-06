@@ -2,6 +2,8 @@
 
 docmancer is a local knowledge base for AI agents. It pulls documentation and research material from the web or local files, embeds everything locally with FastEmbed, stores vectors in on-disk Qdrant, and exposes retrieval through a CLI that agents call directly via installed skill files.
 
+For a quick overview of every command, see [Commands](./Commands.md).
+
 There are two primary workflows, both built on the same local-first retrieval stack.
 
 ## Docs retrieval
@@ -13,6 +15,8 @@ docmancer ingest https://docs.example.com
 docmancer install claude-code
 # your agent now calls `docmancer query` automatically
 ```
+
+If you need LLM-powered features such as deep lint or LLM-assisted dataset generation, run `docmancer setup` to configure API keys and optional integrations interactively.
 
 This workflow is covered in [Architecture](./Architecture.md), [Supported Sources](./Supported-Sources.md), and [Install Targets](./Install-Targets.md).
 
@@ -55,4 +59,5 @@ If you start with docs retrieval and later want to build a structured knowledge 
 | [Vault Intelligence](./Vault-Intelligence.md)           | Lint, context, related, backlog, and suggest commands                                    |
 | [Evals and Observability](./Evals-and-Observability.md) | Query tracing, dataset generation, retrieval metrics, and the compiled-vs-raw experiment |
 | [Cross-Vault Workflows](./Cross-Vault-Workflows.md)     | Shared local store, vault registry, and multi-vault patterns                             |
+| [Commands](./Commands.md)                               | Glossary of every top-level docmancer command                                            |
 | [Troubleshooting](./Troubleshooting.md)                 | Common install and runtime issues                                                        |

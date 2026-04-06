@@ -13,6 +13,15 @@ docmancer can ingest content from several source types. Some are available throu
 
 When using `auto` (the default), docmancer tries to detect the provider automatically based on the site's response headers and content.
 
+### Ingest options
+
+Several flags give you more control over how content is fetched:
+
+- `--strategy` forces a specific discovery strategy (for example `llms-full.txt`, `sitemap.xml`, or `nav-crawl`) instead of letting the provider decide automatically.
+- `--max-pages <n>` caps the number of pages fetched from a web provider (default 500), useful for large sites where you only need a subset.
+- `--browser` enables a Playwright browser fallback for JS-heavy sites that do not render meaningful content with plain HTTP requests.
+- `--workers` and `--fetch-workers` control parallelism for ingest processing and page fetching respectively.
+
 These sources work identically whether you are doing standalone docs retrieval or ingesting into a vault. The difference is where the content ends up: standalone ingest goes straight to the vector store, while vault ingest also creates manifest entries with provenance metadata. See [Architecture](./Architecture.md) for how the retrieval engine handles both paths.
 
 ## Vault-specific acquisition
@@ -20,6 +29,8 @@ These sources work identically whether you are doing standalone docs retrieval o
 ### `vault add-url <url>`
 
 `vault add-url` is the opinionated vault acquisition command for a single web page or article. It fetches the page, converts it to markdown, stores it under `raw/` with generated frontmatter, creates a manifest entry with provenance metadata, and indexes it for retrieval in one step.
+
+Like `ingest`, `vault add-url` supports the `--browser` flag for JS-heavy pages that require a real browser to render.
 
 This command exists because `ingest` is aimed at documentation sites (full-site crawls), while vaults need a clean single-page capture workflow for individual articles, blog posts, and reference pages.
 

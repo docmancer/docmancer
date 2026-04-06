@@ -65,6 +65,10 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
+## LLM features require an API key
+
+Commands like `vault lint --deep`, `dataset generate --llm`, `dataset generate-training --llm`, and `eval --judge` need a configured API key. Run `docmancer setup` to configure keys and optional integrations interactively. If you skip setup, all deterministic (non-LLM) features continue to work without any keys.
+
 ## Vault-specific issues
 
 ### `vault scan` reports stale or failed index states
@@ -80,6 +84,16 @@ For persistent issues, `vault lint --fix` re-runs manifest reconciliation before
 ### Eval dataset is empty or missing
 
 `docmancer dataset generate --source <dir>` creates a scaffolded dataset. If it produces no entries, check that the source directory contains markdown files with enough content to extract passages. See [Evals and Observability](./Evals-and-Observability.md) for the full eval workflow.
+
+### Ingest hangs or returns empty content for a JS-heavy site
+
+Some documentation sites rely on client-side JavaScript to render content. If `docmancer ingest <url>` produces empty or incomplete results, try the `--browser` flag to enable Playwright browser fallback:
+
+```bash
+docmancer ingest <url> --browser
+```
+
+The same flag is available on `vault add-url`.
 
 ### Agent does not know about vault commands
 
