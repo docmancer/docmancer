@@ -59,7 +59,24 @@ def _maybe_auto_scan(vault_root: Path, no_scan: bool = False) -> None:
     from docmancer.vault.freshness import auto_scan_if_needed
     manifest = VaultManifest(manifest_path)
     manifest.load()
-    auto_scan_if_needed(vault_root, scan_dirs, manifest, cooldown)
+    result = auto_scan_if_needed(vault_root, scan_dirs, manifest, cooldown)
+    if result is not None:
+        _update_registry_last_scan(vault_root)
+
+
+def _update_registry_last_scan(vault_root: Path) -> None:
+    """Persist registry bookkeeping after a successful scan pass."""
+    try:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        vault_entry = registry.find_by_path(vault_root)
+        if vault_entry:
+            registry.update_last_scan(vault_entry["name"])
+        else:
+            registry.register(vault_root.name, vault_root)
+            registry.update_last_scan(vault_root.name)
+    except Exception:
+        pass
 
 
 @click.group(
@@ -184,14 +201,7 @@ def vault_open_cmd(path: str, vault_name: str | None):
         manifest.save()
 
     # Update registry last_scan timestamp
-    try:
-        from docmancer.vault.registry import VaultRegistry
-        registry = VaultRegistry()
-        vault_entry = registry.find_by_path(dir_path)
-        if vault_entry:
-            registry.update_last_scan(vault_entry["name"])
-    except Exception:
-        pass
+    _update_registry_last_scan(dir_path)
 
     total = len(manifest.all_entries())
     click.echo(f"  Indexed {total} file(s)")
@@ -244,18 +254,7 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
         manifest.save()
 
     # Update registry last_scan timestamp
-    try:
-        from docmancer.vault.registry import VaultRegistry
-        registry = VaultRegistry()
-        vault_entry = registry.find_by_path(vault_root)
-        if vault_entry:
-            registry.update_last_scan(vault_entry["name"])
-        else:
-            # Auto-register if not already registered
-            registry.register(vault_root.name, vault_root)
-            registry.update_last_scan(vault_root.name)
-    except Exception:
-        pass
+    _update_registry_last_scan(vault_root)
 
     for p in result.added:
         click.echo(f"  Added: {p}")
@@ -1167,6 +1166,8 @@ def vault_create_reference_cmd(url: str, name: str, output_dir: str):
         except Exception:
             click.echo("  Warning: Indexing failed. You can re-run 'docmancer vault scan'.")
 
+    _update_registry_last_scan(vault_root)
+
     click.echo(f"  Scan: {len(result.added)} added, {len(result.updated)} updated.")
 
     # 4. Generate eval dataset scaffold
@@ -1187,7 +1188,7 @@ def vault_create_reference_cmd(url: str, name: str, output_dir: str):
     click.echo(f"  Lint: {len(errors)} error(s), {len(warnings)} warning(s).")
 
     click.echo()
-    if fetch_succeeded and result.added:
+    if fetch_succeeded:
         click.echo("  Reference vault scaffolded successfully. Next steps:")
     else:
         click.echo("  Reference vault scaffolded partially. No source content was ingested yet. Next steps:")

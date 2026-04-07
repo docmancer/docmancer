@@ -462,8 +462,8 @@ def cross_vault_query(
     vault_names: list[str] | None = None,
     tag: str | None = None,
     limit: int = 10,
-) -> list:
-    """Query across multiple registered vaults, merging results by score.
+) -> tuple[list, list[str]]:
+    """Query across multiple registered vaults and merge per-vault rankings.
 
     If *vault_names* is None and *tag* is None, queries all registered vaults.
     If *tag* is provided, only vaults with that tag are queried.
@@ -483,26 +483,29 @@ def cross_vault_query(
         all_vaults = [v for v in all_vaults if v["name"] in vault_names]
 
     if not all_vaults:
-        return []
+        return [], []
 
-    all_results = []
+    ranked_results: list[tuple[int, float, str, object]] = []
+    failed_vaults: list[str] = []
     for vault in all_vaults:
         vault_root = Path(vault["root_path"])
         config_path = vault_root / "docmancer.yaml"
         if not config_path.exists():
+            failed_vaults.append(vault["name"])
             continue
         try:
             config = DocmancerConfig.from_yaml(config_path)
             agent = DocmancerAgent(config=config)
             results = agent.query(query_text, limit=limit)
-            for chunk in results:
+            for rank, chunk in enumerate(results, start=1):
                 chunk.vault_name = vault["name"]
-            all_results.extend(results)
+                ranked_results.append((rank, -chunk.score, vault["name"], chunk))
         except Exception:
+            failed_vaults.append(vault["name"])
             continue
 
-    all_results.sort(key=lambda c: c.score, reverse=True)
-    return all_results[:limit]
+    ranked_results.sort(key=lambda item: (item[0], item[1], item[2], item[3].source))
+    return [item[3] for item in ranked_results[:limit]], failed_vaults
 
 
 def search_vault(vault_root: Path, query: str, kind: str | None = None, limit: int = 10) -> list[dict]:

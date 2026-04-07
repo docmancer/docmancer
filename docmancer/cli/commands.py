@@ -607,23 +607,23 @@ def doctor_cmd(config_path: str | None):
 def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool, cross_vault: bool, filter_tag: str | None, no_scan: bool):
     """Run a retrieval query against the vector store (no server required)."""
     effective_limit = limit if limit is not None else 5
-
-    # Auto-scan if a vault is detected in the current directory
-    if not no_scan:
-        vault_indicator = Path(".docmancer/manifest.json")
-        if vault_indicator.exists():
-            from docmancer.cli.vault_commands import _maybe_auto_scan
-            _maybe_auto_scan(Path(".").resolve(), no_scan=False)
+    skipped_vaults: list[str] = []
 
     if filter_tag and not cross_vault:
         cross_vault = True  # --tag implies --cross-vault
 
     if cross_vault:
         from docmancer.vault.operations import cross_vault_query
-        chunks = cross_vault_query(text, tag=filter_tag, limit=effective_limit)
+        chunks, skipped_vaults = cross_vault_query(text, tag=filter_tag, limit=effective_limit)
         query_trace = None
     else:
         config_path = _effective_config(config_path)
+        if not no_scan:
+            config_file = Path(config_path)
+            vault_root = config_file.parent
+            if (vault_root / ".docmancer" / "manifest.json").exists():
+                from docmancer.cli.vault_commands import _maybe_auto_scan
+                _maybe_auto_scan(vault_root, no_scan=False)
         config = _load_config(config_path)
         agent = _get_agent_class()(config=config)
 
@@ -646,6 +646,11 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool,
         click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}{vault_label}")
         click.echo(body)
         click.echo("---")
+
+    if skipped_vaults:
+        names = ", ".join(sorted(set(skipped_vaults)))
+        label = "vault" if len(set(skipped_vaults)) == 1 else "vaults"
+        click.echo(f"Warning: skipped {len(set(skipped_vaults))} {label}: {names}")
 
     if query_trace is not None:
         if trace:

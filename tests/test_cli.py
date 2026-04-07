@@ -299,6 +299,41 @@ def test_query_command_exists():
     assert "--full" in result.output
 
 
+def test_query_auto_scans_vault_from_config_path(tmp_path):
+    runner = CliRunner()
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    (vault_root / ".docmancer").mkdir()
+    (vault_root / ".docmancer" / "manifest.json").write_text("{}")
+    config_path = vault_root / "docmancer.yaml"
+    config_path.write_text("vector_store:\n  local_path: .docmancer/qdrant\n")
+
+    fake_config = MagicMock()
+    fake_agent = MagicMock()
+    fake_agent.query.return_value = [MagicMock(text="result", score=1.0, source="doc.md", vault_name=None)]
+
+    with patch("docmancer.cli.commands._effective_config", return_value=str(config_path)), \
+         patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls, \
+         patch("docmancer.cli.vault_commands._maybe_auto_scan") as mock_auto_scan:
+        mock_agent_cls.return_value = lambda config: fake_agent
+        result = runner.invoke(cli, ["query", "auth", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    mock_auto_scan.assert_called_once_with(vault_root, no_scan=False)
+
+
+def test_query_cross_vault_warns_when_vaults_are_skipped():
+    runner = CliRunner()
+    chunk = MagicMock(text="result", score=1.0, source="doc.md", vault_name="good-vault")
+
+    with patch("docmancer.vault.operations.cross_vault_query", return_value=([chunk], ["broken-vault"])):
+        result = runner.invoke(cli, ["query", "auth", "--cross-vault"])
+
+    assert result.exit_code == 0
+    assert "Warning: skipped 1 vault: broken-vault" in result.output
+
+
 def test_list_command_defaults_to_grouped_entries():
     runner = CliRunner()
     fake_config = MagicMock()

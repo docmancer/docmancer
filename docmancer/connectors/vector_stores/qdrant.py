@@ -129,14 +129,20 @@ class QdrantStore:
         self._create_payload_indexes(self._documents_collection_name)
 
     def _create_payload_indexes(self, collection_name: str) -> None:
-        if not self._url:
-            return
         for field_name in self._INDEXED_PAYLOAD_FIELDS:
-            self._client.create_payload_index(
-                collection_name=collection_name,
-                field_name=field_name,
-                field_schema=rest.PayloadSchemaType.KEYWORD,
-            )
+            try:
+                self._client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=field_name,
+                    field_schema=rest.PayloadSchemaType.KEYWORD,
+                )
+            except UnexpectedResponse as exc:
+                logger.warning(
+                    "Could not create payload index for %s.%s: %s",
+                    collection_name,
+                    field_name,
+                    exc,
+                )
 
     def upsert(self, chunks: list[Chunk], dense_vectors: list[list[float]],
                sparse_vectors: list[SparseVector] | None = None, recreate: bool = False,

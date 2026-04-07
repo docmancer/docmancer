@@ -140,6 +140,16 @@ Shows provenance, metadata, and index state.
 4. Write outputs to `wiki/` or `outputs/` with YAML frontmatter (title, tags, sources, created, updated).
 5. Run `{{DOCS_KIT_CMD}} vault scan` after adding or modifying files.
 
+### Obsidian-native vaults
+
+If the vault was initialized with `--template obsidian`, the entire Obsidian vault is indexed:
+```bash
+{{DOCS_KIT_CMD}} init --template obsidian
+```
+- `scan_dirs` is set to `["."]` so all files in the vault are tracked.
+- New files added through Obsidian Web Clipper or manual editing are auto-indexed on the next query or search command. No need to run `vault scan` manually.
+- Content kind is inferred from folder names (Clippings/ = raw, Notes/ = wiki) or frontmatter `kind` field.
+
 ## Cross-Vault Queries
 
 Multiple vaults can be registered on the same machine. To see all registered vaults:

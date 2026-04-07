@@ -18,11 +18,15 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 - **Composition, discovery, gates, packaging, GitHub helpers, and installer** modules for publishing vaults, resolving dependencies, and installing from GitHub releases.
 - **Vault graph** and **index compiler** for structured wiki navigation and compiled indexes.
 - **`docmancer list --vaults`** to show registered vault roots.
+- **`docmancer init --template obsidian`:** index an existing **Obsidian** vault in place. Discovers registered vaults from the Obsidian desktop app config (macOS, Windows, Linux), or use **`--dir`**. Sets **`scan_dirs: ["."]`** so the whole tree is tracked; adds **`.docmancer`** to Obsidian **`userIgnoreFilters`** when **`app.json`** exists; registers the vault in the local registry.
+- **Scan-on-query freshness:** **`docmancer.vault.freshness.auto_scan_if_needed`** runs before **`vault status`**, **`search`**, **`context`**, and **`related`** when the manifest is newer than disk (with a configurable cooldown). **`VaultConfig.scan_cooldown_seconds`** (default **30**, **`VAULT_SCAN_COOLDOWN_SECONDS`**) limits repeated walks in one CLI session.
+- **`--no-scan`** on **`docmancer query`** and the vault read commands above skips the automatic freshness scan.
+- **Whole-vault scanning:** when **`scan_dirs`** includes **`"."`**, the scanner skips **`.obsidian`**, **`.git`**, **`.trash`**, and **`.docmancer`**, and infers **`ContentKind`** from folder names (for example **Clippings** as raw, **Notes** as wiki), frontmatter **`kind`**, **`source`** URLs, or image extensions.
 
 #### Query and observability
 
 - **`docmancer query --trace`** and **`--save-trace`** using **`DocmancerAgent.query_with_trace`** and the **telemetry** tracer.
-- **`docmancer query --cross-vault`** and **`--tag`**; retrieved chunks can include **vault** attribution.
+- **`docmancer query --cross-vault`** and **`--tag`**; retrieved chunks can include **vault** attribution. Results merge **per-vault ranking** (fair interleaving by rank) instead of a single global score sort; vaults that are missing config or fail to query are reported in a **warning** line after output.
 
 #### Eval
 
@@ -49,13 +53,16 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 #### Documentation and skills
 
 - **Wiki:** **[Commands.md](wiki/Commands.md)** reference, **[Vaults.md](wiki/Vaults.md)**, **[Cross-Vault-Workflows.md](wiki/Cross-Vault-Workflows.md)**, **[Vault-Intelligence.md](wiki/Vault-Intelligence.md)**, **[Evals-and-Observability.md](wiki/Evals-and-Observability.md)**, plus updates to **Architecture**, **Configuration**, **Supported-Sources**, **Troubleshooting**, **Home**, and **Install-Targets**.
-- **Root `SKILL.md`** and **agent templates** (**`skill.md`**, Claude/Cursor variants) updated for vault, eval, cross-vault, and new commands.
+- **Root `SKILL.md`** and **agent templates** (**`skill.md`**, Claude/Cursor variants) updated for vault, eval, cross-vault, **Obsidian-native** workflows (**`init --template obsidian`**, auto-indexing, folder heuristics), and new commands.
 
 ### Changed
 
 - **0.2.x** release line on PyPI; **`SKILL.md`** frontmatter **`version`** aligned with the package.
 - **`DocmancerConfig`** and related models extended for vault, eval, LLM, and tracing.
 - **`QdrantStore`** and **`DocmancerAgent`** adjustments for vault indexing, tracing, and integration tests.
+- **`QdrantStore` payload indexes:** always attempt **`create_payload_index`** for keyword fields (not only when a server **`url`** is set); on **`UnexpectedResponse`** (common for some embedded/local modes), log a warning and continue instead of failing or skipping the path silently.
+- **`docmancer query`** (non-cross-vault): auto-scan uses the **vault root implied by the resolved config path** when a manifest exists there (not only the current working directory).
+- **Vault registry:** shared **`_update_registry_last_scan`** after auto-scan, **`vault open`**, **`vault scan`**, and **`vault create-reference`** so **`last_scan`** stays consistent.
 - **`.gitignore`:** ignore **`scripts/*.log`**.
 
 ### Tests
@@ -63,6 +70,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 - Large suite additions for vault (CLI, registry, manifest, scanner, operations, intelligence, lint, packaging, publish, install, graph, index compiler), eval (metrics, pipeline, judge, training), fetchers (ArXiv, GitHub), telemetry, Langfuse sink, LLM provider, and **setup**.
 - **`tests/test_vault_open.py`** for **`vault open`**; **`cross_vault_query`** tests live with vault operations; **setup** coverage in **`test_cli.py`**.
 - Removed redundant standalone modules (**`test_cross_vault`**, **`test_eval_vault_integration`**, **`test_langfuse_sink`**, **`test_models_provenance`**, **`test_setup`**) in favor of consolidated or slimmer coverage; ongoing refactors in **`test_eval_metrics`**, **`test_eval_pipeline`**, **`test_telemetry`**, and **`test_models`**.
+- **`test_freshness.py`**, **`test_obsidian.py`**, **`test_obsidian_integration.py`**, **`test_scanner_obsidian.py`** for Obsidian init, discovery, and scan-on-query behavior; expanded **`test_cli`**, **`test_vault_cli`**, **`test_vault_operations`**, and **`test_qdrant_store`** for **`query`**, cross-vault warnings, registry updates, and payload index handling.
 
 ## [0.1.11] - 2026-04-03
 ### Added

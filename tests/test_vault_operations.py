@@ -662,12 +662,12 @@ def test_cross_vault_query_merges_results(tmp_path):
 
     with patch("docmancer.vault.registry.VaultRegistry", return_value=mock_registry), \
          patch("docmancer.agent.DocmancerAgent", side_effect=lambda **kwargs: next(agents)):
-        results = cross_vault_query("test query", limit=10)
+        results, failures = cross_vault_query("test query", limit=10)
 
     assert len(results) == 2
-    assert results[0].score == 0.95
     assert results[0].vault_name == "vault2"
     assert results[1].vault_name == "vault1"
+    assert failures == []
 
 
 def test_cross_vault_query_filters_by_name(tmp_path):
@@ -687,7 +687,40 @@ def test_cross_vault_query_filters_by_name(tmp_path):
 
     with patch("docmancer.vault.registry.VaultRegistry", return_value=mock_registry), \
          patch("docmancer.agent.DocmancerAgent", return_value=mock_agent):
-        results = cross_vault_query("test", vault_names=["vault1"], limit=10)
+        results, failures = cross_vault_query("test", vault_names=["vault1"], limit=10)
 
     assert len(results) == 1
     assert results[0].vault_name == "vault1"
+    assert failures == []
+
+
+def test_cross_vault_query_reports_failed_vaults(tmp_path):
+    mock_registry = MagicMock()
+    mock_registry.list_vaults.return_value = [
+        {"name": "good-vault", "root_path": str(tmp_path / "good")},
+        {"name": "broken-vault", "root_path": str(tmp_path / "broken")},
+    ]
+
+    for vname in ["good", "broken"]:
+        vpath = tmp_path / vname
+        vpath.mkdir()
+        (vpath / "docmancer.yaml").write_text("embedding:\n  provider: fastembed\n")
+
+    chunk = RetrievedChunk(source="doc1.md", chunk_index=0, text="healthy", score=0.4)
+    mock_agent = MagicMock()
+    mock_agent.query.return_value = [chunk]
+    agents = iter([mock_agent, RuntimeError("boom")])
+
+    def _agent_factory(**kwargs):
+        candidate = next(agents)
+        if isinstance(candidate, Exception):
+            raise candidate
+        return candidate
+
+    with patch("docmancer.vault.registry.VaultRegistry", return_value=mock_registry), \
+         patch("docmancer.agent.DocmancerAgent", side_effect=_agent_factory):
+        results, failures = cross_vault_query("test query", limit=10)
+
+    assert len(results) == 1
+    assert results[0].vault_name == "good-vault"
+    assert failures == ["broken-vault"]

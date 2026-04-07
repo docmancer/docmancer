@@ -494,6 +494,46 @@ def test_vault_create_reference_reports_partial_success_when_fetch_fails(tmp_pat
     assert "No source content was ingested yet" in result.output
 
 
+def test_vault_create_reference_reports_success_and_updates_last_scan(tmp_path):
+    runner = CliRunner()
+    import docmancer.vault.registry as reg_module
+    original = reg_module._DEFAULT_REGISTRY_PATH
+    reg_module._DEFAULT_REGISTRY_PATH = tmp_path / "test_registry.json"
+    try:
+        mock_entry = MagicMock()
+        mock_entry.path = "raw/ref.md"
+
+        mock_scan_result = MagicMock()
+        mock_scan_result.added = []
+        mock_scan_result.updated = []
+        mock_scan_result.removed = []
+
+        with patch("docmancer.vault.operations.add_url", return_value=mock_entry), \
+             patch("docmancer.vault.scanner.scan_vault", return_value=mock_scan_result), \
+             patch("docmancer.vault.operations.sync_vault_index"), \
+             patch("docmancer.eval.dataset.generate_scaffold") as mock_generate, \
+             patch("docmancer.vault.lint.lint_vault", return_value=[]):
+            mock_dataset = MagicMock()
+            mock_dataset.entries = []
+            mock_generate.return_value = mock_dataset
+
+            result = runner.invoke(
+                cli,
+                ["vault", "create-reference", "https://example.com/page", "--name", "ref-vault", "--output-dir", str(tmp_path)],
+            )
+
+        assert result.exit_code == 0
+        assert "Reference vault scaffolded successfully" in result.output
+
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry(registry_path=tmp_path / "test_registry.json")
+        entry = registry.get_vault("ref-vault")
+        assert entry is not None
+        assert entry["last_scan"] is not None
+    finally:
+        reg_module._DEFAULT_REGISTRY_PATH = original
+
+
 def test_init_vault_with_custom_name(tmp_path):
     """--name flag should register the vault with the given name."""
     runner = CliRunner()
