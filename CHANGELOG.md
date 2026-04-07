@@ -6,24 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [0.2.0] - 2026-04-07
 
+This release adds an optional **knowledge vault** workflow on top of the existing ingest-and-query path, plus **eval**, **query tracing**, **ArXiv/GitHub fetchers**, and expanded wiki documentation. Vault mode is opt-in; classic **`docmancer ingest`** behavior remains unchanged if you do not use **`init --template vault`**.
+
 ### Added
 
-- **`docmancer vault open <path>`:** adopt an existing directory (for example an Obsidian vault) as a docmancer vault without moving files. Creates the vault scaffold under that folder, symlinks supported files into **`raw/`** while preserving layout, runs an initial manifest scan and vector sync, and updates the vault registry. Optional **`--name`** overrides the registry name (default: directory name). Safe to re-run to pick up new files.
-- **`open_vault()`** in **`docmancer.vault.operations`** implementing the symlink-and-scaffold behavior used by **`vault open`**.
+#### Knowledge vaults
+
+- **`docmancer init --template vault`** with **`--name`** / **`--dir`**: structured vault layout (**`raw/`**, **`wiki/`**, **`outputs/`**, **`.docmancer/`**), **registry**, **manifest** (provenance and index state), **scanner**, **lint**, and **vault intelligence** (backlog, suggestions).
+- **Vault CLI:** **`vault scan`**, **`status`**, **`add-url`**, **`lint`**, **`backlog`**, **`suggest`**, **`context`**, **`related`**, **`create-reference`**, **`tag`** / **`untag`**, **`browse`**, **`info`**, **`publish`**, **`install`** / **`uninstall`**, **`deps`**, and related wiring.
+- **`docmancer vault open <path>`:** adopt an existing folder (for example Obsidian) without moving files; scaffold + symlink supported files into **`raw/`**, initial scan and index sync, optional **`--name`**, idempotent re-runs for new files.
+- **Composition, discovery, gates, packaging, GitHub helpers, and installer** modules for publishing vaults, resolving dependencies, and installing from GitHub releases.
+- **Vault graph** and **index compiler** for structured wiki navigation and compiled indexes.
+- **`docmancer list --vaults`** to show registered vault roots.
+
+#### Query and observability
+
+- **`docmancer query --trace`** and **`--save-trace`** using **`DocmancerAgent.query_with_trace`** and the **telemetry** tracer.
+- **`docmancer query --cross-vault`** and **`--tag`**; retrieved chunks can include **vault** attribution.
+
+#### Eval
+
+- **`docmancer eval`** subcommands and pipeline: **datasets**, **metrics**, **runner**, and **reports**.
+- Optional **Ragas**-backed **`eval judge`** (install **`pip install 'docmancer[ragas]'`** with LLM deps as needed) for LLM-as-judge style checks.
+- **Training dataset** builder and CLI hooks for exporting eval-oriented training data.
+
+#### Setup, LLM, and telemetry extras
+
+- **`docmancer setup`:** interactive wizard for **LLM** provider settings (for example Anthropic) written to **`docmancer.yaml`**.
+- **`docmancer.connectors.llm`:** provider abstraction and **Anthropic** adapter for judge and related flows.
+- Optional **Langfuse** trace sink under **`docmancer/telemetry`** (enable via extras / config as documented in wiki).
+
+#### Fetchers
+
+- **ArXiv** fetcher (**`docmancer/connectors/fetchers/arxiv.py`**) for paper metadata and content.
+- **GitHub** documentation fetcher (**`github.py`**) for repo docs.
+
+#### Packaging and scripts
+
+- **PyPI optional extras** for **browser** (Playwright), **`llm`** (Anthropic), **`langfuse`**, and **`ragas`** (see **`pyproject.toml`**).
+- **`scripts/live_vault_integration.sh`** for end-to-end vault smoke checks (alongside **`live_cli_integration.sh`** updates).
+
+#### Documentation and skills
+
+- **Wiki:** **[Commands.md](wiki/Commands.md)** reference, **[Vaults.md](wiki/Vaults.md)**, **[Cross-Vault-Workflows.md](wiki/Cross-Vault-Workflows.md)**, **[Vault-Intelligence.md](wiki/Vault-Intelligence.md)**, **[Evals-and-Observability.md](wiki/Evals-and-Observability.md)**, plus updates to **Architecture**, **Configuration**, **Supported-Sources**, **Troubleshooting**, **Home**, and **Install-Targets**.
+- **Root `SKILL.md`** and **agent templates** (**`skill.md`**, Claude/Cursor variants) updated for vault, eval, cross-vault, and new commands.
 
 ### Changed
 
-- **0.2.x** release line on PyPI.
-- **Wiki** (**[Vaults.md](wiki/Vaults.md)**, **[Commands.md](wiki/Commands.md)**, **[Home.md](wiki/Home.md)**): document **`vault open`** and the existing-folder workflow.
-- **`SKILL.md`** frontmatter **`version`** aligned with the package for marketplace metadata.
+- **0.2.x** release line on PyPI; **`SKILL.md`** frontmatter **`version`** aligned with the package.
+- **`DocmancerConfig`** and related models extended for vault, eval, LLM, and tracing.
+- **`QdrantStore`** and **`DocmancerAgent`** adjustments for vault indexing, tracing, and integration tests.
+- **`.gitignore`:** ignore **`scripts/*.log`**.
 
 ### Tests
 
-- **`cross_vault_query`:** coverage moved next to vault operations tests; removed standalone **`test_cross_vault.py`**.
-- **Eval and telemetry tests:** refactors and additional cases for **`test_eval_pipeline`**, **`test_eval_metrics`**, **`test_telemetry`**, and **`test_models`**.
-- **`docmancer setup`:** CLI integration tests in **`test_cli.py`**.
-- **`vault open`:** new **`tests/test_vault_open.py`**.
-- Removed obsolete **`test_eval_vault_integration`**, **`test_langfuse_sink`**, **`test_models_provenance`**, and **`test_setup`** modules in favor of consolidated or slimmer coverage.
+- Large suite additions for vault (CLI, registry, manifest, scanner, operations, intelligence, lint, packaging, publish, install, graph, index compiler), eval (metrics, pipeline, judge, training), fetchers (ArXiv, GitHub), telemetry, Langfuse sink, LLM provider, and **setup**.
+- **`tests/test_vault_open.py`** for **`vault open`**; **`cross_vault_query`** tests live with vault operations; **setup** coverage in **`test_cli.py`**.
+- Removed redundant standalone modules (**`test_cross_vault`**, **`test_eval_vault_integration`**, **`test_langfuse_sink`**, **`test_models_provenance`**, **`test_setup`**) in favor of consolidated or slimmer coverage; ongoing refactors in **`test_eval_metrics`**, **`test_eval_pipeline`**, **`test_telemetry`**, and **`test_models`**.
 
 ## [0.1.11] - 2026-04-03
 ### Added
