@@ -23,6 +23,7 @@ These commands operate on a vault created with `docmancer init --template vault`
 
 | Command | Description |
 |---------|-------------|
+| `docmancer vault open <path>` | Adopt an existing folder of files as a vault by symlinking them into `raw/` and running an initial scan. See [Vaults](./Vaults.md). |
 | `docmancer vault scan` | Walk vault directories, reconcile the manifest, and refresh the vector index. |
 | `docmancer vault status` | Show a health summary of the vault including file counts and index states. |
 | `docmancer vault add-url <url>` | Fetch a single web page into `raw/` with generated frontmatter and index it in one step. |

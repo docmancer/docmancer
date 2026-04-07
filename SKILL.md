@@ -1,7 +1,7 @@
 ---
 name: docmancer
 description: Search and query local documentation knowledge bases. Fetches docs from public sites, embeds locally, and retrieves relevant chunks without API keys or servers.
-version: 0.1.11
+version: 0.2.0
 author: docmancer
 tags:
   - documentation

@@ -1,4 +1,7 @@
 import json
+from unittest.mock import MagicMock, patch
+
+from docmancer.core.config import DocmancerConfig, TelemetryConfig
 from docmancer.telemetry.tracer import QueryTrace, Span, format_trace_for_terminal
 
 
@@ -61,3 +64,33 @@ def test_format_trace_for_terminal():
     assert "dense_embed" in output
     assert "25.0ms" in output
     assert "a.md" in output
+
+
+# ---------------------------------------------------------------------------
+# Langfuse sink tests
+# ---------------------------------------------------------------------------
+
+
+def test_try_send_skips_when_telemetry_disabled():
+    from docmancer.telemetry.langfuse_sink import try_send_to_langfuse
+    config = DocmancerConfig(telemetry=TelemetryConfig(enabled=False))
+    try_send_to_langfuse(MagicMock(), config)
+
+
+def test_try_send_skips_when_no_telemetry_config():
+    from docmancer.telemetry.langfuse_sink import try_send_to_langfuse
+    try_send_to_langfuse(MagicMock(), DocmancerConfig())
+
+
+def test_try_send_skips_when_provider_not_langfuse():
+    from docmancer.telemetry.langfuse_sink import try_send_to_langfuse
+    config = DocmancerConfig(telemetry=TelemetryConfig(enabled=True, provider="other"))
+    try_send_to_langfuse(MagicMock(), config)
+
+
+def test_try_send_handles_missing_langfuse_package():
+    from docmancer.telemetry.langfuse_sink import try_send_to_langfuse
+    import docmancer.telemetry.langfuse_sink as sink_mod
+    sink_mod._WARNED_MISSING_KEYS = False
+    config = DocmancerConfig(telemetry=TelemetryConfig(enabled=True, provider="langfuse"))
+    try_send_to_langfuse(MagicMock(), config)

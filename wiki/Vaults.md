@@ -14,6 +14,20 @@ docmancer init --template vault --name stripe-research --dir ./vaults/stripe
 
 The `--name` flag sets a custom name for the vault in the registry. If omitted, the directory name is used. The `--dir` flag sets the target directory (defaults to the current directory).
 
+## Opening an existing folder as a vault
+
+If you already have a folder of Markdown files (for example, an Obsidian vault), you can adopt it as a docmancer vault without reorganizing anything:
+
+```bash
+docmancer vault open ./my-obsidian-vault --name research
+```
+
+This creates the docmancer structure (`.docmancer/`, `raw/`, `wiki/`, `outputs/`) inside the existing folder and symlinks all discovered files into `raw/`, preserving the original directory layout. The originals stay exactly where they are, so Obsidian and any other tools that use the folder continue to work normally.
+
+Existing files are treated as `raw` source material. Over time, you can compile them into wiki pages using the vault maintenance workflow.
+
+The command is safe to re-run. Running `vault open` again on the same folder picks up any new files added since the last run, creates symlinks for them, and indexes everything.
+
 ## Vault layout
 
 `docmancer init --template vault` creates:

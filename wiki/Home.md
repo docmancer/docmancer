@@ -24,11 +24,16 @@ This workflow is covered in [Architecture](./Architecture.md), [Supported Source
 
 An expanded workflow for mixed-source knowledge work. A vault adds filesystem structure, a provenance manifest, maintenance intelligence, and retrieval evals on top of the same embedding and retrieval engine.
 
+You can create a fresh vault or adopt an existing folder of Markdown (such as an Obsidian vault):
+
 ```bash
+# Start from scratch
 docmancer init --template vault --name ml-research
 docmancer vault add-url https://some-article.com/post
 docmancer vault scan
-docmancer vault search "concept I care about"
+
+# Or adopt an existing folder
+docmancer vault open ./my-obsidian-vault --name ml-research
 ```
 
 This workflow is covered in [Vaults](./Vaults.md), [Vault Intelligence](./Vault-Intelligence.md), [Evals and Observability](./Evals-and-Observability.md), and [Cross-Vault Workflows](./Cross-Vault-Workflows.md).

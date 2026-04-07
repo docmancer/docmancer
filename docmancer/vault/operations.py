@@ -201,6 +201,60 @@ def init_vault(directory: Path, name: str | None = None) -> Path:
     return config_path
 
 
+_SKIP_DIRS = {"raw", "wiki", "outputs", "assets", ".docmancer"}
+
+
+def open_vault(directory: Path, name: str | None = None) -> tuple[Path, int]:
+    """Adopt an existing folder as a vault by symlinking files into raw/.
+
+    Creates the vault scaffold (via *init_vault*), discovers supported files
+    outside the managed directories, and creates relative symlinks inside
+    ``raw/`` that preserve the original directory structure.
+
+    Returns ``(config_path, symlinks_created)``.
+    """
+    from docmancer.vault.scanner import _SUPPORTED_EXTENSIONS
+
+    directory = directory.resolve()
+    if not directory.is_dir():
+        raise FileNotFoundError(f"Directory does not exist: {directory}")
+
+    config_path = init_vault(directory, name=name)
+    raw_dir = directory / "raw"
+
+    symlinks_created = 0
+    for file_path in sorted(directory.rglob("*")):
+        if not file_path.is_file():
+            continue
+        if file_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+            continue
+
+        # Skip dot-directories and docmancer-managed directories
+        try:
+            relative = file_path.relative_to(directory)
+        except ValueError:
+            continue
+        parts = relative.parts
+        if any(p.startswith(".") for p in parts):
+            continue
+        if parts[0] in _SKIP_DIRS:
+            continue
+
+        # Build the symlink target inside raw/
+        symlink_path = raw_dir / relative
+        if symlink_path.exists() or symlink_path.is_symlink():
+            continue
+
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Compute a relative path from the symlink location back to the original
+        target = Path("../" * len(relative.parts)) / relative
+        symlink_path.symlink_to(target)
+        symlinks_created += 1
+
+    return config_path, symlinks_created
+
+
 def _fetch_url(url: str, browser: bool = False) -> str:
     """Fetch URL with progressive fallback: headers -> retry -> Playwright."""
     with httpx.Client(timeout=30, follow_redirects=True, headers=_FETCH_HEADERS) as client:

@@ -104,6 +104,79 @@ def vault_untag_cmd(vault_name: str, tag: str):
 
 
 @vault_group.command(
+    "open",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Open an existing folder as a vault.",
+    epilog=format_examples(
+        "docmancer vault open ./my-obsidian-vault",
+        "docmancer vault open ./notes --name research",
+    ),
+)
+@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.option("--name", "vault_name", default=None, help="Custom vault name. Defaults to directory name.")
+def vault_open_cmd(path: str, vault_name: str | None):
+    """Adopt an existing folder of files as a docmancer vault.
+
+    Creates the vault structure inside the folder, symlinks existing files
+    into raw/ preserving directory layout, and runs an initial scan to
+    populate the manifest and index everything for retrieval.
+    """
+    from docmancer.vault.operations import open_vault
+
+    dir_path = Path(path).resolve()
+    effective_name = vault_name or dir_path.name
+
+    config_path, symlinks_created = open_vault(dir_path, name=vault_name)
+    click.echo(f"Vault '{effective_name}' opened at {display_path(dir_path)}")
+    click.echo(f"  Config: {display_path(config_path)}")
+    click.echo(f"  Symlinked {symlinks_created} file(s) into raw/")
+
+    # Run initial scan (same logic as vault_scan_cmd)
+    from docmancer.vault.manifest import VaultManifest
+    from docmancer.vault.scanner import scan_vault
+    from docmancer.vault.operations import sync_vault_index
+
+    manifest_path = dir_path / ".docmancer" / "manifest.json"
+    scan_dirs = ["raw", "wiki", "outputs", "assets"]
+    if config_path.exists():
+        from docmancer.core.config import DocmancerConfig
+        config = DocmancerConfig.from_yaml(config_path)
+        if config.vault is not None:
+            scan_dirs = config.vault.effective_scan_dirs()
+
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+
+    result = scan_vault(dir_path, manifest, scan_dirs)
+    try:
+        sync_vault_index(
+            dir_path,
+            manifest,
+            added_paths=result.added,
+            updated_paths=result.updated,
+            removed_paths=result.removed,
+        )
+    finally:
+        manifest.save()
+
+    # Update registry last_scan timestamp
+    try:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        vault_entry = registry.find_by_path(dir_path)
+        if vault_entry:
+            registry.update_last_scan(vault_entry["name"])
+    except Exception:
+        pass
+
+    total = len(manifest.all_entries())
+    click.echo(f"  Indexed {total} file(s)")
+    click.echo()
+    click.echo("Next: run 'docmancer query' to search, or 'docmancer vault status' to inspect.")
+
+
+@vault_group.command(
     "scan",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,

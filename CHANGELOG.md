@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-07
+
+### Added
+
+- **`docmancer vault open <path>`:** adopt an existing directory (for example an Obsidian vault) as a docmancer vault without moving files. Creates the vault scaffold under that folder, symlinks supported files into **`raw/`** while preserving layout, runs an initial manifest scan and vector sync, and updates the vault registry. Optional **`--name`** overrides the registry name (default: directory name). Safe to re-run to pick up new files.
+- **`open_vault()`** in **`docmancer.vault.operations`** implementing the symlink-and-scaffold behavior used by **`vault open`**.
+
+### Changed
+
+- **0.2.x** release line on PyPI.
+- **Wiki** (**[Vaults.md](wiki/Vaults.md)**, **[Commands.md](wiki/Commands.md)**, **[Home.md](wiki/Home.md)**): document **`vault open`** and the existing-folder workflow.
+- **`SKILL.md`** frontmatter **`version`** aligned with the package for marketplace metadata.
+
+### Tests
+
+- **`cross_vault_query`:** coverage moved next to vault operations tests; removed standalone **`test_cross_vault.py`**.
+- **Eval and telemetry tests:** refactors and additional cases for **`test_eval_pipeline`**, **`test_eval_metrics`**, **`test_telemetry`**, and **`test_models`**.
+- **`docmancer setup`:** CLI integration tests in **`test_cli.py`**.
+- **`vault open`:** new **`tests/test_vault_open.py`**.
+- Removed obsolete **`test_eval_vault_integration`**, **`test_langfuse_sink`**, **`test_models_provenance`**, and **`test_setup`** modules in favor of consolidated or slimmer coverage.
+
 ## [0.1.11] - 2026-04-03
 ### Added
 
@@ -141,7 +162,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.1.9]: https://github.com/docmancer/docmancer/compare/v0.1.8...HEAD
+[0.2.0]: https://github.com/docmancer/docmancer/compare/v0.1.11...v0.2.0
+[0.1.11]: https://github.com/docmancer/docmancer/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/docmancer/docmancer/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/docmancer/docmancer/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/docmancer/docmancer/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/docmancer/docmancer/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/docmancer/docmancer/compare/v0.1.5...v0.1.6
