@@ -62,6 +62,7 @@ class VaultConfig(BaseSettings):
     author: str = ""
     repository: str = ""
     dependencies: list[dict] = Field(default_factory=list)
+    scan_cooldown_seconds: int = Field(default=30, ge=0)
     model_config = SettingsConfigDict(env_prefix="VAULT_", extra="ignore")
 
     def effective_scan_dirs(self) -> list[str]:

@@ -297,20 +297,53 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
         "docmancer init --dir ./sandbox",
         "docmancer init --template vault",
         "docmancer init --template vault --name stripe-research",
+        "docmancer init --template obsidian",
     ),
 )
-@click.option("--dir", "directory", default=".", help="Target directory for the config file.")
+@click.option("--dir", "directory", default=None, help="Target directory for the config file.")
 @click.option("--template", "template", default=None,
-              type=click.Choice(["vault"], case_sensitive=False),
-              help="Project template. 'vault' scaffolds a structured knowledge base.")
-@click.option("--name", "vault_name", default=None, help="Custom vault name (vault template only). Defaults to directory name.")
-def init_cmd(directory: str, template: str | None, vault_name: str | None):
+              type=click.Choice(["vault", "obsidian"], case_sensitive=False),
+              help="Project template. 'vault' scaffolds a structured knowledge base. 'obsidian' indexes an existing Obsidian vault.")
+@click.option("--name", "vault_name", default=None, help="Custom vault name (vault/obsidian template). Defaults to directory name.")
+def init_cmd(directory: str | None, template: str | None, vault_name: str | None):
     """Initialize a docmancer project with a config file."""
     import yaml as _yaml
 
+    if template == "obsidian":
+        from docmancer.vault.operations import init_obsidian_vault
+        if directory is not None:
+            dir_path = Path(directory)
+        else:
+            from docmancer.vault.obsidian import discover_obsidian_vaults
+            vaults = discover_obsidian_vaults()
+            if len(vaults) == 1:
+                dir_path = Path(vaults[0]["path"])
+                click.echo(f"Auto-detected Obsidian vault: {vaults[0]['name']}")
+            elif len(vaults) > 1:
+                click.echo("Multiple Obsidian vaults found:")
+                for i, v in enumerate(vaults, 1):
+                    click.echo(f"  {i}. {v['name']} ({v['path']})")
+                choice = click.prompt("Select vault number", type=int, default=1)
+                if 1 <= choice <= len(vaults):
+                    dir_path = Path(vaults[choice - 1]["path"])
+                else:
+                    click.echo("Invalid selection.", err=True)
+                    return
+            else:
+                click.echo("No Obsidian vaults detected. Using current directory.")
+                dir_path = Path(".")
+        config_path = init_obsidian_vault(dir_path, name=vault_name)
+        effective_name = vault_name or dir_path.resolve().name
+        click.echo(f"Obsidian vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
+        click.echo(f"  Config: {display_path(config_path)}")
+        click.echo("  scan_dirs: [\".\"] (entire vault)")
+        click.echo()
+        click.echo("Next: clip articles with Obsidian Web Clipper, then query with 'docmancer query <text>'")
+        return
+
     if template == "vault":
         from docmancer.vault.operations import init_vault
-        dir_path = Path(directory)
+        dir_path = Path(directory or ".")
         config_path = init_vault(dir_path, name=vault_name)
         effective_name = vault_name or dir_path.resolve().name
         click.echo(f"Vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
@@ -320,7 +353,7 @@ def init_cmd(directory: str, template: str | None, vault_name: str | None):
         click.echo("Next: add content with 'docmancer vault add-url <url>' or place files in raw/")
         return
 
-    dir_path = Path(directory)
+    dir_path = Path(directory or ".")
     dir_path.mkdir(parents=True, exist_ok=True)
     config_path = dir_path / "docmancer.yaml"
     if config_path.exists():
@@ -570,9 +603,17 @@ def doctor_cmd(config_path: str | None):
 @click.option("--save-trace", is_flag=True, default=False, help="Save trace to .docmancer/traces/.")
 @click.option("--cross-vault", "cross_vault", is_flag=True, default=False, help="Query across all registered vaults.")
 @click.option("--tag", "filter_tag", default=None, help="Filter cross-vault query to vaults with this tag.")
-def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool, cross_vault: bool, filter_tag: str | None):
+@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan before query.")
+def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool, cross_vault: bool, filter_tag: str | None, no_scan: bool):
     """Run a retrieval query against the vector store (no server required)."""
     effective_limit = limit if limit is not None else 5
+
+    # Auto-scan if a vault is detected in the current directory
+    if not no_scan:
+        vault_indicator = Path(".docmancer/manifest.json")
+        if vault_indicator.exists():
+            from docmancer.cli.vault_commands import _maybe_auto_scan
+            _maybe_auto_scan(Path(".").resolve(), no_scan=False)
 
     if filter_tag and not cross_vault:
         cross_vault = True  # --tag implies --cross-vault

@@ -201,6 +201,52 @@ def init_vault(directory: Path, name: str | None = None) -> Path:
     return config_path
 
 
+def init_obsidian_vault(directory: Path, name: str | None = None) -> Path:
+    """Scaffold a vault inside an existing Obsidian vault directory.
+
+    Unlike *init_vault*, this does **not** create ``raw/``, ``wiki/``,
+    ``outputs/`` or ``assets/`` directories.  Instead it configures
+    ``scan_dirs: ["."]`` so the entire Obsidian vault is indexed.
+
+    Returns path to the created ``docmancer.yaml``.
+    """
+    directory = directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".docmancer").mkdir(exist_ok=True)
+
+    config_path = directory / "docmancer.yaml"
+    if config_path.exists():
+        return config_path
+
+    vault_cfg = VaultConfig(
+        scan_dirs=["."],
+        scan_cooldown_seconds=30,
+    )
+    config = DocmancerConfig(vault=vault_cfg)
+    data = config.model_dump(exclude_none=False)
+    with open(config_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    manifest_path = directory / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.save()
+
+    # Hide .docmancer from Obsidian's search / graph
+    from docmancer.vault.obsidian import update_obsidian_ignore
+    update_obsidian_ignore(directory)
+
+    # Auto-register in local vault registry
+    try:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        vault_name = name or directory.name
+        registry.register(vault_name, directory, config_path)
+    except Exception:
+        pass  # Registry is optional
+
+    return config_path
+
+
 _SKIP_DIRS = {"raw", "wiki", "outputs", "assets", ".docmancer"}
 
 

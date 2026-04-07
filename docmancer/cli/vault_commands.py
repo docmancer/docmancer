@@ -39,6 +39,29 @@ def _parse_frontmatter(content: str) -> dict:
         return {}
 
 
+def _maybe_auto_scan(vault_root: Path, no_scan: bool = False) -> None:
+    """Run the scan-on-query freshness gate unless *no_scan* is set."""
+    if no_scan:
+        return
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    config_path = vault_root / "docmancer.yaml"
+    scan_dirs = ["raw", "wiki", "outputs", "assets"]
+    cooldown = 30
+    if config_path.exists():
+        from docmancer.core.config import DocmancerConfig
+        config = DocmancerConfig.from_yaml(config_path)
+        if config.vault is not None:
+            scan_dirs = config.vault.effective_scan_dirs()
+            cooldown = config.vault.scan_cooldown_seconds
+    from docmancer.vault.manifest import VaultManifest
+    from docmancer.vault.freshness import auto_scan_if_needed
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+    auto_scan_if_needed(vault_root, scan_dirs, manifest, cooldown)
+
+
 @click.group(
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
@@ -287,11 +310,13 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
 )
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
-def vault_status_cmd(directory: str, vault_name: str | None):
+@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan.")
+def vault_status_cmd(directory: str, vault_name: str | None, no_scan: bool):
     """Show a compact operational summary of the vault."""
     from docmancer.vault.manifest import ContentKind, IndexState, VaultManifest
 
     vault_root = _resolve_vault_root(directory, vault_name)
+    _maybe_auto_scan(vault_root, no_scan)
     manifest_path = vault_root / ".docmancer" / "manifest.json"
 
     if not manifest_path.exists():
@@ -510,11 +535,13 @@ def vault_inspect_cmd(id_or_path: str, directory: str, vault_name: str | None):
 @click.option("--limit", default=10, type=int, help="Max results.")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
-def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str, vault_name: str | None):
+@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan.")
+def vault_search_cmd(query: str, kind: str | None, limit: int, directory: str, vault_name: str | None, no_scan: bool):
     """Search vault entries by keyword against paths, titles, tags, and indexed file content."""
     from docmancer.vault.operations import search_vault
 
     vault_root = _resolve_vault_root(directory, vault_name)
+    _maybe_auto_scan(vault_root, no_scan)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -638,11 +665,13 @@ def vault_lint_cmd(directory: str, vault_name: str | None, fix: bool, deep: bool
 @click.option("--limit", default=5, type=int, help="Max results per group.")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
-def vault_context_cmd(query: str, limit: int, directory: str, vault_name: str | None):
+@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan.")
+def vault_context_cmd(query: str, limit: int, directory: str, vault_name: str | None, no_scan: bool):
     """Get grouped research context for a query."""
     from docmancer.vault.intelligence import build_context_bundle
 
     vault_root = _resolve_vault_root(directory, vault_name)
+    _maybe_auto_scan(vault_root, no_scan)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
@@ -697,12 +726,14 @@ def vault_context_cmd(query: str, limit: int, directory: str, vault_name: str | 
 @click.argument("id_or_path")
 @click.option("--dir", "directory", default=".", help="Vault root directory.")
 @click.option("--vault", "vault_name", default=None, help="Target a registered vault by name.")
-def vault_related_cmd(id_or_path: str, directory: str, vault_name: str | None):
+@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan.")
+def vault_related_cmd(id_or_path: str, directory: str, vault_name: str | None, no_scan: bool):
     """Find related vault entries using tags, explicit links, and graph relationships."""
     from docmancer.vault.intelligence import related_entries
     from docmancer.vault.operations import inspect_entry
 
     vault_root = _resolve_vault_root(directory, vault_name)
+    _maybe_auto_scan(vault_root, no_scan)
     if not (vault_root / ".docmancer").exists():
         click.echo("Not a vault project. Run 'docmancer init --template vault' first.", err=True)
         sys.exit(1)
