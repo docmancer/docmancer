@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - Unreleased
-
+## [0.2.1] - 2026-04-07
 ### Changed
 
 - **README:** Vault-first quickstart, **Two Workflows** (research vaults vs quick docs **`ingest`**), Obsidian adoption (**`vault open`**), refreshed hero line and benefit bullets, wiki TOC link.
