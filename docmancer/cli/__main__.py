@@ -21,6 +21,9 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
         "docmancer ingest https://docs.example.com",
         'docmancer query "How do I authenticate?"',
         "docmancer install claude-code",
+        "docmancer init --template vault --name my-research",
+        "docmancer vault scan",
+        'docmancer vault context "OAuth best practices"',
     ),
 )
 @click.option(
@@ -37,7 +40,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
               help="Path to docmancer.yaml (passed through to subcommands).")
 @click.pass_context
 def cli(ctx, config_path: str | None):
-    """Fetch docs, embed them locally, and expose them to AI agents via skills."""
+    """Fetch docs, build research vaults, and expose them to AI agents via skills."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
 

@@ -291,7 +291,7 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Create a docmancer config file.",
+    short_help="Create a config file or scaffold a vault.",
     epilog=format_examples(
         "docmancer init",
         "docmancer init --dir ./sandbox",
@@ -710,7 +710,7 @@ def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="List ingested sources.",
+    short_help="List ingested sources or registered vaults.",
     epilog=format_examples(
         "docmancer list",
         "docmancer list --all",

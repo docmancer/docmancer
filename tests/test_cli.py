@@ -80,7 +80,7 @@ def test_cli_help():
     runner = CliRunner()
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
-    assert "Fetch docs, embed them locally" in result.output
+    assert "Fetch docs, build research vaults" in result.output
     assert "ingest" in result.output
     assert "docmancer query" in result.output
     assert "How do" in result.output

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - Unreleased
+
+### Changed
+
+- **README:** Vault-first quickstart, **Two Workflows** (research vaults vs quick docs **`ingest`**), Obsidian adoption (**`vault open`**), refreshed hero line and benefit bullets, wiki TOC link.
+- **Root `SKILL.md`:** Broader description and body for vaults, **`setup`** / **`doctor`** / **`init`**, docs retrieval vs vault commands, and cross-vault usage.
+- **CLI copy:** Root **`--help`** docstring and epilog examples; **`init`** and **`list`** **`short_help`** strings; banner **TAGLINE** in **`docmancer/cli/ui.py`**.
+- **`scripts/live_cli_integration.sh`:** Default **`DOCMANCER_LIVE_DOCS_URL`** sample ingest target is **`http://docs.bonzo.finance/`** (still overridable via env).
+
+### Tests
+
+- **`test_cli`:** Main help assertion updated for the new root CLI description.
+
 ## [0.2.0] - 2026-04-07
 
 This release adds an optional **knowledge vault** workflow on top of the existing ingest-and-query path, plus **eval**, **query tracing**, **ArXiv/GitHub fetchers**, and expanded wiki documentation. Vault mode is opt-in; classic **`docmancer ingest`** behavior remains unchanged if you do not use **`init --template vault`**.
@@ -209,6 +222,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.2.1]: https://github.com/docmancer/docmancer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/docmancer/docmancer/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/docmancer/docmancer/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/docmancer/docmancer/compare/v0.1.9...v0.1.10
