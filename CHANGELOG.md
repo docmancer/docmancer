@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - Unreleased
-
+## [0.2.2] - 2026-04-08
 ### Added
 
 - **`vault.license`** in **`docmancer.yaml`** (**`VaultConfig`**, **`VAULT_LICENSE`**): required before **`vault publish`**; written to the vault **card** and enforced with a clear CLI error when missing.
