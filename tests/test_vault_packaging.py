@@ -194,7 +194,7 @@ class TestPackageVault:
         _add_manifest_entry(vault_root, "wiki/article.md", ContentKind.wiki)
 
         output_dir = tmp_path / "dist"
-        archive = package_vault(vault_root, output_dir)
+        archive = package_vault(vault_root, output_dir, include_raw=True)
 
         with tarfile.open(archive, "r:gz") as tar:
             names = tar.getnames()
@@ -206,6 +206,28 @@ class TestPackageVault:
         assert "manifest.json" in name_set
         assert "raw/doc.md" in name_set
         assert "wiki/article.md" in name_set
+
+    def test_package_without_raw_filters_manifest_entries(self, tmp_path: Path) -> None:
+        vault_root = _scaffold_vault(tmp_path)
+        _add_file(vault_root, "raw/doc.md", "# Raw\nContent.")
+        _add_file(vault_root, "wiki/article.md", "# Wiki\nContent.")
+        _add_file(vault_root, "assets/image.png", "binary-ish")
+        _add_manifest_entry(vault_root, "raw/doc.md", ContentKind.raw, "Raw Doc")
+        _add_manifest_entry(vault_root, "wiki/article.md", ContentKind.wiki, "Wiki Doc")
+        _add_manifest_entry(vault_root, "assets/image.png", ContentKind.asset, "Image")
+
+        archive = package_vault(vault_root, tmp_path / "dist")
+
+        with tarfile.open(archive, "r:gz") as tar:
+            root = tar.getnames()[0]
+            manifest_member = tar.extractfile(f"{root}/manifest.json")
+            assert manifest_member is not None
+            manifest_data = json.loads(manifest_member.read().decode("utf-8"))
+
+        paths = {entry["path"] for entry in manifest_data["entries"].values()}
+        assert "wiki/article.md" in paths
+        assert "raw/doc.md" not in paths
+        assert "assets/image.png" not in paths
 
     def test_package_with_version_override(self, tmp_path: Path) -> None:
         vault_root = _scaffold_vault(tmp_path)
@@ -252,7 +274,7 @@ class TestExtractVaultPackage:
         _add_manifest_entry(vault_root, "wiki/article.md", ContentKind.wiki)
 
         output_dir = tmp_path / "dist"
-        archive = package_vault(vault_root, output_dir)
+        archive = package_vault(vault_root, output_dir, include_raw=True)
 
         extract_dir = tmp_path / "extracted"
         extracted_root = extract_vault_package(archive, extract_dir)
@@ -272,7 +294,7 @@ class TestExtractVaultPackage:
         _add_manifest_entry(vault_root, "raw/preserve.md", ContentKind.raw)
 
         output_dir = tmp_path / "dist"
-        archive = package_vault(vault_root, output_dir)
+        archive = package_vault(vault_root, output_dir, include_raw=True)
 
         extract_dir = tmp_path / "extracted"
         extracted_root = extract_vault_package(archive, extract_dir)

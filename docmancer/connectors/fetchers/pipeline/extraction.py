@@ -210,11 +210,38 @@ def extract_metadata(html: str) -> dict[str, str | None]:
     if link_canonical and isinstance(link_canonical, Tag):
         canonical_url = link_canonical.get("href")
 
+    author = None
+    for attr in ("author", "article:author"):
+        meta_author = soup.find("meta", attrs={"name": attr}) or soup.find(
+            "meta", attrs={"property": attr}
+        )
+        if meta_author and isinstance(meta_author, Tag):
+            author = meta_author.get("content")
+            if author:
+                break
+
+    published = None
+    for attr in (
+        "article:published_time",
+        "datePublished",
+        "date",
+        "DC.date.issued",
+    ):
+        meta_pub = soup.find("meta", attrs={"property": attr}) or soup.find(
+            "meta", attrs={"name": attr}
+        )
+        if meta_pub and isinstance(meta_pub, Tag):
+            published = meta_pub.get("content")
+            if published:
+                break
+
     return {
         "title": title,
         "description": description,
         "lang": str(lang) if lang else None,
         "canonical_url": str(canonical_url) if canonical_url else None,
+        "author": str(author) if author else None,
+        "published": str(published) if published else None,
     }
 
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +15,9 @@ from docmancer.vault.packaging import VaultCard
 
 
 _GITHUB_API = "https://api.github.com"
+
+_CACHE_PATH = Path.home() / ".docmancer" / "discovery_cache.json"
+_CACHE_TTL_SECONDS = 3600  # 1 hour
 
 
 class VaultListEntry(BaseModel):
@@ -26,6 +32,22 @@ class VaultListEntry(BaseModel):
     updated_at: str = ""
 
 
+def _load_cache() -> dict:
+    """Load discovery cache from disk."""
+    if not _CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_cache(cache: dict) -> None:
+    """Persist discovery cache to disk."""
+    _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _CACHE_PATH.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+
+
 class VaultDiscovery:
     """Discover published vaults from GitHub."""
 
@@ -38,12 +60,21 @@ class VaultDiscovery:
             headers["Authorization"] = f"token {self._token}"
         return headers
 
-    def search(self, query: str | None = None) -> list[VaultListEntry]:
+    def search(
+        self, query: str | None = None, *, refresh: bool = False,
+    ) -> list[VaultListEntry]:
         """Search for vaults on GitHub using topic-based discovery.
 
-        Searches for repos with the 'docmancer-vault' topic, optionally
-        filtered by a query string.
+        Results are cached locally for 1 hour. Pass refresh=True to bypass cache.
         """
+        cache_key = f"search:{query or ''}"
+
+        if not refresh:
+            cache = _load_cache()
+            entry = cache.get(cache_key)
+            if entry and time.time() - entry.get("ts", 0) < _CACHE_TTL_SECONDS:
+                return [VaultListEntry(**e) for e in entry.get("results", [])]
+
         search_query = "topic:docmancer-vault"
         if query:
             search_query += f" {query}"
@@ -69,6 +100,15 @@ class VaultDiscovery:
                         stars=item.get("stargazers_count", 0),
                         updated_at=item.get("updated_at", ""),
                     ))
+
+                # Cache results
+                cache = _load_cache()
+                cache[cache_key] = {
+                    "ts": time.time(),
+                    "results": [r.model_dump() for r in results],
+                }
+                _save_cache(cache)
+
                 return results
         except Exception:
             return []

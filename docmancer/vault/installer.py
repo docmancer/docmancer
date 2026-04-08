@@ -96,6 +96,7 @@ class VaultInstaller:
         repo: str | None = None,
         version: str | None = None,
         skip_index: bool = False,
+        with_index: bool = False,
         token: str | None = None,
     ) -> Path:
         """Install a vault package from a GitHub release.
@@ -105,6 +106,7 @@ class VaultInstaller:
             repo: GitHub repo in owner/repo format
             version: specific version to install (None = latest)
             skip_index: skip re-indexing after install
+            with_index: download pre-built vector index if available
             token: GitHub personal access token
 
         Returns:
@@ -186,8 +188,15 @@ class VaultInstaller:
         except Exception:
             pass
 
-        # Re-index if not skipped
-        if not skip_index:
+        # Try to download pre-built index if requested
+        index_loaded = False
+        if with_index:
+            index_loaded = self._try_download_index(
+                release, vault_root, name, token=token,
+            )
+
+        # Re-index locally if no pre-built index was loaded and not skipped
+        if not skip_index and not index_loaded:
             self._reindex(vault_root)
 
         return vault_root
@@ -289,3 +298,57 @@ class VaultInstaller:
                 manifest.save()
         except Exception:
             pass  # Indexing failure shouldn't block install
+
+    def _try_download_index(
+        self,
+        release: dict,
+        vault_root: Path,
+        name: str,
+        *,
+        token: str | None = None,
+    ) -> bool:
+        """Try to download and extract a pre-built vector index.
+
+        Returns True if index was successfully loaded, False otherwise.
+        Degrades gracefully: prints a notice and returns False on any failure.
+        """
+        import tarfile
+
+        # Look for an index asset (name-version-index.tar.gz)
+        index_asset = None
+        for a in release.get("assets", []):
+            if a["name"].endswith("-index.tar.gz"):
+                index_asset = a
+                break
+
+        if index_asset is None:
+            import logging
+            logging.getLogger("docmancer").info(
+                "No pre-built index available, embedding locally..."
+            )
+            return False
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                download_path = Path(tmp) / index_asset["name"]
+                download_release_asset(
+                    index_asset["browser_download_url"], download_path, token=token,
+                )
+
+                # Extract qdrant directory into vault's .docmancer/
+                docmancer_dir = vault_root / ".docmancer"
+                docmancer_dir.mkdir(exist_ok=True)
+                qdrant_dest = docmancer_dir / "qdrant"
+                if qdrant_dest.exists():
+                    shutil.rmtree(qdrant_dest)
+
+                with tarfile.open(download_path, "r:gz") as tar:
+                    # Security: check for path traversal
+                    for member in tar.getmembers():
+                        if member.name.startswith("/") or ".." in member.name:
+                            return False
+                    tar.extractall(path=docmancer_dir)
+
+                return qdrant_dest.is_dir()
+        except Exception:
+            return False

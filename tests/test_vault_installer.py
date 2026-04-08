@@ -49,7 +49,7 @@ def _scaffold_and_package(tmp_path: Path) -> Path:
     manifest.save()
 
     output_dir = tmp_path / "dist"
-    return package_vault(vault_root, output_dir)
+    return package_vault(vault_root, output_dir, include_raw=True)
 
 
 class TestVaultInstaller:

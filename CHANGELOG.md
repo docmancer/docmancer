@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - Unreleased
+
+### Added
+
+- **`vault.license`** in **`docmancer.yaml`** (**`VaultConfig`**, **`VAULT_LICENSE`**): required before **`vault publish`**; written to the vault **card** and enforced with a clear CLI error when missing.
+- **`docmancer vault publish`:** **`--include-raw`** to ship **`raw/`** in the tarball (with redistribution warning); **`--with-index`** to upload a separate **`*-index.tar.gz`** Qdrant asset when **`raw/`** is included; **500 MB** default package size cap (overridable with **`--force`**); packaged **manifest** filtered to match included roots; **`generate_attribution_md`** (**`ATTRIBUTION.md`**) from per-file **`source`** / **`sources`** frontmatter (grouped by domain).
+- **`docmancer vault install`:** **`--with-index`** to download a pre-built index asset when the release provides one; otherwise falls back to local embedding (same as before).
+- **`docmancer vault browse`:** **`--refresh`** bypasses the discovery cache.
+- **Vault discovery cache:** **`~/.docmancer/discovery_cache.json`** with **1 hour** TTL for **`VaultDiscovery.search`**.
+- **Web extraction:** **`extract_metadata`** reads **`author`** and **`published`** from common **`<meta>`** tags for richer **`vault add-url`** frontmatter (**`source`**, **`author`**, **`published`**, **`description`**, **`tags`:** **`raw`**).
+
+### Changed
+
+- **`vault add-url`:** Frontmatter for new **raw** pages uses structured YAML (**`_build_frontmatter`**) aligned with **Obsidian Web Clipper**-style provenance.
+- **`vault lint`:** **raw** entries require frontmatter **`title`**, **`source`**, and **`created`**.
+- **README:** Demo GIF switched to **`readme-assets/vault-demo.gif`**; command tables reformatted.
+
+### Tests
+
+- Extended **`test_vault_cli`**, **`test_vault_installer`**, **`test_vault_lint`**, **`test_vault_operations`**, and **`test_vault_packaging`** for publish/install/lint/packaging behavior.
+
 ## [0.2.1] - 2026-04-07
 ### Changed
 
@@ -221,6 +242,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.2.2]: https://github.com/docmancer/docmancer/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/docmancer/docmancer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/docmancer/docmancer/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/docmancer/docmancer/compare/v0.1.10...v0.1.11

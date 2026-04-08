@@ -61,6 +61,7 @@ class VaultConfig(BaseSettings):
     description: str = ""
     author: str = ""
     repository: str = ""
+    license: str = ""
     dependencies: list[dict] = Field(default_factory=list)
     scan_cooldown_seconds: int = Field(default=30, ge=0)
     model_config = SettingsConfigDict(env_prefix="VAULT_", extra="ignore")

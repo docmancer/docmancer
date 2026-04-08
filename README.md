@@ -11,7 +11,7 @@
 
 <br>
 
-<img src="readme-assets/demo.gif" alt="docmancer demo" width="720" />
+<img src="readme-assets/vault-demo.gif" alt="docmancer vault demo" width="720" />
 
 <br>
 
@@ -168,29 +168,29 @@ Skills are plain markdown files. No background daemon, no MCP server, no ports. 
 
 ### Vault
 
-| Command                                   | What it does                                                            |
-| ----------------------------------------- | ----------------------------------------------------------------------- |
-| `docmancer init --template vault`         | Scaffold a structured knowledge base with `raw/`, `wiki/`, `outputs/`   |
-| `docmancer vault open <path>`             | Adopt an existing folder of files as a vault                            |
-| `docmancer vault scan`                    | Reconcile filesystem, manifest, and vector index                        |
-| `docmancer vault status`                  | Show vault health summary with file counts and index states             |
-| `docmancer vault add-url <url>`           | Fetch a web page into `raw/` with provenance and index it               |
-| `docmancer vault inspect <id-or-path>`    | Show manifest metadata for a specific vault entry                       |
-| `docmancer vault search <query>`          | Search vault metadata and content at file level                         |
-| `docmancer vault context <query>`         | Get grouped research context across raw, wiki, and output corpora       |
-| `docmancer vault related <id-or-path>`    | Find entries related by tags, links, and semantic similarity            |
-| `docmancer vault lint`                    | Validate vault integrity; use `--deep` for LLM-assisted checks         |
-| `docmancer vault backlog`                 | Generate prioritized maintenance items from vault state                 |
-| `docmancer vault suggest`                 | Produce a next-actions list for agents without writing content          |
+| Command                                | What it does                                                          |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| `docmancer init --template vault`      | Scaffold a structured knowledge base with `raw/`, `wiki/`, `outputs/` |
+| `docmancer vault open <path>`          | Adopt an existing folder of files as a vault                          |
+| `docmancer vault scan`                 | Reconcile filesystem, manifest, and vector index                      |
+| `docmancer vault status`               | Show vault health summary with file counts and index states           |
+| `docmancer vault add-url <url>`        | Fetch a web page into `raw/` with provenance and index it             |
+| `docmancer vault inspect <id-or-path>` | Show manifest metadata for a specific vault entry                     |
+| `docmancer vault search <query>`       | Search vault metadata and content at file level                       |
+| `docmancer vault context <query>`      | Get grouped research context across raw, wiki, and output corpora     |
+| `docmancer vault related <id-or-path>` | Find entries related by tags, links, and semantic similarity          |
+| `docmancer vault lint`                 | Validate vault integrity; use `--deep` for LLM-assisted checks        |
+| `docmancer vault backlog`              | Generate prioritized maintenance items from vault state               |
+| `docmancer vault suggest`              | Produce a next-actions list for agents without writing content        |
 
 ### Evals
 
-| Command                            | What it does                                                              |
-| ---------------------------------- | ------------------------------------------------------------------------- |
-| `docmancer query --trace`          | Print a structured execution trace for a single retrieval                 |
-| `docmancer dataset generate`       | Generate a golden eval dataset scaffold; use `--llm` for LLM-assisted Q&A |
-| `docmancer dataset generate-training` | Generate fine-tuning training data in JSONL, Alpaca, or conversation format |
-| `docmancer eval`                   | Run retrieval metrics (MRR, hit rate, chunk overlap, latency) against a dataset |
+| Command                               | What it does                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `docmancer query --trace`             | Print a structured execution trace for a single retrieval                       |
+| `docmancer dataset generate`          | Generate a golden eval dataset scaffold; use `--llm` for LLM-assisted Q&A       |
+| `docmancer dataset generate-training` | Generate fine-tuning training data in JSONL, Alpaca, or conversation format     |
+| `docmancer eval`                      | Run retrieval metrics (MRR, hit rate, chunk overlap, latency) against a dataset |
 
 Use `--full` with `docmancer query` to return the entire chunk body (default truncates at 1500 characters). Use `--limit N` to change how many chunks are returned.
 

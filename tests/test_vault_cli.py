@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 import pytest
+import yaml
 from docmancer.cli.__main__ import cli
 
 
@@ -72,7 +73,7 @@ def test_vault_scan_warns_missing_frontmatter(tmp_path):
 def test_vault_scan_no_frontmatter_warning_when_clean(tmp_path):
     runner = CliRunner()
     runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
-    (tmp_path / "raw" / "doc.md").write_text("# Doc without frontmatter is fine in raw")
+    (tmp_path / "raw" / "doc.md").write_text("---\ntitle: Doc\nsource: \"https://example.com\"\ncreated: 2026-01-01\n---\n# Doc without frontmatter is fine in raw")
     result = runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "missing required frontmatter" not in result.output
@@ -169,7 +170,7 @@ def test_vault_search_no_results(tmp_path):
 def test_vault_lint_clean(tmp_path):
     runner = CliRunner()
     runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
-    (tmp_path / "raw" / "doc.md").write_text("# Doc")
+    (tmp_path / "raw" / "doc.md").write_text("---\ntitle: Doc\nsource: \"https://example.com\"\ncreated: 2026-01-01\n---\n# Doc")
     runner.invoke(cli, ["vault", "scan", "--dir", str(tmp_path)])
     result = runner.invoke(cli, ["vault", "lint", "--dir", str(tmp_path)])
     assert result.exit_code == 0
@@ -665,3 +666,41 @@ def test_dataset_generate_llm_without_api_key(tmp_path):
                                      "--output", str(tmp_path / "dataset.json")])
     assert result.exit_code == 0
     assert "require an API key" in result.output or "Generated" in result.output
+
+
+def test_vault_publish_skips_index_without_raw(tmp_path):
+    runner = CliRunner()
+    runner.invoke(cli, ["init", "--template", "vault", "--dir", str(tmp_path)])
+    config_path = tmp_path / "docmancer.yaml"
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_data["vault"]["license"] = "CC-BY-4.0"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    package_path = tmp_path / "pkg.tar.gz"
+    package_path.write_bytes(b"package")
+    gate_result = MagicMock(
+        lint_issues=[],
+        warnings=[],
+        passed=True,
+        eval_result=None,
+    )
+    card = MagicMock(name="vault-card")
+    card.name = "test-vault"
+    card.version = "0.1.0"
+
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "token"}, clear=True), \
+         patch("docmancer.vault.gates.run_pre_publish_gates", return_value=gate_result), \
+         patch("docmancer.vault.packaging.package_vault", return_value=package_path), \
+         patch("docmancer.vault.packaging.build_vault_card", return_value=card), \
+         patch("docmancer.vault.github.GitHubPublisher") as MockPublisher, \
+         patch("docmancer.vault.installer.fetch_release_info") as mock_fetch_release:
+        publisher = MockPublisher.return_value
+        publisher.publish_vault.return_value = "https://example.com/release"
+
+        result = runner.invoke(cli, ["vault", "publish", "--dir", str(tmp_path), "--repo", "owner/repo", "--with-index"])
+
+    assert result.exit_code == 0
+    assert "Skipping --with-index because the published package excludes raw/" in result.output
+    publisher.publish_vault.assert_called_once()
+    publisher.upload_release_asset.assert_not_called()
+    mock_fetch_release.assert_not_called()

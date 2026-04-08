@@ -214,8 +214,11 @@ def test_lint_output_is_structured(tmp_path: Path) -> None:
 
 def test_lint_clean_vault(tmp_path: Path) -> None:
     _scaffold_vault(tmp_path)
-    # Create a raw source file (raw files have no frontmatter requirements)
-    _write_file(tmp_path / "raw" / "source.md", "# Source\nSome raw content.\n")
+    # Create a raw source file with required frontmatter (title, source, created)
+    _write_file(
+        tmp_path / "raw" / "source.md",
+        "---\ntitle: Source\nsource: \"https://example.com\"\ncreated: 2026-01-01\n---\n# Source\nSome raw content.\n",
+    )
     # Create a well-formed wiki file with valid wikilink to itself
     _write_file(
         tmp_path / "wiki" / "article.md",

@@ -54,6 +54,26 @@ def _load_vault_config(vault_root: Path) -> DocmancerConfig:
     return DocmancerConfig()
 
 
+def _build_frontmatter(metadata: dict[str, object]) -> str:
+    lines = ["---"]
+    for key, value in metadata.items():
+        if isinstance(value, list):
+            lines.append(f"{key}:")
+            for item in value:
+                lines.append(f"  - {item}")
+            continue
+
+        rendered = yaml.safe_dump(
+            value,
+            default_style='"',
+            default_flow_style=True,
+            allow_unicode=False,
+        ).strip()
+        lines.append(f"{key}: {rendered}")
+    lines.extend(["---", ""])
+    return "\n".join(lines) + "\n"
+
+
 def _document_for_entry(vault_root: Path, entry: ManifestEntry) -> Document | None:
     file_path = vault_root / entry.path
     if not file_path.exists():
@@ -371,15 +391,23 @@ def add_url(vault_root: Path, url: str, browser: bool = False) -> ManifestEntry:
 
     now_iso = datetime.now(timezone.utc).isoformat()
     fm_title = title if title else slug.replace("_", " ").title()
-    frontmatter = (
-        f"---\n"
-        f"title: {fm_title}\n"
-        f"tags: []\n"
-        f"sources: [{url}]\n"
-        f"created: {now_iso}\n"
-        f"updated: {now_iso}\n"
-        f"---\n\n"
-    )
+    author = meta.get("author") or ""
+    published = meta.get("published") or ""
+    description = meta.get("description") or ""
+
+    frontmatter_data: dict[str, object] = {
+        "title": fm_title,
+        "source": url,
+    }
+    if author:
+        frontmatter_data["author"] = author
+    if published:
+        frontmatter_data["published"] = published
+    frontmatter_data["created"] = now_iso
+    if description:
+        frontmatter_data["description"] = description
+    frontmatter_data["tags"] = ["raw"]
+    frontmatter = _build_frontmatter(frontmatter_data)
     content_with_fm = frontmatter + content
     content_hash_val = _content_hash(content_with_fm)
 

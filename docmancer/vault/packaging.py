@@ -3,17 +3,44 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tarfile
 import tempfile
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import yaml
 from pydantic import BaseModel, Field
 
 from docmancer.core.config import DocmancerConfig
 from docmancer.vault.manifest import VaultManifest, ContentKind
+
+
+def _manifest_entry_is_packaged(entry_path: str, included_roots: set[str]) -> bool:
+    root = Path(entry_path).parts[0] if Path(entry_path).parts else ""
+    return root in included_roots
+
+
+def _build_packaged_manifest(vault_root: Path, included_roots: set[str]) -> dict[str, Any] | None:
+    manifest_path = vault_root / ".docmancer" / "manifest.json"
+    if not manifest_path.exists():
+        return None
+
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw_entries = data.get("entries", {})
+    filtered_entries = {
+        entry_id: entry_data
+        for entry_id, entry_data in raw_entries.items()
+        if _manifest_entry_is_packaged(entry_data.get("path", ""), included_roots)
+    }
+    return {
+        "version": data.get("version", 1),
+        "entries": filtered_entries,
+    }
 
 
 class ContentStats(BaseModel):
@@ -221,14 +248,106 @@ def generate_vault_readme(card: VaultCard) -> str:
     return "\n".join(lines)
 
 
+def _parse_frontmatter(content: str) -> dict | None:
+    """Extract YAML frontmatter from markdown content."""
+    if not content.startswith("---"):
+        return None
+    end = content.find("---", 3)
+    if end == -1:
+        return None
+    try:
+        fm = yaml.safe_load(content[3:end])
+        return fm if isinstance(fm, dict) else None
+    except yaml.YAMLError:
+        return None
+
+
+def generate_attribution_md(vault_root: Path) -> str:
+    """Generate ATTRIBUTION.md by aggregating per-file source frontmatter.
+
+    Groups sources by domain and lists every unique source URL with author
+    and fetch date. Follows the Obsidian Web Clipper provenance convention.
+    """
+    # Collect source info from all markdown files
+    sources_by_domain: dict[str, list[dict]] = defaultdict(list)
+    seen_urls: set[str] = set()
+
+    for content_dir in ("raw", "wiki", "outputs"):
+        d = vault_root / content_dir
+        if not d.is_dir():
+            continue
+        for md_file in sorted(d.rglob("*.md")):
+            try:
+                text = md_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            fm = _parse_frontmatter(text)
+            if not fm:
+                continue
+
+            # Handle both single source and sources list
+            urls = []
+            if "source" in fm and fm["source"]:
+                urls.append(str(fm["source"]))
+            if "sources" in fm and isinstance(fm["sources"], list):
+                urls.extend(str(s) for s in fm["sources"] if s)
+
+            for url in urls:
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                try:
+                    domain = urlparse(url).netloc or "local"
+                except Exception:
+                    domain = "unknown"
+
+                sources_by_domain[domain].append({
+                    "url": url,
+                    "author": fm.get("author", ""),
+                    "created": fm.get("created", ""),
+                    "title": fm.get("title", ""),
+                    "file": str(md_file.relative_to(vault_root)),
+                })
+
+    # Build markdown
+    lines = [
+        "# Attribution",
+        "",
+        "This vault was compiled from the following sources.",
+        "Per-file attribution is also available in each file's YAML frontmatter.",
+        "",
+    ]
+
+    if not sources_by_domain:
+        lines.append("No external sources recorded.")
+        return "\n".join(lines)
+
+    for domain in sorted(sources_by_domain):
+        entries = sources_by_domain[domain]
+        lines.append(f"## {domain} ({len(entries)} source{'s' if len(entries) != 1 else ''})")
+        lines.append("")
+        for entry in entries:
+            title = entry["title"] or entry["url"]
+            author_str = f" — {entry['author']}" if entry["author"] else ""
+            created_str = f" (fetched {entry['created'][:10]})" if entry["created"] else ""
+            lines.append(f"- [{title}]({entry['url']}){author_str}{created_str}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def package_vault(
     vault_root: Path,
     output_dir: Path,
     *,
     version: str | None = None,
     quality_report: QualityReport | None = None,
+    include_raw: bool = False,
 ) -> Path:
     """Bundle vault into a distributable .tar.gz package.
+
+    By default, raw/ is excluded to avoid redistributing third-party content.
+    Pass include_raw=True only when you have the rights to redistribute.
 
     Returns path to the created archive.
     """
@@ -256,8 +375,12 @@ def package_vault(
         staging = Path(tmp) / archive_name
         staging.mkdir()
 
-        # Copy content directories
-        for content_dir in ("raw", "wiki", "outputs"):
+        # Copy content directories (raw/ excluded by default)
+        content_dirs = ["wiki", "outputs"]
+        if include_raw:
+            content_dirs.insert(0, "raw")
+        included_roots = set(content_dirs)
+        for content_dir in content_dirs:
             src = vault_root / content_dir
             if src.is_dir():
                 shutil.copytree(src, staging / content_dir)
@@ -267,9 +390,12 @@ def package_vault(
             shutil.copy2(config_path, staging / "docmancer.yaml")
 
         # Copy manifest
-        manifest_src = vault_root / ".docmancer" / "manifest.json"
-        if manifest_src.exists():
-            shutil.copy2(manifest_src, staging / "manifest.json")
+        packaged_manifest = _build_packaged_manifest(vault_root, included_roots)
+        if packaged_manifest is not None:
+            (staging / "manifest.json").write_text(
+                json.dumps(packaged_manifest, indent=2),
+                encoding="utf-8",
+            )
 
         # Copy eval dataset and results if they exist
         docmancer_dir = staging / ".docmancer"
@@ -292,6 +418,10 @@ def package_vault(
         # Write README
         readme_content = generate_vault_readme(card)
         (staging / "README.md").write_text(readme_content, encoding="utf-8")
+
+        # Write ATTRIBUTION.md from per-file frontmatter
+        attribution = generate_attribution_md(vault_root)
+        (staging / "ATTRIBUTION.md").write_text(attribution, encoding="utf-8")
 
         # Write quality report if provided
         if quality_report:

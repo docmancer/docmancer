@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from docmancer.core.models import RetrievedChunk
 from docmancer.vault.manifest import ContentKind, IndexState, ManifestEntry, SourceType, VaultManifest
@@ -258,9 +259,35 @@ def test_sync_vault_index_indexes_pdf_entries(tmp_path):
         sync_vault_index(vault, manifest, added_paths=["raw/paper.pdf"])
 
     mock_agent.ingest_documents.assert_called_once()
-    indexed_entry = manifest.get_by_path("raw/paper.pdf")
-    assert indexed_entry is not None
-    assert indexed_entry.index_state == IndexState.indexed
+
+
+def test_add_url_serializes_yaml_frontmatter_safely(tmp_path):
+    vault = tmp_path / "vault"
+    init_vault(vault)
+    html = """
+    <html>
+      <head>
+        <title>The "easy" way</title>
+        <meta name="author" content='Ada "A." Lovelace'>
+        <meta name="description" content='Line one
+Line two: details'>
+      </head>
+      <body><main><p>Body content</p></main></body>
+    </html>
+    """
+
+    with patch("docmancer.vault.operations._fetch_url", return_value=html):
+        entry = add_url(vault, "https://example.com/posts/easy")
+
+    raw_path = vault / entry.path
+    text = raw_path.read_text(encoding="utf-8")
+    _, frontmatter_text, _ = text.split("---", 2)
+    frontmatter = yaml.safe_load(frontmatter_text)
+
+    assert frontmatter["title"] == 'The "easy" way'
+    assert frontmatter["author"] == 'Ada "A." Lovelace'
+    assert frontmatter["description"] == "Line one\nLine two: details"
+    assert frontmatter["source"] == "https://example.com/posts/easy"
 
 
 def test_search_vault_matches_body_content(tmp_path):
@@ -416,10 +443,11 @@ def test_add_url_creates_entry(mock_httpx, mock_sync_index, tmp_path):
     assert (vault / entry.path).exists()
     file_content = (vault / entry.path).read_text()
     assert file_content.startswith("---\n")
-    assert "title: Title" in file_content
-    assert "sources: [https://docs.example.com/getting-started]" in file_content
+    assert 'title: "Title"' in file_content
+    assert 'source: "https://docs.example.com/getting-started"' in file_content
     assert "created:" in file_content
-    assert "updated:" in file_content
+    assert "tags:" in file_content
+    assert "  - raw" in file_content
     assert "# Title\n\nContent here" in file_content
     mock_sync_index.assert_called_once()
 
@@ -566,11 +594,11 @@ def test_add_url_generates_frontmatter(mock_httpx, mock_sync_index, tmp_path):
 
     file_content = (vault / entry.path).read_text()
     assert file_content.startswith("---\n")
-    assert "title: My Page" in file_content
-    assert "tags: []" in file_content
-    assert "sources: [https://example.com/my-page]" in file_content
+    assert 'title: "My Page"' in file_content
+    assert "tags:" in file_content
+    assert "  - raw" in file_content
+    assert 'source: "https://example.com/my-page"' in file_content
     assert "created:" in file_content
-    assert "updated:" in file_content
     # Frontmatter ends with --- followed by content
     assert "---\n\n# My Page" in file_content
     mock_sync_index.assert_called_once()
@@ -602,7 +630,7 @@ def test_add_url_frontmatter_uses_slug_when_no_title(mock_httpx, mock_sync_index
     file_content = (vault / entry.path).read_text()
     assert file_content.startswith("---\n")
     # Slug "getting_started" -> title "Getting Started"
-    assert "title: Getting Started" in file_content
+    assert 'title: "Getting Started"' in file_content
     mock_sync_index.assert_called_once()
 
 

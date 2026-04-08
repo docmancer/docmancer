@@ -17,6 +17,7 @@ _IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 # Required frontmatter keys by content kind
 _REQUIRED_FRONTMATTER: dict[str, list[str]] = {
+    "raw": ["title", "source", "created"],
     "wiki": ["title", "tags", "sources", "created", "updated"],
     "output": ["title", "tags", "created"],
 }

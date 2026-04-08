@@ -829,7 +829,8 @@ def vault_suggest_cmd(limit: int, directory: str, vault_name: str | None):
 @click.option("--version", "version", default=None, help="Specific version to install.")
 @click.option("--local", "local_path", default=None, type=click.Path(exists=True), help="Install from local .tar.gz file.")
 @click.option("--skip-index", is_flag=True, default=False, help="Skip re-indexing after install.")
-def vault_install_cmd(name: str, repo: str | None, version: str | None, local_path: str | None, skip_index: bool):
+@click.option("--with-index", is_flag=True, default=False, help="Download pre-built index if available (faster install).")
+def vault_install_cmd(name: str, repo: str | None, version: str | None, local_path: str | None, skip_index: bool, with_index: bool):
     """Install a vault package from GitHub or a local archive."""
     import os
     from docmancer.vault.installer import VaultInstaller
@@ -848,6 +849,7 @@ def vault_install_cmd(name: str, repo: str | None, version: str | None, local_pa
 
             vault_root = installer.install(
                 name, repo=repo, version=version, skip_index=skip_index, token=token,
+                with_index=with_index,
             )
             click.echo(f"  Installed vault '{name}'.")
 
@@ -901,7 +903,19 @@ def vault_uninstall_cmd(name: str):
 @click.option("--repo", required=True, help="GitHub repo (owner/repo).")
 @click.option("--force", is_flag=True, default=False, help="Publish even with lint errors.")
 @click.option("--draft", is_flag=True, default=False, help="Create a draft release.")
-def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
+@click.option(
+    "--include-raw",
+    is_flag=True,
+    default=False,
+    help="Include raw/ directory in package. Only use if you have redistribution rights.",
+)
+@click.option(
+    "--with-index",
+    is_flag=True,
+    default=False,
+    help="Upload pre-built vector index as a separate release asset.",
+)
+def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool, include_raw: bool, with_index: bool):
     """Package and publish vault to a GitHub release."""
     import os
     import tempfile
@@ -919,6 +933,24 @@ def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
     config_path = vault_root / "docmancer.yaml"
     config = DocmancerConfig.from_yaml(config_path) if config_path.exists() else DocmancerConfig()
     version = config.vault.version if config.vault else "0.1.0"
+
+    # Require vault.license
+    vault_license = config.vault.license if config.vault else ""
+    if not vault_license:
+        click.echo(
+            "  vault.license is required for publishing.\n"
+            "  Add a license field to docmancer.yaml under the vault section:\n"
+            "    vault:\n"
+            "      license: CC-BY-4.0  # or MIT, Apache-2.0, etc.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if include_raw:
+        click.echo(
+            "  Warning: --include-raw will include raw source material in the package.\n"
+            f"  Ensure you have the right to redistribute this content under {vault_license}.\n"
+        )
 
     click.echo(f"  Publishing {vault_root.name} v{version} to {repo}...")
     click.echo()
@@ -961,8 +993,23 @@ def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
     with tempfile.TemporaryDirectory() as tmp:
         archive = package_vault(
             vault_root, Path(tmp), quality_report=quality_report,
+            include_raw=include_raw,
         )
-        click.echo(f"  Package: {archive.name}")
+
+        # Check package size (500 MB limit)
+        archive_size = archive.stat().st_size
+        max_size = 500 * 1024 * 1024  # 500 MB
+        if archive_size > max_size and not force:
+            size_mb = archive_size / (1024 * 1024)
+            click.echo(
+                f"  Package size ({size_mb:.0f} MB) exceeds 500 MB limit.\n"
+                "  Consider: publish without --include-raw, or split into sub-vaults.\n"
+                "  Use --force to override.",
+                err=True,
+            )
+            sys.exit(1)
+
+        click.echo(f"  Package: {archive.name} ({archive_size / (1024 * 1024):.1f} MB)")
 
         # Get GitHub token
         token = os.environ.get("GITHUB_TOKEN")
@@ -977,6 +1024,7 @@ def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
         publisher = GitHubPublisher(token=token, repo=repo)
 
         card = build_vault_card(vault_root, config)
+        card.license = vault_license
         try:
             release_url = publisher.publish_vault(archive, card, draft=draft)
             click.echo()
@@ -984,6 +1032,42 @@ def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
         except RuntimeError as e:
             click.echo(f"  Publish failed: {e}", err=True)
             sys.exit(1)
+
+        # Upload pre-built index as separate asset if requested
+        if with_index:
+            if not include_raw:
+                click.echo(
+                    "  Skipping --with-index because the published package excludes raw/.\n"
+                    "  Rebuild the index during install, or publish with --include-raw if redistribution is allowed.",
+                )
+                return
+            qdrant_dir = vault_root / ".docmancer" / "qdrant"
+            if qdrant_dir.is_dir():
+                click.echo("  Packaging vector index...")
+                index_archive = Path(tmp) / f"{card.name}-{card.version}-index.tar.gz"
+                import tarfile
+                try:
+                    with tarfile.open(index_archive, "w:gz") as tar:
+                        tar.add(qdrant_dir, arcname="qdrant")
+                    index_size = index_archive.stat().st_size
+                    max_asset = 2 * 1024 * 1024 * 1024  # 2 GB GitHub limit
+                    if index_size > max_asset:
+                        click.echo(
+                            f"  Index too large ({index_size / (1024**3):.1f} GB) for GitHub release assets.\n"
+                            "  Consumers will embed locally on install.",
+                        )
+                    else:
+                        # Need release_id — parse from URL or re-fetch
+                        tag = f"v{card.version}"
+                        from docmancer.vault.installer import fetch_release_info
+                        release_info = fetch_release_info(repo, version=tag.lstrip("v"), token=token)
+                        if release_info:
+                            publisher.upload_release_asset(release_info["id"], index_archive)
+                            click.echo(f"  Index uploaded ({index_size / (1024**2):.1f} MB)")
+                except Exception as e:
+                    click.echo(f"  Index upload failed (vault still published): {e}")
+            else:
+                click.echo("  No local Qdrant index found. Skipping --with-index.")
 
 
 @vault_group.command(
@@ -997,12 +1081,13 @@ def vault_publish_cmd(directory: str, repo: str, force: bool, draft: bool):
     ),
 )
 @click.argument("query", required=False, default=None)
-def vault_browse_cmd(query: str | None):
+@click.option("--refresh", is_flag=True, default=False, help="Bypass cache and fetch fresh results.")
+def vault_browse_cmd(query: str | None, refresh: bool):
     """Search for published vaults on GitHub."""
     from docmancer.vault.discovery import VaultDiscovery
 
     discovery = VaultDiscovery()
-    results = discovery.search(query)
+    results = discovery.search(query, refresh=refresh)
 
     if not results:
         click.echo("  No vaults found.")
