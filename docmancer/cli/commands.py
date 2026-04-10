@@ -115,6 +115,30 @@ def _describe_vector_store(config) -> str:
     return f"local embedded Qdrant at {display_path(config.vector_store.local_path)}"
 
 
+def _is_embedded_qdrant_lock_error(exc: Exception, config) -> bool:
+    if getattr(config.vector_store, "url", ""):
+        return False
+    message = str(exc)
+    return "already accessed by another instance of Qdrant client" in message
+
+
+def _embedded_qdrant_lock_message(config) -> str:
+    qdrant_path = display_path(config.vector_store.local_path)
+    return (
+        f"Embedded docmancer storage is busy because another process is using {qdrant_path}. "
+        "Close the other docmancer process or switch to a remote Qdrant server for concurrent access."
+    )
+
+
+def _create_agent_or_raise_lock_error(config):
+    try:
+        return _get_agent_class()(config=config)
+    except RuntimeError as exc:
+        if _is_embedded_qdrant_lock_error(exc, config):
+            raise click.ClickException(_embedded_qdrant_lock_message(config)) from exc
+        raise
+
+
 def _color_enabled() -> bool:
     return color_enabled()
 
@@ -492,7 +516,7 @@ def inspect_cmd(config_path: str | None):
     """Show collection stats and configuration."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
-    agent = _get_agent_class()(config=config)
+    agent = _create_agent_or_raise_lock_error(config)
 
     stats = agent.collection_stats()
     click.echo(f"Collection: {config.vector_store.collection_name}")
@@ -560,6 +584,14 @@ def doctor_cmd(config_path: str | None):
                         "'docmancer remove --all' and re-ingest to apply on-disk storage optimizations.",
                         state="warn",
                     )
+            except RuntimeError as exc:
+                if _is_embedded_qdrant_lock_error(exc, config):
+                    _emit_status_line(
+                        "Embedded Qdrant is currently in use by another docmancer process; chunk count unavailable.",
+                        state="warn",
+                    )
+                else:
+                    pass
             except Exception:
                 pass
         else:
@@ -754,7 +786,7 @@ def list_cmd(show_all: bool, show_vaults: bool, filter_tag: str | None, config_p
         return
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
-    agent = _get_agent_class()(config=config)
+    agent = _create_agent_or_raise_lock_error(config)
     entries = agent.list_sources_with_dates() if show_all else agent.list_grouped_sources_with_dates()
     if not entries:
         click.echo("No sources ingested yet.")

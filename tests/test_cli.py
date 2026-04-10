@@ -372,6 +372,44 @@ def test_list_command_all_uses_raw_entries():
         mock_agent.list_sources_with_dates.assert_called_once()
 
 
+def test_list_command_reports_busy_embedded_qdrant_without_traceback():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    fake_config.vector_store.url = ""
+    fake_config.vector_store.local_path = "/tmp/busy-qdrant"
+    lock_error = RuntimeError(
+        "Storage folder /tmp/busy-qdrant is already accessed by another instance of Qdrant client. "
+        "If you require concurrent access, use Qdrant server instead."
+    )
+
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class", side_effect=lambda: (lambda config: (_ for _ in ()).throw(lock_error))):
+        result = runner.invoke(cli, ["list"])
+
+    assert result.exit_code == 1
+    assert "Embedded docmancer storage is busy because another process is using /tmp/busy-qdrant." in result.output
+    assert "Traceback" not in result.output
+
+
+def test_inspect_command_reports_busy_embedded_qdrant_without_traceback():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    fake_config.vector_store.url = ""
+    fake_config.vector_store.local_path = "/tmp/busy-qdrant"
+    lock_error = RuntimeError(
+        "Storage folder /tmp/busy-qdrant is already accessed by another instance of Qdrant client. "
+        "If you require concurrent access, use Qdrant server instead."
+    )
+
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class", side_effect=lambda: (lambda config: (_ for _ in ()).throw(lock_error))):
+        result = runner.invoke(cli, ["inspect"])
+
+    assert result.exit_code == 1
+    assert "Embedded docmancer storage is busy because another process is using /tmp/busy-qdrant." in result.output
+    assert "Traceback" not in result.output
+
+
 def test_remove_command_reports_docset_removal():
     runner = CliRunner()
     fake_config = MagicMock()
@@ -473,6 +511,42 @@ def test_doctor_checks_remote_qdrant_when_url_is_set(tmp_path):
     assert result.exit_code == 0
     assert "remote Qdrant at http://example.com:6333" in result.output
     assert "Qdrant reachable at http://example.com:6333" in result.output
+
+
+def test_doctor_warns_when_local_embedded_qdrant_is_busy(tmp_path):
+    runner = CliRunner()
+    qdrant_path = tmp_path / "qdrant"
+    qdrant_path.mkdir()
+    fake_config = MagicMock()
+    fake_config.vector_store.url = ""
+    fake_config.vector_store.local_path = str(qdrant_path)
+    lock_error = RuntimeError(
+        f"Storage folder {qdrant_path} is already accessed by another instance of Qdrant client. "
+        "If you require concurrent access, use Qdrant server instead."
+    )
+
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class", side_effect=lambda: (lambda config: (_ for _ in ()).throw(lock_error))):
+        result = runner.invoke(cli, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Embedded Qdrant is currently in use by another docmancer process; chunk count unavailable." in result.output
+    assert "Traceback" not in result.output
+
+
+def test_list_command_does_not_mask_non_lock_runtime_errors():
+    runner = CliRunner()
+    fake_config = MagicMock()
+    fake_config.vector_store.url = ""
+    fake_config.vector_store.local_path = "/tmp/qdrant"
+
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class", side_effect=lambda: (lambda config: (_ for _ in ()).throw(RuntimeError("boom")))):
+        result = runner.invoke(cli, ["list"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert str(result.exception) == "boom"
 
 
 def test_fetch_shows_compact_saved_paths():
