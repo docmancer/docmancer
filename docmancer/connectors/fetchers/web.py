@@ -140,7 +140,7 @@ class WebFetcher:
                 if body_words < 50:
                     hint = (
                         " The page appears to be JavaScript-rendered (very little content "
-                        "in the static HTML). Try: docmancer ingest <url> --browser"
+                        "in the static HTML). Try: docmancer add <url> --browser"
                     )
                 raise ValueError(
                     f"Could not discover any documentation pages at {base_url!r}. "

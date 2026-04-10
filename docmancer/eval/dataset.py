@@ -36,9 +36,9 @@ class EvalDataset(BaseModel):
 
 
 def _source_ref_for_file(source_dir: Path, file_path: Path) -> str:
-    vault_root = source_dir.parent
-    if (vault_root / ".docmancer").exists():
-        return str(file_path.relative_to(vault_root))
+    project_root = source_dir.parent
+    if (project_root / ".docmancer").exists():
+        return str(file_path.relative_to(project_root))
     return str(file_path)
 
 
@@ -88,56 +88,3 @@ def generate_scaffold(source_dir: Path, max_entries: int = 50) -> EvalDataset:
         },
     )
 
-
-def generate_with_llm(
-    source_dir: Path,
-    llm_provider,
-    max_entries: int = 50,
-) -> EvalDataset:
-    """Generate eval dataset using LLM to create Q&A pairs from source documents."""
-    files = sorted(source_dir.rglob("*.md")) + sorted(source_dir.rglob("*.txt"))
-    if not files:
-        raise ValueError(f"No .md or .txt files found in {source_dir}")
-
-    entries = []
-    for file_path in files:
-        if len(entries) >= max_entries:
-            break
-        content = file_path.read_text(encoding="utf-8")
-        if len(content.strip()) < 50:
-            continue
-
-        # Take first ~2000 chars as context passage
-        passage = content[:2000]
-
-        prompt = (
-            f"Given this documentation passage, generate a specific question that could be "
-            f"answered using this text, and provide the answer.\n\n"
-            f"Passage:\n{passage}\n\n"
-            f"Respond in exactly this format:\n"
-            f"QUESTION: <your question>\n"
-            f"ANSWER: <the answer from the passage>"
-        )
-
-        try:
-            response = llm_provider.complete(prompt, max_tokens=500)
-            question = ""
-            answer = ""
-            for line in response.strip().split("\n"):
-                if line.startswith("QUESTION:"):
-                    question = line[len("QUESTION:"):].strip()
-                elif line.startswith("ANSWER:"):
-                    answer = line[len("ANSWER:"):].strip()
-
-            if question and answer:
-                entries.append(DatasetEntry(
-                    question=question,
-                    expected_answer=answer,
-                    expected_context=[passage[:500]],
-                    source_refs=[str(file_path.relative_to(source_dir))],
-                    tags=[],
-                ))
-        except Exception:
-            continue
-
-    return EvalDataset(entries=entries, metadata={"generated_by": "llm", "source_dir": str(source_dir)})

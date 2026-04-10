@@ -65,36 +65,25 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-## LLM features require an API key
+## SQLite FTS5 is not available
 
-Commands like `vault lint --deep`, `dataset generate --llm`, `dataset generate-training --llm`, and `eval --judge` need a configured API key. Run `docmancer setup` to configure keys and optional integrations interactively. If you skip setup, all deterministic (non-LLM) features continue to work without any keys.
-
-## Vault-specific issues
-
-### `vault scan` reports stale or failed index states
-
-Run `docmancer vault status` to see which files are affected. Common causes:
-
-- Files were added outside docmancer and have not been scanned yet. Run `vault scan` again.
-- A previous scan was interrupted. Re-running `vault scan` will pick up where it left off.
-- Content hash mismatches usually mean files changed on disk since the last scan.
-
-For persistent issues, `vault lint --fix` re-runs manifest reconciliation before checking.
-
-### Eval dataset is empty or missing
-
-`docmancer dataset generate --source <dir>` creates a scaffolded dataset. If it produces no entries, check that the source directory contains markdown files with enough content to extract passages. See [Evals and Observability](./Evals-and-Observability.md) for the full eval workflow.
-
-### Ingest hangs or returns empty content for a JS-heavy site
-
-Some documentation sites rely on client-side JavaScript to render content. If `docmancer ingest <url>` produces empty or incomplete results, try the `--browser` flag to enable Playwright browser fallback:
+docmancer requires SQLite with FTS5 support. Most Python distributions include it by default. If you see a `RuntimeError` about FTS5, install a Python build that includes it:
 
 ```bash
-docmancer ingest <url> --browser
+brew install python@3.13
+pipx install docmancer --python /opt/homebrew/bin/python3.13
 ```
 
-The same flag is available on `vault add-url`.
+## `docmancer add` hangs or returns empty content for a JS-heavy site
 
-### Agent does not know about vault commands
+Some documentation sites rely on client-side JavaScript to render content. If `docmancer add <url>` produces empty or incomplete results, use the `--browser` flag to enable Playwright browser fallback:
 
-Re-run `docmancer install <target>` to update the skill file. Older skill installations may not include vault workflow instructions. See [Install Targets](./Install-Targets.md) for where skills land.
+```bash
+docmancer add <url> --browser
+```
+
+This requires the `browser` optional dependency: `pip install docmancer[browser]`.
+
+## Agent does not know about docmancer commands
+
+Re-run `docmancer setup` or `docmancer install <target>` to update the skill file. Older skill installations may not include newer commands. See [Install Targets](./Install-Targets.md) for where skills land.

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import yaml
@@ -8,70 +7,29 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class EmbeddingConfig(BaseSettings):
-    provider: str = "fastembed"
-    model: str = "BAAI/bge-small-en-v1.5"
-    batch_size: int = Field(default=256, ge=1)
-    parallel: int = Field(default=0, ge=0)
-    lazy_load: bool = True
-    model_config = SettingsConfigDict(env_prefix="EMBEDDING_", extra="ignore")
+def default_user_db_path() -> str:
+    return str(Path.home() / ".docmancer" / "docmancer.db")
 
 
-class VectorStoreConfig(BaseSettings):
-    provider: str = "qdrant"
-    url: str = ""
-    collection_name: str = "knowledge_base"
-    local_path: str = ".docmancer/qdrant"
-    retrieval_limit: int = 5
-    score_threshold: float = 0.35
-    dense_prefetch_limit: int = 20
-    sparse_prefetch_limit: int = 20
-    model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")
-
-    @property
-    def use_local(self) -> bool:
-        return not bool(self.url)
+class IndexConfig(BaseSettings):
+    provider: str = "sqlite"
+    db_path: str = Field(default_factory=default_user_db_path)
+    extracted_dir: str = ""
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_INDEX_", extra="ignore")
 
 
-class IngestionConfig(BaseSettings):
-    chunk_size: int = 800
-    chunk_overlap: int = 120
-    bm25_model: str = "Qdrant/bm25"
-    workers: int = Field(default_factory=lambda: max(1, min(4, os.cpu_count() or 1)), ge=1)
-    embed_queue_size: int = Field(default=4, ge=1)
-    model_config = SettingsConfigDict(env_prefix="INGESTION_", extra="ignore")
+class QueryConfig(BaseSettings):
+    default_budget: int = Field(default=1200, ge=100)
+    default_limit: int = Field(default=8, ge=1)
+    default_expand: str = "adjacent"
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_QUERY_", extra="ignore")
 
 
 class WebFetchConfig(BaseSettings):
     workers: int = Field(default=8, ge=1)
-    model_config = SettingsConfigDict(env_prefix="WEB_FETCH_", extra="ignore")
-
-
-class VaultConfig(BaseSettings):
-    enabled: bool = True
-    raw_dir: str = "raw"
-    wiki_dir: str = "wiki"
-    outputs_dir: str = "outputs"
-    assets_dir: str = "assets"
-    manifest_path: str = ".docmancer/manifest.json"
-    index_roots: list[str] = Field(default_factory=list)
-    scan_dirs: list[str] = Field(default_factory=lambda: ["raw", "wiki", "outputs", "assets"])
-    registry_path: str = ""
-    version: str = "0.1.0"
-    description: str = ""
-    author: str = ""
-    repository: str = ""
-    license: str = ""
-    dependencies: list[dict] = Field(default_factory=list)
-    scan_cooldown_seconds: int = Field(default=30, ge=0)
-    model_config = SettingsConfigDict(env_prefix="VAULT_", extra="ignore")
-
-    def effective_scan_dirs(self) -> list[str]:
-        if self.index_roots:
-            return list(self.index_roots)
-        if self.scan_dirs:
-            return list(self.scan_dirs)
-        return [self.raw_dir, self.wiki_dir, self.outputs_dir, self.assets_dir]
+    default_page_cap: int = Field(default=500, ge=1)
+    browser_fallback: bool = False
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_WEB_FETCH_", extra="ignore")
 
 
 class EvalConfig(BaseSettings):
@@ -79,44 +37,40 @@ class EvalConfig(BaseSettings):
     output_dir: str = ".docmancer/eval"
     judge_provider: str = ""
     default_k: int = Field(default=5, ge=1)
-    model_config = SettingsConfigDict(env_prefix="EVAL_", extra="ignore")
-
-
-class TelemetryConfig(BaseSettings):
-    enabled: bool = False
-    provider: str = ""
-    endpoint: str = ""
-    model_config = SettingsConfigDict(env_prefix="TELEMETRY_", extra="ignore")
-
-
-class LLMConfig(BaseSettings):
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
-    api_key: str = ""
-    model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_EVAL_", extra="ignore")
 
 
 class DocmancerConfig(BaseModel):
-    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
-    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
-    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    index: IndexConfig = Field(default_factory=IndexConfig)
+    query: QueryConfig = Field(default_factory=QueryConfig)
     web_fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
-    vault: VaultConfig | None = None
     eval: EvalConfig | None = None
-    telemetry: TelemetryConfig | None = None
-    llm: LLMConfig | None = None
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:
         path = Path(path)
         with open(path) as f:
             data = yaml.safe_load(f) or {}
+
+        # Accept old configs but translate the storage path onto the rebooted
+        # SQLite index. This keeps local projects readable while dropping the
+        # Qdrant/FastEmbed default path.
+        if "index" not in data and isinstance(data.get("vector_store"), dict):
+            vector_store = data.get("vector_store") or {}
+            local_path = vector_store.get("db_path") or vector_store.get("local_path")
+            if local_path:
+                data["index"] = {"db_path": local_path}
+
         config = cls(**data)
-        # Resolve a relative local_path against the YAML file's directory so the
-        # vector store is always found regardless of the process's working directory.
-        local_path = Path(config.vector_store.local_path)
-        if not local_path.is_absolute():
-            config.vector_store.local_path = str((path.parent / local_path).resolve())
+        db_path = Path(config.index.db_path)
+        if not db_path.is_absolute():
+            config.index.db_path = str((path.parent / db_path).resolve())
+
+        extracted_dir = config.index.extracted_dir
+        if extracted_dir:
+            extracted_path = Path(extracted_dir)
+            if not extracted_path.is_absolute():
+                config.index.extracted_dir = str((path.parent / extracted_path).resolve())
         return config
 
     @classmethod

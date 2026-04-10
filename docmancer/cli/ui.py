@@ -17,7 +17,7 @@ BANNER_LINES = [
 ]
 
 BANNER_COLOR = "bright_cyan"
-TAGLINE = "Ground coding agents in documentation and research vaults."
+TAGLINE = "Compress documentation context for coding agents."
 
 
 def color_enabled() -> bool:

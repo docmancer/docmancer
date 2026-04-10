@@ -30,8 +30,7 @@ def _default_eval_cache_path(dataset_path: Path, config_path: str | None) -> Pat
 @click.option("--source", required=True, help="Source directory to generate dataset from.")
 @click.option("--output", default=None, help="Output path (default: .docmancer/eval_dataset.json).")
 @click.option("--count", default=50, type=int, help="Max entries to generate.")
-@click.option("--llm", is_flag=True, default=False, help="Use LLM to generate Q&A pairs (requires API key).")
-def dataset_generate_cmd(source: str, output: str | None, count: int, llm: bool):
+def dataset_generate_cmd(source: str, output: str | None, count: int):
     """Generate a golden dataset scaffold from source documents."""
     from docmancer.eval.dataset import generate_scaffold
 
@@ -39,31 +38,6 @@ def dataset_generate_cmd(source: str, output: str | None, count: int, llm: bool)
     if not source_path.is_dir():
         click.echo(f"Error: source directory not found: {source}", err=True)
         sys.exit(1)
-
-    if llm:
-        from docmancer.connectors.llm.provider import get_llm_provider
-        from docmancer.core.config import DocmancerConfig
-
-        # Try to load config for LLM settings
-        config = DocmancerConfig()
-        config_file = Path("docmancer.yaml")
-        if config_file.exists():
-            config = DocmancerConfig.from_yaml(config_file)
-
-        provider = get_llm_provider(config)
-        if provider is None:
-            click.echo("  LLM features require an API key.")
-            click.echo("  Run 'docmancer setup' to configure, or set ANTHROPIC_API_KEY.")
-            click.echo("  Falling back to manual scaffold mode.")
-            click.echo()
-        else:
-            from docmancer.eval.dataset import generate_with_llm
-            dataset = generate_with_llm(source_path, provider, max_entries=count)
-            output_path = Path(output) if output else Path(".docmancer/eval_dataset.json")
-            dataset.save(output_path)
-            click.echo(f"  Generated {len(dataset.entries)} Q&A pairs via LLM")
-            click.echo(f"  Saved to: {output_path}")
-            return
 
     dataset = generate_scaffold(source_path, max_entries=count)
 
@@ -108,7 +82,7 @@ def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None, 
     filled = [e for e in ds.entries if e.question]
     if not filled:
         click.echo("Error: no entries with questions found in dataset.", err=True)
-        click.echo("Fill in at least one 'question' field or regenerate with --llm.", err=True)
+        click.echo("Fill in at least one 'question' field.", err=True)
         sys.exit(1)
 
     config_path = _effective_config(config_path)
@@ -121,9 +95,8 @@ def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None, 
 
     # Config snapshot for report
     config_snap = {
-        "chunk_size": config.ingestion.chunk_size,
-        "chunk_overlap": config.ingestion.chunk_overlap,
-        "embedding_model": config.embedding.model,
+        "index_provider": config.index.provider,
+        "query_budget": config.query.default_budget,
         "retrieval_limit": k,
     }
 
@@ -132,8 +105,6 @@ def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None, 
     if judge:
         import os
         api_key = os.environ.get("OPENAI_API_KEY") or ""
-        if not api_key and config.llm:
-            api_key = config.llm.api_key
         judge_provider = "openai"
         if config.eval and config.eval.judge_provider:
             judge_provider = config.eval.judge_provider
@@ -181,73 +152,3 @@ def eval_cmd(dataset: str, output: str | None, k: int, config_path: str | None, 
                 encoding="utf-8",
             )
         click.echo(f"\n  Report saved to: {output_path}")
-
-
-@click.command(
-    "generate-training",
-    cls=DocmancerCommand,
-    context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Generate training data for fine-tuning.",
-    epilog=format_examples(
-        "docmancer dataset generate-training --source ./wiki",
-        "docmancer dataset generate-training --source ./wiki --format alpaca",
-        "docmancer dataset generate-training --source ./wiki --llm --count 200",
-    ),
-)
-@click.option("--source", required=True, help="Source directory of markdown files.")
-@click.option("--output", default=None, help="Output path (default: .docmancer/training_data.jsonl).")
-@click.option("--count", default=100, type=int, help="Max training examples to generate.")
-@click.option("--format", "output_format", default="jsonl",
-              type=click.Choice(["jsonl", "alpaca", "conversation"]),
-              help="Output format.")
-@click.option("--llm", is_flag=True, default=False, help="Use LLM for diverse Q&A generation (requires API key).")
-@click.option("--question-types", default=None,
-              help="Comma-separated types: factual,comparison,reasoning,summarization.")
-def dataset_generate_training_cmd(source: str, output: str | None, count: int,
-                                   output_format: str, llm: bool, question_types: str | None):
-    """Generate training data for fine-tuning from documentation content."""
-    from docmancer.eval.training import generate_training_scaffold
-
-    source_path = Path(source)
-    if not source_path.is_dir():
-        click.echo(f"Error: source directory not found: {source}", err=True)
-        sys.exit(1)
-
-    if llm:
-        from docmancer.connectors.llm.provider import get_llm_provider
-        from docmancer.core.config import DocmancerConfig
-
-        config = DocmancerConfig()
-        config_file = Path("docmancer.yaml")
-        if config_file.exists():
-            config = DocmancerConfig.from_yaml(config_file)
-
-        provider = get_llm_provider(config)
-        if provider is None:
-            click.echo("  LLM features require an API key.")
-            click.echo("  Run 'docmancer setup' to configure, or set ANTHROPIC_API_KEY.")
-            click.echo("  Falling back to scaffold mode.")
-            click.echo()
-        else:
-            from docmancer.eval.training import generate_training_with_llm
-            q_types = question_types.split(",") if question_types else None
-            dataset = generate_training_with_llm(
-                source_path, provider, max_count=count, question_types=q_types,
-            )
-            ext = {"jsonl": ".jsonl", "alpaca": ".jsonl", "conversation": ".jsonl"}[output_format]
-            output_path = Path(output) if output else Path(f".docmancer/training_data{ext}")
-            dataset.save(output_path, format=output_format)
-            click.echo(f"  Generated {len(dataset.examples)} training examples via LLM")
-            click.echo(f"  Format: {output_format}")
-            click.echo(f"  Saved to: {output_path}")
-            return
-
-    dataset = generate_training_scaffold(source_path, max_count=count)
-
-    ext = {"jsonl": ".jsonl", "alpaca": ".jsonl", "conversation": ".jsonl"}[output_format]
-    output_path = Path(output) if output else Path(f".docmancer/training_data{ext}")
-    dataset.save(output_path, format=output_format)
-
-    click.echo(f"  Generated {len(dataset.examples)} training examples")
-    click.echo(f"  Format: {output_format}")
-    click.echo(f"  Saved to: {output_path}")

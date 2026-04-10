@@ -1,6 +1,8 @@
 # Install Targets
 
-`docmancer install` places a skill file in the agent's expected location. The skill teaches the agent when and how to call docmancer CLI commands for both docs retrieval and vault workflows. See [Architecture](./Architecture.md) for how agents fit into the overall system.
+`docmancer setup` auto-detects installed coding agents and installs skill files in one pass. For manual per-agent installation, use `docmancer install <agent>`.
+
+The skill teaches the agent when and how to call docmancer CLI commands. See [Architecture](./Architecture.md) for how agents fit into the system.
 
 ## Skill locations
 
@@ -18,21 +20,22 @@
 
 ## Project-local installs
 
-Use `--project` with `claude-code`, `gemini`, or `cline` to install under `.claude/skills/...`, `.gemini/skills/...`, or `.cline/skills/...` in the current working directory instead of globally. This is useful when different projects need different docmancer configurations.
+Use `--project` with `claude-code`, `gemini`, or `cline` to install under `.claude/skills/...`, `.gemini/skills/...`, or `.cline/skills/...` in the current working directory. This is useful when different projects need different docmancer configurations.
 
 ## What the skill teaches agents
 
-Installed skills cover both workflows:
+Installed skills cover the core workflow:
 
-- **Docs retrieval:** `ingest`, `query`, `list`, `inspect`, and `doctor`
-- **Vault maintenance:** `vault scan`, `vault status`, `vault search`, `vault context`, `vault inspect`, `vault add-url`
-- **Quality and maintenance:** `vault lint`, `vault backlog`, `vault suggest`, `eval`, `dataset generate`
+- `docmancer add` to index new documentation sources
+- `docmancer update` to refresh existing sources
+- `docmancer query` to get compact context packs with token savings
+- `docmancer list`, `docmancer inspect`, `docmancer remove`, `docmancer doctor` for index management
 
-Agents learn to use `query` for chunk-level evidence and `vault search` for file-level navigation. For the full distinction, see [Vaults](./Vaults.md).
+Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data.
 
-## Shared knowledge bus
+## Shared index
 
-All installed agent skills call the same docmancer CLI. If multiple agents on the same machine point at the same local Qdrant store, they see the same indexed content. This cross-agent property is described in [Cross-Vault Workflows](./Cross-Vault-Workflows.md).
+All installed agent skills call the same docmancer CLI. If multiple agents on the same machine use the same SQLite database, they see the same indexed content. Ingest from Claude Code, query from Cursor, update from Gemini. The cross-agent property is a natural consequence of the shared local database.
 
 ## Troubleshooting
 

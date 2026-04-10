@@ -170,35 +170,35 @@ def test_dataset_generate_cli(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Vault integration tests
+# Project-local config integration tests
 # ---------------------------------------------------------------------------
 
 
-def test_generate_scaffold_uses_vault_relative_source_refs(tmp_path):
-    vault_root = tmp_path / "vault"
-    (vault_root / ".docmancer").mkdir(parents=True)
-    raw_dir = vault_root / "raw"
-    raw_dir.mkdir()
-    (raw_dir / "doc.md").write_text("# Title\n\nBody text.", encoding="utf-8")
+def test_generate_scaffold_uses_project_relative_source_refs(tmp_path):
+    project_root = tmp_path / "project"
+    (project_root / ".docmancer").mkdir(parents=True)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "doc.md").write_text("# Title\n\nBody text.", encoding="utf-8")
 
-    dataset = generate_scaffold(raw_dir)
+    dataset = generate_scaffold(docs_dir)
 
-    assert dataset.entries[0].source_refs == ["raw/doc.md"]
+    assert dataset.entries[0].source_refs == ["docs/doc.md"]
 
 
-def test_generate_scaffold_skips_auto_generated_vault_files(tmp_path):
-    vault_root = tmp_path / "vault"
-    (vault_root / ".docmancer").mkdir(parents=True)
-    wiki_dir = vault_root / "wiki"
-    wiki_dir.mkdir()
-    (wiki_dir / "_index.md").write_text("# Index\n\nAuto-generated.", encoding="utf-8")
-    (wiki_dir / "_graph.md").write_text("# Graph\n\nAuto-generated.", encoding="utf-8")
-    (wiki_dir / "guide.md").write_text("# Guide\n\nReal content.", encoding="utf-8")
+def test_generate_scaffold_skips_auto_generated_project_files(tmp_path):
+    project_root = tmp_path / "project"
+    (project_root / ".docmancer").mkdir(parents=True)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "_index.md").write_text("# Index\n\nAuto-generated.", encoding="utf-8")
+    (docs_dir / "_graph.md").write_text("# Graph\n\nAuto-generated.", encoding="utf-8")
+    (docs_dir / "guide.md").write_text("# Guide\n\nReal content.", encoding="utf-8")
 
-    dataset = generate_scaffold(wiki_dir)
+    dataset = generate_scaffold(docs_dir)
 
     assert len(dataset.entries) == 1
-    assert dataset.entries[0].source_refs == ["wiki/guide.md"]
+    assert dataset.entries[0].source_refs == ["docs/guide.md"]
 
 
 def test_eval_command_writes_latest_result_cache(tmp_path, monkeypatch):

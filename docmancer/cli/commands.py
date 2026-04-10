@@ -48,12 +48,6 @@ def _get_config_class():
     return DocmancerConfig
 
 
-def _get_qdrant_client_class():
-    from qdrant_client import QdrantClient
-
-    return QdrantClient
-
-
 def _get_user_config_dir() -> Path:
     return Path.home() / ".docmancer"
 
@@ -81,7 +75,8 @@ def _get_cline_skill_path() -> Path:
 def _build_user_bootstrap_config():
     DocmancerConfig = _get_config_class()
     config = DocmancerConfig()
-    config.vector_store.local_path = str((_get_user_config_dir() / "qdrant").resolve())
+    config.index.db_path = str((_get_user_config_dir() / "docmancer.db").resolve())
+    config.index.extracted_dir = str((_get_user_config_dir() / "extracted").resolve())
     return config
 
 
@@ -109,33 +104,14 @@ def _load_config(config_path: str | None):
     return DocmancerConfig.from_yaml(_ensure_user_config())
 
 
-def _describe_vector_store(config) -> str:
-    if config.vector_store.url:
-        return f"remote Qdrant at {config.vector_store.url}"
-    return f"local embedded Qdrant at {display_path(config.vector_store.local_path)}"
-
-
-def _is_embedded_qdrant_lock_error(exc: Exception, config) -> bool:
-    if getattr(config.vector_store, "url", ""):
-        return False
-    message = str(exc)
-    return "already accessed by another instance of Qdrant client" in message
-
-
-def _embedded_qdrant_lock_message(config) -> str:
-    qdrant_path = display_path(config.vector_store.local_path)
-    return (
-        f"Embedded docmancer storage is busy because another process is using {qdrant_path}. "
-        "Close the other docmancer process or switch to a remote Qdrant server for concurrent access."
-    )
+def _describe_index(config) -> str:
+    return f"SQLite FTS5 at {display_path(config.index.db_path)}"
 
 
 def _create_agent_or_raise_lock_error(config):
     try:
         return _get_agent_class()(config=config)
-    except RuntimeError as exc:
-        if _is_embedded_qdrant_lock_error(exc, config):
-            raise click.ClickException(_embedded_qdrant_lock_message(config)) from exc
+    except RuntimeError:
         raise
 
 
@@ -201,13 +177,6 @@ def _configure_ingest_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
-
-
-def _apply_ingest_overrides(config, workers: int | None, fetch_workers: int | None) -> None:
-    if workers is not None:
-        config.ingestion.workers = workers
-    if fetch_workers is not None:
-        config.web_fetch.workers = fetch_workers
 
 
 def _emit_install_summary(
@@ -314,68 +283,17 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
 
 @click.command(
     cls=DocmancerCommand,
-    context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Create a config file or scaffold a vault.",
+    context_settings={**HELP_CONTEXT_SETTINGS, "allow_extra_args": True},
+    short_help="Create a project-local config file.",
     epilog=format_examples(
         "docmancer init",
         "docmancer init --dir ./sandbox",
-        "docmancer init --template vault",
-        "docmancer init --template vault --name stripe-research",
-        "docmancer init --template obsidian",
     ),
 )
 @click.option("--dir", "directory", default=None, help="Target directory for the config file.")
-@click.option("--template", "template", default=None,
-              type=click.Choice(["vault", "obsidian"], case_sensitive=False),
-              help="Project template. 'vault' scaffolds a structured knowledge base. 'obsidian' indexes an existing Obsidian vault.")
-@click.option("--name", "vault_name", default=None, help="Custom vault name (vault/obsidian template). Defaults to directory name.")
-def init_cmd(directory: str | None, template: str | None, vault_name: str | None):
+def init_cmd(directory: str | None):
     """Initialize a docmancer project with a config file."""
     import yaml as _yaml
-
-    if template == "obsidian":
-        from docmancer.vault.operations import init_obsidian_vault
-        if directory is not None:
-            dir_path = Path(directory)
-        else:
-            from docmancer.vault.obsidian import discover_obsidian_vaults
-            vaults = discover_obsidian_vaults()
-            if len(vaults) == 1:
-                dir_path = Path(vaults[0]["path"])
-                click.echo(f"Auto-detected Obsidian vault: {vaults[0]['name']}")
-            elif len(vaults) > 1:
-                click.echo("Multiple Obsidian vaults found:")
-                for i, v in enumerate(vaults, 1):
-                    click.echo(f"  {i}. {v['name']} ({v['path']})")
-                choice = click.prompt("Select vault number", type=int, default=1)
-                if 1 <= choice <= len(vaults):
-                    dir_path = Path(vaults[choice - 1]["path"])
-                else:
-                    click.echo("Invalid selection.", err=True)
-                    return
-            else:
-                click.echo("No Obsidian vaults detected. Using current directory.")
-                dir_path = Path(".")
-        config_path = init_obsidian_vault(dir_path, name=vault_name)
-        effective_name = vault_name or dir_path.resolve().name
-        click.echo(f"Obsidian vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
-        click.echo(f"  Config: {display_path(config_path)}")
-        click.echo("  scan_dirs: [\".\"] (entire vault)")
-        click.echo()
-        click.echo("Next: clip articles with Obsidian Web Clipper, then query with 'docmancer query <text>'")
-        return
-
-    if template == "vault":
-        from docmancer.vault.operations import init_vault
-        dir_path = Path(directory or ".")
-        config_path = init_vault(dir_path, name=vault_name)
-        effective_name = vault_name or dir_path.resolve().name
-        click.echo(f"Vault '{effective_name}' initialized at {display_path(dir_path.resolve())}")
-        click.echo(f"  Config: {display_path(config_path)}")
-        click.echo("  Directories: raw/, wiki/, outputs/, assets/, .docmancer/")
-        click.echo()
-        click.echo("Next: add content with 'docmancer vault add-url <url>' or place files in raw/")
-        return
 
     dir_path = Path(directory or ".")
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -385,29 +303,31 @@ def init_cmd(directory: str | None, template: str | None, vault_name: str | None
         return
     DocmancerConfig = _get_config_class()
     config = DocmancerConfig()
+    config.index.db_path = ".docmancer/docmancer.db"
+    config.index.extracted_dir = ".docmancer/extracted"
     data = config.model_dump()
     with open(config_path, "w") as f:
         _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     click.echo(f"Created config at {display_path(config_path)}")
-    click.echo("No API keys required; embeddings run fully locally.")
+    click.echo("Local SQLite FTS5 index configured at .docmancer/docmancer.db")
 
 
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Ingest docs from a path or URL.",
+    short_help="Add docs to the local SQLite index.",
     epilog=format_examples(
-        "docmancer ingest ./docs",
-        "docmancer ingest https://docs.example.com",
-        "docmancer ingest ./docs --recreate",
-        "docmancer ingest https://docs.example.com --provider web",
-        "docmancer ingest https://docs.example.com --provider web --max-pages 200",
+        "docmancer add ./docs",
+        "docmancer add ./README.md",
+        "docmancer add https://docs.example.com",
+        "docmancer add https://github.com/owner/repo",
+        "docmancer add https://docs.example.com --max-pages 200",
     ),
 )
 @click.argument("path")
 @click.option("--recreate", is_flag=True, help="Recreate the collection first.")
 @click.option("--provider", default="auto", show_default=True,
-              type=click.Choice(["auto", "gitbook", "mintlify", "web"], case_sensitive=False),
+              type=click.Choice(["auto", "gitbook", "mintlify", "web", "github"], case_sensitive=False),
               help="Docs platform. auto tries llms.txt then sitemap.xml. web uses generic pipeline.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 @click.option("--max-pages", default=500, show_default=True, type=int,
@@ -416,11 +336,9 @@ def init_cmd(directory: str | None, template: str | None, vault_name: str | None
               help="Force a discovery strategy (e.g. llms-full.txt, sitemap.xml, nav-crawl).")
 @click.option("--browser", is_flag=True, default=False,
               help="Enable Playwright browser fallback for JS-heavy sites.")
-@click.option("--workers", default=None, type=int,
-              help="Number of concurrent ingest workers for chunking and embedding.")
 @click.option("--fetch-workers", default=None, type=int,
               help="Number of concurrent page fetch workers for the web provider.")
-def ingest_cmd(
+def add_cmd(
     path: str,
     recreate: bool,
     provider: str,
@@ -428,50 +346,21 @@ def ingest_cmd(
     max_pages: int,
     strategy: str | None,
     browser: bool,
-    workers: int | None,
     fetch_workers: int | None,
 ):
-    """Ingest documents from a file, directory, or URL."""
+    """Add documents from a file, directory, or URL."""
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
 
     config = _load_config(config_path)
-    _apply_ingest_overrides(config, workers=workers, fetch_workers=fetch_workers)
+    if fetch_workers is not None:
+        config.web_fetch.workers = fetch_workers
     agent = _get_agent_class()(config=config)
-
-    # Handle obsidian:// URIs — resolve to vault path and sync
-    if path.startswith("obsidian://"):
-        vault_name = path.removeprefix("obsidian://").strip("/")
-        from docmancer.vault.obsidian import discover_obsidian_vaults
-        from docmancer.vault.operations import sync_obsidian_vault
-
-        vaults = discover_obsidian_vaults()
-        match = next(
-            (v for v in vaults if v["name"].lower() == vault_name.lower()),
-            None,
-        )
-        if not match:
-            from docmancer.vault.registry import VaultRegistry
-            entry = VaultRegistry().get_vault(vault_name)
-            if entry:
-                match = {"name": vault_name, "path": entry["root_path"]}
-        if not match:
-            click.echo(f"Obsidian vault '{vault_name}' not found.", err=True)
-            sys.exit(1)
-
-        click.echo(f"Syncing Obsidian vault '{match['name']}'...")
-        result = sync_obsidian_vault(Path(match["path"]), name=match["name"])
-        click.echo(
-            f"Synced: +{len(result.added)} added, "
-            f"~{len(result.updated)} updated, "
-            f"={result.unchanged} unchanged"
-        )
-        return
 
     try:
         if path.startswith("http://") or path.startswith("https://"):
-            click.echo(f"Fetching docs from {path}...")
-            total = agent.ingest_url(
+            click.echo(f"Adding docs from {path}...")
+            total = agent.add(
                 path,
                 recreate=recreate,
                 provider=provider if provider != "auto" else None,
@@ -480,11 +369,111 @@ def ingest_cmd(
                 browser=browser,
             )
         else:
-            total = agent.ingest(path, recreate=recreate)
-        click.echo(f"Total: {total} chunks ingested")
+            total = agent.add(path, recreate=recreate)
+        click.echo(f"Total: {total} sections indexed")
     except (FileNotFoundError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+@click.command(
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Refresh all or specific indexed docs sources.",
+    epilog=format_examples(
+        "docmancer update",
+        "docmancer update https://docs.example.com",
+        "docmancer update ./docs",
+    ),
+)
+@click.argument("source", required=False, default=None)
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+@click.option("--max-pages", default=500, show_default=True, type=int,
+              help="Maximum pages to fetch (web sources).")
+@click.option("--browser", is_flag=True, default=False,
+              help="Enable Playwright browser fallback for JS-heavy sites.")
+def update_cmd(
+    source: str | None,
+    config_path: str | None,
+    max_pages: int,
+    browser: bool,
+):
+    """Re-fetch and re-index existing docs sources.
+
+    With no arguments, refreshes every source in the index. Pass a specific
+    source URL or path to update only that source.
+    """
+    config_path = _effective_config(config_path)
+    _configure_ingest_logging()
+
+    config = _load_config(config_path)
+    agent = _get_agent_class()(config=config)
+
+    sources = agent.list_sources_with_dates()
+    if not sources:
+        click.echo("No indexed sources to update. Run 'docmancer add <url-or-path>' first.")
+        return
+
+    if source:
+        matching = [s for s in sources if s["source"] == source]
+        if not matching:
+            # Try matching against grouped docset roots
+            grouped = agent.list_grouped_sources_with_dates()
+            matching_root = [g for g in grouped if g["source"] == source]
+            if matching_root:
+                # Re-add the entire docset root
+                matching = [s for s in sources if True]  # will be filtered below
+                # Get all individual sources under this docset root
+                all_sources = agent.list_sources_with_dates()
+                matching = []
+                with agent.store._connect() as conn:
+                    rows = conn.execute(
+                        "SELECT source FROM sources WHERE docset_root = ?", (source,)
+                    ).fetchall()
+                    matching = [{"source": row["source"]} for row in rows]
+            if not matching:
+                click.echo(f"Source not found in index: {source}")
+                click.echo("Run 'docmancer list' to see indexed sources.")
+                sys.exit(1)
+        targets = matching
+    else:
+        # Deduplicate by docset root so we re-add at the docset level
+        grouped = agent.list_grouped_sources_with_dates()
+        targets = grouped
+
+    updated = 0
+    failed = 0
+    for entry in targets:
+        src = entry["source"]
+        try:
+            if src.startswith(("http://", "https://")):
+                click.echo(f"Updating {src}...")
+                total = agent.add(src, recreate=False, max_pages=max_pages, browser=browser)
+            else:
+                if not Path(src).exists():
+                    click.echo(f"Skipping {src} (path not found on disk)")
+                    failed += 1
+                    continue
+                click.echo(f"Updating {src}...")
+                total = agent.add(src, recreate=False)
+            click.echo(f"  {total} sections indexed")
+            updated += 1
+        except Exception as e:
+            click.echo(f"  Error updating {src}: {e}", err=True)
+            failed += 1
+
+    click.echo()
+    click.echo(f"Updated {updated} source(s)." + (f" {failed} failed." if failed else ""))
+
+
+@click.command(
+    cls=DocmancerCommand,
+    context_settings={**HELP_CONTEXT_SETTINGS, "ignore_unknown_options": True, "allow_extra_args": True},
+    short_help="Deprecated. Use 'docmancer add'.",
+)
+def ingest_cmd():
+    """Deprecated command retained only to explain the breaking transition."""
+    raise click.ClickException("docmancer ingest has been removed from the primary CLI. Use: docmancer add <url-or-path>")
 
 
 @click.command(
@@ -548,10 +537,11 @@ def inspect_cmd(config_path: str | None):
     agent = _create_agent_or_raise_lock_error(config)
 
     stats = agent.collection_stats()
-    click.echo(f"Collection: {config.vector_store.collection_name}")
+    click.echo(f"Index: {display_path(config.index.db_path)}")
     click.echo(f"Exists: {stats.get('collection_exists', False)}")
-    click.echo(f"Points: {stats.get('points_count', 0)}")
-    click.echo(f"Embeddings: {config.embedding.provider} ({config.embedding.model})")
+    click.echo(f"Sources: {stats.get('sources_count', 0)}")
+    click.echo(f"Sections: {stats.get('sections_count', 0)}")
+    click.echo(f"Extracted: {display_path(stats.get('extracted_dir', ''))}")
 
 
 @click.command(
@@ -587,44 +577,18 @@ def doctor_cmd(config_path: str | None):
         effective_config = _get_user_config_path()
     _emit_status_line(f"Config: {display_path(effective_config)}")
 
-    # Vector store
-    _emit_status_line(f"Vector store: {_describe_vector_store(config)}")
-
-    if config.vector_store.url:
-        try:
-            QdrantClient = _get_qdrant_client_class()
-            client = QdrantClient(url=config.vector_store.url, timeout=3)
-            client.get_collections()
-            _emit_status_line(f"Qdrant reachable at {config.vector_store.url}")
-        except Exception:
-            _emit_status_line(f"Qdrant not reachable at {config.vector_store.url}", state="warn")
+    _emit_status_line(f"Index: {_describe_index(config)}")
+    try:
+        agent = _get_agent_class()(config=config)
+        stats = agent.collection_stats()
+        _emit_status_line(f"Sources indexed: {stats.get('sources_count', 0)}")
+        _emit_status_line(f"Sections indexed: {stats.get('sections_count', 0)}")
+        _emit_status_line(f"Inspectable extracts: {display_path(stats.get('extracted_dir', ''))}")
+    except RuntimeError as exc:
+        _emit_status_line(str(exc), state="error")
     else:
-        qdrant_path = Path(config.vector_store.local_path)
-        if qdrant_path.exists():
-            _emit_status_line(f"Embedded Qdrant data at {display_path(qdrant_path)}")
-            try:
-                agent = _get_agent_class()(config=config)
-                stats = agent.collection_stats()
-                count = stats.get("points_count") or 0
-                _emit_status_line(f"Chunks indexed: {count}")
-                if count >= 20000:
-                    _emit_status_line(
-                        f"Large collection ({count} chunks). For best performance, run "
-                        "'docmancer remove --all' and re-ingest to apply on-disk storage optimizations.",
-                        state="warn",
-                    )
-            except RuntimeError as exc:
-                if _is_embedded_qdrant_lock_error(exc, config):
-                    _emit_status_line(
-                        "Embedded Qdrant is currently in use by another docmancer process; chunk count unavailable.",
-                        state="warn",
-                    )
-                else:
-                    pass
-            except Exception:
-                pass
-        else:
-            _emit_status_line(f"No Qdrant data yet at {display_path(qdrant_path)} (run: docmancer ingest)", state="warn")
+        if not Path(config.index.db_path).exists():
+            _emit_status_line("No docs indexed yet (run: docmancer add <url-or-path>)", state="warn")
 
     # Skill install status
     click.echo()
@@ -649,102 +613,99 @@ def doctor_cmd(config_path: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Search ingested docs.",
+    short_help="Search indexed docs.",
     epilog=format_examples(
         'docmancer query "How do I authenticate?"',
         'docmancer query "getting started" --limit 3',
-        'docmancer query "season 5 end date" --full',
+        'docmancer query "season 5 end date" --expand',
+        'docmancer query "auth" --format json',
     ),
 )
 @click.argument("text")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-@click.option("--limit", default=None, type=int, help="Maximum chunks to return.")
-@click.option("--full", is_flag=True, default=False, help="Show full chunk text without truncation.")
-@click.option("--trace", is_flag=True, default=False, help="Show execution trace with timing breakdown.")
-@click.option("--save-trace", is_flag=True, default=False, help="Save trace to .docmancer/traces/.")
-@click.option("--cross-vault", "cross_vault", is_flag=True, default=False, help="Query across all registered vaults.")
-@click.option("--tag", "filter_tag", default=None, help="Filter cross-vault query to vaults with this tag.")
-@click.option("--no-scan", "no_scan", is_flag=True, default=False, help="Skip automatic freshness scan before query.")
-def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool, trace: bool, save_trace: bool, cross_vault: bool, filter_tag: str | None, no_scan: bool):
-    """Run a retrieval query against the vector store (no server required)."""
-    effective_limit = limit if limit is not None else 5
-    skipped_vaults: list[str] = []
+@click.option("--limit", default=None, type=int, help="Maximum sections to return.")
+@click.option("--budget", default=None, type=int, help="Maximum estimated output tokens.")
+@click.option(
+    "--expand",
+    flag_value="adjacent",
+    default=None,
+    help="Include adjacent sections around matches.",
+)
+@click.option("output_format", "--format", type=click.Choice(["markdown", "json"], case_sensitive=False), default="markdown", show_default=True)
+@click.pass_context
+def query_cmd(
+    ctx: click.Context,
+    text: str,
+    config_path: str | None,
+    limit: int | None,
+    budget: int | None,
+    expand: str | None,
+    output_format: str,
+):
+    """Return a compact docs context pack from the local SQLite index."""
+    import json as _json
 
-    if filter_tag and not cross_vault:
-        cross_vault = True  # --tag implies --cross-vault
-
-    if cross_vault:
-        if not no_scan:
-            from docmancer.cli.vault_commands import _maybe_auto_scan
-            from docmancer.vault.registry import VaultRegistry
-
-            registry = VaultRegistry()
-            target_vaults = registry.list_vaults_by_tag(filter_tag) if filter_tag else registry.list_vaults()
-            for vault in target_vaults:
-                _maybe_auto_scan(Path(vault["root_path"]), no_scan=False)
-        from docmancer.vault.operations import cross_vault_query
-        chunks, skipped_vaults = cross_vault_query(text, tag=filter_tag, limit=effective_limit)
-        query_trace = None
-    else:
-        config_path = _effective_config(config_path)
-        if not no_scan:
-            config_file = Path(config_path)
-            vault_root = config_file.parent
-            if (vault_root / ".docmancer" / "manifest.json").exists():
-                from docmancer.cli.vault_commands import _maybe_auto_scan
-                _maybe_auto_scan(vault_root, no_scan=False)
-        config = _load_config(config_path)
-        agent = _get_agent_class()(config=config)
-
-        if trace or save_trace:
-            chunks, query_trace = agent.query_with_trace(text, limit=limit)
+    if expand and ctx.args:
+        if ctx.args == ["page"]:
+            expand = "page"
+        elif ctx.args == ["adjacent"]:
+            expand = "adjacent"
         else:
-            chunks = agent.query(text, limit=limit)
-            query_trace = None
+            raise click.ClickException("Unexpected argument after --expand. Use '--expand' or '--expand page'.")
+    config_path = _effective_config(config_path)
+    config = _load_config(config_path)
+    agent = _get_agent_class()(config=config)
+    chunks = agent.query(text, limit=limit, budget=budget, expand=expand)
 
     if not chunks:
         click.echo("No results found.")
         sys.exit(1)
 
+    meta = chunks[0].metadata or {}
+    savings = meta.get("savings_percent", 0)
+    runway = meta.get("runway_multiplier", 1)
+    docmancer_tokens = meta.get("docmancer_tokens", 0)
+    raw_tokens = meta.get("raw_tokens", 0)
+
+    if output_format == "json":
+        click.echo(
+            _json.dumps(
+                {
+                    "query": text,
+                    "budget": budget or config.query.default_budget,
+                    "docmancer_tokens": docmancer_tokens,
+                    "raw_tokens": raw_tokens,
+                    "savings_percent": savings,
+                    "runway_multiplier": runway,
+                    "results": [chunk.model_dump() for chunk in chunks],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    click.echo(
+        f"Context pack: ~{docmancer_tokens} tokens vs ~{raw_tokens} raw docs tokens "
+        f"({savings}% less docs overhead, {runway}x agentic runway)"
+    )
+    click.echo("---")
+
     for i, chunk in enumerate(chunks, start=1):
-        if full:
-            body = chunk.text
-        else:
-            body = chunk.text[:1500] + "..." if len(chunk.text) > 1500 else chunk.text
-        vault_label = f"  vault={chunk.vault_name}" if chunk.vault_name else ""
-        click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}{vault_label}")
+        body = chunk.text
+        click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}")
         meta = chunk.metadata or {}
-        source_url = meta.get("canonical_source", "")
-        extra = meta.get("extra", {}) if isinstance(meta.get("extra"), dict) else {}
-        if source_url:
-            click.echo(f"    url: {source_url}")
-        if extra.get("author"):
-            click.echo(f"    author: {extra['author']}")
-        if extra.get("published"):
-            click.echo(f"    published: {extra['published']}")
+        if meta.get("title"):
+            click.echo(f"    section: {meta['title']}")
+        click.echo(f"    tokens: ~{meta.get('token_estimate', 0)}")
         click.echo(body)
         click.echo("---")
-
-    if skipped_vaults:
-        names = ", ".join(sorted(set(skipped_vaults)))
-        label = "vault" if len(set(skipped_vaults)) == 1 else "vaults"
-        click.echo(f"Warning: skipped {len(set(skipped_vaults))} {label}: {names}")
-
-    if query_trace is not None:
-        if trace:
-            from docmancer.telemetry.tracer import format_trace_for_terminal
-            click.echo("")
-            click.echo(format_trace_for_terminal(query_trace))
-        if save_trace:
-            traces_dir = Path(".docmancer") / "traces"
-            saved_path = query_trace.save(traces_dir)
-            click.echo(f"Trace saved to {saved_path}")
 
 
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Remove an ingested source.",
+    short_help="Remove an indexed source.",
     epilog=format_examples(
         "docmancer remove --all",
         "docmancer remove https://docs.example.com",
@@ -756,7 +717,7 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool,
 @click.option("--all", "remove_all", is_flag=True, default=False, help="Remove every stored source and docset.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
-    """Remove an ingested source (URL or file path) from the knowledge base."""
+    """Remove an indexed source (URL or file path) from the knowledge base."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
@@ -788,54 +749,23 @@ def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="List ingested sources or registered vaults.",
+    short_help="List indexed documentation sources.",
     epilog=format_examples(
         "docmancer list",
         "docmancer list --all",
-        "docmancer list --vaults",
-        "docmancer list --vaults --tag research",
         "docmancer list --config ./docmancer.yaml",
     ),
 )
 @click.option("--all", "show_all", is_flag=True, default=False, help="Show every stored page/file source.")
-@click.option("--vaults", "show_vaults", is_flag=True, default=False, help="Show all registered vaults.")
-@click.option("--tag", "filter_tag", default=None, help="Filter vaults by tag (use with --vaults).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def list_cmd(show_all: bool, show_vaults: bool, filter_tag: str | None, config_path: str | None):
-    """List all ingested sources with their ingestion dates."""
-    if show_vaults:
-        from docmancer.vault.registry import VaultRegistry
-        registry = VaultRegistry()
-        if filter_tag:
-            vaults = registry.list_vaults_by_tag(filter_tag)
-        else:
-            vaults = registry.list_vaults()
-        if not vaults:
-            if filter_tag:
-                click.echo(f"No vaults with tag '{filter_tag}'.")
-            else:
-                click.echo("No vaults registered.")
-            return
-        for v in vaults:
-            name = v["name"]
-            path = v["root_path"]
-            last_scan = v.get("last_scan") or "never"
-            status = v.get("status", "unknown")
-            tags = v.get("tags", [])
-            click.echo(f"  {name}")
-            click.echo(f"    Path:      {path}")
-            click.echo(f"    Last scan: {last_scan}")
-            click.echo(f"    Status:    {status}")
-            if tags:
-                click.echo(f"    Tags:      {', '.join(tags)}")
-            click.echo()
-        return
+def list_cmd(show_all: bool, config_path: str | None):
+    """List all indexed sources with their indexing dates."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _create_agent_or_raise_lock_error(config)
     entries = agent.list_sources_with_dates() if show_all else agent.list_grouped_sources_with_dates()
     if not entries:
-        click.echo("No sources ingested yet.")
+        click.echo("No sources indexed yet.")
         return
     for entry in entries:
         click.echo(f"{entry['ingested_at']}  {entry['source']}")
@@ -864,7 +794,7 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
     Teaches the agent to call docmancer CLI commands directly. No server
-    required. Run 'docmancer ingest <url>' first to populate the knowledge base.
+    required. Run 'docmancer add <url-or-path>' first to populate the knowledge base.
 
     AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
     codex-app, codex-desktop, gemini, opencode
@@ -1022,3 +952,75 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             extra_lines=["OpenCode will automatically use docmancer commands."],
         )
         return
+
+
+def _detect_setup_targets() -> list[str]:
+    home = Path.home()
+    targets: list[str] = []
+    checks = [
+        ("claude-code", home / ".claude"),
+        ("cursor", home / ".cursor"),
+        ("codex", home / ".codex"),
+        ("cline", home / ".cline"),
+        ("gemini", home / ".gemini"),
+        ("opencode", home / ".config" / "opencode"),
+    ]
+    for target, path in checks:
+        if path.exists():
+            targets.append(target)
+    # Claude Desktop has no stable skill directory to inspect, so include it
+    # when its macOS support directory exists.
+    if (home / "Library" / "Application Support" / "Claude").exists():
+        targets.append("claude-desktop")
+    return targets
+
+
+def _ensure_config_and_db(config_path: str | None) -> Path:
+    config_file = Path(config_path).resolve() if config_path else _ensure_user_config().resolve()
+    config = _get_config_class().from_yaml(config_file)
+    agent = _get_agent_class()(config=config)
+    agent.collection_stats()
+    return config_file
+
+
+@click.command(
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Set up docmancer for local agent docs retrieval.",
+    epilog=format_examples(
+        "docmancer setup",
+        "docmancer setup --all",
+        "docmancer setup --agent codex --agent claude-desktop",
+    ),
+)
+@click.option("--all", "install_all", is_flag=True, default=False, help="Install every supported agent integration non-interactively.")
+@click.option("--agent", "agents", multiple=True, type=click.Choice(INSTALL_TARGETS, case_sensitive=False), help="Agent integration to install. Can be repeated.")
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def setup_cmd(install_all: bool, agents: tuple[str, ...], config_path: str | None):
+    """Create config/database and install selected agent skills."""
+    config_path = _effective_config(config_path)
+    config_file = _ensure_config_and_db(config_path)
+    _emit_brand_header("docmancer setup", "Create the SQLite index and connect coding agents.")
+    _emit_status_line(f"Config: {display_path(config_file)}")
+    config = _get_config_class().from_yaml(config_file)
+    _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")
+
+    selected = [agent.lower() for agent in agents]
+    if install_all:
+        selected = list(INSTALL_TARGETS)
+    elif not selected:
+        detected = _detect_setup_targets()
+        if detected:
+            selected = detected
+        elif click.confirm("No agent installs detected. Install Codex skill?", default=True):
+            selected = ["codex"]
+
+    if not selected:
+        _emit_next_step("Run `docmancer add <url-or-path>` to index documentation.")
+        return
+
+    for target in dict.fromkeys(selected):
+        ctx = click.get_current_context()
+        ctx.invoke(install_cmd, agent=target, project=False, config_path=str(config_file))
+
+    _emit_next_step("Run `docmancer add <url-or-path>`, then `docmancer query \"your question\"`.")

@@ -1,5 +1,3 @@
-import logging
-from contextlib import nullcontext
 from unittest.mock import MagicMock
 
 from docmancer.agent import DocmancerAgent
@@ -7,244 +5,115 @@ from docmancer.core.config import DocmancerConfig
 from docmancer.core.models import Document
 
 
+def _config(tmp_path):
+    config = DocmancerConfig()
+    config.index.db_path = str(tmp_path / "docmancer.db")
+    config.index.extracted_dir = str(tmp_path / "extracted")
+    return config
+
+
 def test_agent_default_creation():
-    config = DocmancerConfig()
-    agent = DocmancerAgent(config=config, _lazy_init=True)
-    assert agent.config.embedding.provider == "fastembed"
-    assert agent.config.vector_store.provider == "qdrant"
+    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
+    assert agent.config.index.provider == "sqlite"
+    assert agent.config.query.default_budget == 1200
 
 
-def test_agent_ingest_documents_uses_markdown_chunking_metadata() -> None:
-    config = DocmancerConfig()
-    config.ingestion.chunk_size = 40
-    config.ingestion.chunk_overlap = 0
-
-    agent = DocmancerAgent(config=config, _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
-
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
+def test_ingest_documents_indexes_sections_and_extracts_files(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
 
     count = agent.ingest_documents(
         [
             Document(
                 source="https://docs.example.com/page",
-                content="# Intro\n\nGitBook content.",
-                metadata={"content_type": "text/markdown", "format": "markdown"},
+                content="# Intro\n\nGitBook content.\n\n## Auth\n\nUse tokens.",
+                metadata={"format": "markdown", "docset_root": "https://docs.example.com"},
             )
         ],
         recreate=True,
     )
 
-    assert count == 1
-    upsert_chunks = agent._vector_store.upsert.call_args.args[0]
-    assert upsert_chunks[0].text.startswith("[# Intro]")
-    assert agent._vector_store.prepare_ingest.call_args.kwargs["recreate"] is True
-    assert agent._vector_store.upsert.call_args.kwargs["prepare"] is False
+    assert count == 2
+    stats = agent.collection_stats()
+    assert stats["sources_count"] == 1
+    assert stats["sections_count"] == 2
+    assert list((tmp_path / "extracted").glob("*.md"))
+    assert list((tmp_path / "extracted").glob("*.json"))
 
 
-def test_ingest_preserves_recreate_until_non_empty_file(tmp_path) -> None:
-    empty = tmp_path / "empty.md"
-    empty.write_text("")
-    non_empty = tmp_path / "real.md"
-    non_empty.write_text("# Intro\n\nBody text.")
-
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
-
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
-
-    count = agent.ingest(tmp_path, recreate=True)
-
-    assert count == 1
-    assert agent._vector_store.prepare_ingest.call_args.kwargs["recreate"] is True
-    assert agent._vector_store.upsert.call_args.kwargs["prepare"] is False
-
-
-def test_ingest_documents_persists_exact_document_content() -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
-
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
-
-    document = Document(
-        source="https://docs.example.com/page",
-        content="# Heading\n\nOriginal body text.",
-        metadata={"format": "markdown"},
-    )
-
-    agent.ingest_documents([document], recreate=True)
-
-    agent._vector_store.upsert_document.assert_called_once_with(
-        "https://docs.example.com/page",
-        "# Heading\n\nOriginal body text.",
+def test_query_returns_context_pack_metadata(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
+    agent.ingest_documents(
+        [
+            Document(
+                source="docs/auth.md",
+                content="# Auth\n\nAuthenticate with OAuth tokens.\n\n## Refresh\n\nRefresh tokens before expiry.",
+                metadata={"format": "markdown"},
+            )
+        ],
         recreate=True,
-        docset_root=None,
     )
 
+    results = agent.query("OAuth tokens", budget=1200)
 
-def test_ingest_documents_persists_docset_root_and_logs_progress(caplog) -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
-
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
-
-    document = Document(
-        source="https://docs.example.com/page",
-        content="# Heading\n\nOriginal body text.",
-        metadata={"format": "markdown", "docset_root": "https://docs.example.com"},
-    )
-
-    with caplog.at_level(logging.INFO):
-        agent.ingest_documents([document], recreate=True)
-
-    agent._vector_store.upsert_document.assert_called_once_with(
-        "https://docs.example.com/page",
-        "# Heading\n\nOriginal body text.",
-        recreate=True,
-        docset_root="https://docs.example.com",
-    )
-    assert "Chunking https://docs.example.com/page..." in caplog.text
-    assert "Embedding 1 chunks from https://docs.example.com/page in 1 batch(es)..." in caplog.text
-    assert "Stored source https://docs.example.com/page" in caplog.text
-    assert "Processed 1/1 documents" in caplog.text
+    assert results
+    assert results[0].source == "docs/auth.md"
+    assert results[0].metadata["docmancer_tokens"] > 0
+    assert results[0].metadata["raw_tokens"] > 0
+    assert "savings_percent" in results[0].metadata
 
 
-def test_ingest_url_logs_post_fetch_summary(caplog) -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
-    agent._get_fetcher = MagicMock()
+def test_ingest_reads_markdown_directory(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "auth.md").write_text("# Auth\n\nToken docs.", encoding="utf-8")
+
+    agent = DocmancerAgent(config=_config(tmp_path))
+    count = agent.ingest(docs, recreate=True)
+
+    assert count == 1
+    assert agent.list_sources()
+
+
+def test_ingest_url_logs_post_fetch_summary(caplog, tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
     fetcher = MagicMock()
     fetcher.fetch.return_value = [
         Document(source="https://docs.example.com/page", content="# Hi", metadata={"format": "markdown"})
     ]
-    agent._get_fetcher.return_value = fetcher
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
+    agent._get_fetcher = MagicMock(return_value=fetcher)
 
-    with caplog.at_level(logging.INFO):
-        agent.ingest_url("https://docs.example.com")
+    agent.ingest_url("https://docs.example.com")
 
-    assert "Fetched 1 document(s); starting ingest" in caplog.text
+    assert "https://docs.example.com/page" in agent.list_sources()
 
 
-def test_ingest_documents_prepares_collections_once_and_writes_all_batches() -> None:
-    config = DocmancerConfig()
-    config.ingestion.chunk_size = 10
-    config.ingestion.chunk_overlap = 0
-    config.embedding.batch_size = 1
+def test_get_document_returns_exact_content(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
+    agent.ingest_documents([Document(source="docs/intro.md", content="# Intro\n\nExact stored text")], recreate=True)
 
-    agent = DocmancerAgent(config=config, _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
+    assert agent.get_document("docs/intro.md") == "# Intro\n\nExact stored text"
 
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
 
-    count = agent.ingest_documents(
+def test_remove_source_prefers_docset_then_source(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
+    agent.ingest_documents(
         [
             Document(
                 source="https://docs.example.com/page",
-                content="# Intro\n\nOne two three four.\n\nFive six seven eight.\n\nNine ten eleven twelve.",
-                metadata={"content_type": "text/markdown", "format": "markdown"},
+                content="# Intro\n\nBody",
+                metadata={"docset_root": "https://docs.example.com"},
             )
         ],
         recreate=True,
     )
 
-    assert count >= 2
-    assert agent._vector_store.upsert.call_count == count
-    agent._vector_store.prepare_ingest.assert_called_once()
-    for call in agent._vector_store.upsert.call_args_list:
-        assert call.kwargs["prepare"] is False
-    agent._vector_store.upsert_document.assert_called_once()
+    assert agent.remove_source("https://docs.example.com") == (True, "docset")
+    assert agent.list_sources() == []
 
 
-def test_ingest_documents_uses_configured_worker_count() -> None:
-    config = DocmancerConfig()
-    config.ingestion.workers = 2
-    agent = DocmancerAgent(config=config, _lazy_init=True)
-    agent._dense_embedder = MagicMock()
-    agent._sparse_embedder = MagicMock()
-    agent._vector_store = MagicMock()
+def test_remove_all_sources_deletes_entire_store(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
+    agent.ingest_documents([Document(source="docs/intro.md", content="# Intro\n\nBody")], recreate=True)
 
-    agent._dense_embedder.embed.return_value = [[0.1]]
-    agent._sparse_embedder.embed.return_value = [MagicMock()]
-    agent._vector_store.upsert.return_value = 1
-
-    documents = [
-        Document(source=f"https://docs.example.com/{idx}", content="# Heading\n\nBody", metadata={"format": "markdown"})
-        for idx in range(3)
-    ]
-
-    count = agent.ingest_documents(documents, recreate=True)
-
-    assert count == 3
-    agent._vector_store.prepare_ingest.assert_called_once()
-
-
-def test_get_document_returns_exact_content() -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._vector_store = MagicMock()
-    agent._vector_store.get_document_content.return_value = "Exact stored text"
-
-    result = agent.get_document("docs/intro.md")
-
-    assert result == "Exact stored text"
-    agent._vector_store.get_document_content.assert_called_once_with("docs/intro.md")
-
-
-def test_remove_source_prefers_docset_then_source() -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._vector_store = MagicMock()
-    agent._vector_store.delete_docset.return_value = True
-
-    result = agent.remove_source("https://docs.example.com")
-
-    assert result == (True, "docset")
-    agent._vector_store.delete_docset.assert_called_once_with("https://docs.example.com")
-    agent._vector_store.delete_source.assert_not_called()
-
-
-def test_remove_source_falls_back_to_exact_source() -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._vector_store = MagicMock()
-    agent._vector_store.delete_docset.return_value = False
-    agent._vector_store.delete_source.return_value = True
-
-    result = agent.remove_source("https://docs.example.com/page")
-
-    assert result == (True, "source")
-    agent._vector_store.delete_docset.assert_called_once_with("https://docs.example.com/page")
-    agent._vector_store.delete_source.assert_called_once_with("https://docs.example.com/page")
-
-
-def test_remove_all_sources_deletes_entire_store() -> None:
-    agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
-    agent._vector_store = MagicMock()
-    agent._vector_store.delete_all.return_value = True
-
-    result = agent.remove_all_sources()
-
-    assert result is True
-    agent._vector_store.delete_all.assert_called_once_with()
+    assert agent.remove_all_sources() is True
+    assert agent.collection_stats()["sources_count"] == 0

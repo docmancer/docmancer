@@ -5,15 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "docmancer"
 dynamic = ["version"]
-description = "Fetch docs, embed locally, expose to AI agents via skills."
+description = "Compress local documentation context for coding agents."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.2.1",
-    "qdrant-client>=1.10.0",
-    "fastembed>=0.6.0",
     "httpx>=0.27.0",
     "click>=8.0.0",
     "pyyaml>=6.0",
@@ -27,8 +25,6 @@ dependencies = [
 
 [project.optional-dependencies]
 browser = ["playwright>=1.40.0"]
-llm = ["anthropic>=0.40.0"]
-langfuse = ["langfuse>=2.0.0"]
 ragas = ["ragas>=0.2.0"]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 

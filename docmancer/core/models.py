@@ -25,5 +25,3 @@ class RetrievedChunk(BaseModel):
     text: str
     score: float
     metadata: dict[str, Any] = Field(default_factory=dict)
-    vault_name: str | None = None
-

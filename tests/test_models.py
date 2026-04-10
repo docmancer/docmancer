@@ -15,19 +15,3 @@ def test_chunk_creation():
 def test_retrieved_chunk_creation():
     rc = RetrievedChunk(source="test.md", chunk_index=0, text="Some text", score=0.95)
     assert rc.score == 0.95
-
-
-def test_retrieved_chunk_has_vault_name():
-    chunk = RetrievedChunk(
-        source="raw/doc.md",
-        chunk_index=0,
-        text="hello",
-        score=0.9,
-        vault_name="my-vault",
-    )
-    assert chunk.vault_name == "my-vault"
-
-
-def test_retrieved_chunk_vault_name_defaults_none():
-    chunk = RetrievedChunk(source="raw/doc.md", chunk_index=0, text="hello", score=0.9)
-    assert chunk.vault_name is None
