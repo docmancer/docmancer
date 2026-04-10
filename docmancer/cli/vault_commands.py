@@ -233,20 +233,8 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
     manifest.load()
 
     result = scan_vault(vault_root, manifest, scan_dirs)
-    try:
-        sync_vault_index(
-            vault_root,
-            manifest,
-            added_paths=result.added,
-            updated_paths=result.updated,
-            removed_paths=result.removed,
-        )
-    finally:
-        manifest.save()
 
-    # Update registry last_scan timestamp
-    _update_registry_last_scan(vault_root)
-
+    # Print scan summary BEFORE the (slow) embed phase so the user sees progress
     for p in result.added:
         click.echo(f"  Added: {p}")
     for p in result.updated:
@@ -262,6 +250,27 @@ def vault_scan_cmd(directory: str, vault_name: str | None):
         f"={result.unchanged} unchanged. "
         f"Total: {total} entries."
     )
+
+    # Enable ingest logging so the user sees embedding progress
+    docs_to_index = len(result.added) + len(result.updated)
+    if docs_to_index > 0:
+        from docmancer.cli.commands import _configure_ingest_logging
+        _configure_ingest_logging()
+        click.echo(f"\n  Indexing {docs_to_index} document(s)... (this may take a while for large files)")
+
+    try:
+        sync_vault_index(
+            vault_root,
+            manifest,
+            added_paths=result.added,
+            updated_paths=result.updated,
+            removed_paths=result.removed,
+        )
+    finally:
+        manifest.save()
+
+    # Update registry last_scan timestamp
+    _update_registry_last_scan(vault_root)
 
     # Auto-update index and graph when content changed
     if result.added or result.updated or result.removed:

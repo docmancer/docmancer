@@ -146,6 +146,10 @@ def obsidian_sync_cmd(vault_name: str | None, sync_all: bool, pick: bool):
         # Single vault — auto-select
         selected = all_vaults
 
+    # Enable ingest logging so the user sees embedding progress
+    from docmancer.cli.commands import _configure_ingest_logging
+    _configure_ingest_logging()
+
     # Sync each selected vault
     for v in selected:
         click.echo(f"  Syncing '{v['name']}'...")
