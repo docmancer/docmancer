@@ -14,19 +14,31 @@ docmancer init --template vault --name stripe-research --dir ./vaults/stripe
 
 The `--name` flag sets a custom name for the vault in the registry. If omitted, the directory name is used. The `--dir` flag sets the target directory (defaults to the current directory).
 
-## Opening an existing folder as a vault
+## Syncing existing Obsidian vaults
 
-If you already have a folder of Markdown files (for example, an Obsidian vault), you can adopt it as a docmancer vault without reorganizing anything:
+If you already use Obsidian, docmancer auto-discovers your vaults and can sync them directly:
 
 ```bash
-docmancer vault open ./my-obsidian-vault --name research
+# discover all Obsidian vaults registered on this machine
+docmancer obsidian discover
+
+# sync all vaults (init + scan + embed in one pass)
+docmancer obsidian sync --all
+
+# sync a specific vault by name
+docmancer obsidian sync "My Research"
+
+# check sync status
+docmancer obsidian status
 ```
 
-This creates the docmancer structure (`.docmancer/`, `raw/`, `wiki/`, `outputs/`) inside the existing folder and symlinks all discovered files into `raw/`, preserving the original directory layout. The originals stay exactly where they are, so Obsidian and any other tools that use the folder continue to work normally.
+When you sync an Obsidian vault, docmancer creates a `docmancer.yaml` and `.docmancer/` directory inside the vault with `scan_dirs: ["."]` so the entire vault is indexed. Each vault gets its own Qdrant collection for clean isolation. The `.docmancer` directory is automatically added to Obsidian's ignore list so it stays out of search and graph view.
 
-Existing files are treated as `raw` source material. Over time, you can compile them into wiki pages using the vault maintenance workflow.
+Content kind is inferred from folder names: `Clippings/` maps to raw, `Notes/` to wiki, `Attachments/` to asset. Files saved by the Obsidian Web Clipper are handled natively, with source URL, author, and published date extracted from frontmatter and preserved in query results.
 
-The command is safe to re-run. Running `vault open` again on the same folder picks up any new files added since the last run, creates symlinks for them, and indexes everything.
+Subsequent syncs are incremental: only files whose content has changed are re-embedded.
+
+You can also ingest a named vault via URI: `docmancer ingest obsidian://My-Vault-Name`.
 
 ## Vault layout
 
@@ -160,4 +172,4 @@ You can query across vaults with `docmancer query --cross-vault`, or target a sp
 
 ## Current boundary
 
-Vaults are local, filesystem-backed knowledge bases. docmancer helps you acquire, index, inspect, lint, and evaluate them. Publishing vaults to a registry or installing external vault packages is future work.
+Vaults are local, filesystem-backed knowledge bases. docmancer helps you acquire, index, inspect, lint, and evaluate them. Vault publishing to GitHub and installation from published packages are supported through `docmancer vault publish` and `docmancer vault install`.

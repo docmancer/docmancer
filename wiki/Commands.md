@@ -17,13 +17,24 @@ A quick reference for every top-level docmancer command. For detailed usage, see
 | `docmancer init` | Create a project-local `docmancer.yaml`. Use `--template vault` to scaffold a structured knowledge base. See [Vaults](./Vaults.md). |
 | `docmancer setup` | Interactive wizard to configure API keys and optional integrations (LLM features, telemetry, eval judge). |
 
-## Vault commands
+## Obsidian commands
 
-These commands operate on a vault created with `docmancer init --template vault`. See [Vaults](./Vaults.md) and [Vault Intelligence](./Vault-Intelligence.md) for full details.
+These commands manage Obsidian vault discovery, syncing, and status. See [Vaults](./Vaults.md) for full details.
 
 | Command | Description |
 |---------|-------------|
-| `docmancer vault open <path>` | Adopt an existing folder of files as a vault by symlinking them into `raw/` and running an initial scan. See [Vaults](./Vaults.md). |
+| `docmancer obsidian discover` | List all Obsidian vaults registered on this machine and show their sync status. |
+| `docmancer obsidian sync [name]` | Init, scan, and ingest Obsidian vaults in one pass. Use `--all` to sync all vaults or pass a vault name. Incremental on re-runs. |
+| `docmancer obsidian status` | Show detailed sync state for all indexed Obsidian vaults: entries, kinds, index states, last scan. |
+| `docmancer obsidian list` | Quick inventory of indexed Obsidian vaults with entry counts. |
+| `docmancer ingest obsidian://<name>` | Ingest a named Obsidian vault via URI. Resolves through Obsidian config or the vault registry. |
+
+## Vault commands
+
+These commands operate on a vault created with `docmancer init --template vault` or synced via `docmancer obsidian sync`. See [Vaults](./Vaults.md) and [Vault Intelligence](./Vault-Intelligence.md) for full details.
+
+| Command | Description |
+|---------|-------------|
 | `docmancer vault scan` | Walk vault directories, reconcile the manifest, and refresh the vector index. |
 | `docmancer vault status` | Show a health summary of the vault including file counts and index states. |
 | `docmancer vault add-url <url>` | Fetch a single web page into `raw/` with generated frontmatter and index it in one step. |

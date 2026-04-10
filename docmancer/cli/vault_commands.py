@@ -156,13 +156,10 @@ def vault_untag_cmd(vault_name: str, tag: str):
 @click.argument("path", type=click.Path(exists=True, file_okay=False))
 @click.option("--name", "vault_name", default=None, help="Custom vault name. Defaults to directory name.")
 def vault_open_cmd(path: str, vault_name: str | None):
-    """Adopt an existing folder of files as a docmancer vault.
-
-    Creates the vault structure inside the folder, symlinks existing files
-    into raw/ preserving directory layout, and runs an initial scan to
-    populate the manifest and index everything for retrieval.
-    """
-    from docmancer.vault.operations import open_vault
+    """Adopt an existing folder of files as a docmancer vault."""
+    from docmancer.vault.manifest import VaultManifest
+    from docmancer.vault.operations import open_vault, sync_vault_index
+    from docmancer.vault.scanner import scan_vault
 
     dir_path = Path(path).resolve()
     effective_name = vault_name or dir_path.name
@@ -171,11 +168,6 @@ def vault_open_cmd(path: str, vault_name: str | None):
     click.echo(f"Vault '{effective_name}' opened at {display_path(dir_path)}")
     click.echo(f"  Config: {display_path(config_path)}")
     click.echo(f"  Symlinked {symlinks_created} file(s) into raw/")
-
-    # Run initial scan (same logic as vault_scan_cmd)
-    from docmancer.vault.manifest import VaultManifest
-    from docmancer.vault.scanner import scan_vault
-    from docmancer.vault.operations import sync_vault_index
 
     manifest_path = dir_path / ".docmancer" / "manifest.json"
     scan_dirs = ["raw", "wiki", "outputs", "assets"]
@@ -200,7 +192,6 @@ def vault_open_cmd(path: str, vault_name: str | None):
     finally:
         manifest.save()
 
-    # Update registry last_scan timestamp
     _update_registry_last_scan(dir_path)
 
     total = len(manifest.all_entries())

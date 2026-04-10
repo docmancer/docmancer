@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from docmancer.core.config import DocmancerConfig
 from docmancer.vault.manifest import ContentKind, VaultManifest
 from docmancer.vault.operations import init_obsidian_vault, init_vault
 from docmancer.vault.scanner import scan_vault
@@ -74,6 +75,40 @@ def test_init_obsidian_updates_obsidian_ignore(tmp_path: Path) -> None:
 
     data = json.loads(app_json.read_text())
     assert ".docmancer" in data["userIgnoreFilters"]
+
+
+def test_init_obsidian_migrates_existing_config_into_obsidian_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "docmancer.yaml"
+    config_path.write_text(
+        "vector_store:\n"
+        "  collection_name: knowledge_base\n"
+        "vault:\n"
+        "  scan_dirs:\n"
+        "    - raw\n",
+        encoding="utf-8",
+    )
+
+    init_obsidian_vault(tmp_path, name="My Research")
+
+    config = DocmancerConfig.from_yaml(config_path)
+    assert config.vault is not None
+    assert config.vault.effective_scan_dirs() == ["."]
+    assert config.vector_store.collection_name == "obsidian_my_research"
+
+
+@patch("docmancer.vault.registry.VaultRegistry")
+def test_init_obsidian_registers_and_tags_existing_config(mock_registry_cls, tmp_path: Path) -> None:
+    (tmp_path / "docmancer.yaml").write_text(
+        "vector_store:\n"
+        "  collection_name: knowledge_base\n",
+        encoding="utf-8",
+    )
+
+    init_obsidian_vault(tmp_path, name="research")
+
+    registry = mock_registry_cls.return_value
+    registry.register.assert_called_once()
+    registry.add_tags.assert_called_once_with("research", ["obsidian"])
 
 
 # ---------------------------------------------------------------------------

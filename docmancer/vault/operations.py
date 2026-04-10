@@ -54,6 +54,11 @@ def _load_vault_config(vault_root: Path) -> DocmancerConfig:
     return DocmancerConfig()
 
 
+def _obsidian_collection_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_")
+    return f"obsidian_{slug or 'vault'}"
+
+
 def _build_frontmatter(metadata: dict[str, object]) -> str:
     lines = ["---"]
     for key, value in metadata.items():
@@ -89,6 +94,8 @@ def _document_for_entry(vault_root: Path, entry: ManifestEntry) -> Document | No
         "tags": list(entry.tags),
         "parent_ref": entry.parent_ref or "",
     }
+    if entry.extra:
+        metadata["extra"] = entry.extra
     if suffix == ".md":
         content = file_path.read_text(encoding="utf-8")
         metadata["format"] = "markdown"
@@ -235,7 +242,38 @@ def init_obsidian_vault(directory: Path, name: str | None = None) -> Path:
     (directory / ".docmancer").mkdir(exist_ok=True)
 
     config_path = directory / "docmancer.yaml"
+    vault_name = name or directory.name
+    expected_collection = _obsidian_collection_name(vault_name)
     if config_path.exists():
+        config = DocmancerConfig.from_yaml(config_path)
+        config_changed = False
+        if config.vault is None or config.vault.effective_scan_dirs() != ["."]:
+            config.vault = VaultConfig(scan_dirs=["."], scan_cooldown_seconds=30)
+            config_changed = True
+        collection_name = config.vector_store.collection_name.strip()
+        if collection_name in {"", "knowledge_base"}:
+            config.vector_store.collection_name = expected_collection
+            config_changed = True
+        if config_changed:
+            with open(config_path, "w") as f:
+                yaml.dump(
+                    config.model_dump(exclude_none=False),
+                    f,
+                    default_flow_style=False,
+                    sort_keys=False,
+                )
+        manifest_path = directory / ".docmancer" / "manifest.json"
+        if not manifest_path.exists():
+            VaultManifest(manifest_path).save()
+        from docmancer.vault.obsidian import update_obsidian_ignore
+        update_obsidian_ignore(directory)
+        try:
+            from docmancer.vault.registry import VaultRegistry
+            registry = VaultRegistry()
+            registry.register(vault_name, directory, config_path)
+            registry.add_tags(vault_name, ["obsidian"])
+        except Exception:
+            pass
         return config_path
 
     vault_cfg = VaultConfig(
@@ -243,6 +281,10 @@ def init_obsidian_vault(directory: Path, name: str | None = None) -> Path:
         scan_cooldown_seconds=30,
     )
     config = DocmancerConfig(vault=vault_cfg)
+
+    # Give each Obsidian vault its own Qdrant collection
+    config.vector_store.collection_name = expected_collection
+
     data = config.model_dump(exclude_none=False)
     with open(config_path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -255,12 +297,12 @@ def init_obsidian_vault(directory: Path, name: str | None = None) -> Path:
     from docmancer.vault.obsidian import update_obsidian_ignore
     update_obsidian_ignore(directory)
 
-    # Auto-register in local vault registry
+    # Auto-register in local vault registry and tag as Obsidian
     try:
         from docmancer.vault.registry import VaultRegistry
         registry = VaultRegistry()
-        vault_name = name or directory.name
         registry.register(vault_name, directory, config_path)
+        registry.add_tags(vault_name, ["obsidian"])
     except Exception:
         pass  # Registry is optional
 
@@ -271,14 +313,7 @@ _SKIP_DIRS = {"raw", "wiki", "outputs", "assets", ".docmancer"}
 
 
 def open_vault(directory: Path, name: str | None = None) -> tuple[Path, int]:
-    """Adopt an existing folder as a vault by symlinking files into raw/.
-
-    Creates the vault scaffold (via *init_vault*), discovers supported files
-    outside the managed directories, and creates relative symlinks inside
-    ``raw/`` that preserve the original directory structure.
-
-    Returns ``(config_path, symlinks_created)``.
-    """
+    """Adopt an existing folder as a vault by symlinking files into raw/."""
     from docmancer.vault.scanner import _SUPPORTED_EXTENSIONS
 
     directory = directory.resolve()
@@ -295,30 +330,74 @@ def open_vault(directory: Path, name: str | None = None) -> tuple[Path, int]:
         if file_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
             continue
 
-        # Skip dot-directories and docmancer-managed directories
         try:
             relative = file_path.relative_to(directory)
         except ValueError:
             continue
+
         parts = relative.parts
         if any(p.startswith(".") for p in parts):
             continue
         if parts[0] in _SKIP_DIRS:
             continue
 
-        # Build the symlink target inside raw/
         symlink_path = raw_dir / relative
         if symlink_path.exists() or symlink_path.is_symlink():
             continue
 
         symlink_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Compute a relative path from the symlink location back to the original
         target = Path("../" * len(relative.parts)) / relative
         symlink_path.symlink_to(target)
         symlinks_created += 1
 
     return config_path, symlinks_created
+
+
+def sync_obsidian_vault(vault_path: Path, name: str | None = None) -> "ScanResult":
+    """One-shot discover-init-scan-embed pipeline for a single Obsidian vault.
+
+    Idempotent: first run initialises everything; subsequent runs only
+    re-embed files whose content hash has changed.
+
+    Returns a :class:`ScanResult` with added/updated/removed/unchanged counts.
+    """
+    from docmancer.vault.scanner import scan_vault, ScanResult
+
+    # 1. Init (idempotent — returns early if docmancer.yaml exists)
+    config_path = init_obsidian_vault(vault_path, name=name)
+    vault_name = name or vault_path.name
+
+    # 2. Load config and manifest
+    config = DocmancerConfig.from_yaml(config_path)
+    scan_dirs = config.vault.effective_scan_dirs() if config.vault else ["."]
+    manifest_path = vault_path / ".docmancer" / "manifest.json"
+    manifest = VaultManifest(manifest_path)
+    manifest.load()
+
+    # 3. Scan (incremental — only marks changed files as stale)
+    result = scan_vault(vault_path, manifest, scan_dirs)
+
+    # 4. Ingest changed files into vector DB
+    try:
+        sync_vault_index(
+            vault_path,
+            manifest,
+            added_paths=result.added,
+            updated_paths=result.updated,
+            removed_paths=result.removed,
+        )
+    finally:
+        manifest.save()
+
+    # 5. Update registry timestamp
+    try:
+        from docmancer.vault.registry import VaultRegistry
+        registry = VaultRegistry()
+        registry.update_last_scan(vault_name)
+    except Exception:
+        pass
+
+    return result
 
 
 def _fetch_url(url: str, browser: bool = False) -> str:

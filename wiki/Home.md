@@ -24,25 +24,39 @@ This workflow is covered in [Architecture](./Architecture.md), [Supported Source
 
 An expanded workflow for mixed-source knowledge work. A vault adds filesystem structure, a provenance manifest, maintenance intelligence, and retrieval evals on top of the same embedding and retrieval engine.
 
-You can create a fresh vault or adopt an existing folder of Markdown (such as an Obsidian vault):
+You can create a fresh vault from scratch:
 
 ```bash
-# Start from scratch
 docmancer init --template vault --name ml-research
 docmancer vault add-url https://some-article.com/post
 docmancer vault scan
-
-# Or adopt an existing folder
-docmancer vault open ./my-obsidian-vault --name ml-research
 ```
 
 This workflow is covered in [Vaults](./Vaults.md), [Vault Intelligence](./Vault-Intelligence.md), [Evals and Observability](./Evals-and-Observability.md), and [Cross-Vault Workflows](./Cross-Vault-Workflows.md).
 
-## Obsidian compatibility
+## Obsidian integration
 
-Vaults are plain markdown on the filesystem, which means they work natively with Obsidian. You can open any vault root as an Obsidian vault and get graph view, canvas, backlinks, and the full plugin ecosystem for free.
+Obsidian is a first-class citizen in docmancer. If you already use Obsidian, docmancer auto-discovers your vaults and can sync them in one command:
 
-A particularly useful pairing is the Obsidian Web Clipper extension. Use it to save web articles and pages as `.md` files directly into your vault's `raw/` folder, then run `docmancer vault scan` to pick them up, add manifest entries, and index them for retrieval. This gives you a fast capture workflow from the browser straight into the knowledge base without leaving Obsidian.
+```bash
+# discover all Obsidian vaults on this machine
+docmancer obsidian discover
+
+# sync all vaults (init + scan + embed) — incremental on re-runs
+docmancer obsidian sync --all
+
+# sync a specific vault by name
+docmancer obsidian sync "My Research"
+
+# query across all Obsidian vaults
+docmancer query --tag obsidian "your question"
+```
+
+Each synced Obsidian vault gets its own Qdrant collection for clean isolation. The scanner handles Web Clipper frontmatter (source URL, author, published date) and infers content kind from folder names: `Clippings/` maps to raw, `Notes/` to wiki, `Attachments/` to asset, and so on. Web Clipper metadata is preserved through the ingest pipeline and shown in query results.
+
+You can also ingest a named Obsidian vault via URI: `docmancer ingest obsidian://My-Vault-Name`.
+
+For vaults you plan to publish (with `docmancer vault publish`), the hybrid model works well: create a vault with `docmancer init --template vault` to get the structured `raw/wiki/outputs` layout, then open it in Obsidian. The structured directories are normal Obsidian folders, and the layout maps cleanly to the publish model.
 
 docmancer handles the data layer (ingest, index, query, manifest, eval) while Obsidian handles the UI layer (rendering, graph view, editing). Agents operate through docmancer CLI and do not depend on Obsidian being open.
 

@@ -439,6 +439,35 @@ def ingest_cmd(
     _apply_ingest_overrides(config, workers=workers, fetch_workers=fetch_workers)
     agent = _get_agent_class()(config=config)
 
+    # Handle obsidian:// URIs — resolve to vault path and sync
+    if path.startswith("obsidian://"):
+        vault_name = path.removeprefix("obsidian://").strip("/")
+        from docmancer.vault.obsidian import discover_obsidian_vaults
+        from docmancer.vault.operations import sync_obsidian_vault
+
+        vaults = discover_obsidian_vaults()
+        match = next(
+            (v for v in vaults if v["name"].lower() == vault_name.lower()),
+            None,
+        )
+        if not match:
+            from docmancer.vault.registry import VaultRegistry
+            entry = VaultRegistry().get_vault(vault_name)
+            if entry:
+                match = {"name": vault_name, "path": entry["root_path"]}
+        if not match:
+            click.echo(f"Obsidian vault '{vault_name}' not found.", err=True)
+            sys.exit(1)
+
+        click.echo(f"Syncing Obsidian vault '{match['name']}'...")
+        result = sync_obsidian_vault(Path(match["path"]), name=match["name"])
+        click.echo(
+            f"Synced: +{len(result.added)} added, "
+            f"~{len(result.updated)} updated, "
+            f"={result.unchanged} unchanged"
+        )
+        return
+
     try:
         if path.startswith("http://") or path.startswith("https://"):
             click.echo(f"Fetching docs from {path}...")
@@ -645,6 +674,14 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool,
         cross_vault = True  # --tag implies --cross-vault
 
     if cross_vault:
+        if not no_scan:
+            from docmancer.cli.vault_commands import _maybe_auto_scan
+            from docmancer.vault.registry import VaultRegistry
+
+            registry = VaultRegistry()
+            target_vaults = registry.list_vaults_by_tag(filter_tag) if filter_tag else registry.list_vaults()
+            for vault in target_vaults:
+                _maybe_auto_scan(Path(vault["root_path"]), no_scan=False)
         from docmancer.vault.operations import cross_vault_query
         chunks, skipped_vaults = cross_vault_query(text, tag=filter_tag, limit=effective_limit)
         query_trace = None
@@ -676,6 +713,15 @@ def query_cmd(text: str, config_path: str | None, limit: int | None, full: bool,
             body = chunk.text[:1500] + "..." if len(chunk.text) > 1500 else chunk.text
         vault_label = f"  vault={chunk.vault_name}" if chunk.vault_name else ""
         click.echo(f"[{i}] score={chunk.score:.2f}  source={chunk.source}{vault_label}")
+        meta = chunk.metadata or {}
+        source_url = meta.get("canonical_source", "")
+        extra = meta.get("extra", {}) if isinstance(meta.get("extra"), dict) else {}
+        if source_url:
+            click.echo(f"    url: {source_url}")
+        if extra.get("author"):
+            click.echo(f"    author: {extra['author']}")
+        if extra.get("published"):
+            click.echo(f"    published: {extra['published']}")
         click.echo(body)
         click.echo("---")
 

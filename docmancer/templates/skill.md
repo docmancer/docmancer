@@ -130,15 +130,35 @@ Shows provenance, metadata, and index state.
 4. Write outputs to `wiki/` or `outputs/` with YAML frontmatter (title, tags, sources, created, updated).
 5. Run `{{DOCS_KIT_CMD}} vault scan` after adding or modifying files.
 
-### Obsidian-native vaults
+### Obsidian integration
 
-If the vault was initialized with `--template obsidian`, the entire Obsidian vault is indexed:
+docmancer is a first-class citizen with Obsidian vaults. It auto-discovers all vaults registered in Obsidian and can batch-sync them in one command.
+
 ```bash
-{{DOCS_KIT_CMD}} init --template obsidian
+# Discover all Obsidian vaults on this machine
+{{DOCS_KIT_CMD}} obsidian discover
+
+# Sync all vaults (init + scan + embed) — incremental on re-runs
+{{DOCS_KIT_CMD}} obsidian sync --all
+
+# Sync a specific vault by name
+{{DOCS_KIT_CMD}} obsidian sync "My Research"
+
+# Check sync status of indexed Obsidian vaults
+{{DOCS_KIT_CMD}} obsidian status
+
+# Quick inventory
+{{DOCS_KIT_CMD}} obsidian list
+
+# Ingest via obsidian:// URI
+{{DOCS_KIT_CMD}} ingest obsidian://My-Vault-Name
 ```
+
+- Each vault gets its own Qdrant collection for clean separation.
 - `scan_dirs` is set to `["."]` so all files in the vault are tracked.
-- New files added through Obsidian Web Clipper or manual editing are auto-indexed on the next query or search command. No need to run `vault scan` manually.
+- New files added through Obsidian Web Clipper or manual editing are auto-indexed on the next sync or query.
 - Content kind is inferred from folder names (Clippings/ = raw, Notes/ = wiki) or frontmatter `kind` field.
+- Web Clipper metadata (source URL, author, published date) is preserved and shown in query results.
 
 ## Cross-Vault Queries
 
@@ -146,6 +166,12 @@ Multiple vaults can be registered on the same machine. To see all registered vau
 
 ```
 {{DOCS_KIT_CMD}} list --vaults
+```
+
+Query across all Obsidian vaults with the `--tag` flag:
+
+```
+{{DOCS_KIT_CMD}} query "your question" --tag obsidian
 ```
 
 Use these commands for vault maintenance and exploration:

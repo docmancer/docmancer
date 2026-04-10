@@ -2,6 +2,7 @@ import click
 from docmancer import __version__
 from docmancer.cli.commands import init_cmd, ingest_cmd, inspect_cmd, doctor_cmd, query_cmd, fetch_cmd, install_cmd, remove_cmd, list_cmd
 from docmancer.cli.vault_commands import vault_group
+from docmancer.cli.obsidian_commands import obsidian_group
 from docmancer.cli.eval_commands import dataset_generate_cmd, dataset_generate_training_cmd, eval_cmd
 from docmancer.cli.setup import setup_cmd
 from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
@@ -55,6 +56,7 @@ cli.add_command(install_cmd, "install")
 cli.add_command(remove_cmd, "remove")
 cli.add_command(list_cmd, "list")
 cli.add_command(vault_group, "vault")
+cli.add_command(obsidian_group, "obsidian")
 cli.add_command(setup_cmd, "setup")
 
 

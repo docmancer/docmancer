@@ -326,12 +326,49 @@ def test_query_auto_scans_vault_from_config_path(tmp_path):
 def test_query_cross_vault_warns_when_vaults_are_skipped():
     runner = CliRunner()
     chunk = MagicMock(text="result", score=1.0, source="doc.md", vault_name="good-vault")
+    registry = MagicMock()
+    registry.list_vaults.return_value = []
 
-    with patch("docmancer.vault.operations.cross_vault_query", return_value=([chunk], ["broken-vault"])):
+    with patch("docmancer.vault.registry.VaultRegistry", return_value=registry), \
+         patch("docmancer.vault.operations.cross_vault_query", return_value=([chunk], ["broken-vault"])):
         result = runner.invoke(cli, ["query", "auth", "--cross-vault"])
 
     assert result.exit_code == 0
     assert "Warning: skipped 1 vault: broken-vault" in result.output
+
+
+def test_query_cross_vault_auto_scans_target_vaults_by_tag(tmp_path):
+    runner = CliRunner()
+    vault_root = tmp_path / "obsidian-vault"
+    vault_root.mkdir()
+    chunk = MagicMock(text="result", score=1.0, source="doc.md", vault_name="obsidian-vault")
+    registry = MagicMock()
+    registry.list_vaults_by_tag.return_value = [{"name": "obsidian-vault", "root_path": str(vault_root)}]
+
+    with patch("docmancer.vault.registry.VaultRegistry", return_value=registry), \
+         patch("docmancer.cli.vault_commands._maybe_auto_scan") as mock_auto_scan, \
+         patch("docmancer.vault.operations.cross_vault_query", return_value=([chunk], [])):
+        result = runner.invoke(cli, ["query", "auth", "--tag", "obsidian"])
+
+    assert result.exit_code == 0
+    mock_auto_scan.assert_called_once_with(vault_root, no_scan=False)
+
+
+def test_query_cross_vault_no_scan_skips_freshness_pass(tmp_path):
+    runner = CliRunner()
+    vault_root = tmp_path / "obsidian-vault"
+    vault_root.mkdir()
+    chunk = MagicMock(text="result", score=1.0, source="doc.md", vault_name="obsidian-vault")
+    registry = MagicMock()
+    registry.list_vaults.return_value = [{"name": "obsidian-vault", "root_path": str(vault_root)}]
+
+    with patch("docmancer.vault.registry.VaultRegistry", return_value=registry), \
+         patch("docmancer.cli.vault_commands._maybe_auto_scan") as mock_auto_scan, \
+         patch("docmancer.vault.operations.cross_vault_query", return_value=([chunk], [])):
+        result = runner.invoke(cli, ["query", "auth", "--cross-vault", "--no-scan"])
+
+    assert result.exit_code == 0
+    mock_auto_scan.assert_not_called()
 
 
 def test_list_command_defaults_to_grouped_entries():

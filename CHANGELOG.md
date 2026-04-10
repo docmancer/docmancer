@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - Unreleased
+
+### Added
+
+- **`docmancer obsidian`:** **`discover`**, **`sync`** (including **`--all`** and **`--pick`**), **`status`**, and **`list`** for Obsidian vault discovery, incremental sync, and inventory.
+- **`docmancer ingest`** with an **`obsidian://`** vault name: resolve the vault from Obsidian app config or the registry and run the same sync path as **`obsidian sync`**.
+- **`docmancer query --cross-vault`:** freshness pass via **`_maybe_auto_scan`** over targeted vaults (all vaults or **`--tag`**); query output can show **`canonical_source`**, **`author`**, and **`published`** when chunk metadata includes them.
+
+### Changed
+
+- **`init_obsidian_vault`** for existing **`docmancer.yaml`:** per-vault Qdrant collection **`obsidian_<slug>`** when replacing empty or default **`knowledge_base`**; migrate **`vault.scan_dirs`** to **`"."`** where needed; ensure manifest and Obsidian ignore updates; register the vault when reusing an on-disk config.
+- **Document metadata:** manifest **`extra`** (for example clipper fields) is forwarded into indexed document metadata.
+- **README**, **wiki** (**`Commands`**, **`Home`**, **`Vaults`**), and **agent skill templates** updated for the Obsidian workflow and command tables.
+- **`vault open`:** shorter help text only.
+
+### Fixed
+
+- **`list`** / **`inspect`:** embedded Qdrant lock contention is reported as a clear **`ClickException`** instead of a traceback.
+- **`doctor`:** warn when chunk stats are unavailable because embedded Qdrant is locked by another process.
+
+### Tests
+
+- **`test_cli`:** cross-vault auto-scan, **`--no-scan`**, and registry patching for cross-vault warnings.
+- **`test_obsidian_integration`:** Obsidian init config migration and registry registration.
+- **`test_vault_open`:** aligned with refactors.
+
 ## [0.2.2] - 2026-04-08
 ### Added
 

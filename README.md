@@ -18,7 +18,7 @@
 <table><tr><td>
 
 &#x2714; Up-to-date, version-specific documentation straight from the source<br>
-&#x2714; Research vaults for mixed-source knowledge work with Obsidian compatibility<br>
+&#x2714; Research vaults with first-class Obsidian integration<br>
 &#x2714; Only the chunks your agent needs, not the whole doc site<br>
 &#x2714; Built-in evals to measure and improve retrieval quality<br>
 &#x2714; 100% local. Embeddings, storage, retrieval all on your machine.<br>
@@ -68,11 +68,20 @@ docmancer vault suggest
 
 No server to start. Config and the default vector store are created under **`~/.docmancer/`** on first use. Vaults are plain markdown on the filesystem, so they work natively with Obsidian for graph view, canvas, backlinks, and the full plugin ecosystem.
 
-You can also adopt an existing folder of Markdown (such as an Obsidian vault) without reorganizing anything:
+If you already use Obsidian, docmancer auto-discovers your vaults and can sync them in one command:
 
 ```bash
-docmancer vault open ./my-obsidian-vault --name research
+# discover all Obsidian vaults on this machine
+docmancer obsidian discover
+
+# sync all vaults (init + scan + embed) — incremental on re-runs
+docmancer obsidian sync --all
+
+# query across all Obsidian vaults
+docmancer query --tag obsidian "your question"
 ```
+
+Each Obsidian vault gets its own vector collection. Web Clipper metadata (source URL, author, published date) is preserved and shown in query results.
 
 ---
 
@@ -166,12 +175,21 @@ Skills are plain markdown files. No background daemon, no MCP server, no ports. 
 | `docmancer init`                 | Create a project-local `docmancer.yaml`              |
 | `docmancer setup`                | Interactive wizard for API keys and integrations     |
 
+### Obsidian
+
+| Command                           | What it does                                                    |
+| --------------------------------- | --------------------------------------------------------------- |
+| `docmancer obsidian discover`     | List all Obsidian vaults registered on this machine             |
+| `docmancer obsidian sync [name]`  | Init, scan, and ingest Obsidian vaults (incremental on re-runs) |
+| `docmancer obsidian status`       | Show sync state of all indexed Obsidian vaults                  |
+| `docmancer obsidian list`         | Quick inventory of indexed Obsidian vaults with entry counts    |
+| `docmancer ingest obsidian://`    | Ingest a named Obsidian vault via URI                           |
+
 ### Vault
 
 | Command                                | What it does                                                          |
 | -------------------------------------- | --------------------------------------------------------------------- |
 | `docmancer init --template vault`      | Scaffold a structured knowledge base with `raw/`, `wiki/`, `outputs/` |
-| `docmancer vault open <path>`          | Adopt an existing folder of files as a vault                          |
 | `docmancer vault scan`                 | Reconcile filesystem, manifest, and vector index                      |
 | `docmancer vault status`               | Show vault health summary with file counts and index states           |
 | `docmancer vault add-url <url>`        | Fetch a web page into `raw/` with provenance and index it             |
