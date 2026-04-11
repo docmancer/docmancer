@@ -3,18 +3,21 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$SCRIPT_DIR/live_cli_integration.log"
-exec > >(tee "$LOG_FILE") 2>&1
+LOG_FILE="${DOCMANCER_LIVE_LOG_FILE:-}"
+if [[ -n "$LOG_FILE" ]]; then
+  mkdir -p "$(dirname "$LOG_FILE")"
+  exec >"$LOG_FILE" 2>&1
+fi
 
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 VENV_PIP="$ROOT_DIR/.venv/bin/pip"
-CLI_CMD=("$VENV_PYTHON" -m docmancer.cli)
+CLI_CMD=("$VENV_PYTHON" -m docmancer)
 
 DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-http://docs.bonzo.finance/}"
 MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-2}"
 FETCH_WORKERS="${DOCMANCER_LIVE_FETCH_WORKERS:-8}"
-INGEST_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
-INGEST_STRATEGY="${DOCMANCER_LIVE_STRATEGY:-}"
+ADD_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
+ADD_STRATEGY="${DOCMANCER_LIVE_STRATEGY:-}"
 RUN_WEB_VARIANTS="${DOCMANCER_RUN_WEB_VARIANTS:-0}"
 RUN_BROWSER_VARIANT="${DOCMANCER_RUN_BROWSER_VARIANT:-0}"
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
@@ -67,8 +70,8 @@ run() {
 run_live_add() {
   local browser_flag="${1:-0}"
   local max_pages="${2:-$MAX_PAGES}"
-  local provider="${3:-$INGEST_PROVIDER}"
-  local strategy="${4:-$INGEST_STRATEGY}"
+  local provider="${3:-$ADD_PROVIDER}"
+  local strategy="${4:-$ADD_STRATEGY}"
   local recreate_flag="${5:-1}"
   local cmd=("${CLI_CMD[@]}" add "$DOCS_URL" --max-pages "$max_pages" --fetch-workers "$FETCH_WORKERS" --config "$CONFIG_PATH")
 
@@ -90,7 +93,7 @@ run_live_add() {
 
 capture_first_source() {
   "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH" \
-    | awk 'NF >= 2 && $0 !~ /^No sources ingested yet\.$/ {print $NF; exit}'
+    | awk 'NF >= 2 && $0 !~ /^No sources indexed yet\.$/ {print $NF; exit}'
 }
 
 print_banner "docmancer live CLI integration"
@@ -101,8 +104,8 @@ echo "Temporary project: $PROJECT_DIR"
 echo "Docs URL: $DOCS_URL"
 echo "Max pages: $MAX_PAGES"
 echo "Fetch workers: $FETCH_WORKERS"
-echo "Provider: $INGEST_PROVIDER"
-echo "Strategy: ${INGEST_STRATEGY:-<default>}"
+echo "Provider: $ADD_PROVIDER"
+echo "Strategy: ${ADD_STRATEGY:-<default>}"
 echo "RUN_WEB_VARIANTS=$RUN_WEB_VARIANTS"
 echo "RUN_BROWSER_VARIANT=$RUN_BROWSER_VARIANT"
 echo "RUN_FETCH_STEP=$RUN_FETCH_STEP"
@@ -142,8 +145,8 @@ print_banner "Install targets in isolated HOME"
 run "${CLI_CMD[@]}" install claude-code --config "$CONFIG_PATH"
 (
   cd "$PROJECT_DIR"
-  run "$VENV_PYTHON" -m docmancer.cli install claude-code --project --config "$CONFIG_PATH"
-  run "$VENV_PYTHON" -m docmancer.cli install cline --project --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer install claude-code --project --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer install cline --project --config "$CONFIG_PATH"
 )
 for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini opencode; do
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"

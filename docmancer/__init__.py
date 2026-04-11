@@ -1,4 +1,4 @@
-"""docmancer: Fetch docs, embed locally, query via CLI and installed agent skills."""
+"""docmancer: Fetch docs, index sections locally, and return compact context packs."""
 
 from docmancer._version import __version__
 

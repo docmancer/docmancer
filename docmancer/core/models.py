@@ -19,7 +19,7 @@ class Chunk(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    """A chunk returned from vector store retrieval with a relevance score."""
+    """A section returned from the local docs index with a relevance score."""
     source: str
     chunk_index: int
     text: str

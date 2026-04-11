@@ -55,6 +55,15 @@ def test_old_vector_store_path_is_translated(tmp_path):
     assert config.index.db_path == str((tmp_path / ".docmancer" / "old.db").resolve())
 
 
+def test_old_qdrant_directory_path_uses_sqlite_default(tmp_path):
+    config_file = tmp_path / "docmancer.yaml"
+    config_file.write_text("vector_store:\n  local_path: .docmancer/qdrant\n")
+
+    config = DocmancerConfig.from_yaml(config_file)
+
+    assert config.index.db_path == str((tmp_path / ".docmancer" / "docmancer.db").resolve())
+
+
 def test_settings_do_not_auto_load_dotenv():
     assert IndexConfig.model_config.get("env_file") is None
     assert QueryConfig.model_config.get("env_file") is None

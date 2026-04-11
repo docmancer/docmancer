@@ -160,9 +160,9 @@ class _IngestLogFormatter(logging.Formatter):
             return _style("[fetch] ", fg="bright_green", bold=True) + message
         if lower.startswith("chunking ") or lower.startswith("built "):
             return _style("[chunk] ", fg="yellow", bold=True) + message
-        if lower.startswith("embedding "):
-            return _style("[embed] ", fg="magenta", bold=True) + message
-        if lower.startswith("upserting ") or lower.startswith("persisting batch ") or "vector store write complete" in lower or "preparing vector store collections" in lower:
+        if lower.startswith("indexing "):
+            return _style("[index] ", fg="magenta", bold=True) + message
+        if lower.startswith("stored ") or lower.startswith("persisting batch "):
             return _style("[store] ", fg="bright_blue", bold=True) + message
         if lower.startswith("stored source ") or lower.startswith("processed "):
             return _style("[done] ", fg="bright_green", bold=True) + message
@@ -612,12 +612,13 @@ def doctor_cmd(config_path: str | None):
 
 @click.command(
     cls=DocmancerCommand,
-    context_settings=HELP_CONTEXT_SETTINGS,
+    context_settings={**HELP_CONTEXT_SETTINGS, "allow_extra_args": True},
     short_help="Search indexed docs.",
     epilog=format_examples(
         'docmancer query "How do I authenticate?"',
         'docmancer query "getting started" --limit 3',
         'docmancer query "season 5 end date" --expand',
+        'docmancer query "season 5 end date" --expand page',
         'docmancer query "auth" --format json',
     ),
 )
@@ -629,7 +630,7 @@ def doctor_cmd(config_path: str | None):
     "--expand",
     flag_value="adjacent",
     default=None,
-    help="Include adjacent sections around matches.",
+    help="Include adjacent sections around matches. Add 'page' after the flag for the full page.",
 )
 @click.option("output_format", "--format", type=click.Choice(["markdown", "json"], case_sensitive=False), default="markdown", show_default=True)
 @click.pass_context

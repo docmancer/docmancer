@@ -1,7 +1,7 @@
 """Content extraction: trafilatura primary, markdownify fallback.
 
-Converts fetched HTML pages into clean Markdown suitable for chunking
-and embedding. The extraction pipeline:
+Converts fetched HTML pages into clean Markdown suitable for section indexing.
+The extraction pipeline:
 1. Try trafilatura (best precision/recall for main-content extraction)
 2. Fall back to markdownify with a custom DocsMarkdownConverter that
    strips navigation, handles code fences, and converts admonitions

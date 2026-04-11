@@ -206,6 +206,33 @@ def test_query_outputs_savings_by_default():
     assert "5.0x agentic runway" in result.output
 
 
+def test_query_accepts_expand_page():
+    fake_config = MagicMock()
+    fake_config.query.default_budget = 1200
+    fake_agent = MagicMock()
+    fake_agent.query.return_value = [
+        MagicMock(
+            text="result",
+            score=1.0,
+            source="doc.md",
+            metadata={
+                "title": "Auth",
+                "token_estimate": 12,
+                "docmancer_tokens": 120,
+                "raw_tokens": 600,
+                "savings_percent": 80.0,
+                "runway_multiplier": 5.0,
+            },
+        )
+    ]
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
+         patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
+        result = CliRunner().invoke(cli, ["query", "auth", "--expand", "page"])
+
+    assert result.exit_code == 0
+    fake_agent.query.assert_called_once_with("auth", limit=None, budget=None, expand="page")
+
+
 def test_query_json_output():
     fake_config = MagicMock()
     fake_config.query.default_budget = 1200

@@ -1,19 +1,13 @@
-embedding:
-  provider: fastembed
-  model: BAAI/bge-small-en-v1.5
-
-vector_store:
-  provider: qdrant
-  local_path: .docmancer/qdrant
-  collection_name: knowledge_base
-  retrieval_limit: 5
-  score_threshold: 0.35
-
-ingestion:
-  chunk_size: 800
-  chunk_overlap: 120
-  workers: 4
-  embed_queue_size: 4
-
+index:
+  provider: sqlite
+  db_path: .docmancer/docmancer.db
+  extracted_dir: .docmancer/extracted
+query:
+  default_budget: 1200
+  default_limit: 8
+  default_expand: adjacent
 web_fetch:
   workers: 8
+  default_page_cap: 500
+  browser_fallback: false
+eval: null

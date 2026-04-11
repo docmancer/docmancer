@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - Unreleased
+
+This release replaces the 0.2.x vector stack with a **SQLite FTS5** section index and reframes the CLI around **context packs** for agents. Treat it as a clean upgrade: re-index sources with **`docmancer add`** / **`docmancer update`** after installing.
+
+### Breaking
+
+- **Indexing and retrieval** use **SQLite FTS5** over heading-normalized sections instead of **Qdrant** and **FastEmbed** embeddings. Existing Qdrant data is not migrated; add or update each source again after upgrading.
+- **`docmancer ingest`** is removed as a working command; the name is kept only to print an error that points to **`docmancer add`**.
+
+### Added
+
+- **`docmancer setup`** to create config, initialize the SQLite database, detect installed agents, and install skills (**`--all`** installs every supported integration non-interactively).
+- **`docmancer add`** and **`docmancer update`** as the primary paths to fetch or read docs and refresh the SQLite index (GitBook, Mintlify, generic **web**, GitHub, local paths).
+- **`docmancer query`** returns compact **context packs** with estimated docs-token savings; **`--format json`**, **`--expand`**, and **`--expand page`** tune how much surrounding content is included within the token **budget**.
+- **`index`** settings (**`db_path`**, **`extracted_dir`**) and on-disk **extracted** markdown/JSON for inspection alongside the database.
+- **Config compatibility:** if **`docmancer.yaml`** still has a legacy **`vector_store`** block but no **`index`** section, **`db_path`** / **`local_path`** is mapped to **`index.db_path`** so project configs keep a sensible database location. Paths that look like a SQLite file (**`.db`**, **`.sqlite`**, **`.sqlite3`**) map as-is; a **directory** path (typical old Qdrant **`local_path`**) maps to **`.docmancer/docmancer.db`** next to the config instead.
+
+### Removed
+
+- The **knowledge vault** surface area from 0.2.x (**`vault`** commands, **Obsidian**-specific flows, **cross-vault** **`query`**, **`init --template vault|obsidian`**, publish/install/registry features tied to vaults).
+- **ArXiv** fetcher and the previous **Anthropic-first setup wizard** / **Langfuse** telemetry stack that shipped with the old agent implementation. **`docmancer eval`** remains for deterministic retrieval metrics; optional **`--judge`** uses **Ragas** and an API key when installed and configured.
+- **`scripts/live_vault_integration.sh`** (vault end-to-end smoke script removed with the vault stack).
+
+### Changed
+
+- **`inspect`** and **`doctor`** report SQLite index stats, extract locations, and FTS5 availability instead of Qdrant chunk counts and locks.
+- **`list`** and **`remove`** operate on SQLite-backed sources and docsets.
+- **Dependencies:** core install no longer pulls **Qdrant** or **FastEmbed**; optional extras are trimmed to **`browser`** and **`ragas`** (see **`pyproject.toml`**).
+- **README**, **wiki**, **packaged agent templates**, and **root `SKILL.md`** describe **`setup`**, **`add`**, **`update`**, and **`query`** for the new workflow (**`SKILL.md`** frontmatter **`version`** **0.3.0**).
+- **`docmancer query`:** **`--expand page`** is accepted as a second token after **`--expand`** (Click **`allow_extra_args`** on the command).
+- **Add/update logging:** progress prefixes use **`[index]`** and **`[store]`** instead of embedding and vector-store wording.
+- **Root `docmancer.yaml` example:** **`index`**, **`query`**, and **`web_fetch`** keys match the SQLite workflow.
+- **`scripts/live_cli_integration.sh`:** runs **`python -m docmancer`**, uses **`add`**-oriented env names, optional tee replaced by **`DOCMANCER_LIVE_LOG_FILE`** when set, and list output expectations use “indexed” wording.
+
+### Tests
+
+- Test suite refocused on the SQLite agent, CLI, fetchers, and eval paths; large vault- and Qdrant-oriented modules from 0.2.x are dropped with that code.
+- **`test_cli`:** **`query --expand page`** passes **`expand="page"`** to the agent.
+- **`test_config`:** legacy **`vector_store.local_path`** pointing at a **directory** resolves to **`.docmancer/docmancer.db`** under the config parent.
+
 ## [0.2.3] - 2026-04-10
 ### Added
 
@@ -266,6 +306,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.3.0]: https://github.com/docmancer/docmancer/compare/v0.2.3...v0.3.0
 [0.2.2]: https://github.com/docmancer/docmancer/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/docmancer/docmancer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/docmancer/docmancer/compare/v0.1.11...v0.2.0

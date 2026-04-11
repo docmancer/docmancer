@@ -54,12 +54,16 @@ class DocmancerConfig(BaseModel):
 
         # Accept old configs but translate the storage path onto the rebooted
         # SQLite index. This keeps local projects readable while dropping the
-        # Qdrant/FastEmbed default path.
+        # old directory-style index path.
         if "index" not in data and isinstance(data.get("vector_store"), dict):
             vector_store = data.get("vector_store") or {}
             local_path = vector_store.get("db_path") or vector_store.get("local_path")
             if local_path:
-                data["index"] = {"db_path": local_path}
+                legacy_path = Path(str(local_path))
+                if legacy_path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
+                    data["index"] = {"db_path": local_path}
+                else:
+                    data["index"] = {"db_path": ".docmancer/docmancer.db"}
 
         config = cls(**data)
         db_path = Path(config.index.db_path)
