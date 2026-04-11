@@ -36,7 +36,12 @@ This release replaces the 0.2.x vector stack with a **SQLite FTS5** section inde
 - **`docmancer query`:** **`--expand page`** is accepted as a second token after **`--expand`** (Click **`allow_extra_args`** on the command).
 - **Add/update logging:** progress prefixes use **`[index]`** and **`[store]`** instead of embedding and vector-store wording.
 - **Root `docmancer.yaml` example:** **`index`**, **`query`**, and **`web_fetch`** keys match the SQLite workflow.
-- **`scripts/live_cli_integration.sh`:** runs **`python -m docmancer`**, uses **`add`**-oriented env names, optional tee replaced by **`DOCMANCER_LIVE_LOG_FILE`** when set, and list output expectations use “indexed” wording.
+- **`scripts/live_cli_integration.sh`:** runs **`python -m docmancer`**, uses **`add`**-oriented env names, and list output expectations use “indexed” wording. By default it **`tee`**s stdout and stderr to a timestamped log under **`scripts/`** (override with **`DOCMANCER_LIVE_LOG_FILE`**, disable with **`DOCMANCER_LIVE_NO_LOG=1`**); the run banner prints the log path.
+
+### Fixed
+
+- **`remove --all`:** when there is nothing to remove, print a short message and exit successfully instead of treating it as an error.
+- **`query --expand page` (SQLite):** expansion stays within the logical page bounded by level-1 headings instead of returning every section in the source (which was wrong for single-file **`llms-full.txt`**-style docsets). The matching section is ordered first so token-budget packing still prioritizes the hit.
 
 ### Tests
 

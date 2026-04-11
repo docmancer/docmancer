@@ -730,8 +730,7 @@ def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
         if deleted:
             click.echo("Removed all sources.")
         else:
-            click.echo("No data found to remove.", err=True)
-            sys.exit(1)
+            click.echo("No data found to remove.")
         return
     if not source:
         click.echo("Missing argument 'SOURCE'.", err=True)

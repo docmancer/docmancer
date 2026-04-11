@@ -3,10 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="${DOCMANCER_LIVE_LOG_FILE:-}"
-if [[ -n "$LOG_FILE" ]]; then
+# Mirror all stdout/stderr to a log file while keeping the console. Default path is
+# scripts/live_cli_integration_YYYYMMDD_HHMMSS.log. Override with DOCMANCER_LIVE_LOG_FILE.
+# Set DOCMANCER_LIVE_NO_LOG=1 to skip the log file (terminal only).
+LOG_FILE=""
+if [[ "${DOCMANCER_LIVE_NO_LOG:-0}" != "1" ]]; then
+  LOG_FILE="${DOCMANCER_LIVE_LOG_FILE:-$SCRIPT_DIR/live_cli_integration_$(date +%Y%m%d_%H%M%S).log}"
   mkdir -p "$(dirname "$LOG_FILE")"
-  exec >"$LOG_FILE" 2>&1
+  exec > >(tee "$LOG_FILE") 2>&1
 fi
 
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
@@ -112,6 +116,7 @@ echo "RUN_FETCH_STEP=$RUN_FETCH_STEP"
 echo "SKIP_NETWORK=$SKIP_NETWORK"
 echo "KEEP_TMP=$KEEP_TMP"
 echo "REQUIRE_REFRESH=$REQUIRE_REFRESH"
+echo "Log file: ${LOG_FILE:-disabled (DOCMANCER_LIVE_NO_LOG=1)}"
 
 cd "$ROOT_DIR"
 

@@ -315,12 +315,55 @@ class SQLiteStore:
             return [row]
         with self._connect() as conn:
             if expand == "page":
-                return list(
+                # Find sections that belong to the same logical page as the
+                # matching row.  For multi-page docsets the page boundary is
+                # the nearest preceding level-1 heading.  For single-page
+                # sources (e.g. llms-full.txt) this avoids returning the
+                # entire document from chunk_index 0 and instead anchors on
+                # the matched section's page neighbourhood.
+                anchor_idx = int(row["chunk_index"])
+                source_id = row["source_id"]
+
+                # Walk backwards to find the nearest level-1 heading.
+                prev_h1 = conn.execute(
+                    """
+                    SELECT chunk_index FROM sections
+                    WHERE source_id = ? AND chunk_index <= ? AND level = 1
+                    ORDER BY chunk_index DESC LIMIT 1
+                    """,
+                    (source_id, anchor_idx),
+                ).fetchone()
+                page_start = int(prev_h1["chunk_index"]) if prev_h1 else anchor_idx
+
+                # Walk forward to find the next level-1 heading (exclusive).
+                next_h1 = conn.execute(
+                    """
+                    SELECT chunk_index FROM sections
+                    WHERE source_id = ? AND chunk_index > ? AND level = 1
+                    ORDER BY chunk_index ASC LIMIT 1
+                    """,
+                    (source_id, anchor_idx),
+                ).fetchone()
+                page_end = int(next_h1["chunk_index"]) - 1 if next_h1 else anchor_idx + 20
+
+                # Return sections within this page, anchored section first.
+                rows = list(
                     conn.execute(
-                        "SELECT * FROM sections WHERE source_id = ? ORDER BY chunk_index",
-                        (row["source_id"],),
+                        """
+                        SELECT * FROM sections
+                        WHERE source_id = ? AND chunk_index BETWEEN ? AND ?
+                        ORDER BY chunk_index
+                        """,
+                        (source_id, page_start, page_end),
                     )
                 )
+                # Reorder so the matching section comes first (budget
+                # packing keeps early items, so this ensures the actual
+                # match is always included).
+                anchor_rows = [r for r in rows if int(r["chunk_index"]) == anchor_idx]
+                other_rows = [r for r in rows if int(r["chunk_index"]) != anchor_idx]
+                return anchor_rows + other_rows
+
             if expand == "adjacent":
                 return list(
                     conn.execute(
