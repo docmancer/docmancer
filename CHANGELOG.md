@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - Unreleased
-
+## [0.3.0] - 2026-04-12
 This release replaces the 0.2.x vector stack with a **SQLite FTS5** section index and reframes the CLI around **context packs** for agents. Treat it as a clean upgrade: re-index sources with **`docmancer add`** / **`docmancer update`** after installing.
 
 ### Breaking
