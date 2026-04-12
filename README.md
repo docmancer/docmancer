@@ -14,6 +14,12 @@ Docmancer fetches documentation, normalizes it into inspectable sections, indexe
 
 In a typical agentic coding session, raw docs pages can consume 30 to 40 percent of the context window. Docmancer compresses that overhead by 60 to 90 percent, so the agent stays sharp longer, runs more iterations before context degradation, and produces more output per session.
 
+<div align="center">
+
+<img src="vhs_videos/demo.gif" alt="CLI demo" style="width: 67%; max-width: 720px; height: auto;" />
+
+</div>
+
 ## Quickstart
 
 ```bash
