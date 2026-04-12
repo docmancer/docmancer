@@ -210,7 +210,7 @@ class DocmancerAgent:
             text,
             limit=limit or self.config.query.default_limit,
             budget=budget or self.config.query.default_budget,
-            expand=expand,
+            expand=expand if expand is not None else self.config.query.default_expand,
         )
 
     def collection_stats(self) -> dict:

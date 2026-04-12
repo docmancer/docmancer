@@ -42,6 +42,10 @@ This release replaces the 0.2.x vector stack with a **SQLite FTS5** section inde
 
 - **`remove --all`:** when there is nothing to remove, print a short message and exit successfully instead of treating it as an error.
 - **`query --expand page` (SQLite):** expansion stays within the logical page bounded by level-1 headings instead of returning every section in the source (which was wrong for single-file **`llms-full.txt`**-style docsets). The matching section is ordered first so token-budget packing still prioritizes the hit.
+- **Default query token budget** is **2400** (was **1200**); override via **`query.default_budget`** or **`DOCMANCER_QUERY_DEFAULT_BUDGET`**.
+- **SQLite FTS retrieval:** re-ranks BM25 hits to downrank long and boilerplate/legal sections, boost title and early-body overlap with the query, and skip duplicate section bodies (common when the same block appears multiple times in aggregated sources). Stopwords are stripped from the FTS query to reduce noise.
+- **Agent `query`:** when **`expand`** is not passed, uses **`query.default_expand`** from config instead of treating it as unset.
+- **`doctor`:** when the resolved **`docmancer`** on **`PATH`** is not the same executable as the running interpreter, prints a line showing **`python -m docmancer`** style invocation.
 
 ### Tests
 

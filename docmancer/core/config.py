@@ -19,7 +19,7 @@ class IndexConfig(BaseSettings):
 
 
 class QueryConfig(BaseSettings):
-    default_budget: int = Field(default=1200, ge=100)
+    default_budget: int = Field(default=2400, ge=100)
     default_limit: int = Field(default=8, ge=1)
     default_expand: str = "adjacent"
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_QUERY_", extra="ignore")

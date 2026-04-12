@@ -14,6 +14,26 @@ from docmancer.core.models import Document, RetrievedChunk
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
+# Keywords that indicate boilerplate/legal content.  Matched against
+# normalized title words so numbered headings like "12. Miscellaneous"
+# and subsections like "Privacy Policy" are caught.
+_BOILERPLATE_KEYWORDS = frozenset({
+    "terms", "conditions", "privacy", "policy", "legal", "disclaimer",
+    "eula", "license", "agreement", "dmca", "copyright", "sla",
+    "miscellaneous", "modifications", "indemnification", "severability",
+    "arbitration", "jurisdiction", "governing", "waiver", "warranties",
+    "limitation", "liability",
+})
+
+# Query stopwords that inflate BM25 scores for legal text without
+# carrying search intent.
+_QUERY_STOPWORDS = frozenset({
+    "how", "do", "i", "a", "an", "the", "to", "is", "it", "in", "on",
+    "of", "for", "my", "can", "what", "where", "when", "why", "does",
+    "should", "would", "could", "with", "this", "that", "are", "was",
+    "be", "have", "has", "will", "we", "you", "your", "me",
+})
+
 
 @dataclass(slots=True)
 class IndexResult:
@@ -225,9 +245,58 @@ class SQLiteStore:
         expand: str | None = None,
     ) -> list[RetrievedChunk]:
         expand_mode = expand or "none"
-        rows = self._search_rows(text, max(limit * 4, limit))
-        selected: list[sqlite3.Row] = []
+        rows = [dict(r) for r in self._search_rows(text, max(limit * 4, limit))]
+
+        # --- Re-ranking passes (BM25 rank is negative, lower = better) ---
+        query_lower = text.lower()
+        content_terms = set(re.findall(r"\w+", self._strip_stopwords(text).lower()))
+
+        for r in rows:
+            tokens = int(r["token_estimate"])
+            title_lower = r["title"].lower()
+            title_words = set(re.findall(r"\w+", title_lower))
+            text_lower = r["text"].lower()
+
+            # 1. Penalize long sections to prefer focused matches.
+            if tokens > 600:
+                r["rank"] -= 0.3 * (tokens - 600) / 600
+
+            # 2. Penalize boilerplate/legal sections.  Use keyword overlap
+            #    so numbered headings ("12. Miscellaneous") and subsections
+            #    ("1. Modifications") are caught, not just exact titles.
+            boilerplate_overlap = title_words & _BOILERPLATE_KEYWORDS
+            if boilerplate_overlap:
+                # Scale penalty by how many boilerplate keywords match.
+                r["rank"] -= 3.0 * len(boilerplate_overlap)
+
+            # 3. Boost sections where content terms appear in the title.
+            title_term_overlap = title_words & content_terms
+            if title_term_overlap:
+                r["rank"] += 1.5 * len(title_term_overlap)
+
+            # 4. Boost sections where the stripped query phrase appears
+            #    verbatim in the first 500 chars of body text.
+            stripped_query = self._strip_stopwords(text).lower()
+            if stripped_query and stripped_query in text_lower[:500]:
+                r["rank"] += 2.0
+
+            # 5. Boost sections with action verbs in the title when the
+            #    query is task-oriented.
+            _task_signals = {"how", "create", "setup", "set", "configure",
+                             "install", "add", "build", "deploy", "start",
+                             "connect", "enable", "generate", "register"}
+            if content_terms & _task_signals:
+                _action_verbs = {"create", "set", "setup", "configure",
+                                 "install", "add", "build", "deploy", "start",
+                                 "connect", "enable", "initialize", "register",
+                                 "sign", "generate", "getting", "started"}
+                if title_words & _action_verbs:
+                    r["rank"] += 1.5
+
+        rows.sort(key=lambda r: r["rank"])
+        selected: list[dict] = []
         used_ids: set[int] = set()
+        seen_content: set[str] = set()
         token_total = 0
 
         for row in rows:
@@ -236,11 +305,21 @@ class SQLiteStore:
                 row_id = int(candidate["id"])
                 if row_id in used_ids:
                     continue
+                # Dedupe sections with identical content (common in
+                # aggregated sources like llms-full.txt where the same
+                # heading/text can appear in multiple pages).
+                content_key = hashlib.sha1(
+                    (candidate["title"] + "\n" + candidate["text"]).encode()
+                ).hexdigest()
+                if content_key in seen_content:
+                    used_ids.add(row_id)
+                    continue
                 tokens = int(candidate["token_estimate"])
                 if selected and token_total + tokens > budget:
                     continue
                 selected.append(candidate)
                 used_ids.add(row_id)
+                seen_content.add(content_key)
                 token_total += tokens
                 if len(selected) >= limit:
                     break
@@ -276,7 +355,15 @@ class SQLiteStore:
             )
         return results
 
+    @staticmethod
+    def _strip_stopwords(query: str) -> str:
+        """Remove common stopwords to reduce noise in BM25 scoring."""
+        tokens = re.findall(r"\w+", query)
+        filtered = [t for t in tokens if t.lower() not in _QUERY_STOPWORDS]
+        return " ".join(filtered) if filtered else query
+
     def _search_rows(self, query: str, limit: int) -> list[sqlite3.Row]:
+        cleaned = self._strip_stopwords(query)
         with self._connect() as conn:
             try:
                 return list(
@@ -289,11 +376,11 @@ class SQLiteStore:
                         ORDER BY rank
                         LIMIT ?
                         """,
-                        (query, limit),
+                        (cleaned, limit),
                     )
                 )
             except sqlite3.OperationalError:
-                terms = " OR ".join(token for token in re.findall(r"\w+", query) if token)
+                terms = " OR ".join(token for token in re.findall(r"\w+", cleaned) if token)
                 if not terms:
                     return []
                 return list(

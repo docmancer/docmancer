@@ -15,7 +15,7 @@ def _config(tmp_path):
 def test_agent_default_creation():
     agent = DocmancerAgent(config=DocmancerConfig(), _lazy_init=True)
     assert agent.config.index.provider == "sqlite"
-    assert agent.config.query.default_budget == 1200
+    assert agent.config.query.default_budget == 2400
 
 
 def test_ingest_documents_indexes_sections_and_extracts_files(tmp_path):
