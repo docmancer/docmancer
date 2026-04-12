@@ -55,7 +55,7 @@ docmancer query "How do I authenticate?"
 
 ## Retrieval Shape
 
-By default, `query` uses a 1200 token budget and returns markdown. It includes a summary like:
+By default, `query` uses a 2400 token budget and returns markdown. It includes a summary like:
 
 ```text
 Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.33x agentic runway)

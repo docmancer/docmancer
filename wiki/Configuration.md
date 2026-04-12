@@ -18,7 +18,7 @@ These settings control the SQLite FTS5 index described in [Architecture](./Archi
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `query.default_budget` | `1200` | Default token budget for context packs |
+| `query.default_budget` | `2400` | Default token budget for context packs |
 | `query.default_limit` | `8` | Maximum sections returned per query |
 | `query.default_expand` | `adjacent` | Default expansion mode (`none`, `adjacent`, `page`) |
 
@@ -50,7 +50,7 @@ index:
   extracted_dir: ~/.docmancer/extracted
 
 query:
-  default_budget: 1200
+  default_budget: 2400
   default_limit: 8
   default_expand: adjacent
 

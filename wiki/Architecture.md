@@ -14,7 +14,7 @@ No embeddings are generated. No vector database is required. The index is fast t
 
 Queries run against the FTS5 index using BM25 ranking. This is a strong fit for documentation retrieval because most queries are dominated by exact API names, option flags, config keys, error strings, and code identifiers.
 
-Results are sections, not whole pages. The query respects a configurable token budget (default: 1200) and returns only the sections that fit. Adjacent sections or full pages can be included with `--expand`.
+Results are sections, not whole pages. The query respects a configurable token budget (default: 2400) and returns only the sections that fit. Adjacent sections or full pages can be included with `--expand`.
 
 ## Context packs
 

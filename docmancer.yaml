@@ -3,7 +3,7 @@ index:
   db_path: .docmancer/docmancer.db
   extracted_dir: .docmancer/extracted
 query:
-  default_budget: 1200
+  default_budget: 2400
   default_limit: 8
   default_expand: adjacent
 web_fetch:

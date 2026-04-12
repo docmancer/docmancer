@@ -58,7 +58,7 @@ Returns a compact markdown context pack with source attribution. This is the pri
 
 | Flag | Purpose |
 |------|---------|
-| `--budget <n>` | Max estimated output tokens (default: 1200) |
+| `--budget <n>` | Max estimated output tokens (default: 2400) |
 | `--limit <n>` | Max sections to return |
 | `--expand` | Include adjacent sections around matches |
 | `--expand page` | Include full page content within budget |

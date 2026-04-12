@@ -22,7 +22,7 @@ A quick reference for every top-level docmancer command.
 
 | Option | Description |
 |--------|-------------|
-| `--budget <tokens>` | Set the docs context token budget (default: 1200). |
+| `--budget <tokens>` | Set the docs context token budget (default: 2400). |
 | `--expand` | Include adjacent sections around matches. |
 | `--expand page` | Include the full matching page, subject to the token budget. |
 | `--format json` | Return the context pack as JSON instead of markdown. |
