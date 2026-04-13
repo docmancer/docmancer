@@ -7,6 +7,7 @@ and extracts lastmod/priority metadata when available.
 from __future__ import annotations
 
 import logging
+import gzip
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -68,9 +69,10 @@ def _parse_sitemap_xml(sitemap_url: str, client: httpx.Client) -> list[dict[str,
     """
     try:
         resp = client.get(sitemap_url)
-        if resp.status_code != 200 or not resp.text.strip():
+        text = _response_text(resp, sitemap_url)
+        if resp.status_code != 200 or not text.strip():
             return []
-        return _parse_xml_content(resp.text, client)
+        return _parse_xml_content(text, client)
     except Exception as exc:
         logger.warning("Failed to fetch sitemap %s: %s", sitemap_url, exc)
         return []
@@ -157,10 +159,23 @@ def _parse_sitemap_index(root: ET.Element, client: httpx.Client) -> list[dict[st
     for sitemap_loc in sitemap_locs:
         try:
             resp = client.get(sitemap_loc)
-            if resp.status_code == 200 and resp.text.strip():
-                child_entries = _parse_xml_content(resp.text, client)
+            text = _response_text(resp, sitemap_loc)
+            if resp.status_code == 200 and text.strip():
+                child_entries = _parse_xml_content(text, client)
                 entries.extend(child_entries)
         except Exception as exc:
             logger.warning("Failed to fetch child sitemap %s: %s", sitemap_loc, exc)
 
     return entries
+
+
+def _response_text(resp: httpx.Response, url: str) -> str:
+    """Return response text, explicitly handling gzipped sitemap URLs."""
+    if url.endswith(".gz"):
+        content = getattr(resp, "content", None)
+        if isinstance(content, bytes):
+            try:
+                return gzip.decompress(content).decode("utf-8")
+            except (OSError, UnicodeDecodeError):
+                logger.debug("Failed to gzip-decompress %s, falling back to text", url)
+    return resp.text

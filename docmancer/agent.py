@@ -99,36 +99,14 @@ class DocmancerAgent:
     ):
         if fetcher is not None:
             return fetcher
-        if provider == "gitbook":
-            from docmancer.connectors.fetchers.gitbook import GitBookFetcher
-            return GitBookFetcher()
-        if provider == "mintlify":
-            from docmancer.connectors.fetchers.mintlify import MintlifyFetcher
-            return MintlifyFetcher()
-        if provider == "github":
-            from docmancer.connectors.fetchers.github import GitHubFetcher
-            return GitHubFetcher()
-        if provider == "web":
-            from docmancer.connectors.fetchers.web import WebFetcher
-            return WebFetcher(
-                max_pages=max_pages,
-                strategy=strategy,
-                browser=browser,
-                workers=self.config.web_fetch.workers,
-            )
+        from docmancer.connectors.fetchers.factory import build_fetcher
 
-        if url:
-            detected = self._auto_detect_provider(url)
-            return self._get_fetcher(
-                detected,
-                max_pages=max_pages,
-                strategy=strategy,
-                browser=browser,
-                url=None,
-            )
+        if provider is None and url:
+            provider = self._auto_detect_provider(url)
 
-        from docmancer.connectors.fetchers.web import WebFetcher
-        return WebFetcher(
+        return build_fetcher(
+            url or "",
+            provider=provider,
             max_pages=max_pages,
             strategy=strategy,
             browser=browser,

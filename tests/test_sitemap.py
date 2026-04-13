@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import gzip
 import httpx
 
 from docmancer.connectors.fetchers.pipeline.sitemap import (
@@ -120,3 +121,16 @@ class TestParseSitemap:
 
         entries = parse_sitemap("https://example.com/sitemap.xml", client)
         assert entries == []
+
+    def test_parses_gzipped_sitemap(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = gzip.compress(STANDARD_SITEMAP.encode("utf-8"))
+        mock_resp.text = ""
+
+        client = MagicMock(spec=httpx.Client)
+        client.get.return_value = mock_resp
+
+        entries = parse_sitemap("https://example.com/sitemap.xml.gz", client)
+        assert len(entries) == 2
+        assert entries[0]["url"] == "https://example.com/docs/getting-started"
