@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 from docmancer.core.models import Document, RetrievedChunk
+from docmancer.core.registry_models import InstalledPack
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -129,6 +131,22 @@ class SQLiteStore:
                     source,
                     content='sections',
                     content_rowid='id'
+                );
+
+                CREATE TABLE IF NOT EXISTS installed_packs (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    trust_tier TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    registry_url TEXT NOT NULL,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    sections_count INTEGER NOT NULL DEFAULT 0,
+                    archive_sha256 TEXT NOT NULL,
+                    index_db_sha256 TEXT NOT NULL,
+                    extracted_path TEXT NOT NULL DEFAULT '',
+                    installed_at TEXT NOT NULL,
+                    UNIQUE(name, version)
                 );
                 """
             )
@@ -510,6 +528,224 @@ class SQLiteStore:
                 )
             ]
 
+    def install_pack(self, pack: InstalledPack) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO installed_packs (
+                    name, version, trust_tier, source_url, registry_url,
+                    total_tokens, sections_count, archive_sha256, index_db_sha256,
+                    extracted_path, installed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name, version) DO UPDATE SET
+                    trust_tier = excluded.trust_tier,
+                    source_url = excluded.source_url,
+                    registry_url = excluded.registry_url,
+                    total_tokens = excluded.total_tokens,
+                    sections_count = excluded.sections_count,
+                    archive_sha256 = excluded.archive_sha256,
+                    index_db_sha256 = excluded.index_db_sha256,
+                    extracted_path = excluded.extracted_path,
+                    installed_at = excluded.installed_at
+                """,
+                (
+                    pack.name,
+                    pack.version,
+                    pack.trust_tier.value if hasattr(pack.trust_tier, "value") else str(pack.trust_tier),
+                    pack.source_url,
+                    pack.registry_url,
+                    pack.total_tokens,
+                    pack.sections_count,
+                    pack.archive_sha256,
+                    pack.index_db_sha256,
+                    pack.extracted_path or "",
+                    str(pack.installed_at),
+                ),
+            )
+
+    def list_installed_packs(self) -> list[dict]:
+        with self._connect() as conn:
+            return [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT * FROM installed_packs
+                    ORDER BY installed_at DESC, name, version
+                    """
+                )
+            ]
+
+    def get_installed_pack(self, name: str, version: str | None = None) -> dict | None:
+        with self._connect() as conn:
+            if version:
+                row = conn.execute(
+                    "SELECT * FROM installed_packs WHERE name = ? AND version = ?",
+                    (name, version),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM installed_packs WHERE name = ? ORDER BY installed_at DESC LIMIT 1",
+                    (name,),
+                ).fetchone()
+            return dict(row) if row else None
+
+    def uninstall_pack(self, name: str, version: str | None = None) -> bool:
+        rows = []
+        with self._connect() as conn:
+            if version:
+                rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT * FROM installed_packs WHERE name = ? AND version = ?",
+                        (name, version),
+                    )
+                ]
+            else:
+                rows = [dict(row) for row in conn.execute("SELECT * FROM installed_packs WHERE name = ?", (name,))]
+        deleted = False
+        for row in rows:
+            docset_root = f"registry://{row['name']}@{row['version']}"
+            deleted = self.delete_docset(docset_root) or deleted
+            extracted_path = row.get("extracted_path") or ""
+            if extracted_path:
+                shutil.rmtree(extracted_path, ignore_errors=True)
+            with self._connect() as conn:
+                conn.execute(
+                    "DELETE FROM installed_packs WHERE name = ? AND version = ?",
+                    (row["name"], row["version"]),
+                )
+                deleted = True
+        return deleted
+
+    def import_pack_db(self, pack_db_path: str | Path, docset_root: str, local_extracted_prefix: str | Path) -> int:
+        pack_db = Path(pack_db_path).expanduser().resolve()
+        local_prefix = Path(local_extracted_prefix).expanduser().resolve()
+        local_prefix.mkdir(parents=True, exist_ok=True)
+        section_count = 0
+        with self._connect() as conn:
+            conn.execute("ATTACH DATABASE ? AS packdb", (str(pack_db),))
+            try:
+                source_rows = list(
+                    conn.execute(
+                        """
+                        SELECT id, source, content, metadata_json, markdown_path, json_path, raw_tokens, ingested_at
+                        FROM packdb.sources
+                        ORDER BY id
+                        """
+                    )
+                )
+                source_id_map: dict[int, int] = {}
+                for row in source_rows:
+                    original_source = str(row["source"])
+                    namespaced_source = f"{docset_root}::{original_source}"
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                    metadata["docset_root"] = docset_root
+
+                    markdown_path = local_prefix / Path(str(row["markdown_path"] or f"{_slug(original_source)}.md")).name
+                    json_path = local_prefix / Path(str(row["json_path"] or f"{_slug(original_source)}.json")).name
+                    markdown_path.write_text(str(row["content"]), encoding="utf-8")
+                    json_path.write_text(
+                        json.dumps(
+                            {"source": original_source, "metadata": metadata, "content": row["content"]},
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+
+                    existing = conn.execute("SELECT id FROM sources WHERE source = ?", (namespaced_source,)).fetchone()
+                    if existing:
+                        new_source_id = int(existing["id"])
+                        old_section_ids = [
+                            r["id"]
+                            for r in conn.execute("SELECT id FROM sections WHERE source_id = ?", (new_source_id,))
+                        ]
+                        for old_id in old_section_ids:
+                            conn.execute("DELETE FROM sections_fts WHERE rowid = ?", (old_id,))
+                        conn.execute("DELETE FROM sections WHERE source_id = ?", (new_source_id,))
+                        conn.execute(
+                            """
+                            UPDATE sources
+                            SET docset_root = ?, content = ?, metadata_json = ?, markdown_path = ?,
+                                json_path = ?, raw_tokens = ?, ingested_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                docset_root,
+                                row["content"],
+                                json.dumps(metadata, ensure_ascii=False),
+                                str(markdown_path),
+                                str(json_path),
+                                int(row["raw_tokens"] or 0),
+                                row["ingested_at"],
+                                new_source_id,
+                            ),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            INSERT INTO sources (
+                                source, docset_root, content, metadata_json, markdown_path,
+                                json_path, raw_tokens, ingested_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                namespaced_source,
+                                docset_root,
+                                row["content"],
+                                json.dumps(metadata, ensure_ascii=False),
+                                str(markdown_path),
+                                str(json_path),
+                                int(row["raw_tokens"] or 0),
+                                row["ingested_at"],
+                            ),
+                        )
+                        new_source_id = int(cursor.lastrowid)
+                    source_id_map[int(row["id"])] = new_source_id
+
+                section_rows = list(conn.execute(
+                    """
+                    SELECT source_id, source, chunk_index, title, level, text, token_estimate, metadata_json
+                    FROM packdb.sections
+                    ORDER BY source_id, chunk_index
+                    """
+                ))
+                for row in section_rows:
+                    new_source_id = source_id_map[int(row["source_id"])]
+                    namespaced_source = f"{docset_root}::{row['source']}"
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                    metadata["docset_root"] = docset_root
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO sections (
+                            source_id, source, chunk_index, title, level, text, token_estimate, metadata_json
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            new_source_id,
+                            namespaced_source,
+                            int(row["chunk_index"]),
+                            row["title"],
+                            int(row["level"]),
+                            row["text"],
+                            int(row["token_estimate"]),
+                            json.dumps(metadata, ensure_ascii=False),
+                        ),
+                    )
+                    row_id = int(cursor.lastrowid)
+                    conn.execute(
+                        "INSERT INTO sections_fts(rowid, title, text, source) VALUES (?, ?, ?, ?)",
+                        (row_id, row["title"], row["text"], namespaced_source),
+                    )
+                    section_count += 1
+            finally:
+                conn.commit()
+                conn.execute("DETACH DATABASE packdb")
+        return section_count
+
     def list_sources(self) -> list[str]:
         return [entry["source"] for entry in self.list_sources_with_dates()]
 
@@ -548,4 +784,5 @@ class SQLiteStore:
             conn.execute("DELETE FROM sections_fts")
             conn.execute("DELETE FROM sections")
             conn.execute("DELETE FROM sources")
+            conn.execute("DELETE FROM installed_packs")
         return stats["sources_count"] > 0 or stats["sections_count"] > 0

@@ -3,6 +3,8 @@ import click
 from docmancer import __version__
 from docmancer.cli.commands import (
     add_cmd,
+    audit_cmd,
+    auth_group,
     doctor_cmd,
     fetch_cmd,
     ingest_cmd,
@@ -10,8 +12,12 @@ from docmancer.cli.commands import (
     inspect_cmd,
     install_cmd,
     list_cmd,
+    packs_cmd,
+    publish_cmd,
+    pull_cmd,
     query_cmd,
     remove_cmd,
+    search_cmd,
     setup_cmd,
     update_cmd,
 )
@@ -31,8 +37,10 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
+        "docmancer pull react",
         "docmancer add https://docs.example.com",
         "docmancer update",
+        "docmancer search langchain",
         'docmancer query "How do I authenticate?"',
         "docmancer install claude-code",
     ),
@@ -58,6 +66,12 @@ def cli(ctx, config_path: str | None):
 cli.add_command(setup_cmd, "setup")
 cli.add_command(add_cmd, "add")
 cli.add_command(update_cmd, "update")
+cli.add_command(pull_cmd, "pull")
+cli.add_command(search_cmd, "search")
+cli.add_command(publish_cmd, "publish")
+cli.add_command(packs_cmd, "packs")
+cli.add_command(audit_cmd, "audit")
+cli.add_command(auth_group, "auth")
 cli.add_command(query_cmd, "query")
 cli.add_command(inspect_cmd, "inspect")
 cli.add_command(list_cmd, "list")
