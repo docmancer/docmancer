@@ -26,18 +26,49 @@ In a typical agentic coding session, raw docs pages can consume 30 to 40 percent
 pipx install docmancer --python python3.13
 
 docmancer setup
-docmancer add https://docs.example.com
-docmancer query "How do I authenticate?"
+docmancer pull react
+docmancer query "How do I use hooks?"
 ```
 
 `setup` creates `~/.docmancer/docmancer.yaml`, initializes `~/.docmancer/docmancer.db`, and installs detected agent skills. Use `setup --all` for non-interactive installation across all supported agents.
 
 ## What It Does
 
+- **Pull pre-indexed packs** from the public registry, or add docs from any URL or local path.
 - Uses SQLite FTS5 by default. No Qdrant server, no embedding model download, no vector database startup.
 - Stores normalized sections in SQLite and writes extracted markdown/json files under `.docmancer/extracted/` for inspection.
 - Supports documentation URLs, GitHub README and docs markdown, local directories, and markdown/text files.
 - Returns compact context packs with estimated docs-token savings and agentic runway.
+
+## Registry
+
+The docmancer registry is a public library of pre-indexed, version-aware documentation packs. Pull trusted packs instead of crawling docs yourself:
+
+```bash
+docmancer search langchain
+docmancer pull langchain
+docmancer pull react@18.2        # version pinning (Pro)
+docmancer packs                  # list installed packs
+```
+
+Packs are verified with a three-tier trust model:
+
+- **Official** — provenance traced to package registry metadata (PyPI, npm, etc.)
+- **Verified** — library maintainer has claimed ownership
+- **Community** — user-submitted, requires `--community` flag and passes audit
+
+### Project manifest
+
+Declare your project's documentation stack in `docmancer.yaml`:
+
+```yaml
+packs:
+  react: "18.2"
+  nextjs: "14.1"
+  langchain: "0.2"
+```
+
+Then run `docmancer pull` with no arguments to install everything. Share the manifest with your team so everyone has the same docs context.
 
 ## Commands
 
@@ -46,16 +77,23 @@ docmancer query "How do I authenticate?"
 | `docmancer setup` | Create config/database and install detected agent skills |
 | `docmancer setup --all` | Non-interactively install all supported agent integrations |
 | `docmancer add <url-or-path>` | Fetch or read documentation and index normalized sections |
+| `docmancer pull [pack[@version]]` | Pull a pack from the registry (or all packs from manifest) |
+| `docmancer search <query>` | Search the public registry for available packs |
+| `docmancer publish <url>` | Submit a docs URL to the registry for indexing |
+| `docmancer packs` | List locally installed registry packs |
+| `docmancer packs sync` | Sync installed packs with manifest (additive by default) |
+| `docmancer audit <pack>` | Scan a pack for suspicious patterns |
+| `docmancer auth login` | Authenticate with the registry (device code flow) |
+| `docmancer auth status` | Show authentication and subscription tier |
 | `docmancer update` | Re-fetch and re-index all existing docs sources |
-| `docmancer update <source>` | Re-fetch and re-index a specific source |
 | `docmancer query <text>` | Return a compact markdown context pack |
 | `docmancer query <text> --format json` | Return the same context pack as JSON |
 | `docmancer query <text> --expand` | Include adjacent sections around matches |
 | `docmancer query <text> --expand page` | Include the full matching page, subject to the token budget |
 | `docmancer list` | List indexed docsets or sources |
 | `docmancer inspect` | Show SQLite index stats and extract locations |
-| `docmancer remove <source>` | Remove a source or docset root |
-| `docmancer doctor` | Check config, SQLite FTS5, index stats, and agent skill installs |
+| `docmancer remove <source>` | Remove a source, docset root, or installed pack |
+| `docmancer doctor` | Check config, SQLite FTS5, index stats, registry, and agent skill installs |
 | `docmancer init` | Create a project-local `docmancer.yaml` |
 | `docmancer install <agent>` | Advanced/manual skill installation for a single agent |
 
@@ -69,15 +107,30 @@ Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.
 
 The savings are estimates, but the direction is explicit: compress docs overhead so the remaining token budget goes into useful agent work.
 
-## Keeping Docs Up To Date
+## Workflow
 
-Run `docmancer update` to refresh all indexed sources. Docmancer re-fetches each URL or re-reads each local path and updates the index in place. Only the content that changed gets reprocessed.
-
-To update a single source:
+The recommended workflow combines registry packs with custom docs:
 
 ```bash
-docmancer update https://docs.example.com
+# 1. Pull pre-indexed packs for your stack
+docmancer pull react
+docmancer pull nextjs
+
+# 2. Add project-specific or internal docs
+docmancer add https://internal-docs.company.com
+docmancer add ./docs
+
+# 3. Query — results come from both packs and local docs
+docmancer query "How do server components work?"
 ```
+
+Registry packs and locally indexed docs live in the same SQLite index. Queries search both seamlessly.
+
+## Keeping Docs Up To Date
+
+Run `docmancer update` to refresh all locally-added sources. Docmancer re-fetches each URL or re-reads each local path and updates the index in place.
+
+For registry packs, run `docmancer packs sync` to update installed packs to their latest versions.
 
 ## Project-Local Config
 
@@ -89,6 +142,18 @@ docmancer add ./docs
 ```
 
 The generated `docmancer.yaml` points to `.docmancer/docmancer.db` and `.docmancer/extracted` inside the project. If no project config exists, docmancer falls back to the global config.
+
+Add a `packs:` section to declare your project's documentation stack:
+
+```yaml
+index:
+  db_path: .docmancer/docmancer.db
+  extracted_dir: .docmancer/extracted/
+
+packs:
+  react: "18.2"
+  nextjs: "14.1"
+```
 
 ## Supported Agents
 
