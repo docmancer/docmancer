@@ -62,6 +62,30 @@ def test_query_returns_context_pack_metadata(tmp_path):
     assert "savings_percent" in results[0].metadata
 
 
+def test_query_falls_back_to_or_when_all_terms_do_not_match_one_section(tmp_path):
+    agent = DocmancerAgent(config=_config(tmp_path))
+    agent.ingest_documents(
+        [
+            Document(
+                source="docs/terminal-moto.md",
+                content=(
+                    "# Process MOTO payments\n\n"
+                    "Use Stripe Terminal to process MOTO payments.\n\n"
+                    "## Android\n\n"
+                    "Set a non-null MotoConfiguration on the CollectPaymentIntentConfiguration."
+                ),
+                metadata={"format": "markdown"},
+            )
+        ],
+        recreate=True,
+    )
+
+    results = agent.query("How do I process MOTO payments on Android with Kotlin", budget=1200)
+
+    assert results
+    assert results[0].source == "docs/terminal-moto.md"
+
+
 def test_ingest_reads_markdown_directory(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()

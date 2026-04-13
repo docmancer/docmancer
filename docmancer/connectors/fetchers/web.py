@@ -16,6 +16,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 
@@ -32,6 +33,7 @@ from docmancer.connectors.fetchers.pipeline.extraction import (
 )
 from docmancer.connectors.fetchers.pipeline.filtering import (
     ContentDeduplicator,
+    infer_docset_root,
     is_docs_url,
     normalize_url,
 )
@@ -46,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Default HTTP client settings.
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_USER_AGENT = "docmancer/1.0 (+https://github.com/docmancer/docmancer)"
+_DIRECT_TEXT_SUFFIXES = {".md", ".txt"}
 
 
 @dataclass(slots=True)
@@ -111,6 +114,9 @@ class WebFetcher:
         base_url = url.rstrip("/")
 
         with httpx.Client(**self._client_kwargs()) as client:
+            if self._is_direct_text_url(base_url):
+                return [self._fetch_direct_text_page(base_url, client)]
+
             # Step 1: Fetch homepage and detect platform
             platform, root_html, root_headers = self._fetch_and_detect(base_url, client)
             logger.info("Detected platform: %s", platform.value)
@@ -157,6 +163,54 @@ class WebFetcher:
 
             # Step 5: Fetch and extract each page
             return self._fetch_pages(discovered, base_url, client, platform, robots)
+
+    @staticmethod
+    def _is_direct_text_url(url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return any(path.endswith(suffix) for suffix in _DIRECT_TEXT_SUFFIXES)
+
+    def _fetch_direct_text_page(self, url: str, client: httpx.Client) -> Document:
+        """Fetch an exact markdown/text docs URL without running site discovery."""
+        try:
+            resp = client.get(url)
+        except httpx.RequestError as exc:
+            raise ValueError(f"Could not fetch documentation page {url!r}: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise ValueError(f"Could not fetch documentation page {url!r}: status {resp.status_code}")
+        if not resp.text.strip():
+            raise ValueError(f"Could not fetch documentation page {url!r}: empty response")
+        if looks_like_html(resp.text):
+            raise ValueError(f"Could not fetch documentation page {url!r}: response appears to be HTML")
+
+        resp_url = getattr(resp, "url", None)
+        if isinstance(resp_url, (str, httpx.URL)):
+            final_url = normalize_url(str(resp_url))
+        else:
+            final_url = normalize_url(url)
+        content = resp.text
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        content_hash = ContentDeduplicator.content_hash(content)
+        suffix = urlparse(final_url).path.lower().rsplit(".", 1)[-1]
+        fmt = "markdown" if suffix == "md" else "text"
+        return Document(
+            source=final_url,
+            content=content,
+            metadata={
+                "fetch_method": "direct-url",
+                "format": fmt,
+                "docset_root": infer_docset_root(final_url) or final_url,
+                "platform": Platform.GENERIC.value,
+                "title": None,
+                "description": None,
+                "lang": None,
+                "canonical_url": final_url,
+                "section_path": [],
+                "content_hash": content_hash,
+                "word_count": len(content.split()),
+                "fetched_at": fetched_at,
+            },
+        )
 
     def _fetch_and_detect(
         self, base_url: str, client: httpx.Client

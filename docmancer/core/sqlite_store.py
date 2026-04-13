@@ -364,9 +364,10 @@ class SQLiteStore:
 
     def _search_rows(self, query: str, limit: int) -> list[sqlite3.Row]:
         cleaned = self._strip_stopwords(query)
+        terms = [token for token in re.findall(r"\w+", cleaned) if token]
         with self._connect() as conn:
             try:
-                return list(
+                rows = list(
                     conn.execute(
                         """
                         SELECT sections.*, bm25(sections_fts) AS rank
@@ -379,23 +380,27 @@ class SQLiteStore:
                         (cleaned, limit),
                     )
                 )
+                if rows or len(terms) <= 1:
+                    return rows
             except sqlite3.OperationalError:
-                terms = " OR ".join(token for token in re.findall(r"\w+", cleaned) if token)
-                if not terms:
-                    return []
-                return list(
-                    conn.execute(
-                        """
-                        SELECT sections.*, bm25(sections_fts) AS rank
-                        FROM sections_fts
-                        JOIN sections ON sections.id = sections_fts.rowid
-                        WHERE sections_fts MATCH ?
-                        ORDER BY rank
-                        LIMIT ?
-                        """,
-                        (terms, limit),
-                    )
+                pass
+
+            fallback_query = " OR ".join(terms)
+            if not fallback_query:
+                return []
+            return list(
+                conn.execute(
+                    """
+                    SELECT sections.*, bm25(sections_fts) AS rank
+                    FROM sections_fts
+                    JOIN sections ON sections.id = sections_fts.rowid
+                    WHERE sections_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (fallback_query, limit),
                 )
+            )
 
     def _expand_row(self, row: sqlite3.Row, expand: str) -> list[sqlite3.Row]:
         if expand == "none":

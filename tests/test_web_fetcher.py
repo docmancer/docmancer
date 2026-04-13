@@ -80,6 +80,29 @@ class TestWebFetcherLlmsFull:
         assert "content_hash" in docs[0].metadata
 
 
+class TestWebFetcherDirectText:
+    def test_direct_markdown_url_fetches_single_page(self):
+        """Exact markdown URLs should not run site-wide discovery."""
+
+        page = "# Process MOTO payments\n\nUse Stripe Terminal to process MOTO payments."
+
+        def mock_get(url, **kwargs):
+            assert url == "https://docs.example.com/terminal/moto.md"
+            return _mock_response(page, content_type="text/plain")
+
+        mock_client = _make_mock_client(mock_get)
+
+        with patch("docmancer.connectors.fetchers.web.httpx.Client", return_value=mock_client):
+            fetcher = WebFetcher(max_pages=100)
+            docs = fetcher.fetch("https://docs.example.com/terminal/moto.md")
+
+        assert len(docs) == 1
+        assert docs[0].source == "https://docs.example.com/terminal/moto.md"
+        assert docs[0].content == page
+        assert docs[0].metadata["fetch_method"] == "direct-url"
+        assert docs[0].metadata["format"] == "markdown"
+
+
 class TestWebFetcherNavCrawl:
     def test_nav_crawl_fetches_pages(self):
         """When no llms.txt or sitemap, fall back to nav crawl."""
