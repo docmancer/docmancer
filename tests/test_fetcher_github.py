@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+import json
 from unittest.mock import MagicMock, patch
 
 from docmancer.connectors.fetchers.github import GitHubFetcher
@@ -79,3 +79,77 @@ class TestFetch:
         assert docs[0].metadata["branch"] == "main"
         assert docs[0].metadata["file_path"] == "README.md"
         assert docs[0].metadata["format"] == "markdown"
+
+    def test_context7_config_filters_and_ranks_docs(self):
+        branch_response = _make_response(200, json_data={"default_branch": "main"})
+        tree_response = _make_response(
+            200,
+            json_data={
+                "tree": [
+                    {"path": "context7.json", "type": "blob"},
+                    {"path": "README.md", "type": "blob"},
+                    {"path": "docs/guide.mdx", "type": "blob"},
+                    {"path": "docs/old/stale.md", "type": "blob"},
+                    {"path": "i18n/fr/guide.md", "type": "blob"},
+                    {"path": "src/index.ts", "type": "blob"},
+                ]
+            },
+        )
+        context_response = _make_response(
+            200,
+            text=json.dumps(
+                {
+                    "folders": ["docs"],
+                    "rules": ["Prefer the documented public API."],
+                }
+            ),
+        )
+        docs_response = _make_response(200, text="# Guide\n\nUse the stable API.")
+        readme_response = _make_response(200, text="# Project\n\nOverview.")
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [
+            branch_response,
+            tree_response,
+            context_response,
+            docs_response,
+            readme_response,
+        ]
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            docs = GitHubFetcher().fetch("https://github.com/owner/repo")
+
+        assert [doc.metadata["file_path"] for doc in docs] == ["docs/guide.mdx", "README.md"]
+        assert docs[0].metadata["format"] == "markdown"
+        assert docs[0].metadata["context7_rules"] == ["Prefer the documented public API."]
+
+    def test_ipynb_cells_are_converted_to_markdown(self):
+        branch_response = _make_response(200, json_data={"default_branch": "main"})
+        tree_response = _make_response(
+            200,
+            json_data={"tree": [{"path": "docs/tutorial.ipynb", "type": "blob"}]},
+        )
+        notebook_response = _make_response(
+            200,
+            text=json.dumps(
+                {
+                    "cells": [
+                        {"cell_type": "markdown", "source": ["# Tutorial\n", "Intro"]},
+                        {"cell_type": "code", "source": ["print('hello')"]},
+                    ]
+                }
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [branch_response, tree_response, notebook_response]
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            docs = GitHubFetcher().fetch("https://github.com/owner/repo")
+
+        assert "# Tutorial" in docs[0].content
+        assert "```python" in docs[0].content

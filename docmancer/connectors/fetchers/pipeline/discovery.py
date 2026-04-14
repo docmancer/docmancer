@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import deque
 from enum import Enum
 from urllib.parse import urlparse, urljoin
 
@@ -83,27 +84,74 @@ def discover_urls(
         (DiscoveryStrategy.ROBOTS_SITEMAP, lambda u, c, p, r: _try_robots_sitemap(u, c, r)),
         (DiscoveryStrategy.SITEMAP_XML, lambda u, c, p, r: _try_sitemap_xml(u, c)),
         (DiscoveryStrategy.PLATFORM_SITEMAP, _try_platform_sitemap),
-        (DiscoveryStrategy.NAV_CRAWL, lambda u, c, p, r: _try_nav_crawl(u, c)),
+        (DiscoveryStrategy.NAV_CRAWL, _try_nav_crawl),
     ]
 
-    for strategy_enum, strategy_fn in strategies:
-        if force_strategy and strategy_enum.value != force_strategy:
-            continue
+    if force_strategy:
+        for strategy_enum, strategy_fn in strategies:
+            if strategy_enum.value != force_strategy:
+                continue
+            try:
+                if strategy_enum == DiscoveryStrategy.NAV_CRAWL:
+                    return (strategy_fn(base_url, client, platform, robots, max_pages) or [])[:max_pages]
+                return (strategy_fn(base_url, client, platform, robots) or [])[:max_pages]
+            except Exception as exc:
+                logger.debug("Discovery strategy %s failed: %s", strategy_enum.value, exc)
+                return []
 
+    llms_full = _try_llms_full_txt(base_url, client, platform, robots)
+    if llms_full:
+        logger.info("Discovery: %s found %d URL(s)", DiscoveryStrategy.LLMS_FULL_TXT.value, len(llms_full))
+        return llms_full
+
+    all_results: list[DiscoveredUrl] = []
+    strategy_counts: dict[str, int] = {}
+    for strategy_enum, strategy_fn in strategies[1:]:
         try:
-            results = strategy_fn(base_url, client, platform, robots)
+            if strategy_enum == DiscoveryStrategy.NAV_CRAWL:
+                results = strategy_fn(base_url, client, platform, robots, max_pages)
+            else:
+                results = strategy_fn(base_url, client, platform, robots)
             if results:
-                logger.info(
-                    "Discovery: %s found %d URL(s)",
-                    strategy_enum.value,
-                    len(results),
-                )
-                return results[:max_pages]
+                strategy_counts[strategy_enum.value] = len(results)
+                all_results.extend(results)
         except Exception as exc:
             logger.debug("Discovery strategy %s failed: %s", strategy_enum.value, exc)
 
+    if all_results:
+        ranked = _dedupe_and_rank(all_results)
+        logger.info("Discovery candidates by strategy: %s", strategy_counts)
+        return ranked[:max_pages]
+
     logger.warning("No discovery strategy found URLs for %s", base_url)
     return []
+
+
+def _dedupe_and_rank(results: list[DiscoveredUrl]) -> list[DiscoveredUrl]:
+    by_url: dict[str, DiscoveredUrl] = {}
+    for result in results:
+        key = normalize_url(result.url)
+        existing = by_url.get(key)
+        if existing is None or _strategy_rank(result.strategy) < _strategy_rank(existing.strategy):
+            by_url[key] = result
+    return sorted(by_url.values(), key=lambda item: (_strategy_rank(item.strategy), _path_rank(item.url), item.url))
+
+
+def _strategy_rank(strategy: DiscoveryStrategy) -> int:
+    return {
+        DiscoveryStrategy.LLMS_TXT: 0,
+        DiscoveryStrategy.ROBOTS_SITEMAP: 1,
+        DiscoveryStrategy.SITEMAP_XML: 2,
+        DiscoveryStrategy.PLATFORM_SITEMAP: 3,
+        DiscoveryStrategy.NAV_CRAWL: 4,
+    }.get(strategy, 10)
+
+
+def _path_rank(url: str) -> int:
+    path = urlparse(url).path.lower()
+    if any(part in path for part in ("/docs", "/documentation", "/reference", "/api", "/guide")):
+        return 0
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -260,55 +308,85 @@ def _try_platform_sitemap(
     return None
 
 
-def _try_nav_crawl(base_url: str, client: httpx.Client) -> list[DiscoveredUrl] | None:
+def _try_nav_crawl(
+    base_url: str,
+    client: httpx.Client,
+    platform: Platform | None = None,
+    robots: RobotsChecker | None = None,
+    max_pages: int = 500,
+) -> list[DiscoveredUrl] | None:
     """BFS crawl of navigation links from the homepage.
 
     Fetches the homepage, extracts links from <nav> elements and
     common navigation selectors, then follows those links one level deep.
     """
-    try:
-        resp = client.get(base_url)
-        if resp.status_code != 200:
-            return None
-    except httpx.RequestError:
+    seen = {normalize_url(base_url)}
+    found: list[str] = []
+    queue = deque([(base_url, 0)])
+    max_depth = 2
+
+    while queue and len(found) < max_pages:
+        page_url, depth = queue.popleft()
+        if robots and not robots.can_fetch(page_url):
+            continue
+        try:
+            resp = client.get(page_url)
+            if resp.status_code != 200:
+                continue
+        except httpx.RequestError:
+            continue
+
+        links = _extract_nav_links(resp.text, page_url, base_url)
+        for link_url in links:
+            if link_url in seen:
+                continue
+            seen.add(link_url)
+            found.append(link_url)
+            if len(found) >= max_pages:
+                break
+            if depth < max_depth:
+                queue.append((link_url, depth + 1))
+
+    if not found:
         return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    nav_selectors = ["nav a", ".sidebar a", "[role='navigation'] a", ".toc a"]
+    return [DiscoveredUrl(url=u, strategy=DiscoveryStrategy.NAV_CRAWL) for u in found]
+
+
+def _extract_nav_links(html: str, page_url: str, base_url: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    nav_selectors = ["nav a", ".sidebar a", "[role='navigation'] a", ".toc a", ".menu a"]
 
     seen = set()
     nav_links = []
-
     for selector in nav_selectors:
         for link in soup.select(selector):
-            href = link.get("href")
-            if not href:
-                continue
-            full_url = normalize_url(_resolve(href, base_url))
-            if full_url not in seen and is_docs_url(full_url, base_url):
-                seen.add(full_url)
-                nav_links.append(full_url)
+            _append_link(link.get("href"), page_url, base_url, seen, nav_links)
 
-    # Also collect all <a> links from <main> or <article> if nav gave few results
     if len(nav_links) < 5:
         for container_tag in ["main", "article"]:
             container = soup.find(container_tag)
             if container:
                 for link in container.find_all("a", href=True):
-                    full_url = normalize_url(_resolve(link["href"], base_url))
-                    if full_url not in seen and is_docs_url(full_url, base_url):
-                        seen.add(full_url)
-                        nav_links.append(full_url)
+                    _append_link(link.get("href"), page_url, base_url, seen, nav_links)
 
-    # Last resort: collect ALL <a> links on the page
     if len(nav_links) < 5:
         for link in soup.find_all("a", href=True):
-            full_url = normalize_url(_resolve(link["href"], base_url))
-            if full_url not in seen and is_docs_url(full_url, base_url):
-                seen.add(full_url)
-                nav_links.append(full_url)
+            _append_link(link.get("href"), page_url, base_url, seen, nav_links)
 
-    if not nav_links:
-        return None
+    return nav_links
 
-    return [DiscoveredUrl(url=u, strategy=DiscoveryStrategy.NAV_CRAWL) for u in nav_links]
+
+def _append_link(
+    href: str | None,
+    page_url: str,
+    base_url: str,
+    seen: set[str],
+    output: list[str],
+) -> None:
+    if not href:
+        return
+    full_url = normalize_url(_resolve(href, page_url))
+    if full_url not in seen and is_docs_url(full_url, base_url):
+        seen.add(full_url)
+        output.append(full_url)

@@ -41,6 +41,36 @@ These settings control the optional eval/benchmark layer.
 | `eval.judge_provider` | _(unset)_ | Reserved for judge-based evals |
 | `eval.default_k` | `5` | Default top-K for eval runs |
 
+### Registry
+
+| Key | Default | What it controls |
+|-----|---------|------------------|
+| `registry.url` | `https://registry.docmancer.dev` | Registry API base URL |
+| `registry.cache_dir` | `~/.docmancer/cache/packs` | Local cache for downloaded pack archives |
+| `registry.auth_path` | `~/.docmancer/auth.json` | Path to stored auth token |
+| `registry.auto_update` | `true` | Reserved on `RegistryConfig`; not yet consumed by CLI commands (safe to omit from YAML) |
+| `registry.timeout` | `30` | HTTP request timeout in seconds |
+
+### Packs (project manifest)
+
+The `packs` section declares registry packs for the project:
+
+```yaml
+packs:
+  react: "18.2"
+  nextjs: "14.1"
+  langchain: "0.2"
+```
+
+Running `docmancer pull` with no arguments installs all declared packs. Use `docmancer pull <name> --save` to add a pack to the manifest.
+
+### Environment variables
+
+| Variable | What it does |
+|----------|--------------|
+| `DOCMANCER_REGISTRY_URL` | Override registry URL |
+| `DOCMANCER_REGISTRY_TOKEN` | Override auth token (takes precedence over `auth.json`) |
+
 ## Example `docmancer.yaml`
 
 ```yaml
@@ -58,6 +88,14 @@ web_fetch:
   workers: 8
   default_page_cap: 500
 
+packs:
+  react: "18.2"
+  langchain: "0.2"
+
+registry:
+  url: https://registry.docmancer.dev
+  timeout: 30
+
 eval:
   dataset_path: .docmancer/eval_dataset.json
   output_dir: .docmancer/eval
@@ -68,4 +106,5 @@ eval:
 
 - Relative `index.db_path` values are resolved relative to the location of `docmancer.yaml`, not the current shell directory.
 - Project-local configs are created by `docmancer init` and point to `.docmancer/docmancer.db` inside the project.
-- The `eval` section is optional. If omitted, eval commands use defaults.
+- The `eval`, `registry`, and `packs` sections are optional. If omitted, commands use defaults.
+- Old config files without `packs:` or `registry:` keys load without errors.

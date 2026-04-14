@@ -1,16 +1,74 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import os
 import re
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 
 import httpx
 
 from docmancer.core.models import Document
 
 logger = logging.getLogger(__name__)
+
+_DOC_EXTENSIONS = (".md", ".mdx", ".txt", ".rst", ".ipynb")
+_DEFAULT_EXCLUDE_FILES = {
+    "CHANGELOG.md",
+    "changelog.md",
+    "CHANGELOG.mdx",
+    "changelog.mdx",
+    "LICENSE.md",
+    "license.md",
+    "CODE_OF_CONDUCT.md",
+    "code_of_conduct.md",
+}
+_DEFAULT_EXCLUDE_FOLDERS = [
+    "*archive*",
+    "*archived*",
+    "old",
+    "docs/old",
+    "*deprecated*",
+    "*legacy*",
+    "*previous*",
+    "*outdated*",
+    "*superseded*",
+    "i18n/zh*",
+    "i18n/es*",
+    "i18n/fr*",
+    "i18n/de*",
+    "i18n/ja*",
+    "i18n/ko*",
+    "i18n/ru*",
+    "i18n/pt*",
+    "i18n/it*",
+    "i18n/ar*",
+    "i18n/hi*",
+    "i18n/tr*",
+    "i18n/nl*",
+    "i18n/pl*",
+    "i18n/sv*",
+    "i18n/vi*",
+    "i18n/th*",
+    "zh-cn",
+    "zh-tw",
+    "zh-hk",
+    "zh-mo",
+    "zh-sg",
+]
+
+
+@dataclass(slots=True)
+class Context7Config:
+    branch: str | None = None
+    folders: list[str] = field(default_factory=list)
+    exclude_folders: list[str] = field(default_factory=list)
+    exclude_files: list[str] = field(default_factory=list)
+    rules: list[str] = field(default_factory=list)
+    previous_versions: list[str] = field(default_factory=list)
+    branch_versions: list[str] = field(default_factory=list)
 
 
 class GitHubFetcher:
@@ -54,11 +112,14 @@ class GitHubFetcher:
             if not branch:
                 branch = self._get_default_branch(owner, repo, client)
 
-            # Try listing the full repo tree via the API.
             all_files = self._list_repo_tree(owner, repo, branch, client)
+            context_config = self._load_context7_config(owner, repo, branch, all_files, client)
+            if context_config.branch and context_config.branch != branch:
+                branch = context_config.branch
+                all_files = self._list_repo_tree(owner, repo, branch, client)
 
             if all_files is not None:
-                matching = [f for f in all_files if self._matches_patterns(f)]
+                matching = self._select_documentation_files(all_files, context_config)
             else:
                 # Tree listing failed (private repo, no token, rate-limited).
                 # Fall back to fetching common README paths directly.
@@ -72,34 +133,54 @@ class GitHubFetcher:
 
             documents: list[Document] = []
             fetched_at = datetime.now(timezone.utc).isoformat()
+            version_refs = [branch]
+            version_refs.extend(context_config.previous_versions)
+            version_refs.extend(context_config.branch_versions)
+            seen_sources: set[tuple[str, str]] = set()
 
-            for file_path in matching:
-                content = self._fetch_raw_file(
-                    owner, repo, branch, file_path, client
-                )
-                if content is None:
-                    continue
+            for ref in version_refs:
+                ref_files = matching
+                if ref != branch:
+                    ref_tree = self._list_repo_tree(owner, repo, ref, client)
+                    if ref_tree is None:
+                        continue
+                    ref_files = self._select_documentation_files(ref_tree, context_config)
 
-                raw_url = (
-                    f"https://raw.githubusercontent.com/"
-                    f"{owner}/{repo}/{branch}/{file_path}"
-                )
-                fmt = "markdown" if file_path.endswith(".md") else "text"
-
-                documents.append(
-                    Document(
-                        source=raw_url,
-                        content=content,
-                        metadata={
-                            "format": fmt,
-                            "repo": f"{owner}/{repo}",
-                            "branch": branch,
-                            "file_path": file_path,
-                            "docset_root": f"https://github.com/{owner}/{repo}",
-                            "fetched_at": fetched_at,
-                        },
+                for file_path in ref_files:
+                    if (ref, file_path) in seen_sources:
+                        continue
+                    seen_sources.add((ref, file_path))
+                    content = self._fetch_raw_file(
+                        owner, repo, ref, file_path, client
                     )
-                )
+                    if content is None:
+                        continue
+                    content = self._normalize_file_content(file_path, content)
+                    if not content.strip():
+                        continue
+
+                    raw_url = (
+                        f"https://raw.githubusercontent.com/"
+                        f"{owner}/{repo}/{ref}/{file_path}"
+                    )
+                    fmt = "markdown" if file_path.endswith((".md", ".mdx", ".ipynb")) else "text"
+
+                    documents.append(
+                        Document(
+                            source=raw_url,
+                            content=content,
+                            metadata={
+                                "format": fmt,
+                                "repo": f"{owner}/{repo}",
+                                "branch": ref,
+                                "file_path": file_path,
+                                "docset_root": f"https://github.com/{owner}/{repo}",
+                                "fetch_method": "github",
+                                "context7_rules": context_config.rules,
+                                "fetched_at": fetched_at,
+                            },
+                        )
+                    )
 
             if not documents:
                 raise ValueError(
@@ -248,6 +329,142 @@ class GitHubFetcher:
                     return True
         return False
 
+    def _select_documentation_files(
+        self, all_files: list[str], context_config: Context7Config | None = None
+    ) -> list[str]:
+        """Select and rank documentation files from a repository tree."""
+        context_config = context_config or Context7Config()
+        selected = []
+        for file_path in all_files:
+            if context_config.folders:
+                if not self._is_in_included_folder(file_path, context_config.folders) and not self._is_root_doc(file_path):
+                    continue
+                if not file_path.endswith(_DOC_EXTENSIONS):
+                    continue
+            elif self._uses_default_patterns():
+                if not self._is_default_doc_path(file_path):
+                    continue
+            elif not self._matches_patterns(file_path):
+                continue
+
+            if self._is_excluded(file_path, context_config):
+                continue
+            selected.append(file_path)
+
+        return sorted(dict.fromkeys(selected), key=lambda path: self._rank_file(path, context_config))
+
+    def _uses_default_patterns(self) -> bool:
+        return self._file_patterns == ["README.md", "docs/**/*.md", "doc/**/*.md"]
+
+    @staticmethod
+    def _is_root_doc(file_path: str) -> bool:
+        return "/" not in file_path and file_path.endswith(_DOC_EXTENSIONS)
+
+    @staticmethod
+    def _is_default_doc_path(file_path: str) -> bool:
+        if file_path == "README.md":
+            return True
+        return file_path.startswith(("docs/", "doc/")) and file_path.endswith(_DOC_EXTENSIONS)
+
+    @staticmethod
+    def _is_in_included_folder(file_path: str, folders: list[str]) -> bool:
+        clean_path = file_path.strip("/")
+        for folder in folders:
+            clean_folder = folder.strip("./").strip("/")
+            if clean_folder and (clean_path == clean_folder or clean_path.startswith(clean_folder + "/")):
+                return True
+        return False
+
+    def _is_excluded(self, file_path: str, context_config: Context7Config) -> bool:
+        name = file_path.rsplit("/", 1)[-1]
+        exclude_files = set(context_config.exclude_files) if context_config.exclude_files else _DEFAULT_EXCLUDE_FILES
+        if name in exclude_files:
+            return True
+
+        exclude_folders = context_config.exclude_folders if context_config.exclude_folders else _DEFAULT_EXCLUDE_FOLDERS
+        parts = file_path.split("/")[:-1]
+        for pattern in exclude_folders:
+            if self._path_matches_exclusion(file_path, parts, pattern):
+                return True
+        return False
+
+    @staticmethod
+    def _path_matches_exclusion(file_path: str, folders: list[str], pattern: str) -> bool:
+        clean = pattern.strip()
+        if not clean:
+            return False
+        if clean.startswith("./"):
+            root_pattern = clean[2:].strip("/")
+            return file_path == root_pattern or file_path.startswith(root_pattern + "/")
+        if "/" in clean or "*" in clean:
+            return fnmatch.fnmatch(file_path, clean) or any(fnmatch.fnmatch("/".join(folders[: i + 1]), clean) for i in range(len(folders)))
+        return any(fnmatch.fnmatch(folder, clean) for folder in folders)
+
+    @staticmethod
+    def _rank_file(file_path: str, context_config: Context7Config) -> tuple[int, str]:
+        if context_config.folders:
+            for idx, folder in enumerate(context_config.folders):
+                clean_folder = folder.strip("./").strip("/")
+                if clean_folder and file_path.startswith(clean_folder + "/"):
+                    return (idx, file_path)
+        if file_path.startswith(("docs/", "doc/", "documentation/")):
+            return (10, file_path)
+        if file_path.upper() == "README.MD":
+            return (30, file_path)
+        if "/" not in file_path:
+            return (20, file_path)
+        return (40, file_path)
+
+    def _load_context7_config(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        all_files: list[str] | None,
+        client: httpx.Client,
+    ) -> Context7Config:
+        if all_files is not None and "context7.json" not in all_files:
+            return Context7Config()
+        content = self._fetch_raw_file(owner, repo, branch, "context7.json", client)
+        if not content:
+            return Context7Config()
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.warning("Invalid context7.json for %s/%s: %s", owner, repo, exc)
+            return Context7Config()
+
+        return Context7Config(
+            branch=_string_or_none(payload.get("branch")),
+            folders=_string_list(payload.get("folders")),
+            exclude_folders=_string_list(payload.get("excludeFolders")),
+            exclude_files=_string_list(payload.get("excludeFiles")),
+            rules=_string_list(payload.get("rules")),
+            previous_versions=_version_refs(payload.get("previousVersions"), "tag"),
+            branch_versions=_version_refs(payload.get("branchVersions"), "branch"),
+        )
+
+    @staticmethod
+    def _normalize_file_content(file_path: str, content: str) -> str:
+        if not file_path.endswith(".ipynb"):
+            return content
+        try:
+            notebook = json.loads(content)
+        except json.JSONDecodeError:
+            return ""
+        cells = []
+        for cell in notebook.get("cells", []):
+            source = cell.get("source", "")
+            text = "".join(source) if isinstance(source, list) else str(source)
+            if not text.strip():
+                continue
+            cell_type = cell.get("cell_type")
+            if cell_type == "code":
+                cells.append(f"```python\n{text.strip()}\n```")
+            else:
+                cells.append(text.strip())
+        return "\n\n".join(cells)
+
     def _fetch_raw_file(
         self,
         owner: str,
@@ -288,3 +505,27 @@ class GitHubFetcher:
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
+
+
+def _string_or_none(value) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def _version_refs(value, key: str) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    refs = []
+    for item in value:
+        if isinstance(item, dict):
+            ref = item.get(key)
+            if isinstance(ref, str) and ref.strip():
+                refs.append(ref)
+        elif isinstance(item, str) and item.strip():
+            refs.append(item)
+    return refs

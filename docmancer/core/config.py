@@ -40,11 +40,30 @@ class EvalConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_EVAL_", extra="ignore")
 
 
+def default_registry_cache_dir() -> str:
+    return str(Path.home() / ".docmancer" / "cache" / "packs")
+
+
+def default_registry_auth_path() -> str:
+    return str(Path.home() / ".docmancer" / "auth.json")
+
+
+class RegistryConfig(BaseSettings):
+    url: str = "https://registry.docmancer.dev"
+    cache_dir: str = Field(default_factory=default_registry_cache_dir)
+    auth_path: str = Field(default_factory=default_registry_auth_path)
+    auto_update: bool = True
+    timeout: float = Field(default=30.0, gt=0)
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_REGISTRY_", extra="ignore")
+
+
 class DocmancerConfig(BaseModel):
     index: IndexConfig = Field(default_factory=IndexConfig)
     query: QueryConfig = Field(default_factory=QueryConfig)
     web_fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
     eval: EvalConfig | None = None
+    packs: dict[str, str] = Field(default_factory=dict)
+    registry: RegistryConfig = Field(default_factory=RegistryConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:
@@ -75,6 +94,14 @@ class DocmancerConfig(BaseModel):
             extracted_path = Path(extracted_dir)
             if not extracted_path.is_absolute():
                 config.index.extracted_dir = str((path.parent / extracted_path).resolve())
+
+        registry_cache = Path(config.registry.cache_dir)
+        if not registry_cache.is_absolute():
+            config.registry.cache_dir = str((path.parent / registry_cache).resolve())
+
+        registry_auth = Path(config.registry.auth_path)
+        if not registry_auth.is_absolute():
+            config.registry.auth_path = str((path.parent / registry_auth).resolve())
         return config
 
     @classmethod

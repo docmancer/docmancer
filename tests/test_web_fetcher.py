@@ -8,6 +8,8 @@ import httpx
 import pytest
 
 from docmancer.connectors.fetchers.web import WebFetcher
+from docmancer.connectors.fetchers.pipeline.detection import Platform
+from docmancer.connectors.fetchers.pipeline.discovery import DiscoveryStrategy, discover_urls
 
 
 def _mock_response(text: str, status: int = 200, content_type: str = "text/html") -> MagicMock:
@@ -170,3 +172,50 @@ class TestWebFetcherProtocol:
         assert fetcher._strategy == "llms-full.txt"
         assert fetcher._browser is True
         assert fetcher._workers == 6
+
+
+class TestDiscovery:
+    def test_discovery_merges_llms_sitemap_and_nav(self):
+        sitemap = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url><loc>https://example.com/docs/from-sitemap</loc></url>
+</urlset>"""
+
+        def mock_get(url, **kwargs):
+            if url.endswith("/llms-full.txt"):
+                return _mock_response("", status=404, content_type="text/plain")
+            if url.endswith("/llms.txt"):
+                return _mock_response("[LLMS](https://example.com/docs/from-llms)", content_type="text/plain")
+            if url.endswith("/sitemap.xml"):
+                return _mock_response(sitemap, content_type="application/xml")
+            if url.endswith("/sitemap_index.xml"):
+                return _mock_response("", status=404)
+            return _mock_response('<nav><a href="/docs/from-nav">Nav</a></nav>')
+
+        client = MagicMock(spec=httpx.Client)
+        client.get.side_effect = mock_get
+
+        discovered = discover_urls("https://example.com/docs", client, Platform.GENERIC, max_pages=10)
+
+        urls = {item.url for item in discovered}
+        assert "https://example.com/docs/from-llms" in urls
+        assert "https://example.com/docs/from-sitemap" in urls
+        assert "https://example.com/docs/from-nav" in urls
+
+    def test_nav_crawl_follows_links_bounded_bfs(self):
+        def mock_get(url, **kwargs):
+            if url.endswith("/llms-full.txt") or url.endswith("/llms.txt") or "sitemap" in url:
+                return _mock_response("", status=404, content_type="text/plain")
+            if url == "https://example.com/docs":
+                return _mock_response('<nav><a href="/docs/a">A</a></nav>')
+            if url == "https://example.com/docs/a":
+                return _mock_response('<nav><a href="/docs/b">B</a></nav>')
+            return _mock_response("<main><h1>B</h1></main>")
+
+        client = MagicMock(spec=httpx.Client)
+        client.get.side_effect = mock_get
+
+        discovered = discover_urls("https://example.com/docs", client, Platform.GENERIC, max_pages=10)
+
+        assert [item.strategy for item in discovered] == [DiscoveryStrategy.NAV_CRAWL, DiscoveryStrategy.NAV_CRAWL]
+        assert [item.url for item in discovered] == ["https://example.com/docs/a", "https://example.com/docs/b"]
