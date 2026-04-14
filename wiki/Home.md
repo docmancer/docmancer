@@ -36,7 +36,7 @@ Agents call these commands through installed skill files. No background server i
 
 ## Registry
 
-The registry is a hosted catalog of pre-indexed packs at `www.docmancer.dev`. You can search for a pack, pull a specific version, and query it locally without re-crawling the source site. Trust tiers are **official**, **maintainer verified**, and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related options.
+The registry is a hosted catalog of pre-indexed packs at `www.docmancer.dev`. You can search for a pack, pull a specific version, and query it locally without re-crawling the source site. Trust tiers are **official**, **maintainer verified**, and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related options, and [trust tiers](./Commands.md#trust-tiers) for how each tier behaves.
 
 ## Licensing
 

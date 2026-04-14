@@ -47,9 +47,9 @@ These commands talk to the optional hosted registry. The open-source CLI stays f
 
 Packs have one of three trust tiers (API and storage use snake case, for example `maintainer_verified`):
 
-- **Official** — provenance traced to package registry metadata (PyPI, npm, Go, Crates.io, RubyGems). No `--community` flag needed.
-- **Maintainer verified** — maintainer has claimed ownership in the registry. No `--community` flag needed.
-- **Community** — user-submitted via `docmancer publish`. Requires `--community` flag to pull and should pass `docmancer audit`.
+- **Official:** provenance traced to package registry metadata (PyPI, npm, Go, Crates.io, RubyGems). No `--community` flag needed.
+- **Maintainer verified:** maintainer has claimed ownership in the registry. No `--community` flag needed.
+- **Community:** user-submitted via `docmancer publish`. Requires `--community` flag to pull and should pass `docmancer audit`.
 
 Default search and pull exclude community packs. This is a hard gate, not a warning.
 

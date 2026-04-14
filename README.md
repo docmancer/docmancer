@@ -69,9 +69,11 @@ docmancer packs                  # list installed packs
 
 Packs use a three-tier trust model:
 
-- **Official** — provenance traced to package registry metadata (PyPI, npm, etc.)
-- **Maintainer verified** — maintainer has claimed ownership through the registry
-- **Community** — user-submitted (via `publish`); requires `--community` to pull and should pass `audit`
+- **Official:** provenance traced to package registry metadata (PyPI, npm, Go, Crates.io, RubyGems).
+- **Maintainer verified:** maintainer has claimed ownership through the registry.
+- **Community:** user-submitted (via `publish`); requires `--community` to pull and should pass `audit`.
+
+In APIs and manifests, trust tier values use snake case (for example `maintainer_verified`).
 
 ### Project manifest
 
@@ -107,7 +109,7 @@ The **hosted registry** at `www.docmancer.dev` is optional. It provides search, 
 | `docmancer search <query>` | Search the public registry for available packs |
 | `docmancer publish <url>` | Submit a docs URL to the registry for indexing |
 | `docmancer packs` | List locally installed registry packs |
-| `docmancer packs sync` | Sync installed packs with manifest (additive by default) |
+| `docmancer packs sync` | Sync installed packs with manifest (additive by default; use `--prune` to drop mismatched or undeclared packs) |
 | `docmancer audit <path>` | Scan a local pack archive or extracted directory for suspicious patterns |
 | `docmancer auth login` | Authenticate with the registry (OAuth device code flow) |
 | `docmancer auth status` | Show authentication and subscription tier |
@@ -150,7 +152,7 @@ docmancer pull uv
 docmancer add https://internal-docs.company.com
 docmancer add ./docs
 
-# 3. Query — results come from both packs and local docs
+# 3. Query (registry packs + local docs)
 docmancer query "How do I use the uv pip interface?"
 ```
 

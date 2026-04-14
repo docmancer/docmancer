@@ -111,6 +111,6 @@ Supported agents: `claude-code`, `cursor`, `codex`, `gemini`, `cline`, `opencode
 
 ## Common Mistakes
 
-- Do not use `docmancer ingest` — it is deprecated. Use `docmancer add` instead.
+- Do not use `docmancer ingest`; it is deprecated. Use `docmancer add` instead.
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
 - Do not assume docs are indexed. Always verify with `docmancer list` before querying.
