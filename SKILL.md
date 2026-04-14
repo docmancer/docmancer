@@ -16,6 +16,8 @@ install: pipx install docmancer
 
 Fetch docs from public sites (GitBook, Mintlify, GitHub, or any web docs), index them locally with SQLite FTS5, and retrieve relevant sections. No API keys, no servers, no background daemons.
 
+The **PyPI package is MIT open source**; local indexing and `query` stay the core free product. The **hosted registry** is optional, with paid or team offerings (for example organization registry use and priority support) attached to that service, not to removing open source access to the CLI.
+
 ## When to Use
 
 - User asks about a third-party library, SDK, or API and you need accurate, up-to-date documentation

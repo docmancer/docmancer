@@ -43,6 +43,8 @@ These settings control the optional eval/benchmark layer.
 
 ### Registry
 
+The registry block only configures the **optional** hosted service (`search`, `pull`, `publish`, `auth`). Local indexing and `query` do not require it. Paid or team offerings apply to hosted registry use (for example priority support), not to the open source CLI license.
+
 | Key | Default | What it controls |
 |-----|---------|------------------|
 | `registry.url` | `https://www.docmancer.dev` | Base URL for the public registry (HTTPS) |

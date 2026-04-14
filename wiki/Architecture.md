@@ -2,6 +2,8 @@
 
 docmancer has two sources for documentation context: the **public registry** (pre-indexed packs you install) and **local indexing** (URLs and files you add). Both feed into the same SQLite FTS5 index on disk, so `query` searches everything in one pass. There is no separate retrieval service: the CLI talks to the registry only for **search**, **download**, **publish**, and **auth**; context packs are assembled locally.
 
+The open source **PyPI library** is the full local-first toolchain. The **hosted registry** is optional; commercial or team offerings attach to that hosted layer (for example priority support and organization use), not to making the core CLI proprietary.
+
 ## Registry packs
 
 The registry is a hosted catalog (default base URL `https://www.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.

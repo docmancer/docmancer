@@ -4,6 +4,8 @@
 
 Docmancer compresses documentation context so coding agents spend tokens on code, not on rereading raw docs.
 
+The PyPI CLI is **MIT open source**; local `add`, `update`, and `query` are the core free path. The **hosted registry** is optional; paid or team plans focus on that service (for example organization registry use and priority support), not on removing the open source tool.
+
 Executable: `{{DOCS_KIT_CMD}}`
 
 Primary CLI shape: `docmancer setup`, `docmancer list`, `docmancer query "question"`, `docmancer pull <pack>`, and `docmancer add <url-or-path>`.

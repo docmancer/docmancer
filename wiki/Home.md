@@ -33,6 +33,8 @@ Agents call these commands through installed skill files. No background server r
 
 The registry is a hosted catalog of pre-indexed packs maintained alongside the open source CLI. Trust tiers are **official**, **maintainer verified** (`maintainer_verified`), and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related commands.
 
+The **PyPI package stays MIT-licensed open source**: local indexing and `query` are the core product and do not require a commercial license. The **hosted registry** is optional; paid or team-focused plans (for example organization registry use and priority support) apply to that service, not to removing access to the open source CLI.
+
 ## All pages
 
 | Page | What it covers |

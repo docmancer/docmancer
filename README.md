@@ -44,6 +44,12 @@ docmancer query "How do I use fixtures?"
 - Supports documentation URLs, GitHub README and docs markdown, local directories, and markdown/text files.
 - Returns compact context packs with estimated docs-token savings and agentic runway.
 
+## Open source and the registry
+
+The **docmancer** package on PyPI is **MIT-licensed open source**. The core workflows that run on your machine (for example `add`, `update`, `query`, `list`, `inspect`, `remove`, `doctor`, `setup`, and `install`) stay **free to use** and **fully usable** without a commercial docmancer plan: your index and queries stay local.
+
+The **hosted registry** at `www.docmancer.dev` is **optional**. It is there so you can search and **pull** pre-built packs and use account-based flows (for example `publish` and `auth`). **Paid and commercial offerings** (organization-focused registry use, **priority support**, and similar) apply to that hosted service and how you use it, not to locking away the open source CLI. If you never touch the registry, you still have a complete local docs tool.
+
 ## Registry
 
 The docmancer registry is a **hosted catalog** of pre-indexed, version-aware documentation packs derived from package-registry metadata (PyPI, npm, and similar) and published documentation URLs. Think of it as a place to **install** trusted docs packs the same way you install packages: search, pull a version, and query locally without re-crawling the whole site on your laptop.
