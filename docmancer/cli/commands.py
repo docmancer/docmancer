@@ -14,6 +14,7 @@ import webbrowser
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs, unquote
 
 import click
 
@@ -171,12 +172,27 @@ def _sha256(path: Path) -> str:
 
 
 def _split_pack_ref(value: str) -> tuple[str, str | None]:
+    value = _normalize_pack_ref(value)
     if "@" not in value:
         return value, None
     name, version = value.rsplit("@", 1)
     if not name or not version:
         raise click.ClickException("Pack must be formatted as <name> or <name>@<version>.")
     return name, version
+
+
+def _normalize_pack_ref(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return value
+
+    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0] == "registry":
+        name = parts[1]
+        version = parse_qs(parsed.query).get("version", [None])[0]
+        return f"{name}@{version}" if version else name
+
+    return value
 
 
 def _registry_client(config):

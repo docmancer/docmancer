@@ -1,6 +1,6 @@
 # docmancer Wiki
 
-docmancer is **local-first documentation context** for coding agents: an open source CLI that indexes and queries on your machine with **SQLite FTS5** (no vector DB, no embedding download). A **public registry** at `registry.docmancer.dev` supplies optional, pre-built packs so you can **pull** versioned docs instead of crawling every site yourself. You can still **add** GitBook, Mintlify, web, GitHub, or local markdown; registry packs and self-indexed sources share the same index.
+docmancer is **local-first documentation context** for coding agents: an open source CLI that indexes and queries on your machine with **SQLite FTS5** (no vector DB, no embedding download). A **public registry** at `www.docmancer.dev` supplies optional, pre-built packs so you can **pull** versioned docs instead of crawling every site yourself. You can still **add** GitBook, Mintlify, web, GitHub, or local markdown; registry packs and self-indexed sources share the same index.
 
 The goal is agentic runway. Every token an agent spends reading raw docs is a token it did not spend writing code, running tests, or debugging. Docmancer compresses documentation context by 60 to 90 percent, so agents run more iterations before context degradation and produce more output per session.
 

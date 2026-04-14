@@ -6,6 +6,7 @@ import click
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
+from docmancer.cli.commands import _split_pack_ref
 
 
 class FakeRegistry:
@@ -27,6 +28,11 @@ def test_registry_commands_are_lazy_imported():
     top_level = content.split("def _registry_client", 1)[0]
     assert "from docmancer.core.registry_client import" not in top_level
     assert "from docmancer.core.auth import" not in top_level
+
+
+def test_registry_page_url_can_be_used_as_pack_ref():
+    assert _split_pack_ref("https://www.docmancer.dev/registry/certifi") == ("certifi", None)
+    assert _split_pack_ref("https://www.docmancer.dev/registry/certifi?version=2026.01.01") == ("certifi", "2026.01.01")
 
 
 def test_pull_manifest_partial_failure(monkeypatch):

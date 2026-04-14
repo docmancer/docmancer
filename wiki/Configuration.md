@@ -45,7 +45,7 @@ These settings control the optional eval/benchmark layer.
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `registry.url` | `https://registry.docmancer.dev` | Registry API base URL |
+| `registry.url` | `https://www.docmancer.dev` | Registry API base URL |
 | `registry.cache_dir` | `~/.docmancer/cache/packs` | Local cache for downloaded pack archives |
 | `registry.auth_path` | `~/.docmancer/auth.json` | Path to stored auth token |
 | `registry.auto_update` | `true` | Reserved on `RegistryConfig`; not yet consumed by CLI commands (safe to omit from YAML) |
@@ -93,7 +93,7 @@ packs:
   langchain: "0.2"
 
 registry:
-  url: https://registry.docmancer.dev
+  url: https://www.docmancer.dev
   timeout: 30
 
 eval:

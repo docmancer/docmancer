@@ -12,7 +12,7 @@
 
 Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with SQLite FTS5, and returns compact context packs with source attribution. The goal is agentic runway: your agent should burn tokens on implementation, tests, and debugging, not on rereading entire documentation sites.
 
-**Product shape:** the open source CLI on PyPI is the main distribution. You can **pull** versioned, pre-indexed packs from the public registry at `registry.docmancer.dev`, or **add** docs from URLs and local paths and index them yourself. Either way, sections land in a **local SQLite** database on your machine. There is no hosted “query API”: retrieval runs in the CLI, so your agent loop stays local-first.
+**Product shape:** the open source CLI on PyPI is the main distribution. You can **pull** versioned, pre-indexed packs from the public registry at `www.docmancer.dev`, or **add** docs from URLs and local paths and index them yourself. Either way, sections land in a **local SQLite** database on your machine. There is no hosted “query API”: retrieval runs in the CLI, so your agent loop stays local-first.
 
 In a typical agentic coding session, raw docs pages can consume 30 to 40 percent of the context window. Docmancer compresses that overhead by 60 to 90 percent, so the agent stays sharp longer, runs more iterations before context degradation, and produces more output per session.
 

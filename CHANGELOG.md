@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - Unreleased
+
+### Added
+
+- **`pull` pack arguments:** HTTPS **registry pack page** URLs (for example `https://www.docmancer.dev/registry/<name>` with optional **`?version=`**) are normalized to **`name`** / **`name@version`** before download, so you can paste a link from the website.
+
+### Changed
+
+- **Default `registry.url`** is **`https://www.docmancer.dev`** (was **`https://registry.docmancer.dev`**). Override with **`registry.url`** in **`docmancer.yaml`** or **`DOCMANCER_REGISTRY_URL`** if you point at another deployment.
+- **README** and **wiki** (**`Home`**, **`Architecture`**, **`Configuration`**) use the same default host in copy and examples.
+
+### Tests
+
+- **`test_registry_cli`:** **`test_registry_page_url_can_be_used_as_pack_ref`** covers **`_split_pack_ref`** for registry URLs with and without **`version`**.
+
 ## [0.3.1] - 2026-04-14
 ### Added
 

@@ -49,7 +49,7 @@ def default_registry_auth_path() -> str:
 
 
 class RegistryConfig(BaseSettings):
-    url: str = "https://registry.docmancer.dev"
+    url: str = "https://www.docmancer.dev"
     cache_dir: str = Field(default_factory=default_registry_cache_dir)
     auth_path: str = Field(default_factory=default_registry_auth_path)
     auto_update: bool = True

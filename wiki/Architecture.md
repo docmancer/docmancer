@@ -4,7 +4,7 @@ docmancer has two sources for documentation context: the **public registry** (pr
 
 ## Registry packs
 
-The registry is a hosted catalog (default base URL `https://registry.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
+The registry is a hosted catalog (default base URL `https://www.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
 
 When you run `docmancer pull react`, the CLI downloads the archive, verifies its SHA-256 checksum, and imports the pack's sections into your local SQLite database using `ATTACH DATABASE`. Sources from packs are namespaced with a `registry://` prefix to avoid collisions with locally indexed docs.
 
