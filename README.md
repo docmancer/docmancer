@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="readme-assets/wizard-logo.png" alt="docmancer logo" width="120" />
+
 <h1>docmancer</h1>
 
 **Compress documentation context so coding agents spend tokens on code.**
@@ -28,8 +30,8 @@ In a typical agentic coding session, raw docs pages can consume 30 to 40 percent
 pipx install docmancer --python python3.13
 
 docmancer setup
-docmancer pull react
-docmancer query "How do I use hooks?"
+docmancer pull pytest
+docmancer query "How do I use fixtures?"
 ```
 
 `setup` creates `~/.docmancer/docmancer.yaml`, initializes `~/.docmancer/docmancer.db`, and installs detected agent skills. Use `setup --all` for non-interactive installation across all supported agents.
@@ -44,12 +46,12 @@ docmancer query "How do I use hooks?"
 
 ## Registry
 
-The docmancer registry is a **hosted catalog** of pre-indexed, version-aware documentation packs (built by crawl workers from package-registry metadata and published docs URLs). Think of it as a place to **install** trusted docs packs the same way you install packages: search, pull a version, and query locally without re-crawling the whole site on your laptop.
+The docmancer registry is a **hosted catalog** of pre-indexed, version-aware documentation packs derived from package-registry metadata (PyPI, npm, and similar) and published documentation URLs. Think of it as a place to **install** trusted docs packs the same way you install packages: search, pull a version, and query locally without re-crawling the whole site on your laptop.
 
 ```bash
-docmancer search langchain
-docmancer pull langchain
-docmancer pull react@18.2        # optional version pin
+docmancer search langgraph
+docmancer pull langgraph-sdk
+docmancer pull pytest@9.0        # optional version pin
 docmancer packs                  # list installed packs
 ```
 
@@ -65,9 +67,9 @@ Declare your project's documentation stack in `docmancer.yaml`:
 
 ```yaml
 packs:
-  react: "18.2"
-  nextjs: "14.1"
-  langchain: "0.2"
+  pytest: "9.0"
+  uv: "0.11"
+  langgraph-sdk: "0.3"
 ```
 
 Then run `docmancer pull` with no arguments to install everything. Share the manifest with your team so everyone has the same docs context.
@@ -84,8 +86,8 @@ Then run `docmancer pull` with no arguments to install everything. Share the man
 | `docmancer publish <url>` | Submit a docs URL to the registry for indexing |
 | `docmancer packs` | List locally installed registry packs |
 | `docmancer packs sync` | Sync installed packs with manifest (additive by default) |
-| `docmancer audit <pack>` | Scan a pack for suspicious patterns |
-| `docmancer auth login` | Authenticate with the registry (device code flow) |
+| `docmancer audit <path>` | Scan a local pack archive (`.docmancer-pack`) or extracted directory for suspicious patterns |
+| `docmancer auth login` | Authenticate with the registry (OAuth device code flow in the browser; `--token` stores a token directly) |
 | `docmancer auth status` | Show authentication and subscription tier |
 | `docmancer update` | Re-fetch and re-index all existing docs sources |
 | `docmancer query <text>` | Return a compact markdown context pack |
@@ -115,15 +117,15 @@ The recommended workflow combines registry packs with custom docs:
 
 ```bash
 # 1. Pull pre-indexed packs for your stack
-docmancer pull react
-docmancer pull nextjs
+docmancer pull pytest
+docmancer pull uv
 
 # 2. Add project-specific or internal docs
 docmancer add https://internal-docs.company.com
 docmancer add ./docs
 
 # 3. Query — results come from both packs and local docs
-docmancer query "How do server components work?"
+docmancer query "How do I use the uv pip interface?"
 ```
 
 Registry packs and locally indexed docs live in the same SQLite index. Queries search both seamlessly.
@@ -132,7 +134,7 @@ Registry packs and locally indexed docs live in the same SQLite index. Queries s
 
 Run `docmancer update` to refresh all locally-added sources. Docmancer re-fetches each URL or re-reads each local path and updates the index in place.
 
-For registry packs, run `docmancer packs sync` to update installed packs to their latest versions.
+For registry packs, run `docmancer packs sync` to apply the `packs:` pins in `docmancer.yaml` (install anything missing and flag version mismatches). Bump versions in the manifest when you want newer pack releases, then sync again. Use `docmancer packs sync --prune` to remove packs that no longer match the manifest.
 
 ## Project-Local Config
 
@@ -153,8 +155,8 @@ index:
   extracted_dir: .docmancer/extracted/
 
 packs:
-  react: "18.2"
-  nextjs: "14.1"
+  pytest: "9.0"
+  uv: "0.11"
 ```
 
 ## Supported Agents

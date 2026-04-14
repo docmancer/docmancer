@@ -6,9 +6,9 @@ docmancer has two sources for documentation context: the **public registry** (pr
 
 The registry is a hosted catalog (default base URL `https://www.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
 
-When you run `docmancer pull react`, the CLI downloads the archive, verifies its SHA-256 checksum, and imports the pack's sections into your local SQLite database using `ATTACH DATABASE`. Sources from packs are namespaced with a `registry://` prefix to avoid collisions with locally indexed docs.
+When you run `docmancer pull pytest`, the CLI downloads the archive, verifies SHA-256 checksums for the archive and the bundled index database, and imports the pack's sections into your local SQLite database using `ATTACH DATABASE`. Sources from packs are namespaced with a `registry://` prefix to avoid collisions with locally indexed docs.
 
-Packs are produced by separate **pipeline** workers: they discover documentation URLs from package registries (PyPI, npm, Go, Crates.io, RubyGems), crawl with the same fetch stack as the CLI, and upload archives and metadata to registry storage. The PyPI package you install is still just the CLI and skills; it does not run those workers for you.
+Packs are built and published by the hosted registry from package metadata and public documentation sites. The PyPI package is only the CLI and skills: it downloads published packs and merges them into your local index; it does not run registry-side indexing for you.
 
 ## Local indexing
 
@@ -46,7 +46,7 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 │  REGISTRY                 INDEX                    QUERY                 │
 │  ┌────────────┐           ┌────────────┐           ┌──────────────────┐  │
 │  │ docmancer  │           │            │           │ docmancer query  │  │
-│  │ pull react │    ──►    │ SQLite     │    ──►    │ "how to auth?"   │  │
+│  │ pull pytest│    ──►    │ SQLite     │    ──►    │ "how to auth?"   │  │
 │  │            │           │ FTS5 index │           │                  │  │
 │  │ ADD        │           │            │           │ → compact pack   │  │
 │  │ GitBook    │    ──►    │ registry + │           │   + token savings│  │

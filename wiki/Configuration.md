@@ -45,7 +45,7 @@ These settings control the optional eval/benchmark layer.
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `registry.url` | `https://www.docmancer.dev` | Registry API base URL |
+| `registry.url` | `https://www.docmancer.dev` | Base URL for the public registry (HTTPS) |
 | `registry.cache_dir` | `~/.docmancer/cache/packs` | Local cache for downloaded pack archives |
 | `registry.auth_path` | `~/.docmancer/auth.json` | Path to stored auth token |
 | `registry.auto_update` | `true` | Reserved on `RegistryConfig`; not yet consumed by CLI commands (safe to omit from YAML) |
@@ -57,9 +57,9 @@ The `packs` section declares registry packs for the project:
 
 ```yaml
 packs:
-  react: "18.2"
-  nextjs: "14.1"
-  langchain: "0.2"
+  pytest: "9.0"
+  uv: "0.11"
+  langgraph-sdk: "0.3"
 ```
 
 Running `docmancer pull` with no arguments installs all declared packs. Use `docmancer pull <name> --save` to add a pack to the manifest.
@@ -89,8 +89,8 @@ web_fetch:
   default_page_cap: 500
 
 packs:
-  react: "18.2"
-  langchain: "0.2"
+  pytest: "9.0"
+  uv: "0.11"
 
 registry:
   url: https://www.docmancer.dev

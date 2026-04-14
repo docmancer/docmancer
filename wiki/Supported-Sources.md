@@ -34,7 +34,7 @@ Docmancer detects which content changed and updates only the affected sections. 
 
 ## How indexing works
 
-All sources go through the same pipeline regardless of origin:
+All sources follow the same indexing path regardless of origin:
 
 1. Content is fetched or read from disk.
 2. Pages are normalized into semantic sections based on heading structure.

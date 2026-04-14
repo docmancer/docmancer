@@ -16,7 +16,7 @@ A quick reference for every top-level docmancer command.
 | `docmancer doctor` | Health check: config, SQLite FTS5 availability, index stats, registry connectivity, and installed agent skills. |
 | `docmancer init` | Create a project-local `docmancer.yaml` for a project-specific index. |
 | `docmancer install <agent>` | Install a skill file for a single agent manually. See [Install Targets](./Install-Targets.md). |
-| `docmancer fetch <url>` | Download documentation to local Markdown files without indexing. |
+| `docmancer fetch <url>` | Download GitBook documentation to local Markdown files (default output dir `docmancer-docs/`). Does not update the SQLite index; use `add` to index. |
 
 ## Registry commands
 
@@ -26,9 +26,9 @@ A quick reference for every top-level docmancer command.
 | `docmancer search <query>` | Search the public registry for available packs. Use `--community` to include community-trust packs. |
 | `docmancer publish <url>` | Submit a documentation URL to the registry for server-side indexing. Requires authentication. |
 | `docmancer packs` | List locally installed registry packs with name, version, trust tier, tokens, and sections. |
-| `docmancer packs sync` | Sync installed packs with the manifest. Additive by default; use `--prune` to remove packs not in the manifest. |
-| `docmancer audit <pack>` | Scan a pack for suspicious patterns (credential access, data exfiltration, agent overrides). |
-| `docmancer auth login` | Authenticate with the registry using device code flow (GitHub OAuth). Use `--token` for direct token input. |
+| `docmancer packs sync` | Apply `packs:` from `docmancer.yaml`: install missing pins, warn on version mismatches. Use `--prune` to uninstall packs whose installed version does not match the manifest (including packs removed from the manifest). |
+| `docmancer audit <path>` | Scan a local `.docmancer-pack` archive or an extracted pack directory for suspicious patterns (credential access, data exfiltration, agent overrides). |
+| `docmancer auth login` | Authenticate with the registry using an OAuth device code flow in the browser. Use `--token` to store a token without opening a browser. |
 | `docmancer auth logout` | Remove stored credentials. |
 | `docmancer auth status` | Show authentication status and subscription tier. |
 

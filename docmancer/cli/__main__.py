@@ -37,10 +37,10 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
-        "docmancer pull react",
+        "docmancer pull pytest",
         "docmancer add https://docs.example.com",
         "docmancer update",
-        "docmancer search langchain",
+        "docmancer search uv",
         'docmancer query "How do I authenticate?"',
         "docmancer install claude-code",
     ),
