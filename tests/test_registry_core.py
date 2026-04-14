@@ -111,6 +111,27 @@ def test_registry_client_error_translation():
         client._request("GET", "/server")
 
 
+def test_registry_client_reports_missing_api_endpoint():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, html="<h1>Page not found</h1>")
+
+    client = RegistryClient(RegistryConfig(url="https://www.docmancer.dev"))
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://www.docmancer.dev")
+    with pytest.raises(RegistryUnreachable, match="endpoint not found: /v1-packs-detail"):
+        client.get_pack_detail("certifi", "2026.2.25")
+
+
+def test_registry_client_uses_query_name_for_plain_404():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "pack_not_found"})
+
+    client = RegistryClient(RegistryConfig(url="https://www.docmancer.dev"))
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://www.docmancer.dev")
+    with pytest.raises(PackNotFound) as exc:
+        client.get_pack_detail("certifi")
+    assert exc.value.name == "certifi"
+
+
 def test_registry_client_rejects_malformed_url():
     with pytest.raises(RegistryUnreachable):
         RegistryClient(RegistryConfig(url="not a url"))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -81,7 +81,11 @@ class RegistryClient:
                 raise ProRequired(str(payload.get("feature") or "this registry feature"), payload.get("free_alternative"))
             raise AuthRequired(str(payload.get("message") or "Registry access forbidden."))
         if response.status_code == 404:
-            name = str(payload.get("name") or Path(path).name or "unknown")
+            parsed_path = urlparse(path)
+            if not payload and parsed_path.path.startswith("/v1-"):
+                raise RegistryUnreachable(self.base_url, f"endpoint not found: {parsed_path.path}")
+            query = parse_qs(parsed_path.query)
+            name = str(payload.get("name") or query.get("name", [""])[0] or Path(parsed_path.path).name or "unknown")
             version = payload.get("version")
             if version:
                 raise VersionNotFound(name, str(version), payload.get("available") or [])
