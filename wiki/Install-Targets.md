@@ -26,10 +26,12 @@ Use `--project` with `claude-code`, `gemini`, or `cline` to install under `.clau
 
 Installed skills cover the core workflow:
 
+- `docmancer pull` / `docmancer search` / `docmancer packs` for registry packs
 - `docmancer add` to index new documentation sources
 - `docmancer update` to refresh existing sources
 - `docmancer query` to get compact context packs with token savings
 - `docmancer list`, `docmancer inspect`, `docmancer remove`, `docmancer doctor` for index management
+- `docmancer auth` when the registry requires sign-in (for example `publish`)
 
 Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data.
 

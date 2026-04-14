@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - Unreleased
+
+### Added
+
+- **Registry CLI:** **`search`**, **`pull`**, **`packs`**, **`packs sync`**, **`publish`**, **`audit`**, and **`auth`** (**`login`**, **`logout`**, **`status`**, optional **`--token`**) backed by a registry HTTP client and local pack cache under **`registry.cache_dir`**.
+- **`docmancer/connectors/fetchers/factory.py`** with **`build_fetcher`** (and related helpers) so **`DocmancerAgent`** and tooling share one code path for provider selection and **`WebFetcher`** construction.
+
+### Changed
+
+- **GitBook / Mintlify / web / GitHub fetch pipeline:** broader **`GitHubFetcher`** coverage, **`pipeline`** discovery and sitemap helpers aligned with the factory, and **`agent`** fetcher resolution simplified around **`build_fetcher`**.
+- **README** and **wiki** (**`Home`**, **`Architecture`**, **`Commands`**, **`Configuration`**, **`Install-Targets`**, **`Supported-Sources`**): registry-first positioning, trust tier wording (**`maintainer_verified`**), hosted catalog vs local **`query`**, pipeline vs CLI scope, and **`registry.auto_update`** documented as reserved until wired.
+
+### Tests
+
+- **`test_fetcher_github`**, **`test_sitemap`**, **`test_web_fetcher`**, and related suites extended for the factory and GitHub fetch behavior.
+
 ## [0.3.0] - 2026-04-12
 This release replaces the 0.2.x vector stack with a **SQLite FTS5** section index and reframes the CLI around **context packs** for agents. Treat it as a clean upgrade: re-index sources with **`docmancer add`** / **`docmancer update`** after installing.
 

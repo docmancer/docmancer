@@ -1,6 +1,6 @@
 # Supported Sources
 
-docmancer can index content from several source types through `docmancer add`.
+Registry packs (`docmancer pull`) ship with their own extracted sections and SQLite slice; the sources below apply to **`docmancer add`**, where the CLI fetches or reads content and builds the index on your machine.
 
 ## Source types
 

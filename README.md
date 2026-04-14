@@ -12,6 +12,8 @@
 
 Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with SQLite FTS5, and returns compact context packs with source attribution. The goal is agentic runway: your agent should burn tokens on implementation, tests, and debugging, not on rereading entire documentation sites.
 
+**Product shape:** the open source CLI on PyPI is the main distribution. You can **pull** versioned, pre-indexed packs from the public registry at `registry.docmancer.dev`, or **add** docs from URLs and local paths and index them yourself. Either way, sections land in a **local SQLite** database on your machine. There is no hosted “query API”: retrieval runs in the CLI, so your agent loop stays local-first.
+
 In a typical agentic coding session, raw docs pages can consume 30 to 40 percent of the context window. Docmancer compresses that overhead by 60 to 90 percent, so the agent stays sharp longer, runs more iterations before context degradation, and produces more output per session.
 
 <div align="center">
@@ -42,20 +44,20 @@ docmancer query "How do I use hooks?"
 
 ## Registry
 
-The docmancer registry is a public library of pre-indexed, version-aware documentation packs. Pull trusted packs instead of crawling docs yourself:
+The docmancer registry is a **hosted catalog** of pre-indexed, version-aware documentation packs (built by crawl workers from package-registry metadata and published docs URLs). Think of it as a place to **install** trusted docs packs the same way you install packages: search, pull a version, and query locally without re-crawling the whole site on your laptop.
 
 ```bash
 docmancer search langchain
 docmancer pull langchain
-docmancer pull react@18.2        # version pinning (Pro)
+docmancer pull react@18.2        # optional version pin
 docmancer packs                  # list installed packs
 ```
 
-Packs are verified with a three-tier trust model:
+Packs use a three-tier trust model (values in APIs and manifests use snake case, for example `maintainer_verified`):
 
 - **Official** — provenance traced to package registry metadata (PyPI, npm, etc.)
-- **Verified** — library maintainer has claimed ownership
-- **Community** — user-submitted, requires `--community` flag and passes audit
+- **Maintainer verified** — maintainer has claimed ownership through the registry
+- **Community** — user-submitted (for example via `publish`); requires `--community` to pull and should pass `audit`
 
 ### Project manifest
 

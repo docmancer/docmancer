@@ -1,6 +1,6 @@
 # docmancer Wiki
 
-docmancer is documentation context compression infrastructure for coding agents. It pulls pre-indexed packs from a public registry or fetches documentation from URLs and local files, normalizes content into inspectable sections, indexes those sections with SQLite FTS5, and returns compact context packs with source attribution and token savings estimates.
+docmancer is **local-first documentation context** for coding agents: an open source CLI that indexes and queries on your machine with **SQLite FTS5** (no vector DB, no embedding download). A **public registry** at `registry.docmancer.dev` supplies optional, pre-built packs so you can **pull** versioned docs instead of crawling every site yourself. You can still **add** GitBook, Mintlify, web, GitHub, or local markdown; registry packs and self-indexed sources share the same index.
 
 The goal is agentic runway. Every token an agent spends reading raw docs is a token it did not spend writing code, running tests, or debugging. Docmancer compresses documentation context by 60 to 90 percent, so agents run more iterations before context degradation and produce more output per session.
 
@@ -31,7 +31,7 @@ Agents call these commands through installed skill files. No background server r
 
 ## Registry
 
-The docmancer registry is a public library of pre-indexed, version-aware documentation packs. Packs are verified with a three-tier trust model (Official, Verified, Community). See [Commands](./Commands.md) for the full set of registry commands.
+The registry is a hosted catalog of pre-indexed packs maintained alongside the open source CLI. Trust tiers are **official**, **maintainer verified** (`maintainer_verified`), and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related commands.
 
 ## All pages
 

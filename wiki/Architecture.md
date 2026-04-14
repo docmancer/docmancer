@@ -1,14 +1,14 @@
 # Architecture
 
-docmancer has two sources for documentation context: the public registry (pre-indexed packs) and local indexing (URLs and files). Both feed into the same SQLite FTS5 index, so queries search everything seamlessly.
+docmancer has two sources for documentation context: the **public registry** (pre-indexed packs you install) and **local indexing** (URLs and files you add). Both feed into the same SQLite FTS5 index on disk, so `query` searches everything in one pass. There is no separate retrieval service: the CLI talks to the registry only for **search**, **download**, **publish**, and **auth**; context packs are assembled locally.
 
 ## Registry packs
 
-The registry is a public library of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
+The registry is a hosted catalog (default base URL `https://registry.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
 
 When you run `docmancer pull react`, the CLI downloads the archive, verifies its SHA-256 checksum, and imports the pack's sections into your local SQLite database using `ATTACH DATABASE`. Sources from packs are namespaced with a `registry://` prefix to avoid collisions with locally indexed docs.
 
-Packs are built by the pipeline crawler, which discovers documentation URLs from package registries (PyPI, npm, Go, Crates.io, RubyGems), crawls them using docmancer's own `WebFetcher`, and uploads the resulting packs to Supabase Storage.
+Packs are produced by separate **pipeline** workers: they discover documentation URLs from package registries (PyPI, npm, Go, Crates.io, RubyGems), crawl with the same fetch stack as the CLI, and upload archives and metadata to registry storage. The PyPI package you install is still just the CLI and skills; it does not run those workers for you.
 
 ## Local indexing
 

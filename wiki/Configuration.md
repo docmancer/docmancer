@@ -48,7 +48,7 @@ These settings control the optional eval/benchmark layer.
 | `registry.url` | `https://registry.docmancer.dev` | Registry API base URL |
 | `registry.cache_dir` | `~/.docmancer/cache/packs` | Local cache for downloaded pack archives |
 | `registry.auth_path` | `~/.docmancer/auth.json` | Path to stored auth token |
-| `registry.auto_update` | `false` | Auto-update installed packs (Pro tier) |
+| `registry.auto_update` | `true` | Reserved on `RegistryConfig`; not yet consumed by CLI commands (safe to omit from YAML) |
 | `registry.timeout` | `30` | HTTP request timeout in seconds |
 
 ### Packs (project manifest)

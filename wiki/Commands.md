@@ -43,11 +43,11 @@ A quick reference for every top-level docmancer command.
 
 ### Trust tiers
 
-Packs have one of three trust tiers:
+Packs have one of three trust tiers (API and storage use snake case, for example `maintainer_verified`):
 
 - **Official** — provenance traced to package registry metadata (PyPI, npm, Go, Crates.io, RubyGems). No `--community` flag needed.
-- **Verified** — library maintainer has claimed ownership. No `--community` flag needed.
-- **Community** — user-submitted via `docmancer publish`. Requires `--community` flag to pull and must pass `docmancer audit`.
+- **Maintainer verified** — maintainer has claimed ownership in the registry. No `--community` flag needed.
+- **Community** — user-submitted via `docmancer publish`. Requires `--community` flag to pull and should pass `docmancer audit`.
 
 Default search and pull exclude community packs. This is a hard gate, not a warning.
 
