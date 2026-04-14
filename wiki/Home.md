@@ -1,10 +1,8 @@
 # docmancer Wiki
 
-docmancer is **local-first documentation context** for coding agents: an open source CLI that indexes and queries on your machine with **SQLite FTS5** (no vector DB, no embedding download). A **public registry** at `www.docmancer.dev` supplies optional, pre-built packs so you can **pull** versioned docs instead of crawling every site yourself. You can still **add** GitBook, Mintlify, web, GitHub, or local markdown; registry packs and self-indexed sources share the same index.
+Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with SQLite FTS5, and returns compact context packs with source attribution. The open-source CLI on PyPI is the main distribution; the public registry at `www.docmancer.dev` supplies optional pre-indexed packs. See the [README](../README.md) for the full overview and quickstart.
 
-The goal is agentic runway. Every token an agent spends reading raw docs is a token it did not spend writing code, running tests, or debugging. Docmancer compresses documentation context by 60 to 90 percent, so agents run more iterations before context degradation and produce more output per session.
-
-## Getting started
+## Quickstart
 
 ```bash
 pipx install docmancer --python python3.13
@@ -14,34 +12,32 @@ docmancer pull pytest
 docmancer query "How do I use fixtures?"
 ```
 
-`setup` creates the config and SQLite database, auto-detects installed coding agents, and installs skill files so agents can call docmancer directly.
+`setup` creates the config and SQLite database, auto-detects installed coding agents, and installs skill files so agents can call docmancer directly. See [Install Targets](./Install-Targets.md) for where those skill files land.
 
-For a quick overview of every command, see [Commands](./Commands.md).
-
-## Core workflow
-
-The recommended workflow combines registry packs with custom docs:
-
-1. **Pull** pre-indexed packs with `docmancer pull <pack>` or declare them in `docmancer.yaml` and run `docmancer pull`.
-2. **Add** custom or internal docs with `docmancer add <url-or-path>`.
-3. **Query** with `docmancer query "your question"`. Results come from both registry packs and locally indexed docs.
-4. **Update** with `docmancer update` to refresh local sources, or `docmancer packs sync` to apply registry pack pins from `docmancer.yaml`.
-
-Agents call these commands through installed skill files. No background server required.
-
-## Registry
-
-The registry is a hosted catalog of pre-indexed packs maintained alongside the open source CLI. Trust tiers are **official**, **maintainer verified** (`maintainer_verified`), and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related commands.
-
-The **PyPI package stays MIT-licensed open source**: local indexing and `query` are the core product and do not require a commercial license. The **hosted registry** is optional; paid or team-focused plans (for example organization registry use and priority support) apply to that service, not to removing access to the open source CLI.
-
-## All pages
+## Wiki pages
 
 | Page | What it covers |
 | --- | --- |
-| [Architecture](./Architecture.md) | Local indexing, registry packs, retrieval model, and how everything fits together |
-| [Configuration](./Configuration.md) | Full config reference for indexing, query, registry, and web fetch settings |
-| [Supported Sources](./Supported-Sources.md) | GitBook, Mintlify, web, GitHub, local files |
+| [Architecture](./Architecture.md) | How local indexing, registry packs, retrieval, and context packs fit together |
+| [Commands](./Commands.md) | Every CLI command with options and examples |
+| [Configuration](./Configuration.md) | Full `docmancer.yaml` reference: index, query, registry, web fetch, eval |
+| [Supported Sources](./Supported-Sources.md) | GitBook, Mintlify, generic web, GitHub, and local files |
 | [Install Targets](./Install-Targets.md) | Where skill files land for each supported agent |
-| [Commands](./Commands.md) | Every top-level docmancer command |
 | [Troubleshooting](./Troubleshooting.md) | Common install and runtime issues |
+
+## Core workflow
+
+1. **Pull** pre-indexed packs with `docmancer pull <pack>`, or declare them in `docmancer.yaml` and run `docmancer pull` with no arguments.
+2. **Add** custom or internal docs with `docmancer add <url-or-path>`. See [Supported Sources](./Supported-Sources.md) for what works.
+3. **Query** with `docmancer query "your question"`. Results come from both registry packs and locally indexed docs. See [Architecture](./Architecture.md) for how retrieval works.
+4. **Update** with `docmancer update` to refresh local sources, or `docmancer packs sync` to apply registry pack pins from `docmancer.yaml`.
+
+Agents call these commands through installed skill files. No background server is involved.
+
+## Registry
+
+The registry is a hosted catalog of pre-indexed packs at `www.docmancer.dev`. You can search for a pack, pull a specific version, and query it locally without re-crawling the source site. Trust tiers are **official**, **maintainer verified**, and **community** (opt-in with `--community`). See [Commands](./Commands.md) for `search`, `pull`, `publish`, `auth`, and related options.
+
+## Licensing
+
+The PyPI package is MIT-licensed open source. Local indexing and querying work without a commercial plan. The hosted registry is optional; paid offerings (organization registry use, priority support) apply to that service, not the CLI. If you never touch the registry, you still have a complete local docs tool.

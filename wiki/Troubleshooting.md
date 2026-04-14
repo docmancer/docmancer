@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues when installing or running docmancer. For architecture and configuration context, see [Architecture](./Architecture.md) and [Configuration](./Configuration.md).
+Common issues when installing or running docmancer. See also [Architecture](./Architecture.md), [Configuration](./Configuration.md), and [Install Targets](./Install-Targets.md).
 
 ## `pip install` succeeds, but `docmancer` is `command not found`
 

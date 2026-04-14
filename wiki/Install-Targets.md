@@ -1,8 +1,6 @@
 # Install Targets
 
-`docmancer setup` auto-detects installed coding agents and installs skill files in one pass. For manual per-agent installation, use `docmancer install <agent>`.
-
-The skill teaches the agent when and how to call docmancer CLI commands. See [Architecture](./Architecture.md) for how agents fit into the system.
+`docmancer setup` auto-detects installed coding agents and installs skill files in one pass. For manual per-agent installation, use `docmancer install <agent>`. See [Commands](./Commands.md) for the full option reference and [Architecture](./Architecture.md) for how agents fit into the system.
 
 ## Skill locations
 

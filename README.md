@@ -4,17 +4,21 @@
 
 <h1>docmancer</h1>
 
-**Compress documentation context so coding agents spend tokens on code.**
+**Compress documentation context so coding agents spend tokens on code, not docs.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 
+[Get Started](#quickstart) | [What It Does](#what-it-does) | [Registry](#registry) | [Supported Agents](#supported-agents) | [Docs](https://www.docmancer.dev)
+
 </div>
 
-Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with SQLite FTS5, and returns compact context packs with source attribution. The goal is agentic runway: your agent should burn tokens on implementation, tests, and debugging, not on rereading entire documentation sites.
+---
 
-**Product shape:** the open source CLI on PyPI is the main distribution. You can **pull** versioned, pre-indexed packs from the public registry at `www.docmancer.dev`, or **add** docs from URLs and local paths and index them yourself. Either way, sections land in a **local SQLite** database on your machine. There is no hosted “query API”: retrieval runs in the CLI, so your agent loop stays local-first.
+Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with **SQLite FTS5**, and returns compact context packs with source attribution. The goal is agentic runway: your agent should burn tokens on implementation, tests, and debugging, not on rereading entire documentation sites.
+
+**Product shape:** the open-source CLI on PyPI is the main distribution. You can **pull** versioned, pre-indexed packs from the public registry at [`www.docmancer.dev`](https://www.docmancer.dev), or **add** docs from URLs and local paths and index them yourself. Either way, sections land in a **local SQLite** database on your machine. There is no hosted "query API": retrieval runs in the CLI, so your agent loop stays local-first.
 
 In a typical agentic coding session, raw docs pages can consume 30 to 40 percent of the context window. Docmancer compresses that overhead by 60 to 90 percent, so the agent stays sharp longer, runs more iterations before context degradation, and produces more output per session.
 
@@ -23,6 +27,8 @@ In a typical agentic coding session, raw docs pages can consume 30 to 40 percent
 <img src="vhs_videos/demo.gif" alt="CLI demo" style="width: 67%; max-width: 720px; height: auto;" />
 
 </div>
+
+---
 
 ## Quickstart
 
@@ -36,23 +42,21 @@ docmancer query "How do I use fixtures?"
 
 `setup` creates `~/.docmancer/docmancer.yaml`, initializes `~/.docmancer/docmancer.db`, and installs detected agent skills. Use `setup --all` for non-interactive installation across all supported agents.
 
+---
+
 ## What It Does
 
 - **Pull pre-indexed packs** from the public registry, or add docs from any URL or local path.
-- Uses SQLite FTS5 by default. No Qdrant server, no embedding model download, no vector database startup.
+- Uses SQLite FTS5 by default. No vector database, no embedding model download, no external API calls.
 - Stores normalized sections in SQLite and writes extracted markdown/json files under `.docmancer/extracted/` for inspection.
-- Supports documentation URLs, GitHub README and docs markdown, local directories, and markdown/text files.
-- Returns compact context packs with estimated docs-token savings and agentic runway.
+- Supports GitBook, Mintlify, GitHub markdown, local directories, and plain text/markdown files.
+- Returns compact context packs with estimated token savings and source attribution.
 
-## Open source and the registry
-
-The **docmancer** package on PyPI is **MIT-licensed open source**. The core workflows that run on your machine (for example `add`, `update`, `query`, `list`, `inspect`, `remove`, `doctor`, `setup`, and `install`) stay **free to use** and **fully usable** without a commercial docmancer plan: your index and queries stay local.
-
-The **hosted registry** at `www.docmancer.dev` is **optional**. It is there so you can search and **pull** pre-built packs and use account-based flows (for example `publish` and `auth`). **Paid and commercial offerings** (organization-focused registry use, **priority support**, and similar) apply to that hosted service and how you use it, not to locking away the open source CLI. If you never touch the registry, you still have a complete local docs tool.
+---
 
 ## Registry
 
-The docmancer registry is a **hosted catalog** of pre-indexed, version-aware documentation packs derived from package-registry metadata (PyPI, npm, and similar) and published documentation URLs. Think of it as a place to **install** trusted docs packs the same way you install packages: search, pull a version, and query locally without re-crawling the whole site on your laptop.
+The docmancer registry at [`www.docmancer.dev`](https://www.docmancer.dev) is a hosted catalog of pre-indexed, version-aware documentation packs derived from package-registry metadata (PyPI, npm, and similar) and published documentation URLs. You can search for a pack, pull a specific version, and query it locally without re-crawling the source site.
 
 ```bash
 docmancer search langgraph
@@ -61,11 +65,13 @@ docmancer pull pytest@9.0        # optional version pin
 docmancer packs                  # list installed packs
 ```
 
-Packs use a three-tier trust model (values in APIs and manifests use snake case, for example `maintainer_verified`):
+### Trust model
+
+Packs use a three-tier trust model:
 
 - **Official** — provenance traced to package registry metadata (PyPI, npm, etc.)
 - **Maintainer verified** — maintainer has claimed ownership through the registry
-- **Community** — user-submitted (for example via `publish`); requires `--community` to pull and should pass `audit`
+- **Community** — user-submitted (via `publish`); requires `--community` to pull and should pass `audit`
 
 ### Project manifest
 
@@ -80,6 +86,16 @@ packs:
 
 Then run `docmancer pull` with no arguments to install everything. Share the manifest with your team so everyone has the same docs context.
 
+---
+
+## Open Source and the Registry
+
+The **docmancer** package on PyPI is **MIT-licensed open source**. The core workflows that run on your machine (`add`, `update`, `query`, `list`, `inspect`, `remove`, `doctor`, `setup`, and `install`) stay free and fully usable without a commercial plan; your index and queries stay local.
+
+The **hosted registry** at `www.docmancer.dev` is optional. It provides search, pre-built pack downloads, and account-based flows like `publish` and `auth`. Paid offerings (organization registry use, priority support, and similar) apply to the hosted service, not the open-source CLI. If you never touch the registry, you still have a complete local docs tool.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -92,8 +108,8 @@ Then run `docmancer pull` with no arguments to install everything. Share the man
 | `docmancer publish <url>` | Submit a docs URL to the registry for indexing |
 | `docmancer packs` | List locally installed registry packs |
 | `docmancer packs sync` | Sync installed packs with manifest (additive by default) |
-| `docmancer audit <path>` | Scan a local pack archive (`.docmancer-pack`) or extracted directory for suspicious patterns |
-| `docmancer auth login` | Authenticate with the registry (OAuth device code flow in the browser; `--token` stores a token directly) |
+| `docmancer audit <path>` | Scan a local pack archive or extracted directory for suspicious patterns |
+| `docmancer auth login` | Authenticate with the registry (OAuth device code flow) |
 | `docmancer auth status` | Show authentication and subscription tier |
 | `docmancer update` | Re-fetch and re-index all existing docs sources |
 | `docmancer query <text>` | Return a compact markdown context pack |
@@ -107,15 +123,19 @@ Then run `docmancer pull` with no arguments to install everything. Share the man
 | `docmancer init` | Create a project-local `docmancer.yaml` |
 | `docmancer install <agent>` | Advanced/manual skill installation for a single agent |
 
+---
+
 ## Retrieval Shape
 
-By default, `query` uses a 2400 token budget and returns markdown. It includes a summary like:
+By default, `query` uses a 2400 token budget and returns markdown with a summary like:
 
 ```text
 Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.33x agentic runway)
 ```
 
 The savings are estimates, but the direction is explicit: compress docs overhead so the remaining token budget goes into useful agent work.
+
+---
 
 ## Workflow
 
@@ -136,11 +156,15 @@ docmancer query "How do I use the uv pip interface?"
 
 Registry packs and locally indexed docs live in the same SQLite index. Queries search both seamlessly.
 
+---
+
 ## Keeping Docs Up To Date
 
 Run `docmancer update` to refresh all locally-added sources. Docmancer re-fetches each URL or re-reads each local path and updates the index in place.
 
 For registry packs, run `docmancer packs sync` to apply the `packs:` pins in `docmancer.yaml` (install anything missing and flag version mismatches). Bump versions in the manifest when you want newer pack releases, then sync again. Use `docmancer packs sync --prune` to remove packs that no longer match the manifest.
+
+---
 
 ## Project-Local Config
 
@@ -165,6 +189,8 @@ packs:
   uv: "0.11"
 ```
 
+---
+
 ## Supported Agents
 
 `setup` detects common agent installations. Manual installation remains available:
@@ -181,6 +207,16 @@ docmancer install opencode
 
 Claude Desktop receives a zip package that can be uploaded through Claude Desktop's Skills UI.
 
+---
+
 ## Evals
 
 `docmancer eval` is available as an optional quality layer for benchmarking compression quality. It compares raw docs context against docmancer context packs and measures whether token reduction degrades answer quality.
+
+---
+
+<div align="center">
+
+[Quickstart](#quickstart) | [Wiki](./wiki/Home.md) | [Registry](https://www.docmancer.dev) | [PyPI](https://pypi.org/project/docmancer/)
+
+</div>

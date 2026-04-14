@@ -1,6 +1,6 @@
 # Commands
 
-A quick reference for every top-level docmancer command.
+Full reference for every docmancer CLI command. For how these fit into the overall system, see [Architecture](./Architecture.md). For configuration that affects command defaults, see [Configuration](./Configuration.md).
 
 ## Core commands
 
@@ -20,7 +20,7 @@ A quick reference for every top-level docmancer command.
 
 ## Registry commands
 
-These commands talk to the **optional hosted registry**. The open source CLI stays fully usable for local `add` / `query` / `update` without a paid plan; registry accounts and tiers mainly affect hosted features (for example publish, some pull limits, or team support). Exact limits depend on the live registry.
+These commands talk to the optional hosted registry. The open-source CLI stays fully usable for local `add` / `query` / `update` without a paid plan; registry accounts and tiers mainly affect hosted features (for example publish, some pull limits, or team support).
 
 | Command | Description |
 |---------|-------------|

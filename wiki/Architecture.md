@@ -1,8 +1,8 @@
 # Architecture
 
-docmancer has two sources for documentation context: the **public registry** (pre-indexed packs you install) and **local indexing** (URLs and files you add). Both feed into the same SQLite FTS5 index on disk, so `query` searches everything in one pass. There is no separate retrieval service: the CLI talks to the registry only for **search**, **download**, **publish**, and **auth**; context packs are assembled locally.
+Docmancer has two sources for documentation context: the **public registry** (pre-indexed packs you pull) and **local indexing** (URLs and files you add). Both feed into the same SQLite FTS5 index on disk, so `query` searches everything in one pass. There is no separate retrieval service: the CLI talks to the registry only for search, download, publish, and auth; context packs are assembled locally.
 
-The open source **PyPI library** is the full local-first toolchain. The **hosted registry** is optional; commercial or team offerings attach to that hosted layer (for example priority support and organization use), not to making the core CLI proprietary.
+For the full command reference, see [Commands](./Commands.md). For configuration options, see [Configuration](./Configuration.md).
 
 ## Registry packs
 
@@ -18,13 +18,13 @@ Documentation is fetched from URLs or read from local files, then normalized int
 
 Extracted markdown and JSON files are written to `.docmancer/extracted/` so the indexed content is always inspectable on disk.
 
-No embeddings are generated. No vector database is required. The index is fast to build, so `docmancer add` reaches the first useful query quickly.
+No embeddings are generated. No vector database is required. For which documentation sites and file types work with `add`, see [Supported Sources](./Supported-Sources.md).
 
 ## Retrieval
 
-Queries run against the FTS5 index using BM25 ranking. This is a strong fit for documentation retrieval because most queries are dominated by exact API names, option flags, config keys, error strings, and code identifiers.
+Queries run against the FTS5 index using BM25 ranking. This is a good fit for documentation retrieval because most queries are dominated by exact API names, option flags, config keys, error strings, and code identifiers.
 
-Results are sections, not whole pages. The query respects a configurable token budget (default: 2400) and returns only the sections that fit. Adjacent sections or full pages can be included with `--expand`.
+Results are sections, not whole pages. The query respects a configurable token budget (default: 2400) and returns only the sections that fit. Adjacent sections or full pages can be included with `--expand`. See [Configuration](./Configuration.md) for query budget and expansion defaults.
 
 ## Context packs
 
