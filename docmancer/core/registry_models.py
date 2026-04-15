@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -152,7 +152,7 @@ def installed_pack_from_metadata(
         source_url=metadata.source_url,
         total_tokens=metadata.stats.total_tokens,
         sections_count=metadata.stats.sections_count,
-        installed_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        installed_at=datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
         registry_url=registry_url,
         archive_sha256=archive_sha256,
         index_db_sha256=metadata.index_db_sha256,
