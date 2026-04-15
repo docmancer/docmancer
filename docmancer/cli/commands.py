@@ -129,6 +129,54 @@ def _describe_index(config) -> str:
     return f"SQLite FTS5 at {display_path(config.index.db_path)}"
 
 
+def _format_size(num_bytes: int) -> str:
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    if num_bytes < 1024 * 1024 * 1024:
+        return f"{num_bytes / 1024 / 1024:.1f} MB"
+    return f"{num_bytes / 1024 / 1024 / 1024:.1f} GB"
+
+
+def _path_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            total += child.stat().st_size
+    return total
+
+
+def _emit_index_summary(total: int, agent) -> None:
+    click.echo(f"Total: {total} sections indexed")
+    try:
+        stats = agent.collection_stats()
+    except Exception:
+        return
+
+    db_path_value = stats.get("db_path") if isinstance(stats, dict) else None
+    extracted_dir_value = stats.get("extracted_dir") if isinstance(stats, dict) else None
+
+    db_path = Path(db_path_value) if db_path_value else None
+    extracted_dir = Path(extracted_dir_value) if extracted_dir_value else None
+    db_size = _path_size(db_path) if db_path else 0
+    extracted_size = _path_size(extracted_dir) if extracted_dir else 0
+    total_size = db_size + extracted_size
+
+    if total_size:
+        click.echo(f"Storage: {_format_size(total_size)} on disk")
+    if db_path:
+        suffix = f" ({_format_size(db_size)})" if db_size else ""
+        click.echo(f"Index: {display_path(db_path)}{suffix}")
+    if extracted_dir:
+        suffix = f" ({_format_size(extracted_size)})" if extracted_size else ""
+        click.echo(f"Extracted docs: {display_path(extracted_dir)}{suffix}")
+
+
 def _create_agent_or_raise_lock_error(config):
     try:
         return _get_agent_class()(config=config)
@@ -452,7 +500,7 @@ def add_cmd(
             )
         else:
             total = agent.add(path, recreate=recreate)
-        click.echo(f"Total: {total} sections indexed")
+        _emit_index_summary(total, agent)
     except (FileNotFoundError, ValueError) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

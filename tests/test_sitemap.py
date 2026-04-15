@@ -93,6 +93,42 @@ class TestParseXmlContent:
         assert len(entries) == 2  # 2 children, 1 entry each
         assert entries[0]["url"] == "https://example.com/docs/child-page"
 
+    def test_sitemap_index_stops_at_max_entries(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = CHILD_SITEMAP
+
+        client = MagicMock(spec=httpx.Client)
+        client.get.return_value = mock_resp
+
+        entries = _parse_xml_content(SITEMAP_INDEX, client, max_entries=1)
+
+        assert len(entries) == 1
+        assert client.get.call_count == 1
+
+    def test_sitemap_index_skips_out_of_scope_children(self):
+        index = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <sitemap>
+        <loc>https://example.com/transform/sitemap/blog.xml</loc>
+    </sitemap>
+    <sitemap>
+        <loc>https://example.com/transform/sitemap/docs.xml</loc>
+    </sitemap>
+</sitemapindex>"""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = CHILD_SITEMAP
+
+        client = MagicMock(spec=httpx.Client)
+        client.get.return_value = mock_resp
+
+        entries = _parse_xml_content(index, client, scope_base_url="https://example.com/docs")
+
+        assert len(entries) == 1
+        assert client.get.call_count == 1
+        assert client.get.call_args.args[0] == "https://example.com/transform/sitemap/docs.xml"
+
     def test_invalid_xml(self):
         client = MagicMock(spec=httpx.Client)
         entries = _parse_xml_content("not xml at all", client)

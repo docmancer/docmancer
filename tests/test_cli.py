@@ -145,18 +145,30 @@ def test_load_config_prefers_local_docmancer_yaml(tmp_path):
 
 def test_add_shows_total_and_calls_agent(tmp_path):
     runner = CliRunner()
+    db_path = tmp_path / "docmancer.db"
+    db_path.write_bytes(b"x" * 2048)
+    extracted_dir = tmp_path / "extracted"
+    extracted_dir.mkdir()
+    (extracted_dir / "doc.md").write_bytes(b"y" * 1024)
     fake_config = MagicMock()
     fake_config.web_fetch = MagicMock()
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
         mock_agent = MagicMock()
         mock_agent.add.return_value = 42
+        mock_agent.collection_stats.return_value = {
+            "db_path": str(db_path),
+            "extracted_dir": str(extracted_dir),
+        }
         mock_agent_cls.return_value = lambda config: mock_agent
 
         result = runner.invoke(cli, ["add", str(tmp_path)])
 
     assert result.exit_code == 0
     assert "Total: 42 sections indexed" in result.output
+    assert "Storage: 3.0 KB on disk" in result.output
+    assert f"Index: {display_path(db_path)} (2.0 KB)" in result.output
+    assert f"Extracted docs: {display_path(extracted_dir)} (1.0 KB)" in result.output
     mock_agent.add.assert_called_once_with(str(tmp_path), recreate=False)
 
 

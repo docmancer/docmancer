@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import gzip
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 import httpx
 
@@ -18,7 +19,13 @@ logger = logging.getLogger(__name__)
 _SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
 
-def parse_sitemap(sitemap_url: str, client: httpx.Client) -> list[dict[str, str | None]]:
+def parse_sitemap(
+    sitemap_url: str,
+    client: httpx.Client,
+    *,
+    max_entries: int | None = None,
+    scope_base_url: str | None = None,
+) -> list[dict[str, str | None]]:
     """Parse a sitemap URL and return a list of page entries.
 
     Uses direct XML parsing to fetch and parse the specific sitemap URL.
@@ -31,11 +38,19 @@ def parse_sitemap(sitemap_url: str, client: httpx.Client) -> list[dict[str, str 
     Args:
         sitemap_url: URL of the sitemap (e.g. https://example.com/sitemap.xml).
         client: httpx.Client instance to use for fetching.
+        max_entries: Optional maximum number of page entries to return.
+        scope_base_url: Optional docs root used to skip unrelated sitemap
+            children and page URLs on large domains.
 
     Returns:
         List of dicts with keys: url, lastmod (optional), priority (optional).
     """
-    return _parse_sitemap_xml(sitemap_url, client)
+    return _parse_sitemap_xml(
+        sitemap_url,
+        client,
+        max_entries=max_entries,
+        scope_base_url=scope_base_url,
+    )
 
 
 def _try_usp_parse(sitemap_url: str) -> list[dict[str, str | None]] | None:
@@ -61,7 +76,13 @@ def _try_usp_parse(sitemap_url: str) -> list[dict[str, str | None]] | None:
         return None
 
 
-def _parse_sitemap_xml(sitemap_url: str, client: httpx.Client) -> list[dict[str, str | None]]:
+def _parse_sitemap_xml(
+    sitemap_url: str,
+    client: httpx.Client,
+    *,
+    max_entries: int | None = None,
+    scope_base_url: str | None = None,
+) -> list[dict[str, str | None]]:
     """Fallback: parse a sitemap XML directly via httpx + ElementTree.
 
     Handles both namespaced and non-namespaced sitemaps, and follows
@@ -72,13 +93,24 @@ def _parse_sitemap_xml(sitemap_url: str, client: httpx.Client) -> list[dict[str,
         text = _response_text(resp, sitemap_url)
         if resp.status_code != 200 or not text.strip():
             return []
-        return _parse_xml_content(text, client)
+        return _parse_xml_content(
+            text,
+            client,
+            max_entries=max_entries,
+            scope_base_url=scope_base_url,
+        )
     except Exception as exc:
         logger.warning("Failed to fetch sitemap %s: %s", sitemap_url, exc)
         return []
 
 
-def _parse_xml_content(xml_content: str, client: httpx.Client) -> list[dict[str, str | None]]:
+def _parse_xml_content(
+    xml_content: str,
+    client: httpx.Client,
+    *,
+    max_entries: int | None = None,
+    scope_base_url: str | None = None,
+) -> list[dict[str, str | None]]:
     """Parse XML sitemap content, handling both urlsets and sitemap indexes."""
     try:
         root = ET.fromstring(xml_content)
@@ -90,10 +122,17 @@ def _parse_xml_content(xml_content: str, client: httpx.Client) -> list[dict[str,
 
     # Sitemap index: follow child sitemaps
     if "sitemapindex" in tag:
-        return _parse_sitemap_index(root, client)
+        return _parse_sitemap_index(
+            root,
+            client,
+            max_entries=max_entries,
+            scope_base_url=scope_base_url,
+        )
 
     # Regular urlset
-    return _parse_urlset(root)
+    entries = _parse_urlset(root)
+    entries = _filter_entries_for_scope(entries, scope_base_url)
+    return _limit_entries(entries, max_entries)
 
 
 def _parse_urlset(root: ET.Element) -> list[dict[str, str | None]]:
@@ -137,7 +176,13 @@ def _extract_url_entry(url_el: ET.Element, ns: dict[str, str]) -> dict[str, str 
     }
 
 
-def _parse_sitemap_index(root: ET.Element, client: httpx.Client) -> list[dict[str, str | None]]:
+def _parse_sitemap_index(
+    root: ET.Element,
+    client: httpx.Client,
+    *,
+    max_entries: int | None = None,
+    scope_base_url: str | None = None,
+) -> list[dict[str, str | None]]:
     """Follow sitemap index entries and parse each child sitemap."""
     entries = []
 
@@ -157,16 +202,71 @@ def _parse_sitemap_index(root: ET.Element, client: httpx.Client) -> list[dict[st
         ]
 
     for sitemap_loc in sitemap_locs:
+        if not _sitemap_child_in_scope(sitemap_loc, scope_base_url):
+            logger.debug("Skipped child sitemap %s outside scope %s", sitemap_loc, scope_base_url)
+            continue
+        remaining = None if max_entries is None else max_entries - len(entries)
+        if remaining is not None and remaining <= 0:
+            break
         try:
             resp = client.get(sitemap_loc)
             text = _response_text(resp, sitemap_loc)
             if resp.status_code == 200 and text.strip():
-                child_entries = _parse_xml_content(text, client)
+                child_entries = _parse_xml_content(
+                    text,
+                    client,
+                    max_entries=remaining,
+                    scope_base_url=scope_base_url,
+                )
                 entries.extend(child_entries)
         except Exception as exc:
             logger.warning("Failed to fetch child sitemap %s: %s", sitemap_loc, exc)
 
     return entries
+
+
+def _limit_entries(
+    entries: list[dict[str, str | None]],
+    max_entries: int | None,
+) -> list[dict[str, str | None]]:
+    if max_entries is None:
+        return entries
+    return entries[:max(0, max_entries)]
+
+
+def _filter_entries_for_scope(
+    entries: list[dict[str, str | None]],
+    scope_base_url: str | None,
+) -> list[dict[str, str | None]]:
+    if not scope_base_url:
+        return entries
+    return [entry for entry in entries if entry["url"] and _page_url_in_scope(entry["url"], scope_base_url)]
+
+
+def _page_url_in_scope(url: str, scope_base_url: str) -> bool:
+    parsed = urlparse(url)
+    base = urlparse(scope_base_url)
+    if parsed.netloc.lower() != base.netloc.lower():
+        return False
+    base_path = base.path.rstrip("/")
+    if not base_path:
+        return True
+    page_path = parsed.path.rstrip("/")
+    return page_path == base_path or page_path.startswith(f"{base_path}/")
+
+
+def _sitemap_child_in_scope(sitemap_url: str, scope_base_url: str | None) -> bool:
+    if not scope_base_url:
+        return True
+    parsed = urlparse(sitemap_url)
+    base = urlparse(scope_base_url)
+    if parsed.netloc.lower() != base.netloc.lower():
+        return False
+    base_segments = [part.lower() for part in base.path.split("/") if len(part) > 2]
+    if not base_segments:
+        return True
+    sitemap_text = parsed.path.lower()
+    return any(segment in sitemap_text for segment in base_segments)
 
 
 def _response_text(resp: httpx.Response, url: str) -> str:

@@ -79,10 +79,10 @@ def discover_urls(
         List of DiscoveredUrl objects.
     """
     strategies = [
-        (DiscoveryStrategy.LLMS_FULL_TXT, _try_llms_full_txt),
-        (DiscoveryStrategy.LLMS_TXT, _try_llms_txt),
-        (DiscoveryStrategy.ROBOTS_SITEMAP, lambda u, c, p, r: _try_robots_sitemap(u, c, r)),
-        (DiscoveryStrategy.SITEMAP_XML, lambda u, c, p, r: _try_sitemap_xml(u, c)),
+        (DiscoveryStrategy.LLMS_FULL_TXT, lambda u, c, p, r, m: _try_llms_full_txt(u, c, p, r)),
+        (DiscoveryStrategy.LLMS_TXT, lambda u, c, p, r, m: _try_llms_txt(u, c, p, r)),
+        (DiscoveryStrategy.ROBOTS_SITEMAP, lambda u, c, p, r, m: _try_robots_sitemap(u, c, r, m)),
+        (DiscoveryStrategy.SITEMAP_XML, _try_sitemap_xml),
         (DiscoveryStrategy.PLATFORM_SITEMAP, _try_platform_sitemap),
         (DiscoveryStrategy.NAV_CRAWL, _try_nav_crawl),
     ]
@@ -92,9 +92,7 @@ def discover_urls(
             if strategy_enum.value != force_strategy:
                 continue
             try:
-                if strategy_enum == DiscoveryStrategy.NAV_CRAWL:
-                    return (strategy_fn(base_url, client, platform, robots, max_pages) or [])[:max_pages]
-                return (strategy_fn(base_url, client, platform, robots) or [])[:max_pages]
+                return (strategy_fn(base_url, client, platform, robots, max_pages) or [])[:max_pages]
             except Exception as exc:
                 logger.debug("Discovery strategy %s failed: %s", strategy_enum.value, exc)
                 return []
@@ -108,10 +106,7 @@ def discover_urls(
     strategy_counts: dict[str, int] = {}
     for strategy_enum, strategy_fn in strategies[1:]:
         try:
-            if strategy_enum == DiscoveryStrategy.NAV_CRAWL:
-                results = strategy_fn(base_url, client, platform, robots, max_pages)
-            else:
-                results = strategy_fn(base_url, client, platform, robots)
+            results = strategy_fn(base_url, client, platform, robots, max_pages)
             if results:
                 strategy_counts[strategy_enum.value] = len(results)
                 all_results.extend(results)
@@ -244,6 +239,7 @@ def _resolve(url: str, base_url: str) -> str:
 
 def _try_robots_sitemap(
     base_url: str, client: httpx.Client, robots: RobotsChecker | None,
+    max_pages: int = 500,
 ) -> list[DiscoveredUrl] | None:
     """Use Sitemap: directives from robots.txt."""
     if robots is None:
@@ -255,21 +251,32 @@ def _try_robots_sitemap(
 
     all_urls = []
     for sitemap_url in sitemap_urls:
-        entries = parse_sitemap(sitemap_url, client)
+        remaining = max_pages - len(all_urls)
+        if remaining <= 0:
+            break
+        entries = parse_sitemap(sitemap_url, client, max_entries=remaining, scope_base_url=base_url)
         for entry in entries:
             if entry["url"] and is_docs_url(entry["url"], base_url):
                 all_urls.append(
                     DiscoveredUrl(url=entry["url"], strategy=DiscoveryStrategy.ROBOTS_SITEMAP)
                 )
+                if len(all_urls) >= max_pages:
+                    break
 
     return all_urls if all_urls else None
 
 
-def _try_sitemap_xml(base_url: str, client: httpx.Client) -> list[DiscoveredUrl] | None:
+def _try_sitemap_xml(
+    base_url: str,
+    client: httpx.Client,
+    platform: Platform | None = None,
+    robots: RobotsChecker | None = None,
+    max_pages: int = 500,
+) -> list[DiscoveredUrl] | None:
     """Try the standard /sitemap.xml location."""
     for path in ["/sitemap.xml", "/sitemap_index.xml"]:
         sitemap_url = f"{base_url}{path}"
-        entries = parse_sitemap(sitemap_url, client)
+        entries = parse_sitemap(sitemap_url, client, max_entries=max_pages, scope_base_url=base_url)
         if entries:
             results = []
             for entry in entries:
@@ -277,13 +284,19 @@ def _try_sitemap_xml(base_url: str, client: httpx.Client) -> list[DiscoveredUrl]
                     results.append(
                         DiscoveredUrl(url=entry["url"], strategy=DiscoveryStrategy.SITEMAP_XML)
                     )
+                    if len(results) >= max_pages:
+                        break
             if results:
                 return results
     return None
 
 
 def _try_platform_sitemap(
-    base_url: str, client: httpx.Client, platform: Platform, robots: RobotsChecker | None,
+    base_url: str,
+    client: httpx.Client,
+    platform: Platform,
+    robots: RobotsChecker | None,
+    max_pages: int = 500,
 ) -> list[DiscoveredUrl] | None:
     """Try platform-specific sitemap paths."""
     platform_paths: dict[Platform, list[str]] = {
@@ -296,11 +309,11 @@ def _try_platform_sitemap(
     paths = platform_paths.get(platform, [])
     for path in paths:
         sitemap_url = f"{base_url}{path}"
-        entries = parse_sitemap(sitemap_url, client)
+        entries = parse_sitemap(sitemap_url, client, max_entries=max_pages, scope_base_url=base_url)
         if entries:
             results = [
                 DiscoveredUrl(url=e["url"], strategy=DiscoveryStrategy.PLATFORM_SITEMAP)
-                for e in entries
+                for e in entries[:max_pages]
                 if e["url"] and is_docs_url(e["url"], base_url)
             ]
             if results:
