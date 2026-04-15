@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - Unreleased
+### Added
+
+- **`docmancer add`:** after indexing, prints **SQLite** and **extracted** paths with **on-disk sizes** and a total storage line (in addition to the section count).
+
+### Changed
+
+- **Pipeline URL discovery** (**`docmancer/connectors/fetchers/pipeline/discovery.py`**): discovery strategies take **`max_pages`** consistently; **robots.txt** sitemap and default **`/sitemap.xml`** paths respect the cap instead of growing without bound.
+- **Sitemap parsing** (**`sitemap.py`**): **`max_entries`** limits how many URLs are collected; optional **`scope_base_url`** restricts sitemap index child fetches so unrelated sitemap children are skipped (for example blog vs docs trees).
+
+### Fixed
+
+- **Sitemap:** skip XML responses larger than **10 MB**; cap sitemap index child expansion at **50** children to avoid excessive memory use on huge sites.
+
+### Tests
+
+- **`test_sitemap`:** max-entry stop and scoped index child selection.
+- **`test_cli`:** ingest output includes storage summary paths and sizes.
+
 ## [0.3.3] - 2026-04-15
 ### Added
 
@@ -361,6 +380,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.3.4]: https://github.com/docmancer/docmancer/compare/v0.3.3...v0.3.4
 [0.3.0]: https://github.com/docmancer/docmancer/compare/v0.2.3...v0.3.0
 [0.2.2]: https://github.com/docmancer/docmancer/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/docmancer/docmancer/compare/v0.2.0...v0.2.1
