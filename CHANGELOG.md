@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.3] - Unreleased
+## [0.3.3] - 2026-04-15
 ### Added
 
 - **`docmancer install github-copilot`:** writes user **`~/.copilot/copilot-instructions.md`**, or with **`--project`** writes **`.github/copilot-instructions.md`**, merges the Cursor-style **`AGENTS.md`** block when needed, and sets **`github.copilot.chat.codeGeneration.useInstructionFiles`** in **`.vscode/settings.json`** so repository instructions load in VS Code.
