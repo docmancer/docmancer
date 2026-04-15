@@ -78,6 +78,45 @@ def test_install_cursor_creates_agents_md_fallback():
         assert "docmancer add" in agents_md.read_text()
 
 
+def test_install_github_copilot_project_creates_repo_instructions():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "github-copilot", "--project"])
+        assert result.exit_code == 0, result.output
+        copilot_md = Path(".github") / "copilot-instructions.md"
+        agents_md = Path("AGENTS.md")
+        vscode_settings = Path(".vscode") / "settings.json"
+        assert copilot_md.exists()
+        assert agents_md.exists()
+        assert vscode_settings.exists()
+        copilot_content = copilot_md.read_text()
+        assert "docmancer query" in copilot_content
+        assert "MIT open source" in copilot_content
+        assert "docmancer publish <url>" in copilot_content
+        assert "--expand page" in copilot_content
+        assert "docmancer:start" in agents_md.read_text()
+        assert "github.copilot.chat.codeGeneration.useInstructionFiles" in vscode_settings.read_text()
+
+
+def test_setup_detects_vscode_and_installs_github_copilot_project_files():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        (fake_home / "Library" / "Application Support" / "Code").mkdir(parents=True)
+        fake_agent = MagicMock()
+        fake_agent.collection_stats.return_value = {"sources_count": 0, "sections_count": 0}
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.core.config.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
+            result = runner.invoke(cli, ["setup"])
+        assert result.exit_code == 0, result.output
+        assert (Path(".github") / "copilot-instructions.md").exists()
+        assert (Path(".vscode") / "settings.json").exists()
+
+
 def test_install_claude_desktop_creates_zip():
     runner = CliRunner()
     with runner.isolated_filesystem() as tmp_dir:

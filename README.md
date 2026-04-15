@@ -24,7 +24,7 @@ In a typical agentic coding session, raw docs pages can consume 30 to 40 percent
 
 <div align="center">
 
-<img src="vhs_videos/demo.gif" alt="CLI demo" style="width: 67%; max-width: 720px; height: auto;" />
+<img src="readme-assets/demo.gif" alt="CLI demo" style="width: 67%; max-width: 720px; height: auto;" />
 
 </div>
 

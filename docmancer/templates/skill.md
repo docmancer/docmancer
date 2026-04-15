@@ -11,43 +11,45 @@ The PyPI CLI is **MIT open source**; local `add`, `update`, and `query` are the 
 
 Executable: `{{DOCS_KIT_CMD}}`
 
-Primary CLI shape: `docmancer setup`, `docmancer list`, `docmancer query "question"`, `docmancer pull <pack>`, and `docmancer add <url-or-path>`.
+**All commands below use `docmancer` as shorthand for the full executable path above.**
 
 ## Workflow
 
-1. Run `{{DOCS_KIT_CMD}} list` to see indexed docs.
-2. Run `{{DOCS_KIT_CMD}} query "question"` when relevant docs are present.
-3. If docs are missing, run `{{DOCS_KIT_CMD}} search <library>` and then `{{DOCS_KIT_CMD}} pull <pack>` for trusted registry packs.
-4. If no registry pack exists and the user approves the source, run `{{DOCS_KIT_CMD}} add <url-or-path>`.
+1. Run `docmancer list` to see indexed docs.
+2. Run `docmancer query "question"` when relevant docs are present.
+3. If docs are missing, run `docmancer search <library>` and then `docmancer pull <pack>` for trusted registry packs.
+4. If no registry pack exists and the user approves the source, run `docmancer add <url-or-path>`.
 5. Use returned sections as source-grounded context for the answer or code change.
 
 ## Registry Commands
 
 ```bash
-{{DOCS_KIT_CMD}} search react
-{{DOCS_KIT_CMD}} pull react
-{{DOCS_KIT_CMD}} pull react@18.2
-{{DOCS_KIT_CMD}} packs
-{{DOCS_KIT_CMD}} packs sync
+docmancer search pytest
+docmancer pull pytest
+docmancer pull pytest@9.0
+docmancer packs
+docmancer packs sync
+docmancer publish <url>
+docmancer audit <path>
 ```
 
 ## Commands
 
 ```bash
-{{DOCS_KIT_CMD}} setup
-{{DOCS_KIT_CMD}} list
-{{DOCS_KIT_CMD}} search react
-{{DOCS_KIT_CMD}} pull react
-{{DOCS_KIT_CMD}} add https://docs.example.com
-{{DOCS_KIT_CMD}} add ./docs
-{{DOCS_KIT_CMD}} query "how to authenticate"
-{{DOCS_KIT_CMD}} query "how to authenticate" --limit 10
-{{DOCS_KIT_CMD}} query "how to authenticate" --expand
-{{DOCS_KIT_CMD}} query "how to authenticate" --expand page
-{{DOCS_KIT_CMD}} query "how to authenticate" --format json
-{{DOCS_KIT_CMD}} inspect
-{{DOCS_KIT_CMD}} remove <source>
-{{DOCS_KIT_CMD}} doctor
+docmancer setup
+docmancer list
+docmancer search pytest
+docmancer pull pytest
+docmancer add https://docs.example.com
+docmancer add ./docs
+docmancer query "how to authenticate"
+docmancer query "how to authenticate" --limit 10
+docmancer query "how to authenticate" --expand
+docmancer query "how to authenticate" --expand page
+docmancer query "how to authenticate" --format json
+docmancer inspect
+docmancer remove <source>
+docmancer doctor
 ```
 
 `query` prints estimated raw docs tokens, docmancer context-pack tokens, percent saved, and agentic runway. Prefer the compact default first. Use `--expand` for adjacent sections, and use `--expand page` only when the surrounding page is necessary.

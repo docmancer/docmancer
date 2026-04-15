@@ -40,6 +40,7 @@ INSTALL_TARGETS = [
     "codex-app",
     "codex-desktop",
     "gemini",
+    "github-copilot",
     "opencode",
 ]
 
@@ -78,6 +79,10 @@ def _get_gemini_skill_path() -> Path:
 
 def _get_cline_skill_path() -> Path:
     return Path.home() / ".cline" / "skills" / "docmancer" / "SKILL.md"
+
+
+def _get_copilot_user_instructions_path() -> Path:
+    return Path.home() / ".copilot" / "copilot-instructions.md"
 
 
 def _build_user_bootstrap_config():
@@ -338,6 +343,20 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
             dest.write_text(existing.rstrip() + separator + marker_block, encoding="utf-8")
     else:
         dest.write_text(marker_block, encoding="utf-8")
+
+
+def _install_vscode_copilot_settings(dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    settings: dict[str, object] = {}
+    if dest.exists() and dest.read_text(encoding="utf-8").strip():
+        try:
+            settings = json.loads(dest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(f"Could not update {display_path(dest)} because it is not valid JSON: {exc}") from exc
+        if not isinstance(settings, dict):
+            raise click.ClickException(f"Could not update {display_path(dest)} because it must contain a JSON object.")
+    settings["github.copilot.chat.codeGeneration.useInstructionFiles"] = True
+    dest.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +689,7 @@ def doctor_cmd(config_path: str | None):
         ("codex", "codex", _get_codex_skill_path()),
         ("codex-shared", "codex", _get_shared_agent_skill_path()),
         ("gemini", "gemini", _get_gemini_skill_path()),
+        ("github-copilot", "github-copilot", _get_copilot_user_instructions_path()),
         ("opencode", "opencode", home / ".config" / "opencode" / "skills" / "docmancer" / "SKILL.md"),
         ("claude-desktop", "claude-desktop", _get_user_config_dir() / "exports" / "claude-desktop" / "docmancer.zip"),
     ]
@@ -1303,13 +1323,14 @@ def audit_cmd(path: str):
         "docmancer install cursor",
         "docmancer install claude-desktop",
         "docmancer install gemini",
+        "docmancer install github-copilot --project",
         "docmancer install opencode",
         "docmancer install cline",
     ),
 )
 @click.argument("agent", type=click.Choice(INSTALL_TARGETS, case_sensitive=False))
 @click.option("--project", is_flag=True, default=False,
-              help="Install in project-level settings (claude-code, gemini, or cline).")
+              help="Install in project-level settings (claude-code, gemini, cline, or github-copilot).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
@@ -1318,7 +1339,7 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     required. Run 'docmancer add <url-or-path>' first to populate the knowledge base.
 
     AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
-    codex-app, codex-desktop, gemini, opencode
+    codex-app, codex-desktop, gemini, github-copilot, opencode
     """
     config_path = _effective_config(config_path)
     normalized = agent.lower()
@@ -1427,6 +1448,45 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
         )
         return
 
+    if normalized == "github-copilot":
+        content = _build_skill_content("copilot_instructions.md", effective_config_path)
+        if project:
+            copilot_dest = Path(".github") / "copilot-instructions.md"
+            agents_dest = Path("AGENTS.md")
+            settings_dest = Path(".vscode") / "settings.json"
+            _install_or_append_agents_md(copilot_dest, content)
+            _install_or_append_agents_md(agents_dest, content)
+            _install_vscode_copilot_settings(settings_dest)
+            _emit_install_summary(
+                "Install instructions for GitHub Copilot.",
+                [
+                    ("Updated Copilot repository instructions at", copilot_dest),
+                    ("Updated Copilot coding-agent fallback at", agents_dest),
+                    ("Enabled VS Code Copilot instruction files at", settings_dest),
+                ],
+                created_user_config,
+                effective_config_path,
+                "Reload VS Code or start a new Copilot Chat session if the instructions are not picked up immediately.",
+                extra_lines=[
+                    "Copilot Chat and code review use .github/copilot-instructions.md.",
+                    "Copilot coding agent can also read AGENTS.md.",
+                ],
+            )
+        else:
+            dest = _get_copilot_user_instructions_path()
+            _install_or_append_agents_md(dest, content)
+            _emit_install_summary(
+                "Install user instructions for GitHub Copilot CLI.",
+                [("Updated Copilot user instructions at", dest)],
+                created_user_config,
+                effective_config_path,
+                "Start a new Copilot CLI session for the instructions to take effect.",
+                extra_lines=[
+                    "For Copilot in VS Code, Xcode, JetBrains, or GitHub.com, run `docmancer install github-copilot --project` inside each repository.",
+                ],
+            )
+        return
+
     if normalized == "gemini":
         if project:
             dest = Path(".gemini") / "skills" / "docmancer" / "SKILL.md"
@@ -1493,6 +1553,14 @@ def _detect_setup_targets() -> list[str]:
     # when its macOS support directory exists.
     if (home / "Library" / "Application Support" / "Claude").exists():
         targets.append("claude-desktop")
+    vscode_ext_dir = home / ".vscode" / "extensions"
+    vscode_app_dir = home / "Library" / "Application Support" / "Code"
+    if (
+        _get_copilot_user_instructions_path().parent.exists()
+        or vscode_app_dir.exists()
+        or (vscode_ext_dir.exists() and any(vscode_ext_dir.glob("github.copilot*")))
+    ):
+        targets.append("github-copilot")
     return targets
 
 
@@ -1542,6 +1610,6 @@ def setup_cmd(install_all: bool, agents: tuple[str, ...], config_path: str | Non
 
     for target in dict.fromkeys(selected):
         ctx = click.get_current_context()
-        ctx.invoke(install_cmd, agent=target, project=False, config_path=str(config_file))
+        ctx.invoke(install_cmd, agent=target, project=(target == "github-copilot"), config_path=str(config_file))
 
     _emit_next_step("Run `docmancer pull <library>` or `docmancer add <url-or-path>`, then `docmancer query \"your question\"`.")

@@ -1,13 +1,3 @@
----
-name: docmancer
-description: Search local documentation context packs with docmancer CLI. Use when the user asks about library docs, API references, vendor docs, version-specific behavior, offline docs, or wants to add docs before answering a technical question.
-allowed-tools:
-  - Bash(docmancer *)
-  - Bash({{DOCS_KIT_CMD}} *)
-  - Bash({{DOCS_KIT_CMD}} pull *)
-  - Bash({{DOCS_KIT_CMD}} search *)
----
-
 # docmancer
 
 Docmancer compresses documentation context so coding agents spend tokens on code, not on rereading raw docs.
@@ -17,6 +7,8 @@ The PyPI CLI is **MIT open source**; local `add`, `update`, and `query` are the 
 Executable: `{{DOCS_KIT_CMD}}`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
+
+Use docmancer when the user asks about library docs, API references, vendor docs, version-specific behavior, offline docs, or wants to add docs before answering a technical question.
 
 ## Workflow
 
@@ -45,6 +37,7 @@ docmancer setup
 docmancer list
 docmancer search pytest
 docmancer pull pytest
+docmancer pull pytest@9.0
 docmancer add https://docs.example.com
 docmancer add ./docs
 docmancer query "how to authenticate"
@@ -60,3 +53,5 @@ docmancer doctor
 `query` prints estimated raw docs tokens, docmancer context-pack tokens, percent saved, and agentic runway. Prefer the compact default first. Use `--expand` for adjacent sections, and use `--expand page` only when the surrounding page is necessary.
 
 `add` supports documentation URLs, GitHub repositories with README and docs markdown, local directories, markdown files, and text files. Extracted markdown/json remains inspectable under the configured `.docmancer/extracted` directory.
+
+When documentation context is relevant, do not rely only on model memory or latest-only hosted docs. Query Docmancer first, then cite or summarize the relevant local sections in the response.
