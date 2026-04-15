@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Sitemap XML namespace
 _SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
+# Skip sitemap responses larger than 10 MB to avoid memory exhaustion.
+_MAX_SITEMAP_RESPONSE_BYTES = 10 * 1024 * 1024
+
 
 def parse_sitemap(
     sitemap_url: str,
@@ -90,6 +93,12 @@ def _parse_sitemap_xml(
     """
     try:
         resp = client.get(sitemap_url)
+        if len(resp.content) > _MAX_SITEMAP_RESPONSE_BYTES:
+            logger.warning(
+                "Skipped oversized sitemap %s (%d bytes > %d limit)",
+                sitemap_url, len(resp.content), _MAX_SITEMAP_RESPONSE_BYTES,
+            )
+            return []
         text = _response_text(resp, sitemap_url)
         if resp.status_code != 200 or not text.strip():
             return []
@@ -182,8 +191,14 @@ def _parse_sitemap_index(
     *,
     max_entries: int | None = None,
     scope_base_url: str | None = None,
+    max_children: int = 50,
 ) -> list[dict[str, str | None]]:
-    """Follow sitemap index entries and parse each child sitemap."""
+    """Follow sitemap index entries and parse each child sitemap.
+
+    Args:
+        max_children: Hard cap on child sitemaps fetched to prevent memory
+            exhaustion on massive sites (e.g. docs.microsoft.com).
+    """
     entries = []
 
     # Try with namespace
@@ -201,7 +216,14 @@ def _parse_sitemap_index(
             if loc.text
         ]
 
+    children_fetched = 0
     for sitemap_loc in sitemap_locs:
+        if children_fetched >= max_children:
+            logger.info(
+                "Stopped following child sitemaps after %d (cap %d), %d entries so far",
+                children_fetched, max_children, len(entries),
+            )
+            break
         if not _sitemap_child_in_scope(sitemap_loc, scope_base_url):
             logger.debug("Skipped child sitemap %s outside scope %s", sitemap_loc, scope_base_url)
             continue
@@ -219,8 +241,10 @@ def _parse_sitemap_index(
                     scope_base_url=scope_base_url,
                 )
                 entries.extend(child_entries)
+            children_fetched += 1
         except Exception as exc:
             logger.warning("Failed to fetch child sitemap %s: %s", sitemap_loc, exc)
+            children_fetched += 1
 
     return entries
 
