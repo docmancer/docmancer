@@ -110,13 +110,52 @@ def infer_docset_root(url: str) -> str | None:
     return host_root
 
 
+def _infer_scope_path(base_path: str) -> str:
+    """Widen a deep base path to the nearest docs section boundary.
+
+    When a user passes a URL like ``/docs/ai/overview``, we want to scope
+    the crawl to ``/docs/ai`` (the section root), not just ``/docs/ai/overview``.
+    This lets sibling pages like ``/docs/ai/agents`` be discovered from sitemaps.
+
+    The algorithm walks up from the deepest segment and stops at:
+    - A recognized docs root segment (``docs``, ``api``, ``reference``, etc.)
+      with at least one child segment (e.g. ``/docs/ai`` keeps ``ai``).
+    - One level above the leaf if no root hint is found (strips the leaf).
+
+    If the base path has two or fewer segments, it is returned unchanged.
+    """
+    parts = [p for p in base_path.strip("/").split("/") if p]
+
+    if len(parts) <= 2:
+        return base_path.rstrip("/")
+
+    # Find the deepest root-hint segment.
+    root_idx = None
+    for i, segment in enumerate(parts):
+        if segment.lower() in _ROOT_HINT_SEGMENTS:
+            root_idx = i
+
+    if root_idx is not None and root_idx + 1 < len(parts):
+        # Keep the root hint plus one child: /docs/ai
+        scope_parts = parts[: root_idx + 2]
+    else:
+        # No root hint found; strip the leaf segment: /a/b/c -> /a/b
+        scope_parts = parts[:-1]
+
+    return "/" + "/".join(scope_parts)
+
+
 def is_docs_url(url: str, base_url: str) -> bool:
     """Check if a URL is within the documentation scope.
 
     A URL is in scope if:
     - It shares the same domain as the base URL
-    - Its path starts at or below the base path
+    - Its path starts at or below the inferred scope path
     - It does not match any blocklist pattern
+
+    The scope path is widened from the exact base URL to the nearest
+    docs section boundary so that sibling pages are included. For
+    example, ``/docs/ai/overview`` widens to ``/docs/ai``.
 
     Args:
         url: The candidate URL to check.
@@ -139,10 +178,10 @@ def is_docs_url(url: str, base_url: str) -> bool:
     if parsed.netloc.lower() != base_parsed.netloc.lower():
         return False
 
-    # Must be at or below the base path
-    base_path = base_parsed.path.rstrip("/")
+    # Must be at or below the inferred scope path
+    scope_path = _infer_scope_path(base_parsed.path.rstrip("/"))
     url_path = parsed.path.rstrip("/")
-    if base_path and not url_path.startswith(base_path):
+    if scope_path and not url_path.startswith(scope_path):
         return False
 
     # Must not match blocklist

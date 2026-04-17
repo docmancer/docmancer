@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from docmancer.connectors.fetchers.pipeline.filtering import (
     ContentDeduplicator,
+    _infer_scope_path,
     infer_docset_root,
     is_docs_url,
     normalize_url,
@@ -64,6 +65,30 @@ class TestInferDocsetRoot:
 # is_docs_url tests
 # ---------------------------------------------------------------------------
 
+class TestInferScopePath:
+    def test_shallow_path_unchanged(self):
+        assert _infer_scope_path("/docs") == "/docs"
+        assert _infer_scope_path("/docs/getting-started") == "/docs/getting-started"
+
+    def test_deep_path_with_root_hint_widens(self):
+        # /docs/ai/overview -> /docs/ai (root hint "docs" + one child "ai")
+        assert _infer_scope_path("/docs/ai/overview") == "/docs/ai"
+
+    def test_deeper_path_with_root_hint(self):
+        # /docs/ai/overview/install -> /docs/ai
+        assert _infer_scope_path("/docs/ai/overview/install") == "/docs/ai"
+
+    def test_reference_root_hint(self):
+        assert _infer_scope_path("/reference/api/v1/users") == "/reference/api/v1"
+
+    def test_no_root_hint_strips_leaf(self):
+        # No recognized segment, so strip the leaf
+        assert _infer_scope_path("/a/b/c/d") == "/a/b/c"
+
+    def test_api_root_hint(self):
+        assert _infer_scope_path("/api/v2/endpoints/auth") == "/api/v2"
+
+
 class TestIsDocsUrl:
     def test_same_domain_in_scope(self):
         assert is_docs_url("https://example.com/docs/page", "https://example.com/docs")
@@ -95,6 +120,16 @@ class TestIsDocsUrl:
         assert is_docs_url("https://example.com/docs/getting-started", base)
         assert is_docs_url("https://example.com/docs/api/reference", base)
         assert is_docs_url("https://example.com/docs/guides/auth/oauth", base)
+
+    def test_deep_base_url_widens_scope(self):
+        """A deep base URL like /docs/ai/overview should include sibling paths."""
+        base = "https://pydantic.dev/docs/ai/overview"
+        assert is_docs_url("https://pydantic.dev/docs/ai/overview/", base)
+        assert is_docs_url("https://pydantic.dev/docs/ai/advanced-features/input/", base)
+        assert is_docs_url("https://pydantic.dev/docs/ai/api/models/anthropic/", base)
+        # Outside the /docs/ai section
+        assert not is_docs_url("https://pydantic.dev/docs/concepts/models/", base)
+        assert not is_docs_url("https://pydantic.dev/blog/post/", base)
 
     def test_root_base_allows_docs_paths(self):
         base = "https://example.com"

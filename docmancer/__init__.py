@@ -4,11 +4,15 @@ from docmancer._version import __version__
 
 __all__ = [
     "__version__",
+    "AsyncDocmancerAgent",
     "DocmancerAgent",
+    "DocmancerClient",
     "DocmancerConfig",
     "Chunk",
     "Document",
     "RetrievedChunk",
+    "build_rag_prompt",
+    "format_context",
 ]
 
 
@@ -17,6 +21,14 @@ def __getattr__(name: str):
         from docmancer.agent import DocmancerAgent
 
         return DocmancerAgent
+    if name == "AsyncDocmancerAgent":
+        from docmancer.async_agent import AsyncDocmancerAgent
+
+        return AsyncDocmancerAgent
+    if name == "DocmancerClient":
+        from docmancer.client import DocmancerClient
+
+        return DocmancerClient
     if name == "DocmancerConfig":
         from docmancer.core.config import DocmancerConfig
 
@@ -29,4 +41,12 @@ def __getattr__(name: str):
             "Document": Document,
             "RetrievedChunk": RetrievedChunk,
         }[name]
+    if name == "format_context":
+        from docmancer.context import format_context
+
+        return format_context
+    if name == "build_rag_prompt":
+        from docmancer.context import build_rag_prompt
+
+        return build_rag_prompt
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

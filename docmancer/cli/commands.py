@@ -457,7 +457,7 @@ def init_cmd(directory: str | None):
 @click.argument("path")
 @click.option("--recreate", is_flag=True, help="Recreate the collection first.")
 @click.option("--provider", default="auto", show_default=True,
-              type=click.Choice(["auto", "gitbook", "mintlify", "web", "github"], case_sensitive=False),
+              type=click.Choice(["auto", "gitbook", "mintlify", "web", "github", "crawl4ai"], case_sensitive=False),
               help="Docs platform. auto tries llms.txt then sitemap.xml. web uses generic pipeline.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 @click.option("--max-pages", default=500, show_default=True, type=int,

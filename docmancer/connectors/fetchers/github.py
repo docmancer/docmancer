@@ -99,11 +99,12 @@ class GitHubFetcher:
         - https://github.com/owner/repo
         - https://github.com/owner/repo/tree/main
         - https://github.com/owner/repo/tree/main/docs
+        - https://github.com/owner/repo/blob/main/README.md
 
         Returns a Document for each matching markdown file.
         Raises ValueError if the repo cannot be accessed.
         """
-        owner, repo, branch = self._parse_repo_url(url)
+        owner, repo, branch, explicit_file = self._parse_repo_url(url)
 
         with httpx.Client(
             timeout=self._timeout, follow_redirects=True
@@ -111,6 +112,12 @@ class GitHubFetcher:
             # Resolve the branch if it was not specified in the URL.
             if not branch:
                 branch = self._get_default_branch(owner, repo, client)
+
+            # Single-file mode: /blob/ URL pointing at a specific file.
+            if explicit_file:
+                return self._fetch_single_file(
+                    owner, repo, branch, explicit_file, client
+                )
 
             all_files = self._list_repo_tree(owner, repo, branch, client)
             context_config = self._load_context7_config(owner, repo, branch, all_files, client)
@@ -196,18 +203,66 @@ class GitHubFetcher:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _fetch_single_file(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        file_path: str,
+        client: httpx.Client,
+    ) -> list[Document]:
+        """Fetch a single file from a /blob/ URL."""
+        content = self._fetch_raw_file(owner, repo, branch, file_path, client)
+        if content is None:
+            raise ValueError(
+                f"Could not fetch file {file_path!r} from "
+                f"https://github.com/{owner}/{repo} (branch {branch!r})"
+            )
+        content = self._normalize_file_content(file_path, content)
+        if not content.strip():
+            raise ValueError(
+                f"File {file_path!r} in https://github.com/{owner}/{repo} "
+                f"is empty after normalization"
+            )
+
+        raw_url = (
+            f"https://raw.githubusercontent.com/"
+            f"{owner}/{repo}/{branch}/{file_path}"
+        )
+        fmt = "markdown" if file_path.endswith((".md", ".mdx", ".ipynb")) else "text"
+        fetched_at = datetime.now(timezone.utc).isoformat()
+
+        return [
+            Document(
+                source=raw_url,
+                content=content,
+                metadata={
+                    "format": fmt,
+                    "repo": f"{owner}/{repo}",
+                    "branch": branch,
+                    "file_path": file_path,
+                    "docset_root": f"https://github.com/{owner}/{repo}",
+                    "fetch_method": "github",
+                    "context7_rules": [],
+                    "fetched_at": fetched_at,
+                },
+            )
+        ]
+
     @staticmethod
-    def _parse_repo_url(url: str) -> tuple[str, str, str]:
-        """Extract (owner, repo, branch) from a GitHub URL.
+    def _parse_repo_url(url: str) -> tuple[str, str, str, str]:
+        """Extract (owner, repo, branch, file_path) from a GitHub URL.
 
         If the branch is not present in the URL the third element is an
         empty string, signalling the caller to resolve it via the API.
+        ``file_path`` is non-empty only for ``/blob/`` URLs that point at
+        a specific file.
         Handles trailing slashes and a ``.git`` suffix on the repo name.
         """
         url = url.rstrip("/")
 
         match = re.match(
-            r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/tree/([^/]+)(?:/.*)?)?$",
+            r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/(?:tree|blob)/([^/]+)(?:/(.+))?)?$",
             url,
         )
         if not match:
@@ -218,7 +273,8 @@ class GitHubFetcher:
         owner = match.group(1)
         repo = match.group(2)
         branch = match.group(3) or ""
-        return owner, repo, branch
+        file_path = match.group(4) or ""
+        return owner, repo, branch, file_path
 
     def _get_default_branch(
         self, owner: str, repo: str, client: httpx.Client

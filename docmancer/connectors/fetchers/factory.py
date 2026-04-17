@@ -9,7 +9,7 @@ def detect_fetcher_provider(url: str, provider: str | None = None) -> str:
         return provider.lower()
 
     parsed = urlparse(url)
-    if parsed.netloc.lower() == "github.com" and not parsed.path.endswith((".md", ".txt")):
+    if parsed.netloc.lower() == "github.com":
         return "github"
 
     return "web"
@@ -42,6 +42,17 @@ def build_fetcher(
         from docmancer.connectors.fetchers.github import GitHubFetcher
 
         return GitHubFetcher(timeout=timeout)
+
+    if concrete == "crawl4ai":
+        from docmancer.connectors.fetchers.crawl4ai import Crawl4AIFetcher
+
+        return Crawl4AIFetcher(
+            timeout=timeout,
+            max_pages=max_pages,
+            respect_robots=respect_robots,
+            delay=delay,
+            workers=workers,
+        )
 
     from docmancer.connectors.fetchers.web import WebFetcher
 

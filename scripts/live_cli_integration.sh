@@ -24,6 +24,9 @@ ADD_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
 ADD_STRATEGY="${DOCMANCER_LIVE_STRATEGY:-}"
 RUN_WEB_VARIANTS="${DOCMANCER_RUN_WEB_VARIANTS:-0}"
 RUN_BROWSER_VARIANT="${DOCMANCER_RUN_BROWSER_VARIANT:-0}"
+RUN_CRAWL4AI_VARIANT="${DOCMANCER_RUN_CRAWL4AI_VARIANT:-0}"
+RUN_GITHUB_BLOB="${DOCMANCER_RUN_GITHUB_BLOB:-1}"
+GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pydantic/pydantic/blob/main/README.md}"
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_REGISTRY_LIVE="${DOCMANCER_RUN_REGISTRY_LIVE:-0}"
 REGISTRY_SEARCH_QUERY="${DOCMANCER_REGISTRY_SEARCH_QUERY:-langchain}"
@@ -130,6 +133,8 @@ print_info "Local crawl strategy: ${ADD_STRATEGY:-<default>}"
 print_info "Fetch markdown step: $RUN_FETCH_STEP"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
+print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
+print_info "GitHub blob URL test: $RUN_GITHUB_BLOB"
 print_info "Registry live calls: $RUN_REGISTRY_LIVE"
 print_info "Registry search query: $REGISTRY_SEARCH_QUERY"
 print_info "Registry pull ref: $REGISTRY_PULL_REF"
@@ -263,6 +268,24 @@ if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
   run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 fi
 
+if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
+  print_banner "Add live docs with Crawl4AI provider"
+  print_info "Running the Crawl4AI-backed fetch path. Requires: pip install docmancer[crawl4ai] && crawl4ai-setup"
+  run_live_add 0 20 crawl4ai
+  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
+fi
+
+if [[ "$RUN_GITHUB_BLOB" == "1" ]]; then
+  print_banner "Add a single GitHub blob URL"
+  print_info "Fetching a single markdown file via a GitHub /blob/ URL: $GITHUB_BLOB_URL"
+  run "${CLI_CMD[@]}" add "$GITHUB_BLOB_URL" --recreate --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
+  # Query with a term likely to appear in the README; tolerate no-results (exit 1) gracefully.
+  run "${CLI_CMD[@]}" query "pydantic validation" --limit 3 --config "$CONFIG_PATH" || true
+fi
+
 REMOTE_SOURCE="$(capture_first_source)"
 if [[ -n "$REMOTE_SOURCE" ]]; then
   print_banner "Remove a single live source or docset"
@@ -270,6 +293,69 @@ if [[ -n "$REMOTE_SOURCE" ]]; then
   run "${CLI_CMD[@]}" remove "$REMOTE_SOURCE" --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
 fi
+
+print_banner "Library API smoke test"
+print_info "Exercising the programmatic DocmancerClient, format_context, and AsyncDocmancerAgent APIs."
+run "$VENV_PYTHON" -c "
+import sys, pathlib, tempfile
+
+# Verify all public exports are importable.
+from docmancer import (
+    DocmancerAgent, AsyncDocmancerAgent, DocmancerClient,
+    DocmancerConfig, Document, RetrievedChunk, Chunk,
+    format_context, build_rag_prompt,
+)
+print('All public exports imported OK')
+
+# DocmancerClient: ingest a local file and query.
+tmp = pathlib.Path(tempfile.mkdtemp())
+db_path = str(tmp / 'lib_test.db')
+md_file = tmp / 'sample.md'
+md_file.write_text('# Auth\n\nUse OAuth tokens.\n\n# API\n\nCall POST /api/v1/login.\n')
+
+client = DocmancerClient(db_path=db_path)
+sections = client.add(str(md_file))
+print(f'DocmancerClient.add indexed {sections} section(s)')
+
+ctx_md = client.get_context('OAuth tokens', style='markdown')
+print(f'Markdown context ({len(ctx_md)} chars): {ctx_md[:80]}...')
+
+ctx_xml = client.get_context('login endpoint', style='xml')
+print(f'XML context ({len(ctx_xml)} chars): {ctx_xml[:80]}...')
+
+ctx_plain = client.get_context('oauth', style='plain')
+print(f'Plain context ({len(ctx_plain)} chars): {ctx_plain[:80]}...')
+
+# format_context standalone.
+chunks = client.get_chunks('auth')
+formatted = format_context(chunks, style='xml', include_sources=True)
+assert '<doc' in formatted, 'format_context XML output missing <doc> tag'
+print(f'format_context OK ({len(formatted)} chars)')
+
+# build_rag_prompt.
+prompt = build_rag_prompt(chunks, 'How do I log in?', instruction='Be concise.')
+assert 'Question: How do I log in?' in prompt
+print(f'build_rag_prompt OK ({len(prompt)} chars)')
+
+# AsyncDocmancerAgent round-trip.
+import asyncio
+from docmancer.core.config import DocmancerConfig, IndexConfig
+async_db = str(tmp / 'async_test.db')
+cfg = DocmancerConfig(index=IndexConfig(db_path=async_db))
+agent = AsyncDocmancerAgent(config=cfg)
+async def _run():
+    n = await agent.ingest_documents([
+        Document(source='test://a', content='# Hello\n\nWorld.', metadata={}),
+    ])
+    r = await agent.query('hello')
+    ctx = await agent.query_context('hello', style='xml')
+    return n, len(r), len(ctx)
+n, rcount, clen = asyncio.run(_run())
+print(f'AsyncDocmancerAgent: ingested={n}, results={rcount}, context_len={clen}')
+
+print('Library API smoke test passed.')
+"
+print_ok "Programmatic API exercised successfully."
 
 print_banner "Remove all data"
 print_info "Clearing the isolated index to verify removal behavior and final doctor output."

@@ -114,7 +114,7 @@ class DocmancerAgent:
         )
 
     def _auto_detect_provider(self, url: str) -> str:
-        if "github.com" in url and not url.endswith((".md", ".txt")):
+        if "github.com" in url:
             logger.info("Detected GitHub URL")
             return "github"
 
@@ -190,6 +190,26 @@ class DocmancerAgent:
             budget=budget or self.config.query.default_budget,
             expand=expand if expand is not None else self.config.query.default_expand,
         )
+
+    def query_context(
+        self,
+        text: str,
+        *,
+        style: str = "markdown",
+        include_sources: bool = True,
+        limit: int | None = None,
+        budget: int | None = None,
+        expand: str | None = None,
+    ) -> str:
+        """Query the index and return a formatted context string.
+
+        Combines :meth:`query` and :func:`~docmancer.context.format_context`
+        into a single call for convenience.
+        """
+        chunks = self.query(text, limit=limit, budget=budget, expand=expand)
+        from docmancer.context import format_context
+
+        return format_context(chunks, style=style, include_sources=include_sources)
 
     def collection_stats(self) -> dict:
         return self.store.collection_stats()

@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from docmancer.connectors.fetchers.factory import detect_fetcher_provider
 from docmancer.connectors.fetchers.github import GitHubFetcher
 
 
@@ -18,20 +21,36 @@ def _make_response(status_code: int, text: str = "", json_data=None) -> MagicMoc
 
 class TestParseRepoUrl:
     def test_parse_repo_url_standard(self):
-        owner, repo, branch = GitHubFetcher._parse_repo_url("https://github.com/owner/repo")
-        assert (owner, repo, branch) == ("owner", "repo", "")
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url("https://github.com/owner/repo")
+        assert (owner, repo, branch, file_path) == ("owner", "repo", "", "")
 
     def test_parse_repo_url_with_branch(self):
-        owner, repo, branch = GitHubFetcher._parse_repo_url("https://github.com/owner/repo/tree/main")
-        assert (owner, repo, branch) == ("owner", "repo", "main")
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url("https://github.com/owner/repo/tree/main")
+        assert (owner, repo, branch, file_path) == ("owner", "repo", "main", "")
 
     def test_parse_repo_url_trailing_slash(self):
-        owner, repo, branch = GitHubFetcher._parse_repo_url("https://github.com/owner/repo/")
-        assert (owner, repo, branch) == ("owner", "repo", "")
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url("https://github.com/owner/repo/")
+        assert (owner, repo, branch, file_path) == ("owner", "repo", "", "")
 
     def test_parse_repo_url_dot_git(self):
-        owner, repo, branch = GitHubFetcher._parse_repo_url("https://github.com/owner/repo.git")
-        assert (owner, repo, branch) == ("owner", "repo", "")
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url("https://github.com/owner/repo.git")
+        assert (owner, repo, branch, file_path) == ("owner", "repo", "", "")
+
+    def test_parse_blob_url_single_file(self):
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url(
+            "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md"
+        )
+        assert (owner, repo, branch, file_path) == ("anthropics", "claude-code", "main", "CHANGELOG.md")
+
+    def test_parse_blob_url_nested_file(self):
+        owner, repo, branch, file_path = GitHubFetcher._parse_repo_url(
+            "https://github.com/owner/repo/blob/develop/docs/guide/intro.md"
+        )
+        assert (owner, repo, branch, file_path) == ("owner", "repo", "develop", "docs/guide/intro.md")
+
+    def test_invalid_url_raises(self):
+        with pytest.raises(ValueError, match="does not look like a GitHub repository"):
+            GitHubFetcher._parse_repo_url("https://example.com/not-github")
 
 
 class TestMatchesPatterns:
@@ -153,3 +172,70 @@ class TestFetch:
 
         assert "# Tutorial" in docs[0].content
         assert "```python" in docs[0].content
+
+
+class TestSingleFileFetch:
+    def test_blob_url_fetches_single_file(self):
+        """A /blob/ URL should fetch just that one file from raw.githubusercontent.com."""
+        file_content = "# Changelog\n\nAll notable changes..."
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        def mock_get(url, **kwargs):
+            if "raw.githubusercontent.com" in url and "CHANGELOG.md" in url:
+                return _make_response(200, text=file_content)
+            return _make_response(404)
+
+        mock_client.get = mock_get
+
+        with patch("httpx.Client", return_value=mock_client):
+            fetcher = GitHubFetcher()
+            docs = fetcher.fetch(
+                "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md"
+            )
+
+        assert len(docs) == 1
+        assert docs[0].content == file_content
+        assert docs[0].metadata["file_path"] == "CHANGELOG.md"
+        assert docs[0].metadata["branch"] == "main"
+        assert docs[0].metadata["repo"] == "anthropics/claude-code"
+        assert docs[0].metadata["fetch_method"] == "github"
+        assert "raw.githubusercontent.com" in docs[0].source
+
+    def test_blob_url_missing_file_raises(self):
+        """A /blob/ URL pointing at a non-existent file should raise ValueError."""
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = _make_response(404)
+
+        with patch("httpx.Client", return_value=mock_client):
+            fetcher = GitHubFetcher()
+            with pytest.raises(ValueError, match="Could not fetch file"):
+                fetcher.fetch(
+                    "https://github.com/owner/repo/blob/main/missing.md"
+                )
+
+
+class TestFactoryRouting:
+    def test_github_repo_url_routes_to_github(self):
+        assert detect_fetcher_provider("https://github.com/owner/repo") == "github"
+
+    def test_github_md_url_routes_to_github(self):
+        assert detect_fetcher_provider(
+            "https://github.com/owner/repo/blob/main/README.md"
+        ) == "github"
+
+    def test_github_txt_url_routes_to_github(self):
+        assert detect_fetcher_provider(
+            "https://github.com/owner/repo/blob/main/notes.txt"
+        ) == "github"
+
+    def test_non_github_url_routes_to_web(self):
+        assert detect_fetcher_provider("https://docs.example.com") == "web"
+
+    def test_explicit_provider_overrides(self):
+        assert detect_fetcher_provider(
+            "https://github.com/owner/repo", provider="web"
+        ) == "web"
