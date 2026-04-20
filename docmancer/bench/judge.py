@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from docmancer.eval.dataset import EvalDataset
+from docmancer.bench.dataset import BenchDataset
 
 
 @dataclass
@@ -32,7 +32,7 @@ def ragas_available() -> bool:
 
 
 def run_judge_eval(
-    dataset: EvalDataset,
+    dataset: BenchDataset,
     query_fn,
     k: int = 5,
     api_key: str | None = None,
@@ -67,7 +67,7 @@ def run_judge_eval(
     answers = []
     ground_truths = []
 
-    for entry in dataset.entries:
+    for entry in dataset.questions:
         if not entry.question:
             continue
 

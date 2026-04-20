@@ -3,8 +3,6 @@ import click
 from docmancer import __version__
 from docmancer.cli.commands import (
     add_cmd,
-    audit_cmd,
-    auth_group,
     doctor_cmd,
     fetch_cmd,
     ingest_cmd,
@@ -12,17 +10,12 @@ from docmancer.cli.commands import (
     inspect_cmd,
     install_cmd,
     list_cmd,
-    packs_cmd,
-    publish_cmd,
-    pull_cmd,
     query_cmd,
     remove_cmd,
-    search_cmd,
     setup_cmd,
     update_cmd,
 )
-from docmancer.cli.eval_commands import dataset_generate_cmd, eval_cmd
-from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
+from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 
 
 def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
@@ -37,11 +30,10 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
-        "docmancer pull pytest",
         "docmancer add https://docs.example.com",
         "docmancer update",
-        "docmancer search uv",
         'docmancer query "How do I authenticate?"',
+        "docmancer bench run --backend fts --dataset my-dataset",
         "docmancer install claude-code",
     ),
 )
@@ -66,12 +58,6 @@ def cli(ctx, config_path: str | None):
 cli.add_command(setup_cmd, "setup")
 cli.add_command(add_cmd, "add")
 cli.add_command(update_cmd, "update")
-cli.add_command(pull_cmd, "pull")
-cli.add_command(search_cmd, "search")
-cli.add_command(publish_cmd, "publish")
-cli.add_command(packs_cmd, "packs")
-cli.add_command(audit_cmd, "audit")
-cli.add_command(auth_group, "auth")
 cli.add_command(query_cmd, "query")
 cli.add_command(inspect_cmd, "inspect")
 cli.add_command(list_cmd, "list")
@@ -83,15 +69,44 @@ cli.add_command(install_cmd, "install")
 cli.add_command(ingest_cmd, "ingest")
 
 
-@click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Manage eval datasets.")
-def dataset_group():
-    """Manage evaluation datasets."""
+# Hard-fail stubs for commands that moved to `docmancer bench`.
+@click.command(
+    "eval",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Moved. Use 'docmancer bench run'.",
+)
+def _removed_eval_cmd():
+    """Removed. Evaluation now lives under `docmancer bench`."""
+    raise click.ClickException(
+        "This command moved. Use: docmancer bench run --backend fts --dataset <name>"
+    )
+
+
+@click.command(
+    "dataset",
+    cls=DocmancerCommand,
+    context_settings={**HELP_CONTEXT_SETTINGS, "ignore_unknown_options": True, "allow_extra_args": True},
+    short_help="Moved. Use 'docmancer bench dataset'.",
+)
+@click.argument("args", nargs=-1, required=False)
+def _removed_dataset_group(args):
+    """Removed. Dataset commands now live under `docmancer bench dataset`."""
+    raise click.ClickException(
+        "This command moved. Use: docmancer bench dataset create / docmancer bench run"
+    )
+
+
+cli.add_command(_removed_eval_cmd, "eval")
+cli.add_command(_removed_dataset_group, "dataset")
+
+
+try:
+    from docmancer.bench.cli import bench_group
+
+    cli.add_command(bench_group, "bench")
+except ImportError:
     pass
-
-
-dataset_group.add_command(dataset_generate_cmd, "generate")
-cli.add_command(dataset_group, "dataset")
-cli.add_command(eval_cmd, "eval")
 
 
 if __name__ == "__main__":

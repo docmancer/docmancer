@@ -4,7 +4,7 @@
 
 Docmancer compresses documentation context so coding agents spend tokens on code, not on rereading raw docs.
 
-The PyPI CLI is **MIT open source**; local `add`, `update`, and `query` are the core free path. The **hosted registry** is optional; paid or team plans focus on that service (for example organization registry use and priority support), not on removing the open source tool.
+Docmancer is **MIT open source**. Everything runs locally: `add`, `update`, `query`, and the `bench` harness for comparing retrieval backends all work offline with no API keys required.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -16,26 +16,15 @@ Workflow:
 
 1. Run `docmancer list` to see indexed docs.
 2. Run `docmancer query "question"` when relevant docs are present.
-3. If docs are missing, run `docmancer search <library>` and then `docmancer pull <pack>` for trusted registry packs.
-4. If no registry pack exists and the user approves the source, run `docmancer add <url-or-path>`.
-5. Use returned sections as source-grounded context for the answer or code change.
-
-Registry commands:
-
-- `docmancer search <query>`
-- `docmancer pull <name>`
-- `docmancer pull <name>@<version>`
-- `docmancer packs`
+3. If docs are missing and the user approves the source, run `docmancer add <url-or-path>` to index it locally.
+4. Use returned sections as source-grounded context for the answer or code change.
 
 Useful commands:
 
 - `docmancer setup`
-- `docmancer search pytest`
-- `docmancer pull pytest`
-- `docmancer publish <url>`
-- `docmancer audit <path>`
 - `docmancer add https://docs.example.com`
 - `docmancer add ./docs`
+- `docmancer update`
 - `docmancer query "how to authenticate"`
 - `docmancer query "how to authenticate" --expand`
 - `docmancer query "how to authenticate" --expand page`
@@ -44,3 +33,11 @@ Useful commands:
 - `docmancer inspect`
 - `docmancer remove <source>`
 - `docmancer doctor`
+
+Benchmarking retrieval (optional, compare FTS vs vector vs RLM):
+
+- `docmancer bench dataset create --from-corpus <name> --size 30`
+- `docmancer bench run --backend fts --dataset <name>`
+- `docmancer bench compare <run_id_a> <run_id_b>`
+
+Vector and RLM backends are experimental and require `docmancer[vector]` or `docmancer[rlm]`.

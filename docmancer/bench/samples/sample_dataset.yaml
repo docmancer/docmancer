@@ -1,0 +1,19 @@
+version: 1
+corpus_ref: docmancer/bench/samples/
+questions:
+  - id: q0001
+    question: How do I add a documentation source to docmancer?
+    ground_truth_sources: [README.md]
+    tags: [factual, how_to]
+    difficulty: easy
+  - id: q0002
+    question: Which retrieval backends does docmancer bench support?
+    expected_answer: fts, qdrant, rlm
+    accepted_answers:
+      - "fts, qdrant, rlm"
+      - "SQLite FTS, Qdrant vector, RLM"
+    ground_truth_sources: [docs/bench-prd.md]
+    tags: [factual]
+    difficulty: easy
+metadata:
+  purpose: Reference sample for docs and smoke tests.

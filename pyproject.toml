@@ -26,7 +26,14 @@ dependencies = [
 [project.optional-dependencies]
 browser = ["playwright>=1.40.0"]
 crawl4ai = ["crawl4ai>=0.4.0"]
+# Canonical name for the LLM-as-judge extra used by `docmancer bench`.
+judge = ["ragas>=0.2.0"]
+# Deprecated alias for `judge`. Kept for one release; will be removed in the next minor.
 ragas = ["ragas>=0.2.0"]
+# Experimental vector backend for `docmancer bench`.
+vector = ["qdrant-client>=1.7.0", "fastembed>=0.2.0"]
+# Experimental RLM backend for `docmancer bench`.
+rlm = ["rlm>=0.1.0"]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [project.scripts]

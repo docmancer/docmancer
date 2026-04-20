@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+### Breaking changes
+
+- **Registry removed.** The hosted registry commands `pull`, `search`, `publish`, `packs`, `audit`, and the `auth` group (`login`, `logout`) are gone. Re-ingest previously pulled content from source URLs with `docmancer add <source-url>`.
+- **`docmancer eval` and `docmancer dataset generate/eval` removed.** They now hard-fail with pointers to `docmancer bench run` and `docmancer bench dataset create`.
+- **Config:** the `registry:` key is ignored with a one-time warning. The `eval:` key is translated to `bench:` with a deprecation warning and will be removed in the next minor.
+- **`[ragas]` pip extra renamed to `[judge]`.** The old name still works for this release only, with a deprecation warning, and will be removed in the next minor.
+
+### Added
+
+- **`docmancer bench`:** local benchmarking harness comparing FTS (stable, core), Qdrant vector (experimental, `docmancer[vector]`), and RLM (experimental, `docmancer[rlm]`) backends on the same corpus and question set.
+- Subcommands: `bench init`, `bench dataset create/validate` (YAML v1 + legacy JSON accepted read-only), `bench run`, `bench compare`, `bench report`, `bench list`.
+- Canonical artifact layout per run: `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, `report.md`, and `traces/` for RLM.
+- `bench compare` enforces matching `ingest_hash` across runs (override with `--allow-mixed-ingest`) so backends are compared against the same corpus snapshot.
+- Migration helper: `docmancer bench dataset create --from-legacy <path.json>` converts old `.docmancer/eval_dataset.json` files to the new YAML format.
+
+### Migration notes
+
+- Registry users: re-ingest from the pack's source URL with `docmancer add`.
+- Old eval users: `docmancer eval` and `docmancer dataset eval` now fail fast. Use `docmancer bench run`.
+- Legacy `.docmancer/eval_dataset.json` files: accepted read-only. Convert with `docmancer bench dataset create --from-legacy <path.json> --name <name>`.
+- Install extras: `docmancer[judge]` is the new name for `docmancer[ragas]`. The old name works for this release only.
+
 ## [0.3.4] - 2026-04-15
 ### Added
 

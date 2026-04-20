@@ -95,7 +95,7 @@ def test_install_github_copilot_project_creates_repo_instructions():
         copilot_content = copilot_md.read_text()
         assert "docmancer query" in copilot_content
         assert "MIT open source" in copilot_content
-        assert "docmancer publish <url>" in copilot_content
+        assert "docmancer bench" in copilot_content
         assert "--expand page" in copilot_content
         assert "docmancer:start" in agents_md.read_text()
         assert "github.copilot.chat.codeGeneration.useInstructionFiles" in vscode_settings.read_text()

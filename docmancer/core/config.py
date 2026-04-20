@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import yaml
@@ -32,38 +33,63 @@ class WebFetchConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_WEB_FETCH_", extra="ignore")
 
 
-class EvalConfig(BaseSettings):
-    dataset_path: str = ".docmancer/eval_dataset.json"
-    output_dir: str = ".docmancer/eval"
+class BenchBackendConfig(BaseSettings):
+    k_retrieve: int = Field(default=10, ge=1)
+    k_answer: int = Field(default=5, ge=1)
+    timeout_s_fts: float = Field(default=60.0, gt=0)
+    timeout_s_qdrant: float = Field(default=60.0, gt=0)
+    timeout_s_rlm: float = Field(default=300.0, gt=0)
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_BENCH_", extra="ignore")
+
+
+class BenchConfig(BaseSettings):
+    datasets_dir: str = ".docmancer/bench/datasets"
+    runs_dir: str = ".docmancer/bench/runs"
     judge_provider: str = ""
-    default_k: int = Field(default=5, ge=1)
-    model_config = SettingsConfigDict(env_prefix="DOCMANCER_EVAL_", extra="ignore")
+    backends: BenchBackendConfig = Field(default_factory=BenchBackendConfig)
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_BENCH_", extra="ignore")
 
 
-def default_registry_cache_dir() -> str:
-    return str(Path.home() / ".docmancer" / "cache" / "packs")
+def _translate_eval_to_bench(legacy: dict) -> dict:
+    """Map old `eval:` keys onto the `bench:` schema.
 
+    Legacy shape (from the pre-bench `EvalConfig`):
+        dataset_path: ".docmancer/eval_dataset.json"
+        output_dir:   ".docmancer/eval"
+        judge_provider: ""
+        default_k: 5
 
-def default_registry_auth_path() -> str:
-    return str(Path.home() / ".docmancer" / "auth.json")
-
-
-class RegistryConfig(BaseSettings):
-    url: str = "https://www.docmancer.dev"
-    cache_dir: str = Field(default_factory=default_registry_cache_dir)
-    auth_path: str = Field(default_factory=default_registry_auth_path)
-    auto_update: bool = True
-    timeout: float = Field(default=30.0, gt=0)
-    model_config = SettingsConfigDict(env_prefix="DOCMANCER_REGISTRY_", extra="ignore")
+    New `BenchConfig` uses `datasets_dir`, `runs_dir`, `judge_provider`, and
+    `backends.k_retrieve` / `backends.k_answer`. The legacy `dataset_path`
+    pointed at a single JSON file; the parent directory becomes the new
+    `datasets_dir` so legacy users keep working with `bench dataset validate
+    <path>`.
+    """
+    if not isinstance(legacy, dict):
+        return {}
+    out: dict = {}
+    if legacy.get("dataset_path"):
+        out["datasets_dir"] = str(Path(str(legacy["dataset_path"])).parent)
+    if legacy.get("output_dir"):
+        out["runs_dir"] = str(legacy["output_dir"])
+    if legacy.get("judge_provider"):
+        out["judge_provider"] = str(legacy["judge_provider"])
+    if legacy.get("default_k") is not None:
+        backends = out.setdefault("backends", {})
+        backends["k_retrieve"] = int(legacy["default_k"])
+        backends["k_answer"] = int(legacy["default_k"])
+    # Preserve any keys the caller already uses the new names for.
+    for passthrough in ("datasets_dir", "runs_dir", "backends"):
+        if passthrough in legacy and passthrough not in out:
+            out[passthrough] = legacy[passthrough]
+    return out
 
 
 class DocmancerConfig(BaseModel):
     index: IndexConfig = Field(default_factory=IndexConfig)
     query: QueryConfig = Field(default_factory=QueryConfig)
     web_fetch: WebFetchConfig = Field(default_factory=WebFetchConfig)
-    eval: EvalConfig | None = None
-    packs: dict[str, str] = Field(default_factory=dict)
-    registry: RegistryConfig = Field(default_factory=RegistryConfig)
+    bench: BenchConfig = Field(default_factory=BenchConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:
@@ -71,9 +97,34 @@ class DocmancerConfig(BaseModel):
         with open(path) as f:
             data = yaml.safe_load(f) or {}
 
-        # Accept old configs but translate the storage path onto the rebooted
-        # SQLite index. This keeps local projects readable while dropping the
-        # old directory-style index path.
+        if "registry" in data:
+            warnings.warn(
+                "registry config is obsolete and has been removed; the key is ignored.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            data.pop("registry", None)
+
+        if "eval" in data:
+            legacy_eval = data.pop("eval") or {}
+            if "bench" not in data:
+                warnings.warn(
+                    "`eval:` config is deprecated; translating to `bench:`. Rename "
+                    "your config to `bench:` to silence this warning.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                data["bench"] = _translate_eval_to_bench(legacy_eval)
+            else:
+                warnings.warn(
+                    "`eval:` config is deprecated; both `eval:` and `bench:` are set "
+                    "so `eval:` is ignored.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
+        data.pop("packs", None)
+
         if "index" not in data and isinstance(data.get("vector_store"), dict):
             vector_store = data.get("vector_store") or {}
             local_path = vector_store.get("db_path") or vector_store.get("local_path")
@@ -95,13 +146,6 @@ class DocmancerConfig(BaseModel):
             if not extracted_path.is_absolute():
                 config.index.extracted_dir = str((path.parent / extracted_path).resolve())
 
-        registry_cache = Path(config.registry.cache_dir)
-        if not registry_cache.is_absolute():
-            config.registry.cache_dir = str((path.parent / registry_cache).resolve())
-
-        registry_auth = Path(config.registry.auth_path)
-        if not registry_auth.is_absolute():
-            config.registry.auth_path = str((path.parent / registry_auth).resolve())
         return config
 
     @classmethod

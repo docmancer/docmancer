@@ -16,8 +16,9 @@ fi
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 VENV_PIP="$ROOT_DIR/.venv/bin/pip"
 CLI_CMD=("$VENV_PYTHON" -m docmancer)
+export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
-DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-http://docs.bonzo.finance/}"
+DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-https://bun.com/docs}"
 MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-2}"
 FETCH_WORKERS="${DOCMANCER_LIVE_FETCH_WORKERS:-8}"
 ADD_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
@@ -28,9 +29,10 @@ RUN_CRAWL4AI_VARIANT="${DOCMANCER_RUN_CRAWL4AI_VARIANT:-0}"
 RUN_GITHUB_BLOB="${DOCMANCER_RUN_GITHUB_BLOB:-1}"
 GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pydantic/pydantic/blob/main/README.md}"
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
-RUN_REGISTRY_LIVE="${DOCMANCER_RUN_REGISTRY_LIVE:-0}"
-REGISTRY_SEARCH_QUERY="${DOCMANCER_REGISTRY_SEARCH_QUERY:-langchain}"
-REGISTRY_PULL_REF="${DOCMANCER_REGISTRY_PULL_REF:-react}"
+RUN_BENCH_QDRANT="${DOCMANCER_RUN_BENCH_QDRANT:-0}"
+RUN_BENCH_RLM="${DOCMANCER_RUN_BENCH_RLM:-0}"
+BENCH_DATASET_NAME="${DOCMANCER_BENCH_DATASET_NAME:-live-bun}"
+BENCH_CORPUS_OVERRIDE="${DOCMANCER_BENCH_CORPUS_DIR:-}"
 SKIP_NETWORK="${DOCMANCER_SKIP_NETWORK:-0}"
 # Set to 1 to keep the temp dir for inspection; default removes it on every exit.
 KEEP_TMP="${DOCMANCER_KEEP_TMP:-0}"
@@ -118,6 +120,137 @@ capture_first_source() {
     | awk 'NF >= 2 && $0 !~ /^No sources indexed yet\.$/ {print $NF; exit}'
 }
 
+ensure_bench_corpus_dir() {
+  local corpus_dir=""
+  if [[ -n "$BENCH_CORPUS_OVERRIDE" ]]; then
+    corpus_dir="$BENCH_CORPUS_OVERRIDE"
+    if [[ ! -d "$corpus_dir" ]]; then
+      print_warn "DOCMANCER_BENCH_CORPUS_DIR is not a directory: $corpus_dir"
+    elif find "$corpus_dir" -type f -name '*.md' -print -quit | grep -q .; then
+      printf '%s\n' "$corpus_dir"
+      return
+    else
+      print_warn "DOCMANCER_BENCH_CORPUS_DIR has no markdown files: $corpus_dir"
+    fi
+  fi
+
+  corpus_dir="$ROOT_DIR/../docs"
+  if find "$corpus_dir" -type f -name '*.md' -print -quit | grep -q .; then
+    printf '%s\n' "$corpus_dir"
+    return
+  fi
+
+  corpus_dir="$FETCH_DIR"
+  if find "$corpus_dir" -type f -name '*.md' -print -quit | grep -q .; then
+    printf '%s\n' "$corpus_dir"
+    return
+  fi
+
+  corpus_dir="$PROJECT_DIR/bench-corpus"
+  mkdir -p "$corpus_dir"
+  cat > "$corpus_dir/bun-smoke.md" <<'EOF'
+# Bun smoke dataset
+
+Bun is a JavaScript runtime, package manager, test runner, and bundler.
+
+## Install Bun
+
+Install Bun with the official installer, then use bun install to install dependencies.
+
+## Run tests
+
+Use bun test to run tests.
+EOF
+  printf '%s\n' "$corpus_dir"
+}
+
+fill_bench_dataset_questions() {
+  # Rewrite the scaffold's placeholder `ground_truth_sources` with URLs
+  # actually present in the live SQLite index, so retrieval metrics
+  # (MRR / hit / recall / precision) measure something real instead of
+  # matching zero against the scaffold's local markdown paths.
+  local dataset_path="$1"
+  local config_path="$2"
+  "$VENV_PYTHON" - "$dataset_path" "$config_path" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+import yaml
+
+dataset_path = Path(sys.argv[1])
+config_path = Path(sys.argv[2])
+
+from docmancer.core.config import DocmancerConfig
+
+config = DocmancerConfig.from_yaml(config_path)
+db_path = str(config.index.db_path)
+
+# Pull the real indexed sources and pick the best-matching one per question
+# via cheap keyword overlap against source + title.
+conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+try:
+    rows = conn.execute(
+        "SELECT sources.source, COALESCE(sections.title, '') "
+        "FROM sources LEFT JOIN sections ON sections.source_id = sources.id "
+        "GROUP BY sources.source"
+    ).fetchall()
+finally:
+    conn.close()
+
+available = [(src, title) for src, title in rows if src]
+
+
+def pick_source(keywords):
+    best = None
+    best_score = -1
+    for source, title in available:
+        haystack = f"{source} {title}".lower()
+        score = sum(1 for kw in keywords if kw in haystack)
+        if score > best_score:
+            best = source
+            best_score = score
+    return best
+
+
+seed = [
+    (
+        "q_bun_install",
+        "How do I install Bun?",
+        "Install Bun with the official installer.",
+        ["install", "installation", "quickstart"],
+    ),
+    (
+        "q_bun_tests",
+        "How do I run tests with Bun?",
+        "Use bun test to run tests.",
+        ["test", "bun-test", "run"],
+    ),
+]
+
+data = yaml.safe_load(dataset_path.read_text(encoding="utf-8")) or {}
+questions = []
+for qid, question, answer, keywords in seed:
+    picked = pick_source(keywords) if available else None
+    entry = {
+        "id": qid,
+        "question": question,
+        "expected_answer": answer,
+        "accepted_answers": [answer],
+        "ground_truth_sources": [picked] if picked else [],
+        "tags": ["factual", "bun"],
+    }
+    questions.append(entry)
+data["questions"] = questions
+
+dataset_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+print(
+    f"Filled bench dataset questions in {dataset_path} "
+    f"(bound ground_truth_sources to {len(available)} indexed sources)"
+)
+PY
+}
+
 print_banner "docmancer live CLI integration"
 echo "Repo root: $ROOT_DIR"
 echo "Using venv python: $VENV_PYTHON"
@@ -135,14 +268,14 @@ print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
 print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
 print_info "GitHub blob URL test: $RUN_GITHUB_BLOB"
-print_info "Registry live calls: $RUN_REGISTRY_LIVE"
-print_info "Registry search query: $REGISTRY_SEARCH_QUERY"
-print_info "Registry pull ref: $REGISTRY_PULL_REF"
+print_info "Bench dataset name: $BENCH_DATASET_NAME"
+print_info "Bench corpus override: ${BENCH_CORPUS_OVERRIDE:-<default ../docs>}"
+print_info "Bench qdrant backend: $RUN_BENCH_QDRANT"
+print_info "Bench rlm backend: $RUN_BENCH_RLM"
 print_info "Skip all network work: $SKIP_NETWORK"
 print_info "Keep temporary files: $KEEP_TMP"
 print_info "Require editable reinstall: $REQUIRE_REFRESH"
-print_info "Registry commands follow the Phase 1 registry spec: search/pull/auth/packs/publish/audit."
-print_info "Live registry API calls are opt-in with DOCMANCER_RUN_REGISTRY_LIVE=1."
+print_info "Registry commands were removed. Legacy eval/dataset stubs should point at docmancer bench."
 
 cd "$ROOT_DIR"
 
@@ -161,16 +294,16 @@ fi
 run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); print('docmancer=', docmancer.__file__)"
 
 print_banner "CLI help surface"
-print_info "Checking top-level help plus local indexing, registry, auth, install, and maintenance commands."
+print_info "Checking top-level help plus local indexing, bench, install, and maintenance commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update pull search publish packs audit auth query list inspect remove doctor init install fetch ingest dataset eval; do
+for command in setup add update query list inspect remove doctor init install fetch ingest bench dataset eval; do
   run "${CLI_CMD[@]}" "$command" --help
 done
-for command in login logout status; do
-  run "${CLI_CMD[@]}" auth "$command" --help
+for command in init run compare report list dataset; do
+  run "${CLI_CMD[@]}" bench "$command" --help
 done
-for command in list sync; do
-  run "${CLI_CMD[@]}" packs "$command" --help
+for command in create validate; do
+  run "${CLI_CMD[@]}" bench dataset "$command" --help
 done
 
 print_banner "Initialize isolated config"
@@ -190,36 +323,14 @@ run "${CLI_CMD[@]}" install claude-code --config "$CONFIG_PATH"
   run "$VENV_PYTHON" -m docmancer install claude-code --project --config "$CONFIG_PATH"
   run "$VENV_PYTHON" -m docmancer install cline --project --config "$CONFIG_PATH"
 )
-for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini opencode; do
+for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini github-copilot opencode; do
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
 done
 
 print_banner "Doctor and inspect before add"
-print_info "The index should be empty before local crawl or registry pack installation."
+print_info "The index should be empty before local crawl."
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
-
-print_banner "Registry commands without live API"
-print_info "These checks do not contact the registry: auth status, installed pack list, and local audit."
-run "${CLI_CMD[@]}" auth status --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" packs list --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" audit "$PROJECT_DIR"
-
-if [[ "$RUN_REGISTRY_LIVE" == "1" ]]; then
-  print_banner "Registry live API checks"
-  print_info "Searching the public registry and attempting a pull using the configured registry backend."
-  run "${CLI_CMD[@]}" search "$REGISTRY_SEARCH_QUERY" --limit 5 --config "$CONFIG_PATH"
-  if run "${CLI_CMD[@]}" pull "$REGISTRY_PULL_REF" --save --config "$CONFIG_PATH"; then
-    print_ok "Pulled registry pack and saved it to the manifest."
-    run cat "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" packs list --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" packs sync --config "$CONFIG_PATH"
-  else
-    print_warn "Registry pull failed. Continuing because registry availability/auth can vary during local CLI checks."
-  fi
-else
-  print_info "Skipping search/pull/packs sync live calls. Set DOCMANCER_RUN_REGISTRY_LIVE=1 to exercise them."
-fi
 
 if [[ "$SKIP_NETWORK" == "1" ]]; then
   print_banner "Network steps skipped"
@@ -247,8 +358,37 @@ run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" query "How do I create an account?" --limit 5 --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" query "How do I create an account?" --limit 1 --expand page --config "$CONFIG_PATH"
 
+print_banner "Bench local indexed corpus"
+print_info "docmancer list shows the indexed source, while bench uses the same configured SQLite index for backend runs."
+BENCH_CORPUS_DIR="$(ensure_bench_corpus_dir)"
+BENCH_DATASET_PATH="$PROJECT_DIR/.docmancer/bench/datasets/$BENCH_DATASET_NAME/dataset.yaml"
+(
+  cd "$PROJECT_DIR"
+  run "${CLI_CMD[@]}" bench init --config "$CONFIG_PATH"
+  print_info "Creating a bench dataset scaffold from markdown corpus: $BENCH_CORPUS_DIR"
+  run "${CLI_CMD[@]}" bench dataset create --from-corpus "$BENCH_CORPUS_DIR" --size 2 --name "$BENCH_DATASET_NAME" --config "$CONFIG_PATH"
+  run fill_bench_dataset_questions "$BENCH_DATASET_PATH" "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench dataset validate "$BENCH_DATASET_PATH"
+  run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id live_fts_a --k-retrieve 5 --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id live_fts_b --k-retrieve 3 --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench report live_fts_a --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench report live_fts_a --format json --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench compare live_fts_a live_fts_b --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
+  if [[ "$RUN_BENCH_QDRANT" == "1" ]]; then
+    print_info "Running qdrant bench backend. Requires the vector extra in the current venv."
+    run "${CLI_CMD[@]}" bench run --backend qdrant --dataset "$BENCH_DATASET_NAME" --run-id live_qdrant --k-retrieve 5 --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" bench report live_qdrant --config "$CONFIG_PATH"
+  fi
+  if [[ "$RUN_BENCH_RLM" == "1" ]]; then
+    print_info "Running rlm bench backend. Requires the rlm extra and compatible upstream Runner API."
+    run "${CLI_CMD[@]}" bench run --backend rlm --dataset "$BENCH_DATASET_NAME" --run-id live_rlm --k-retrieve 5 --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" bench report live_rlm --config "$CONFIG_PATH"
+  fi
+)
+
 print_banner "Update all indexed sources"
-print_info "Refreshing every currently indexed local source or registry source in the isolated database."
+print_info "Refreshing every currently indexed source in the isolated database."
 run "${CLI_CMD[@]}" update --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 

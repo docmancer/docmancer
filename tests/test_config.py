@@ -74,14 +74,14 @@ def test_query_budget_must_be_reasonable():
         QueryConfig(default_budget=0)
 
 
-def test_default_config_eval_is_none():
+def test_default_config_has_bench():
     config = DocmancerConfig()
-    assert config.eval is None
+    assert config.bench is not None
+    assert config.bench.backends.k_retrieve == 10
+    assert config.bench.backends.k_answer == 5
 
 
-def test_config_with_eval_from_dict():
-    config = DocmancerConfig(eval={"default_k": 10, "judge_provider": "openai"})
-    assert config.eval is not None
-    assert config.eval.default_k == 10
-    assert config.eval.judge_provider == "openai"
-    assert config.eval.dataset_path == ".docmancer/eval_dataset.json"
+def test_config_with_bench_from_dict():
+    config = DocmancerConfig(bench={"judge_provider": "openai", "backends": {"k_retrieve": 20}})
+    assert config.bench.judge_provider == "openai"
+    assert config.bench.backends.k_retrieve == 20
