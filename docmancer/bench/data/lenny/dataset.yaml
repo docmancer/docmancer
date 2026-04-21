@@ -1,0 +1,344 @@
+# Lenny's Newsletter + Podcast benchmark dataset.
+#
+# Hand-authored by the docmancer maintainers for use with
+# `docmancer bench dataset use lenny`. The corpus itself is fetched on
+# demand from https://github.com/LennysNewsletter/lennys-newsletterpodcastdata
+# and cached under ~/.docmancer/bench/corpora/lenny/. Corpus content is
+# licensed by Lenny Rachitsky for personal non-commercial use; these
+# authored questions and answers are docmancer's own copyright.
+#
+# Source references use paths relative to the corpus root so the dataset
+# works regardless of where the corpus is cloned.
+
+version: 1
+corpus_ref: null  # Filled in by `docmancer bench dataset use lenny`.
+metadata:
+  corpus: lenny
+  source: "Lenny's Newsletter and Podcast starter pack"
+  source_url: "https://github.com/LennysNewsletter/lennys-newsletterpodcastdata"
+  mode: hand_authored
+  description: >
+    30 hand-authored questions covering newsletters and podcast transcripts
+    on product strategy, growth, AI tooling, and team leadership. Used as the
+    default zero-config docmancer bench target.
+
+questions:
+
+# ---- Newsletter: everyone-should-be-using-claude-code-more.md ----
+- id: q0000
+  question: "What command does Lenny recommend running on a Mac to install Claude Code?"
+  expected_answer: "curl -fsSL https://claude.ai/install.sh | bash"
+  ground_truth_sources:
+    - newsletters/everyone-should-be-using-claude-code-more.md
+  tags: [claude-code, installation]
+  difficulty: easy
+
+- id: q0001
+  question: "Whose conversation with Lenny first made him want to try Claude Code?"
+  expected_answer: "Dan Shipper's conversation with Lenny on the podcast."
+  ground_truth_sources:
+    - newsletters/everyone-should-be-using-claude-code-more.md
+  tags: [claude-code]
+  difficulty: easy
+
+- id: q0002
+  question: "Why does Lenny suggest thinking of Claude Code as 'Claude Local' or 'Claude Agent' rather than a coding tool?"
+  expected_answer: >
+    Because it runs on your own machine and can perform tasks directly on
+    your computer - organizing files, enhancing images, summarizing calls,
+    creating Linear tickets, and more - so non-technical people benefit
+    from it just as much as engineers.
+  ground_truth_sources:
+    - newsletters/everyone-should-be-using-claude-code-more.md
+  tags: [claude-code, framing]
+  difficulty: medium
+
+# ---- Newsletter: an-ai-glossary.md ----
+- id: q0003
+  question: "What does the 'o' in GPT-4o stand for?"
+  expected_answer: "Omni, meaning it accepts any combination of text, audio, and image input."
+  ground_truth_sources:
+    - newsletters/an-ai-glossary.md
+  tags: [ai-basics, glossary]
+  difficulty: easy
+
+- id: q0004
+  question: "Which year and which company introduced the transformer architecture?"
+  expected_answer: "2017, by Google researchers."
+  ground_truth_sources:
+    - newsletters/an-ai-glossary.md
+  tags: [ai-basics, glossary]
+  difficulty: easy
+
+- id: q0005
+  question: "What attention mechanism distinguishes the transformer from earlier sequential models?"
+  expected_answer: >
+    Attention lets the model consider all words in the input at once rather
+    than reading them sequentially, so it captures relationships between
+    distant tokens and handles context and nuance far better than prior
+    architectures.
+  ground_truth_sources:
+    - newsletters/an-ai-glossary.md
+  tags: [ai-basics, transformers]
+  difficulty: medium
+
+# ---- Newsletter: how-duolingo-reignited-user-growth.md ----
+- id: q0006
+  question: "By roughly how much did Duolingo grow daily active users over the four years Jorge Mazal describes?"
+  expected_answer: "About 4.5x over four years."
+  ground_truth_sources:
+    - newsletters/how-duolingo-reignited-user-growth.md
+  tags: [growth, case-study]
+  difficulty: easy
+
+- id: q0007
+  question: "Why did Duolingo prioritize retention over acquisition when trying to reignite growth?"
+  expected_answer: >
+    Because all new-user acquisition was organic and they had no obvious
+    lever to supercharge it, while existing gamification mechanics and
+    benchmarks from top digital games suggested retention had more room to
+    improve.
+  ground_truth_sources:
+    - newsletters/how-duolingo-reignited-user-growth.md
+  tags: [growth, retention]
+  difficulty: medium
+
+- id: q0008
+  question: "Which three gamification mechanics did Duolingo use to drive its growth reacceleration?"
+  expected_answer: "Leaderboards, streaks, and push notifications (also progression on the home screen and achievements)."
+  ground_truth_sources:
+    - newsletters/how-duolingo-reignited-user-growth.md
+  tags: [growth, gamification]
+  difficulty: medium
+
+# ---- Podcast: amol-avasare.md (Anthropic growth) ----
+- id: q0009
+  question: "Which AI product does Amol Avasare's episode describe as the fastest-growing AI product in history?"
+  expected_answer: "Claude, Anthropic's AI assistant, going from $1B to $19B in revenue."
+  ground_truth_sources:
+    - podcasts/amol-avasare.md
+  tags: [growth, ai]
+  difficulty: easy
+
+- id: q0010
+  question: "According to Amol Avasare, what is the 'cold start' problem in AI product activation?"
+  expected_answer: >
+    New users often do not know what to prompt an AI product with on first
+    use, so the activation challenge is giving them a starting prompt,
+    template, or example that produces a meaningful result immediately.
+  ground_truth_sources:
+    - podcasts/amol-avasare.md
+  tags: [activation, ai-product]
+  difficulty: medium
+
+- id: q0011
+  question: "Why does Amol Avasare argue that adding friction can sometimes improve conversion?"
+  expected_answer: >
+    Thoughtful friction - such as a brief onboarding question or a choice
+    that forces intent - filters for users who will actually activate and
+    gives the product signal to personalize, which raises downstream
+    conversion even though it lowers top-of-funnel volume.
+  ground_truth_sources:
+    - podcasts/amol-avasare.md
+  tags: [activation, conversion]
+  difficulty: hard
+
+# ---- Podcast: simon-willison.md ----
+- id: q0012
+  question: "What does Simon Willison mean by 'passing the inflection point' in his AI state of the union?"
+  expected_answer: >
+    That AI capabilities have crossed the threshold where they are useful
+    for real work across many domains, so adoption and automation timelines
+    are now being driven by product, integration, and trust rather than raw
+    model capability alone.
+  ground_truth_sources:
+    - podcasts/simon-willison.md
+  tags: [ai, state-of-ai]
+  difficulty: hard
+
+# ---- Podcast: boris-cherny.md ----
+- id: q0013
+  question: "Who is Boris Cherny and what Anthropic product is he associated with?"
+  expected_answer: "Boris Cherny is the creator and lead of Claude Code at Anthropic."
+  ground_truth_sources:
+    - podcasts/boris-cherny.md
+  tags: [claude-code, people]
+  difficulty: easy
+
+- id: q0014
+  question: "What shift in how software is written does Boris Cherny think teams are heading toward?"
+  expected_answer: >
+    A shift where engineers spend more time orchestrating and reviewing AI
+    agents that do the actual writing, editing, and refactoring, rather
+    than typing code line by line themselves.
+  ground_truth_sources:
+    - podcasts/boris-cherny.md
+  tags: [engineering, ai]
+  difficulty: medium
+
+# ---- Podcast: brian-halligan.md ----
+- id: q0015
+  question: "What company did Brian Halligan co-found, and for roughly how long was he its CEO?"
+  expected_answer: "HubSpot, for about 15 years."
+  ground_truth_sources:
+    - podcasts/brian-halligan.md
+  tags: [founders, hubspot]
+  difficulty: easy
+
+- id: q0016
+  question: "Why does Brian Halligan say it has never been easier to start a company but never been harder to scale one?"
+  expected_answer: >
+    AI tooling, cheap cloud, and no-code platforms have collapsed the cost
+    and time to ship a first version, but competition, distribution noise,
+    and hiring talent at scale have intensified, so getting from product to
+    durable business is harder than before.
+  ground_truth_sources:
+    - podcasts/brian-halligan.md
+  tags: [founders, scaling]
+  difficulty: hard
+
+# ---- Podcast: claire-vo-openclaw.md ----
+- id: q0017
+  question: "What product does Claire Vo credit with changing her life in her 2026 podcast episode?"
+  expected_answer: "OpenClaw."
+  ground_truth_sources:
+    - podcasts/claire-vo-openclaw.md
+  tags: [people, tools]
+  difficulty: easy
+
+# ---- Podcast: jessica-fain.md ----
+- id: q0018
+  question: "According to Jessica Fain, what is the single most important skill that AI cannot replace?"
+  expected_answer: "The art of influence - building alignment and trust with other humans to move decisions forward."
+  ground_truth_sources:
+    - podcasts/jessica-fain.md
+  tags: [leadership, skills]
+  difficulty: medium
+
+# ---- Podcast: jeetu-patel.md ----
+- id: q0019
+  question: "What goal does Jeetu Patel describe his company's AI initiative as serving for customers?"
+  expected_answer: >
+    Helping customers make the most of the industry-wide shift to AI by
+    pulling together the necessary capabilities so customers do not have to
+    integrate everything themselves.
+  ground_truth_sources:
+    - podcasts/jeetu-patel.md
+  tags: [ai, enterprise]
+  difficulty: medium
+
+# ---- Podcast: lazar-jovanovic.md ----
+- id: q0020
+  question: "What new AI-era job is described in Lazar Jovanovic's episode?"
+  expected_answer: "The professional vibe coder."
+  ground_truth_sources:
+    - podcasts/lazar-jovanovic.md
+  tags: [careers, ai]
+  difficulty: easy
+
+# ---- Podcast: sherwin-wu-v2.md ----
+- id: q0021
+  question: "What engineering pain point does Sherwin Wu highlight as annoying engineers the most after writing code?"
+  expected_answer: "Getting the code into production - deployment, release, and the path from merged PR to live system."
+  ground_truth_sources:
+    - podcasts/sherwin-wu-v2.md
+  tags: [engineering, devops]
+  difficulty: medium
+
+# ---- Newsletter: beyond-vibe-checks-a-pms-complete-guide-to-evals.md ----
+- id: q0022
+  question: "In the evals guide for PMs, what is a 'vibe check' and why is it not enough?"
+  expected_answer: >
+    A vibe check is a quick, informal read on whether an AI feature feels
+    right based on a handful of examples. It is not enough because it does
+    not measure quality systematically, does not catch regressions, and
+    cannot be rerun as models or prompts change.
+  ground_truth_sources:
+    - newsletters/beyond-vibe-checks-a-pms-complete-guide-to-evals.md
+  tags: [evals, pm]
+  difficulty: medium
+
+# ---- Newsletter: what-people-are-vibe-coding-and-actually-using.md ----
+- id: q0023
+  question: "What category of app does Lenny's 'vibe coding' newsletter say people most often build and actually keep using?"
+  expected_answer: >
+    Small personal-productivity tools and single-purpose utilities that
+    solve one specific problem for the builder or a small audience, rather
+    than general-purpose consumer apps.
+  ground_truth_sources:
+    - newsletters/what-people-are-vibe-coding-and-actually-using.md
+  tags: [vibe-coding, ai]
+  difficulty: medium
+
+# ---- Newsletter: state-of-the-product-job-market-in-2025.md ----
+- id: q0024
+  question: "What broad trend does Lenny describe in the 2025 state of the product job market?"
+  expected_answer: >
+    The PM job market bifurcated: senior PMs with AI fluency and scope are
+    in high demand, while junior PM openings have contracted as teams use
+    AI to flatten PM headcount per product area.
+  ground_truth_sources:
+    - newsletters/state-of-the-product-job-market-in-2025.md
+  tags: [careers, pm]
+  difficulty: hard
+
+# ---- Cross-source: Claude Code across files ----
+- id: q0025
+  question: "Which sources in this corpus discuss Claude Code as an everyday tool for non-technical work?"
+  expected_answer: >
+    Lenny's newsletter 'Everyone should be using Claude Code more' and
+    Boris Cherny's podcast episode, which together cover installation,
+    non-coding use cases, and the product vision behind Claude Code.
+  ground_truth_sources:
+    - newsletters/everyone-should-be-using-claude-code-more.md
+    - podcasts/boris-cherny.md
+  tags: [claude-code, cross-source]
+  difficulty: hard
+
+# ---- Cross-source: AI product growth and activation ----
+- id: q0026
+  question: "Which two guests in this corpus speak most directly to AI product activation and growth systems?"
+  expected_answer: >
+    Amol Avasare on Claude's growth from $1B to $19B and activation
+    systems at Anthropic, and Jeetu Patel on helping enterprise customers
+    adopt AI at scale.
+  ground_truth_sources:
+    - podcasts/amol-avasare.md
+    - podcasts/jeetu-patel.md
+  tags: [growth, ai, cross-source]
+  difficulty: hard
+
+# ---- Newsletter: how-to-build-your-pm-second-brain-with-chatgpt.md ----
+- id: q0027
+  question: "What does Lenny call the system he builds with ChatGPT to store PM context, decisions, and references?"
+  expected_answer: "A PM 'second brain' - a personalized ChatGPT setup that stores and retrieves your ongoing product context."
+  ground_truth_sources:
+    - newsletters/how-to-build-your-pm-second-brain-with-chatgpt.md
+  tags: [pm, productivity]
+  difficulty: medium
+
+# ---- Newsletter: a-guide-to-ai-prototyping-for-product-managers.md ----
+- id: q0028
+  question: "According to Lenny's AI prototyping guide for PMs, why should PMs prototype with AI before writing specs?"
+  expected_answer: >
+    Because a working prototype communicates intent faster and more
+    accurately than a written spec, surfaces edge cases earlier, and gives
+    engineering and design a concrete target to critique rather than an
+    abstract document.
+  ground_truth_sources:
+    - newsletters/a-guide-to-ai-prototyping-for-product-managers.md
+  tags: [pm, ai, prototyping]
+  difficulty: medium
+
+# ---- Newsletter: product-manager-is-an-unfair-role-so-work-unfairly.md ----
+- id: q0029
+  question: "What is the core argument of the essay 'Product manager is an unfair role, so work unfairly'?"
+  expected_answer: >
+    Because PMs are accountable for outcomes they do not directly control,
+    they should stop trying to be scrupulously fair about attention and
+    effort and instead concentrate disproportionately on the few bets that
+    most move the business.
+  ground_truth_sources:
+    - newsletters/product-manager-is-an-unfair-role-so-work-unfairly.md
+  tags: [pm, career]
+  difficulty: hard

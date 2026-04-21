@@ -59,23 +59,49 @@ docmancer query "How do I use fixtures?"
 
 `docmancer bench` is a local harness for comparing retrieval backends on your own docs. FTS ships in the core install; Qdrant and RLM are experimental and behind optional extras.
 
-```bash
-# Core FTS backend. No extras required.
-docmancer bench init
-docmancer bench dataset create --from-corpus ./my-docs --size 30 --name mydocs
-docmancer bench run --backend fts --dataset mydocs --run-id mydocs_fts
-docmancer bench report mydocs_fts        # single-run summary
+### Zero-config benchmark (recommended for first run)
 
+The fastest way to see `docmancer bench` work end to end is the built-in Lenny dataset: 30 hand-authored questions grounded in Lenny Rachitsky's public newsletter and podcast starter pack. The corpus (about 24 MB) is fetched on first use from [LennysNewsletter/lennys-newsletterpodcastdata](https://github.com/LennysNewsletter/lennys-newsletterpodcastdata) and cached under `~/.docmancer/bench/corpora/lenny/`. Subsequent invocations reuse the cache and make zero network calls; pass `--refresh` if you ever want to pull an updated copy. The corpus is licensed by Lenny Rachitsky for personal, non-commercial use; you accept that license interactively on first fetch.
+
+```bash
+docmancer bench init
+docmancer bench dataset use lenny
+docmancer bench run --backend fts --dataset lenny --run-id lenny_fts
+docmancer bench report lenny_fts
+```
+
+### Benchmarking your own docs with LLM-generated questions
+
+Point `bench dataset create` at any folder of markdown and docmancer asks an LLM to produce grounded questions with expected answers, source files, and a mix of easy, medium, and hard difficulties.
+
+```bash
+docmancer bench dataset create \
+  --from-corpus ./my-docs --size 30 --name mydocs --provider auto
+docmancer bench run --backend fts --dataset mydocs --run-id mydocs_fts
+```
+
+`--provider auto` picks the first configured provider in the order Anthropic, OpenAI, Gemini, Ollama. Supported providers and the env vars they use:
+
+| Provider | Env var             | Install                                           |
+| -------- | ------------------- | ------------------------------------------------- |
+| Anthropic | `ANTHROPIC_API_KEY` | `pipx inject docmancer 'docmancer[llm]'`          |
+| OpenAI    | `OPENAI_API_KEY`    | `pipx inject docmancer 'docmancer[llm]'`          |
+| Gemini    | `GEMINI_API_KEY`    | `pipx inject docmancer 'docmancer[llm]'`          |
+| Ollama    | (none; `OLLAMA_HOST` optional) | `ollama serve` locally                |
+
+Pass `--provider heuristic` for a no-key shallow fallback that derives one question per markdown heading. Running with `--provider auto` and no key set exits with an actionable setup message rather than silently producing shallow questions.
+
+### Running and comparing
+
+```bash
 # Optional experimental backends. Install the extras up front so pipx
-# records them for the docmancer app (see "Optional Extras" below for
-# alternatives).
+# records them for the docmancer app. The RLM extra depends on `rlms`.
 pipx install 'docmancer[vector,rlm,judge]' --python python3.13
 
-docmancer bench run --backend qdrant --dataset mydocs --run-id mydocs_qdrant
-docmancer bench run --backend rlm    --dataset mydocs --run-id mydocs_rlm
-
-# Compare needs two or more run IDs.
-docmancer bench compare mydocs_fts mydocs_qdrant mydocs_rlm
+docmancer bench run --backend qdrant --dataset lenny --run-id lenny_qdrant
+docmancer bench run --backend rlm    --dataset lenny --run-id lenny_rlm
+docmancer bench compare lenny_fts lenny_qdrant lenny_rlm
+docmancer bench list
 ```
 
 Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, and `report.md` under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` guards against comparing runs across drifted corpora. All backends see the same canonical section chunks so metrics are apples-to-apples. See [wiki/Commands.md](./wiki/Commands.md#bench-commands) for the full command list and [wiki/Configuration.md](./wiki/Configuration.md#bench) for tunables.
@@ -200,8 +226,9 @@ Claude Desktop receives a zip package that can be uploaded through Claude Deskto
 | `docmancer[browser]`  | Playwright-backed fetcher for JS-heavy sites                      |
 | `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites                      |
 | `docmancer[vector]`   | Qdrant vector backend for `docmancer bench`                       |
-| `docmancer[rlm]`      | RLM backend for `docmancer bench`                                 |
+| `docmancer[rlm]`      | RLM backend for `docmancer bench` (`rlms`)                       |
 | `docmancer[judge]`    | LLM-as-judge answer scoring via ragas                             |
+| `docmancer[llm]`      | LLM-powered question generation for `bench dataset create` (Anthropic, OpenAI, Gemini) |
 | `docmancer[ragas]`    | Deprecated alias for `[judge]`; will be removed in the next minor |
 
 **Fresh install with extras (recommended):**
@@ -210,13 +237,15 @@ Claude Desktop receives a zip package that can be uploaded through Claude Deskto
 pipx install 'docmancer[vector,rlm,judge]' --python python3.13
 ```
 
+The `rlm` extra resolves to the PyPI distribution `rlms`, which imports as `rlm` at runtime.
+
 Note: if `docmancer` is already installed via pipx, the command above silently no-ops (pipx prints "already seems to be installed" and does not re-evaluate extras). In that case, use the **Adding extras to an existing pipx install** block below.
 
 **Adding extras to an existing pipx install** (pipx won't re-read extras on a second `pipx install`; inject the deps into the existing venv instead):
 
 ```bash
 pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'   # [vector]
-pipx inject docmancer 'rlm>=0.1.0'                                # [rlm]
+pipx inject docmancer 'rlms>=0.1.0'                               # [rlm]
 pipx inject docmancer 'ragas>=0.2.0'                              # [judge]
 ```
 

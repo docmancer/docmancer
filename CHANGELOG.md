@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-21
+
+Release highlights: built-in **`docmancer bench dataset use lenny`** for a zero-config first run, **LLM-powered question generation** for **`bench dataset create --from-corpus`**, optional **`docmancer[llm]`**, and a packaging fix so **`docmancer[rlm]`** pulls the **`rlms`** PyPI distribution (the import surface remains **`rlm`**).
+
+### Added
+
+- **`docmancer bench dataset use <name>`:** installs a packaged built-in dataset and ensures its corpus is available. **`lenny`** is the first: 30 hand-authored questions over Lenny Rachitsky's public newsletter and podcast starter pack; the corpus is fetched on first use from [LennysNewsletter/lennys-newsletterpodcastdata](https://github.com/LennysNewsletter/lennys-newsletterpodcastdata), cached under **`~/.docmancer/bench/corpora/lenny/`**, with interactive license acceptance (**`--yes`** / **`-y`** to accept non-interactively, **`--refresh`** to re-fetch).
+- **`bench dataset create --from-corpus`:** **`--provider`** (`auto`, `anthropic`, `openai`, `gemini`, `ollama`, `heuristic`), **`--model`**, and **`--questions-per-file`** for LLM-generated grounded questions with difficulties and expected answers; **`auto`** picks the first configured provider (Anthropic, OpenAI, Gemini, Ollama); **`heuristic`** keeps the heading-based shallow scaffold.
+- Optional extra **`docmancer[llm]`:** Anthropic, OpenAI, and Google GenAI clients for bench question generation.
+- Packaged **`docmancer/bench/data`** (for example bundled **`lenny/dataset.yaml`** and the question-generation prompt) shipped in wheels via hatch **`force-include`**.
+
+### Changed
+
+- **`docmancer[rlm]`** optional dependency: depends on PyPI **`rlms`** (not **`rlm`**); README, wiki, and pipx **`inject`** examples updated accordingly.
+- **README, wiki, and agent skill templates:** bench quick-start copy highlights the Lenny built-in path and clarifies **`rlms`** for RLM.
+
+### Tests
+
+- **`tests/bench/`:** corpora resolution, LLM provider wiring, question generation, and related CLI coverage.
+
 ## [0.4.1] - 2026-04-21
 ## [0.4.0] - 2026-04-20
 
@@ -407,6 +427,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.5.0]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/docmancer/docmancer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/docmancer/docmancer/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/docmancer/docmancer/compare/v0.3.3...v0.3.4

@@ -39,7 +39,10 @@ Executable: `{{DOCS_KIT_CMD}}`
 The `bench` namespace compares retrieval backends (FTS, vector, and an RLM path) on the same corpus and question set.
 
 - `docmancer bench init`: scaffold `.docmancer/bench/{datasets,runs}/`.
-- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>`: scaffold a YAML dataset.
+- `docmancer bench dataset use lenny`: install the zero-config built-in dataset. Fetches the corpus from GitHub once and caches it at `~/.docmancer/bench/corpora/lenny/`; reruns reuse the cache.
+- `docmancer bench dataset list-builtin`: list available built-in datasets.
+- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider auto`: generate grounded questions with an LLM (Anthropic, OpenAI, Gemini, or Ollama).
+- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider heuristic`: no-LLM fallback using markdown headings.
 - `docmancer bench dataset create --from-legacy <path.json> --name <name>`: convert a legacy `eval_dataset.json`.
 - `docmancer bench dataset validate <path>`: schema-check a dataset.
 - `docmancer bench run --backend fts --dataset <name>`: run the stable SQLite FTS backend (core install).
@@ -54,4 +57,4 @@ Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `m
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
-- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run` and `docmancer bench dataset create`.
+- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run`, `docmancer bench dataset create`, or `docmancer bench dataset use lenny`.

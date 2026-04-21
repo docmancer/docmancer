@@ -89,6 +89,6 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `docmancer[browser]` | Playwright fetcher for JS-heavy sites (used by `add --browser`). |
 | `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites. |
 | `docmancer[vector]` | Qdrant vector backend for `docmancer bench`. |
-| `docmancer[rlm]` | RLM backend for `docmancer bench`. |
+| `docmancer[rlm]` | RLM backend for `docmancer bench` (`rlms`). |
 | `docmancer[judge]` | LLM-as-judge answer scoring via ragas. |
 | `docmancer[ragas]` | Deprecated alias for `[judge]`; removed in the next minor. |

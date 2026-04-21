@@ -33,7 +33,15 @@ ragas = ["ragas>=0.2.0"]
 # Experimental vector backend for `docmancer bench`.
 vector = ["qdrant-client>=1.7.0", "fastembed>=0.2.0"]
 # Experimental RLM backend for `docmancer bench`.
-rlm = ["rlm>=0.1.0"]
+# The import surface is `rlm`, and the published PyPI distribution is `rlms`.
+rlm = ["rlms>=0.1.0"]
+# LLM providers for `docmancer bench dataset create --provider`.
+# Ollama needs no SDK (reuses the base `httpx` dependency).
+llm = [
+    "anthropic>=0.40",
+    "openai>=1.50",
+    "google-genai>=0.3",
+]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [project.scripts]
@@ -44,6 +52,9 @@ path = "docmancer/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"docmancer/bench/data" = "docmancer/bench/data"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

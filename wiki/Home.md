@@ -36,4 +36,4 @@ Agents call these commands through installed skill files. No background server i
 
 ## Licensing
 
-The PyPI package is MIT-licensed open source. The core path (`add`, `update`, `query`, and bench's FTS backend) runs entirely on your machine with no API keys. Optional extras (`docmancer[vector]`, `docmancer[rlm]`, `docmancer[judge]`) unlock the experimental Qdrant and RLM bench backends and the LLM-as-judge answer scorer.
+The PyPI package is MIT-licensed open source. The core path (`add`, `update`, `query`, and bench's FTS backend) runs entirely on your machine with no API keys. Optional extras (`docmancer[vector]`, `docmancer[rlm]`, `docmancer[judge]`) unlock the experimental Qdrant and RLM bench backends and the LLM-as-judge answer scorer. The `rlm` extra currently installs the upstream `rlms` distribution, which imports as `rlm`.

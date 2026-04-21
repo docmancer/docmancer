@@ -46,12 +46,14 @@ The `bench` namespace compares retrieval backends (FTS, vector, and an RLM path)
 
 ```bash
 docmancer bench init
-docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>
+docmancer bench dataset use lenny                                          # built-in zero-config dataset (fetched once, then cached)
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider auto
 docmancer bench dataset validate <path>
 docmancer bench run --backend fts --dataset <name>
 docmancer bench compare <run_id_a> <run_id_b>
 docmancer bench report <run_id>
 docmancer bench list
+docmancer bench dataset list-builtin
 ```
 
 Artifacts live under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` stops `bench compare` from mixing runs against drifted corpora unless you pass `--allow-mixed-ingest`.

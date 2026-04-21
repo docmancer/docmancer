@@ -106,7 +106,7 @@ pipx install 'docmancer[vector,rlm,judge]' --python python3.13 --force
 pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'
 ```
 
-The equivalent pairs are `'rlm>=0.1.0'` for `[rlm]` and `'ragas>=0.2.0'` for `[judge]`. `pip` users can install any combination directly, e.g. `pip install 'docmancer[vector,rlm,judge]'`.
+The equivalent pairs are `'rlms>=0.1.0'` for `[rlm]` and `'ragas>=0.2.0'` for `[judge]`. `pip` users can install any combination directly, e.g. `pip install 'docmancer[vector,rlm,judge]'`.
 
 ## `docmancer bench run` fails with "No canonical sections in the SQLite store"
 

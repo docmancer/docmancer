@@ -39,7 +39,10 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 ## Benchmarking retrieval (optional, compare FTS, vector, and RLM backends)
 
 - `docmancer bench init`
-- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>`
+- `docmancer bench dataset use lenny` (zero-config built-in dataset; corpus fetched once, cached)
+- `docmancer bench dataset list-builtin`
+- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider auto`
+- `docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider heuristic` (no-LLM fallback)
 - `docmancer bench dataset validate <path>`
 - `docmancer bench run --backend fts --dataset <name>`
 - `docmancer bench run --backend qdrant --dataset <name>` (experimental, `docmancer[vector]`)
@@ -53,4 +56,4 @@ Artifacts live under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
-- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run` and `docmancer bench dataset create`.
+- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run`, `docmancer bench dataset create`, or `docmancer bench dataset use lenny`.

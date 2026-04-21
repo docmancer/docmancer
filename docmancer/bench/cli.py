@@ -34,8 +34,9 @@ def _load_config_and_corpus(config_path: str | None):
     short_help="Benchmark retrieval + reasoning backends locally.",
     epilog=format_examples(
         "docmancer bench init",
-        "docmancer bench dataset create --from-corpus ./docs --size 30",
-        "docmancer bench run --backend fts --dataset my-dataset",
+        "docmancer bench dataset use lenny",
+        "docmancer bench dataset create --from-corpus ./docs --size 30 --provider auto",
+        "docmancer bench run --backend fts --dataset lenny",
         "docmancer bench compare run_a run_b",
     ),
 )
@@ -75,14 +76,38 @@ def bench_dataset_validate_cmd(path: str):
     click.echo(f"OK: version={ds.version} questions={len(ds.questions)} corpus_ref={ds.corpus_ref}")
 
 
+_PROVIDER_CHOICES = ["auto", "anthropic", "openai", "gemini", "ollama", "heuristic"]
+
+
 @bench_dataset_group.command("create", cls=DocmancerCommand)
 @click.option("--from-corpus", "from_corpus", default=None, help="Directory of markdown docs to scaffold from.")
 @click.option("--from-legacy", "from_legacy", default=None, help="Legacy eval_dataset.json to convert.")
 @click.option("--size", default=30, show_default=True, type=int, help="Max entries to sample.")
 @click.option("--name", default=None, help="Dataset name (directory under datasets/).")
+@click.option(
+    "--provider",
+    type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help="LLM provider for question generation, or 'heuristic' for shallow heading-based questions.",
+)
+@click.option("--model", default=None, help="Override the provider's default model.")
+@click.option(
+    "--questions-per-file",
+    "questions_per_file",
+    default=3,
+    show_default=True,
+    type=int,
+    help="How many questions the LLM is asked to draft per source file.",
+)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_dataset_create_cmd(from_corpus, from_legacy, size, name, config_path):
-    """Scaffold a new YAML dataset from a corpus or legacy JSON."""
+def bench_dataset_create_cmd(from_corpus, from_legacy, size, name, provider, model, questions_per_file, config_path):
+    """Scaffold a new YAML dataset from a corpus or legacy JSON.
+
+    With --from-corpus and an LLM provider configured, questions are
+    generated with the LLM and include expected_answer fields. Without a
+    provider, pass --provider heuristic for the legacy heading-based path.
+    """
     from docmancer.bench.dataset import (
         BenchDataset,
         generate_scaffold_from_corpus_dir,
@@ -101,7 +126,13 @@ def bench_dataset_create_cmd(from_corpus, from_legacy, size, name, config_path):
     datasets_dir = Path(config.bench.datasets_dir)
 
     if from_corpus:
-        ds = generate_scaffold_from_corpus_dir(Path(from_corpus), max_entries=size)
+        ds = _dataset_from_corpus(
+            Path(from_corpus),
+            size=size,
+            provider_choice=provider.lower(),
+            model=model,
+            questions_per_file=questions_per_file,
+        )
         out_name = name or Path(from_corpus).name.strip("/") or "dataset"
     else:
         ds = load_dataset(from_legacy)
@@ -113,14 +144,165 @@ def bench_dataset_create_cmd(from_corpus, from_legacy, size, name, config_path):
     out_path = out_dir / "dataset.yaml"
     ds.save_yaml(out_path)
     if from_corpus:
-        click.echo(
-            f"Wrote {len(ds.questions)} heuristic question(s) to {out_path}\n"
-            f"Questions are derived from markdown headings and are intentionally shallow. "
-            f"Edit the YAML to refine them or add 'expected_answer' fields before running "
-            f"'docmancer bench run'."
-        )
+        mode = ds.metadata.get("mode", "heuristic")
+        if mode == "heuristic":
+            click.echo(
+                f"Wrote {len(ds.questions)} heuristic question(s) to {out_path}\n"
+                f"Questions are derived from markdown headings and are intentionally shallow. "
+                f"Edit the YAML to refine them or add 'expected_answer' fields, or re-run "
+                f"with --provider auto once an LLM key is set."
+            )
+        else:
+            click.echo(
+                f"Wrote {len(ds.questions)} LLM-generated question(s) to {out_path} "
+                f"(provider={ds.metadata.get('provider')}, model={ds.metadata.get('model')})."
+            )
     else:
         click.echo(f"Wrote {len(ds.questions)} questions to {out_path}")
+
+
+def _dataset_from_corpus(corpus_dir: Path, *, size: int, provider_choice: str, model: str | None, questions_per_file: int):
+    """Build a BenchDataset from a corpus directory, dispatching on --provider."""
+    from docmancer.bench.dataset import BenchDataset, generate_scaffold_from_corpus_dir
+    from docmancer.bench.llm_providers import (
+        ProviderUnavailableError,
+        available_providers,
+        detect_provider,
+        get_generator,
+        no_provider_message,
+    )
+    from docmancer.bench.question_gen import generate_questions_llm
+
+    if provider_choice == "heuristic":
+        return generate_scaffold_from_corpus_dir(corpus_dir, max_entries=size)
+
+    if provider_choice == "auto":
+        detected = detect_provider()
+        if detected is None:
+            click.echo(no_provider_message(), err=True)
+            sys.exit(2)
+        click.echo(f"Using provider: {detected} (auto-detected from env).")
+        provider_name = detected
+    else:
+        provider_name = provider_choice
+
+    try:
+        generator = get_generator(provider_name, model=model)
+    except ProviderUnavailableError as exc:
+        click.echo(f"Provider '{provider_name}' unavailable: {exc}", err=True)
+        if provider_choice == "auto":
+            others = [p for p in available_providers() if p != provider_name]
+            if others:
+                click.echo(f"Other detected providers: {', '.join(others)}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Generating up to {size} questions from {corpus_dir} ...")
+    questions = generate_questions_llm(
+        corpus_dir,
+        generator=generator,
+        size=size,
+        questions_per_file=questions_per_file,
+    )
+    ds = BenchDataset(
+        version=1,
+        corpus_ref=str(corpus_dir),
+        questions=questions,
+        metadata={
+            "generated_from": str(corpus_dir),
+            "mode": "llm",
+            "provider": provider_name,
+            "model": model or "",
+        },
+    )
+    return ds
+
+
+@bench_dataset_group.command("use", cls=DocmancerCommand)
+@click.argument("name")
+@click.option("--refresh", is_flag=True, default=False, help="Force re-fetch even if the corpus is already cached.")
+@click.option("--yes", "-y", is_flag=True, default=False, help="Pre-accept the corpus license non-interactively.")
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def bench_dataset_use_cmd(name, refresh, yes, config_path):
+    """Install a built-in benchmark dataset (e.g. `docmancer bench dataset use lenny`).
+
+    Fetches the corpus on first use and caches it under
+    ~/.docmancer/bench/corpora/<name>/. Subsequent invocations reuse the
+    cache and make zero network calls; pass --refresh to force a re-fetch.
+    """
+    from docmancer.bench.corpora import BUILTIN_CORPORA, is_fetched, resolve_corpus
+    from docmancer.bench.dataset import load_dataset
+    from docmancer.cli.commands import _effective_config, _load_config
+
+    if name not in BUILTIN_CORPORA:
+        available = ", ".join(sorted(BUILTIN_CORPORA)) or "(none)"
+        raise click.ClickException(f"Unknown built-in dataset {name!r}. Available: {available}")
+
+    config = _load_config(_effective_config(config_path))
+    datasets_dir = Path(config.bench.datasets_dir)
+
+    cached = is_fetched(name) and not refresh
+    try:
+        corpus_root = resolve_corpus(
+            name,
+            accept_license=True if yes else None,
+            refresh=refresh,
+            echo=lambda msg: click.echo(msg),
+            confirm=None if yes else (lambda prompt: click.confirm(prompt, default=False)),
+        )
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+
+    if cached:
+        click.echo(f"Corpus '{name}' already cached at {corpus_root} (no network call).")
+
+    bundled = _bundled_dataset_path(name)
+    if bundled is None or not bundled.exists():
+        raise click.ClickException(
+            f"Bundled dataset YAML for {name!r} is missing from the package."
+        )
+
+    ds = load_dataset(bundled)
+    ds.corpus_ref = str(corpus_root)
+    out_path = datasets_dir / name / "dataset.yaml"
+    ds.save_yaml(out_path)
+
+    click.echo(
+        f"\nDataset '{name}' ready: {len(ds.questions)} questions at {out_path}\n"
+        f"Corpus at {corpus_root}\n"
+        f"Next: docmancer bench run --dataset {name} --backend fts"
+    )
+
+
+def _bundled_dataset_path(name: str) -> Path | None:
+    """Locate the bundled dataset YAML for a built-in corpus."""
+    from importlib import resources
+
+    try:
+        pkg = resources.files(f"docmancer.bench.data.{name}")
+        candidate = pkg / "dataset.yaml"
+        if candidate.is_file():
+            return Path(str(candidate))
+    except (ModuleNotFoundError, FileNotFoundError, AttributeError):
+        pass
+    fallback = Path(__file__).parent / "data" / name / "dataset.yaml"
+    return fallback if fallback.exists() else None
+
+
+@bench_dataset_group.command("list-builtin", cls=DocmancerCommand)
+def bench_dataset_list_builtin_cmd():
+    """List the built-in benchmark datasets available via `bench dataset use`."""
+    from docmancer.bench.corpora import is_fetched, list_builtin
+
+    items = list_builtin()
+    if not items:
+        click.echo("(no built-in datasets registered)")
+        return
+    for spec in items:
+        status = "cached" if is_fetched(spec.name) else "not fetched"
+        click.echo(f"{spec.name}  [{status}]")
+        click.echo(f"  {spec.description}")
+        click.echo(f"  source: {spec.git_url}")
+        click.echo(f"  license: {spec.license_url}")
 
 
 @bench_group.command("run", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)

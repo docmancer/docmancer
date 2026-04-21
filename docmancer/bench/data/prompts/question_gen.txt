@@ -1,0 +1,28 @@
+You generate high-quality benchmark questions for retrieval evaluation.
+
+Given a single markdown document below, produce {n_questions} questions a reader might ask whose answers are clearly grounded in THIS document. Mix difficulty: roughly one third easy factual recall, one third medium synthesis across a section, one third harder questions that require combining two or more passages in the doc.
+
+Hard requirements:
+- Each question must be answerable from the document itself.
+- Each expected_answer is 1 to 3 sentences and factually supported by the text.
+- Do NOT invent facts or paraphrase beyond what the text says.
+- Do NOT write trivia about the document's metadata (word count, date, author bio) unless that metadata is the actual subject.
+- Return ONLY valid JSON. No prose before or after.
+
+Output JSON schema:
+{{
+  "questions": [
+    {{
+      "question": "string",
+      "expected_answer": "string",
+      "difficulty": "easy" | "medium" | "hard"
+    }}
+  ]
+}}
+
+Document source path: {source_path}
+
+Document:
+---
+{content}
+---

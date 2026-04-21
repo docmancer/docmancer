@@ -79,7 +79,10 @@ The `bench` namespace compares retrieval backends (FTS, vector, and an RLM path)
 
 ```bash
 docmancer bench init
-docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>
+docmancer bench dataset use lenny                                          # built-in zero-config dataset; corpus fetched once, then cached
+docmancer bench dataset list-builtin
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider auto
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider heuristic    # no-LLM shallow fallback
 docmancer bench dataset create --from-legacy <path.json> --name <name>
 docmancer bench dataset validate <path>
 docmancer bench run --backend fts --dataset <name>
@@ -98,5 +101,7 @@ Optional extras: `pipx install 'docmancer[vector]'`, `pipx install 'docmancer[rl
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
 - Do not assume docs are indexed. Always verify with `docmancer list` before querying.
-- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run` and `docmancer bench dataset create`.
+- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run`, `docmancer bench dataset create`, or `docmancer bench dataset use lenny`.
+- For first-run or demo benchmarks, prefer `docmancer bench dataset use lenny`: zero config, 30 hand-authored questions, corpus cached locally after first fetch.
+- `bench dataset create --from-corpus` defaults to `--provider auto` and expects an LLM key (Anthropic, OpenAI, Gemini, or Ollama). Use `--provider heuristic` for the old no-LLM shallow path.
 - Do not mix runs from different corpora in `docmancer bench compare` unless you understand the `ingest_hash` guard and pass `--allow-mixed-ingest` explicitly.

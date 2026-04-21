@@ -82,7 +82,10 @@ The `bench` namespace compares retrieval backends on the same corpus and questio
 
 ```bash
 docmancer bench init
-docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>
+docmancer bench dataset use lenny                                          # built-in zero-config dataset (fetches corpus once, caches, reuses)
+docmancer bench dataset list-builtin                                       # list available built-in datasets
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider auto
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name> --provider heuristic    # no-LLM shallow fallback
 docmancer bench dataset create --from-legacy <path.json> --name <name>
 docmancer bench dataset validate <path>
 docmancer bench run --backend fts --dataset <name>
@@ -103,5 +106,7 @@ Optional extras to install the experimental backends and the judge scorer:
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
 - Do not assume docs are indexed. Always verify with `docmancer list` before querying.
-- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run` and `docmancer bench dataset create`.
+- Do not use the old `docmancer eval` or `docmancer dataset generate/eval` commands; they were removed. Use `docmancer bench run`, `docmancer bench dataset create`, or `docmancer bench dataset use lenny` for the built-in dataset.
+- When a user wants to try the benchmark with zero setup, prefer `docmancer bench dataset use lenny` over scaffolding from a local corpus. The corpus is fetched once and cached; subsequent runs never touch the network.
+- `docmancer bench dataset create --from-corpus ...` now uses `--provider auto` by default and requires a configured LLM key (Anthropic, OpenAI, Gemini, or local Ollama). Use `--provider heuristic` explicitly if the user wants shallow heading-based questions without an LLM.
 - Do not mix runs from different corpora in `docmancer bench compare` unless you understand the `ingest_hash` guard and pass `--allow-mixed-ingest` explicitly.
