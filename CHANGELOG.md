@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-04-21
+## [0.4.2] - 2026-04-21
 
 Release highlights: built-in **`docmancer bench dataset use lenny`** for a zero-config first run, **LLM-powered question generation** for **`bench dataset create --from-corpus`**, optional **`docmancer[llm]`**, and a packaging fix so **`docmancer[rlm]`** pulls the **`rlms`** PyPI distribution (the import surface remains **`rlm`**).
 
@@ -427,7 +427,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
-[0.5.0]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.5.0
+[0.4.2]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/docmancer/docmancer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/docmancer/docmancer/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/docmancer/docmancer/compare/v0.3.3...v0.3.4

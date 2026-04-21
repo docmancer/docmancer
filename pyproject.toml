@@ -53,8 +53,5 @@ path = "docmancer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"docmancer/bench/data" = "docmancer/bench/data"
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
