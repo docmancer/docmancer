@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.4] - Unreleased
-
+## [0.4.4] - 2026-04-21
 ### Added
 
 - **`docmancer[bench]`** optional extra: one install path for **vector + rlm + judge + llm** (full local bench stack). **`docmancer[vector]`** and **`docmancer[rlm]`** now include **`docmancer[llm]`** so Qdrant question generation and RLM answering have provider SDKs in the same venv.
