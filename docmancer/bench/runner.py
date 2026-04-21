@@ -83,6 +83,21 @@ def run_bench(
 ) -> Path:
     """Run a dataset against a backend. Returns the run directory path."""
 
+    non_empty = sum(1 for q in dataset.questions if q.question)
+    if non_empty == 0:
+        try:
+            import click
+
+            raise click.ClickException(
+                f"Dataset has {len(dataset.questions)} question(s) but none have a non-empty "
+                f"'question:' field. Edit the dataset YAML and fill in each 'question:' before "
+                f"running bench. (corpus_ref: {dataset.corpus_ref})"
+            )
+        except ImportError:
+            raise ValueError(
+                "Dataset has no non-empty questions; fill in 'question:' in the YAML before running bench."
+            )
+
     if not corpus.ingest_hash:
         corpus.ingest_hash = compute_ingest_hash(corpus)
 

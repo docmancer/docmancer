@@ -21,6 +21,14 @@ def render_single_run_markdown(metrics: BenchResult, config_snap: dict) -> str:
         f"**Ingest hash:** {metrics.ingest_hash[:16]}",
         f"**k_retrieve:** {metrics.k_retrieve} / **k_answer:** {metrics.k_answer}",
         "",
+    ]
+    if metrics.num_queries == 0:
+        lines.append(
+            "> **Warning:** 0 queries executed. The dataset had no non-empty `question:` fields, "
+            "so every metric below is 0.0. Edit the dataset YAML and re-run."
+        )
+        lines.append("")
+    lines += [
         "## Metrics",
         "",
         "| Metric | Value |",

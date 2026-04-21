@@ -8,6 +8,7 @@ use `docmancer bench dataset create --from-legacy <path>` to convert.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,10 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 _AUTO_GENERATED_EVAL_FILES = {"_graph.md", "_index.md"}
+
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$", re.MULTILINE)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_FENCED_CODE_RE = re.compile(r"^([ \t]*)(`{3,}|~{3,}).*?^\1\2\s*$", re.MULTILINE | re.DOTALL)
 
 
 class BenchQuestion(BaseModel):
@@ -112,33 +117,92 @@ def _legacy_dict_to_dataset(data: dict, *, corpus_ref: str) -> BenchDataset:
     )
 
 
-def generate_scaffold_from_corpus_dir(source_dir: Path, max_entries: int = 50) -> BenchDataset:
-    """Generate a dataset scaffold from markdown files.
+def _strip_fenced_code_blocks(content: str) -> str:
+    return _FENCED_CODE_RE.sub("", content)
 
-    Mirrors the pre-refactor `docmancer dataset generate` behavior but emits
-    the new YAML-friendly shape. Extracts a short context passage from each
-    file and pre-fills `ground_truth_sources`; the developer fills in
-    `question` and `expected_answer`.
+
+def _extract_headings(content: str) -> list[tuple[int, str]]:
+    stripped = _strip_fenced_code_blocks(content)
+    results: list[tuple[int, str]] = []
+    for match in _HEADING_RE.finditer(stripped):
+        level = len(match.group(1))
+        text = _MD_LINK_RE.sub(r"\1", match.group(2)).strip()
+        text = text.lstrip("#").strip()
+        if text:
+            results.append((level, text))
+    return results
+
+
+def _heading_to_question(heading: str) -> str:
+    h = heading.strip().rstrip(".").rstrip(":")
+    low = h.lower()
+    if h.endswith("?"):
+        return h
+    if low.startswith("how to "):
+        return f"How do I {h[len('how to '):]}?"
+    if low.startswith(("how ", "what ", "why ", "when ", "where ", "who ")):
+        return f"{h}?"
+    first_word = low.split(" ", 1)[0]
+    if len(first_word) > 4 and first_word.endswith("ing"):
+        return f"How do I {low}?"
+    return f"What is {h}?"
+
+
+def _question_for_file(content: str, stem: str) -> str | None:
+    """Pick a single representative question for a file.
+
+    We emit at most one question per file because `ground_truth_sources` is
+    file-scoped in the current scoring path: emitting several questions per
+    file would tag each with the same file as the "correct" answer, which
+    inflates MRR/hit/recall whenever the backend returns any chunk from
+    that file. Multi-question-per-file support requires section-level
+    ground truth plumbed through the retrieval result type.
+    """
+    headings = _extract_headings(content)
+    headings.sort(key=lambda item: item[0])
+    if headings:
+        return _heading_to_question(headings[0][1])
+    fallback = stem.replace("_", " ").replace("-", " ").strip()
+    if fallback:
+        return _heading_to_question(fallback)
+    return None
+
+
+def generate_scaffold_from_corpus_dir(source_dir: Path, max_entries: int = 50) -> BenchDataset:
+    """Generate a dataset from markdown files using heading-based heuristics.
+
+    Emits one question per markdown file, derived from the file's best
+    heading (H1 > H2 > H3) with fenced code blocks stripped so that
+    headings inside code samples don't leak into the question set. Falls
+    back to the filename when a file has no headings. `max_entries` caps
+    the total number of questions. No LLM calls are made; questions are
+    shallow by design and intended to give a zero-config starting point
+    that users can refine in the YAML.
     """
     questions: list[BenchQuestion] = []
     md_files = [
         file_path
         for file_path in sorted(source_dir.rglob("*.md"))
         if file_path.name not in _AUTO_GENERATED_EVAL_FILES
-    ][:max_entries]
+    ]
 
-    for i, md_file in enumerate(md_files):
+    for md_file in md_files:
+        if len(questions) >= max_entries:
+            break
         try:
             content = md_file.read_text(encoding="utf-8")
         except Exception:
             continue
         if not content.strip():
             continue
+        qtext = _question_for_file(content, md_file.stem)
+        if not qtext:
+            continue
         source_ref = _source_ref_for_file(source_dir, md_file)
         questions.append(
             BenchQuestion(
-                id=f"q{i:04d}",
-                question="",
+                id=f"q{len(questions):04d}",
+                question=qtext,
                 ground_truth_sources=[source_ref],
             )
         )
@@ -149,7 +213,7 @@ def generate_scaffold_from_corpus_dir(source_dir: Path, max_entries: int = 50) -
         questions=questions,
         metadata={
             "generated_from": str(source_dir),
-            "mode": "scaffold",
+            "mode": "heuristic",
             "excluded_auto_generated_files": sorted(_AUTO_GENERATED_EVAL_FILES),
         },
     )

@@ -8,6 +8,7 @@ import pytest
 from docmancer.bench.dataset import (
     BenchDataset,
     BenchQuestion,
+    _heading_to_question,
     generate_scaffold_from_corpus_dir,
     load_dataset,
 )
@@ -78,4 +79,64 @@ def test_generate_scaffold_from_corpus_dir(tmp_path: Path):
     assert len(ds.questions) == 2
     ids = {q.id for q in ds.questions}
     assert ids == {"q0000", "q0001"}
-    assert all(q.question == "" for q in ds.questions)
+    questions = {q.question for q in ds.questions}
+    assert questions == {"What is Intro?", "What is Auth?"}
+    assert ds.metadata.get("mode") == "heuristic"
+
+
+def test_generate_scaffold_emits_one_question_per_file(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "# Guide\n\n## Installation\n\nSteps.\n\n## Configuring the client\n\nDetails.\n"
+    )
+    ds = generate_scaffold_from_corpus_dir(docs, max_entries=10)
+    assert len(ds.questions) == 1
+    assert ds.questions[0].question == "What is Guide?"
+    assert ds.questions[0].ground_truth_sources
+
+
+def test_generate_scaffold_ignores_headings_inside_code_fences(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "snippets.md").write_text(
+        "```md\n# Fake heading in fence\n## Another fake\n```\n\n"
+        "# Real Title\n\nBody.\n"
+        "```sh\n# install step\n```\n"
+    )
+    ds = generate_scaffold_from_corpus_dir(docs, max_entries=10)
+    assert [q.question for q in ds.questions] == ["What is Real Title?"]
+
+
+def test_generate_scaffold_respects_max_entries(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for i in range(5):
+        (docs / f"f{i}.md").write_text(f"# Heading {i}\n")
+    ds = generate_scaffold_from_corpus_dir(docs, max_entries=3)
+    assert len(ds.questions) == 3
+
+
+def test_generate_scaffold_falls_back_to_filename(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "user-guide.md").write_text("Body text with no headings at all.\n")
+    ds = generate_scaffold_from_corpus_dir(docs, max_entries=10)
+    assert len(ds.questions) == 1
+    assert ds.questions[0].question == "What is user guide?"
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        ("Installation", "What is Installation?"),
+        ("Getting Started", "How do I getting started?"),
+        ("How to configure X", "How do I configure X?"),
+        ("How does caching work", "How does caching work?"),
+        ("What is RAG?", "What is RAG?"),
+        ("Why we built this", "Why we built this?"),
+        ("Configuring the embedder.", "How do I configuring the embedder?"),
+    ],
+)
+def test_heading_to_question_patterns(heading: str, expected: str):
+    assert _heading_to_question(heading) == expected

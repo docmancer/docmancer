@@ -140,13 +140,18 @@ class QdrantBackend:
 
 
 def click_extra_required_error(backend: str, extra: str, exc: Exception) -> Exception:
+    msg = (
+        f"The {backend} backend is not installed (missing '[{extra}]' extra).\n"
+        f"If docmancer is already installed via pipx, a plain "
+        f"'pipx install docmancer[{extra}]' will silently no-op. Use one of:\n"
+        f"  pipx install --force 'docmancer[{extra}]' --python python3.13\n"
+        f"  pipx inject docmancer <deps>   # see README 'Adding extras to an existing pipx install'\n"
+        f"  pip install 'docmancer[{extra}]'   # if you use plain pip\n"
+        f"Underlying error: {type(exc).__name__}: {exc}"
+    )
     try:
         import click
 
-        return click.ClickException(
-            f"The {backend} backend requires: pipx install 'docmancer[{extra}]' ({type(exc).__name__}: {exc})"
-        )
+        return click.ClickException(msg)
     except ImportError:
-        return ImportError(
-            f"The {backend} backend requires: pipx install 'docmancer[{extra}]'"
-        )
+        return ImportError(msg)

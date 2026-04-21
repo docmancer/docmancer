@@ -112,7 +112,15 @@ def bench_dataset_create_cmd(from_corpus, from_legacy, size, name, config_path):
     out_dir = datasets_dir / out_name
     out_path = out_dir / "dataset.yaml"
     ds.save_yaml(out_path)
-    click.echo(f"Wrote {len(ds.questions)} questions to {out_path}")
+    if from_corpus:
+        click.echo(
+            f"Wrote {len(ds.questions)} heuristic question(s) to {out_path}\n"
+            f"Questions are derived from markdown headings and are intentionally shallow. "
+            f"Edit the YAML to refine them or add 'expected_answer' fields before running "
+            f"'docmancer bench run'."
+        )
+    else:
+        click.echo(f"Wrote {len(ds.questions)} questions to {out_path}")
 
 
 @bench_group.command("run", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)

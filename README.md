@@ -36,7 +36,7 @@ In a typical agentic coding session, raw docs pages can consume 30 to 40 percent
 pipx install docmancer --python python3.13
 
 docmancer setup
-docmancer add https://docs.pytest.org
+docmancer add https://bun.com/docs
 docmancer query "How do I use fixtures?"
 ```
 
@@ -86,25 +86,25 @@ Legacy `.docmancer/eval_dataset.json` files are accepted read-only; convert them
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `docmancer setup` | Create config/database and install detected agent skills |
-| `docmancer setup --all` | Non-interactively install all supported agent integrations |
-| `docmancer add <url-or-path>` | Fetch or read documentation and index normalized sections |
-| `docmancer update` | Re-fetch and re-index all existing docs sources |
-| `docmancer query <text>` | Return a compact markdown context pack |
-| `docmancer query <text> --format json` | Return the same context pack as JSON |
-| `docmancer query <text> --expand` | Include adjacent sections around matches |
-| `docmancer query <text> --expand page` | Include the full matching page, subject to the token budget |
-| `docmancer list` | List indexed docsets or sources |
-| `docmancer inspect` | Show SQLite index stats and extract locations |
-| `docmancer remove <source>` | Remove a source or docset root |
-| `docmancer remove --all` | Remove everything indexed (keeps the config) |
-| `docmancer doctor` | Check config, SQLite FTS5, index stats, and agent skill installs |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing |
-| `docmancer init` | Create a project-local `docmancer.yaml` |
-| `docmancer install <agent>` | Manual skill installation for a single agent |
-| `docmancer bench ...` | Benchmarking harness (see the section above) |
+| Command                                | What it does                                                     |
+| -------------------------------------- | ---------------------------------------------------------------- |
+| `docmancer setup`                      | Create config/database and install detected agent skills         |
+| `docmancer setup --all`                | Non-interactively install all supported agent integrations       |
+| `docmancer add <url-or-path>`          | Fetch or read documentation and index normalized sections        |
+| `docmancer update`                     | Re-fetch and re-index all existing docs sources                  |
+| `docmancer query <text>`               | Return a compact markdown context pack                           |
+| `docmancer query <text> --format json` | Return the same context pack as JSON                             |
+| `docmancer query <text> --expand`      | Include adjacent sections around matches                         |
+| `docmancer query <text> --expand page` | Include the full matching page, subject to the token budget      |
+| `docmancer list`                       | List indexed docsets or sources                                  |
+| `docmancer inspect`                    | Show SQLite index stats and extract locations                    |
+| `docmancer remove <source>`            | Remove a source or docset root                                   |
+| `docmancer remove --all`               | Remove everything indexed (keeps the config)                     |
+| `docmancer doctor`                     | Check config, SQLite FTS5, index stats, and agent skill installs |
+| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing                 |
+| `docmancer init`                       | Create a project-local `docmancer.yaml`                          |
+| `docmancer install <agent>`            | Manual skill installation for a single agent                     |
+| `docmancer bench ...`                  | Benchmarking harness (see the section above)                     |
 
 ---
 
@@ -195,20 +195,22 @@ Claude Desktop receives a zip package that can be uploaded through Claude Deskto
 
 ## Optional Extras
 
-| Extra | Enables |
-| --- | --- |
-| `docmancer[browser]` | Playwright-backed fetcher for JS-heavy sites |
-| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites |
-| `docmancer[vector]` | Qdrant vector backend for `docmancer bench` |
-| `docmancer[rlm]` | RLM backend for `docmancer bench` |
-| `docmancer[judge]` | LLM-as-judge answer scoring via ragas |
-| `docmancer[ragas]` | Deprecated alias for `[judge]`; will be removed in the next minor |
+| Extra                 | Enables                                                           |
+| --------------------- | ----------------------------------------------------------------- |
+| `docmancer[browser]`  | Playwright-backed fetcher for JS-heavy sites                      |
+| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites                      |
+| `docmancer[vector]`   | Qdrant vector backend for `docmancer bench`                       |
+| `docmancer[rlm]`      | RLM backend for `docmancer bench`                                 |
+| `docmancer[judge]`    | LLM-as-judge answer scoring via ragas                             |
+| `docmancer[ragas]`    | Deprecated alias for `[judge]`; will be removed in the next minor |
 
 **Fresh install with extras (recommended):**
 
 ```bash
 pipx install 'docmancer[vector,rlm,judge]' --python python3.13
 ```
+
+Note: if `docmancer` is already installed via pipx, the command above silently no-ops (pipx prints "already seems to be installed" and does not re-evaluate extras). In that case, use the **Adding extras to an existing pipx install** block below.
 
 **Adding extras to an existing pipx install** (pipx won't re-read extras on a second `pipx install`; inject the deps into the existing venv instead):
 
