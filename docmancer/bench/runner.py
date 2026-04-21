@@ -290,8 +290,12 @@ def _accumulate_metrics(
         )
 
     if result.citations and q.ground_truth_sources:
+        from docmancer.bench.metrics import _source_matches
+
         cited = {c.source for c in result.citations}
-        coverage = len(cited & set(q.ground_truth_sources)) / len(q.ground_truth_sources)
+        gt_set = set(q.ground_truth_sources)
+        matched = sum(1 for gt in q.ground_truth_sources if any(_source_matches(c, {gt}) for c in cited))
+        coverage = matched / len(gt_set) if gt_set else 0.0
         citation_cov.append(coverage)
 
     latencies.append(result.latency.total_ms)

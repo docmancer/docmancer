@@ -12,6 +12,33 @@ import click
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 
 
+_CORPUS_SOURCE_SUFFIXES = {".md", ".txt"}
+
+
+def _normalize_source_value(value: str | Path) -> str:
+    return str(value).replace("\\", "/")
+
+
+def _corpus_expected_sources(corpus_root: Path) -> set[str]:
+    if corpus_root.is_file():
+        return {_normalize_source_value(corpus_root)}
+    if not corpus_root.is_dir():
+        return set()
+    return {
+        _normalize_source_value(path)
+        for path in sorted(corpus_root.rglob("*"))
+        if path.is_file() and path.suffix.lower() in _CORPUS_SOURCE_SUFFIXES
+    }
+
+
+def _corpus_fully_indexed(corpus_root: Path, existing_sources: list[str]) -> bool:
+    expected = _corpus_expected_sources(corpus_root)
+    if not expected:
+        return False
+    existing_norm = {_normalize_source_value(src) for src in existing_sources}
+    return expected.issubset(existing_norm)
+
+
 def _load_config_and_corpus(config_path: str | None):
     from docmancer.cli.commands import _effective_config, _load_config
     from docmancer.bench.backends.base import CorpusHandle
@@ -221,17 +248,21 @@ def _dataset_from_corpus(corpus_dir: Path, *, size: int, provider_choice: str, m
 @click.argument("name")
 @click.option("--refresh", is_flag=True, default=False, help="Force re-fetch even if the corpus is already cached.")
 @click.option("--yes", "-y", is_flag=True, default=False, help="Pre-accept the corpus license non-interactively.")
+@click.option("--no-ingest", is_flag=True, default=False, help="Skip ingesting the corpus into the docmancer index.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_dataset_use_cmd(name, refresh, yes, config_path):
+def bench_dataset_use_cmd(name, refresh, yes, no_ingest, config_path):
     """Install a built-in benchmark dataset (e.g. `docmancer bench dataset use lenny`).
 
     Fetches the corpus on first use and caches it under
     ~/.docmancer/bench/corpora/<name>/. Subsequent invocations reuse the
     cache and make zero network calls; pass --refresh to force a re-fetch.
+
+    Also ingests the corpus into the docmancer index so `bench run` can
+    retrieve from it. Skip with --no-ingest if you plan to ingest yourself.
     """
     from docmancer.bench.corpora import BUILTIN_CORPORA, is_fetched, resolve_corpus
     from docmancer.bench.dataset import load_dataset
-    from docmancer.cli.commands import _effective_config, _load_config
+    from docmancer.cli.commands import _effective_config, _load_config, _get_agent_class
 
     if name not in BUILTIN_CORPORA:
         available = ", ".join(sorted(BUILTIN_CORPORA)) or "(none)"
@@ -266,9 +297,37 @@ def bench_dataset_use_cmd(name, refresh, yes, config_path):
     out_path = datasets_dir / name / "dataset.yaml"
     ds.save_yaml(out_path)
 
+    ingested_note = ""
+    if not no_ingest:
+        agent = _get_agent_class()(config=config)
+        existing = agent.list_sources()
+        corpus_str = str(corpus_root)
+        already_ingested = _corpus_fully_indexed(corpus_root, existing)
+        if already_ingested and not refresh:
+            ingested_note = f"Corpus already indexed (skipping re-ingest).\n"
+        else:
+            click.echo(f"Ingesting corpus into docmancer index at {config.index.db_path} ...")
+            try:
+                count = agent.add(corpus_str, recreate=False)
+                ingested_note = (
+                    f"Ingested {count} sections into the index.\n"
+                    f"To remove later: docmancer remove {corpus_str}\n"
+                )
+            except Exception as exc:
+                ingested_note = (
+                    f"WARNING: auto-ingest failed: {exc}\n"
+                    f"Run manually: docmancer add {corpus_str}\n"
+                )
+    else:
+        ingested_note = (
+            f"Skipped ingest (--no-ingest). Run manually before bench:\n"
+            f"  docmancer add {corpus_root}\n"
+        )
+
     click.echo(
         f"\nDataset '{name}' ready: {len(ds.questions)} questions at {out_path}\n"
         f"Corpus at {corpus_root}\n"
+        f"{ingested_note}"
         f"Next: docmancer bench run --dataset {name} --backend fts"
     )
 

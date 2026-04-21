@@ -12,9 +12,38 @@ import statistics
 from dataclasses import dataclass, field
 
 
+def _normalize_source_path(value: str) -> str:
+    return value.replace("\\", "/")
+
+
+def _source_matches(retrieved: str, relevant: set[str]) -> bool:
+    """Flexible match: exact, or the retrieved path ends with a ground-truth path.
+
+    Ground truth in portable datasets is stored as `newsletters/foo.md` so the
+    same dataset works regardless of where the corpus lives on disk. A
+    retrieved source like `/Users/me/.docmancer/bench/corpora/lenny/newsletters/foo.md`
+    matches ground truth `newsletters/foo.md` because it ends with the
+    expected suffix preceded by a path separator. URL ground truths still
+    match exactly since URLs do not contain trailing slashes before the
+    stored value.
+    """
+    if retrieved in relevant:
+        return True
+    retrieved_norm = _normalize_source_path(retrieved)
+    for gt in relevant:
+        if not gt:
+            continue
+        gt_norm = _normalize_source_path(gt)
+        if retrieved_norm == gt_norm:
+            return True
+        if retrieved_norm.endswith("/" + gt_norm):
+            return True
+    return False
+
+
 def mean_reciprocal_rank(ranked_results: list[str], relevant: set[str]) -> float:
     for i, result in enumerate(ranked_results, start=1):
-        if result in relevant:
+        if _source_matches(result, relevant):
             return 1.0 / i
     return 0.0
 
@@ -22,7 +51,7 @@ def mean_reciprocal_rank(ranked_results: list[str], relevant: set[str]) -> float
 def hit_rate(ranked_results: list[str], relevant: set[str], k: int | None = None) -> float:
     top_k = ranked_results[:k] if k is not None else ranked_results
     for result in top_k:
-        if result in relevant:
+        if _source_matches(result, relevant):
             return 1.0
     return 0.0
 
@@ -31,7 +60,7 @@ def recall_at_k(ranked_results: list[str], relevant: set[str], k: int | None = N
     if not relevant:
         return 0.0
     top_k = ranked_results[:k] if k is not None else ranked_results
-    found = sum(1 for r in top_k if r in relevant)
+    found = sum(1 for r in top_k if _source_matches(r, relevant))
     return found / len(relevant)
 
 
@@ -41,7 +70,7 @@ def precision_at_k(ranked_results: list[str], relevant: set[str], k: int | None 
     top_k = ranked_results[:k] if k is not None else ranked_results
     if not top_k:
         return 0.0
-    found = sum(1 for r in top_k if r in relevant)
+    found = sum(1 for r in top_k if _source_matches(r, relevant))
     return found / len(top_k)
 
 

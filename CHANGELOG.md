@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - Unreleased
+
+### Added
+
+- **`bench dataset use`:** optional **`--no-ingest`** to skip indexing the corpus; by default the command ingests the resolved corpus into the SQLite index (with **skip when already fully indexed** detection for **`.md`** / **`.txt`** sources) so **`bench run`** can retrieve without a separate **`docmancer add`**.
+
+### Fixed
+
+- **Bench metrics:** **MRR**, **hit rate**, **recall@k**, **precision@k**, and **citation coverage** treat portable **`ground_truth_sources`** (for example `newsletters/foo.md`) as matching absolute retrieved paths (for example under **`~/.docmancer/bench/corpora/lenny/`**), so built-in datasets score correctly across machines.
+
+### Tests
+
+- **`test_dataset_use_index_detection`**, **`test_metrics_matching`:** corpus index detection and suffix-based source matching.
+
 ## [0.4.2] - 2026-04-21
 
 Release highlights: built-in **`docmancer bench dataset use lenny`** for a zero-config first run, **LLM-powered question generation** for **`bench dataset create --from-corpus`**, optional **`docmancer[llm]`**, and a packaging fix so **`docmancer[rlm]`** pulls the **`rlms`** PyPI distribution (the import surface remains **`rlm`**).
