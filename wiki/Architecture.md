@@ -34,8 +34,10 @@ This feedback loop makes the compression value visible on every query.
 Three backends ship:
 
 - **`fts` (stable, core).** Wraps the SQLite FTS5 store and returns BM25-ranked sections.
-- **`qdrant` (experimental, `docmancer[vector]`).** Embeds the canonical sections with FastEmbed and searches a local embedded Qdrant collection, reusing the same `section_id` as its point id.
-- **`rlm` (experimental, `docmancer[rlm]`).** Delegates to the upstream `rlm` import surface, shipped on PyPI as `rlms`, with the canonical sections as its document context. Local REPL by default; `--sandbox docker` opt-in.
+- **`qdrant` (experimental, `docmancer[vector]`).** Embeds the canonical sections with FastEmbed and searches a local embedded Qdrant collection, reusing the same `section_id` as its point id. Uses the modern `query_points` API with a fallback to legacy `search` for older qdrant-client releases.
+- **`rlm` (experimental, `docmancer[rlm]`).** Delegates to the `rlm` library (PyPI: `rlms`). Requires an LLM provider key at runtime: auto-detects Anthropic, OpenAI, or Gemini from env, and accepts explicit pass-through for `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, and `litellm` via `--rlm-provider` or `bench.backends.rlm_provider`. Execution environments: `local` (default), `docker`, `modal`, `prime`, `daytona`, `e2b`. RLM manages its own retrieval, so retrieval metrics (MRR/Hit/Recall) do not apply; Chunk Overlap is computed from the generated answer.
+
+Built-in datasets (e.g. `lenny`) are available via `bench dataset use <name>`, which fetches the corpus on first use to `~/.docmancer/bench/corpora/<name>/`, caches it for subsequent runs, and auto-runs `docmancer add` so `bench run` can retrieve from it. Portable relative paths like `newsletters/foo.md` in a dataset's `ground_truth_sources` match retrieved absolute paths via suffix matching in the metrics helpers.
 
 Every run records a content-based `ingest_hash` of the SQLite snapshot (source count, section count, max `id`, max `ingested_at`). `docmancer bench compare` refuses to compare runs across different hashes unless `--allow-mixed-ingest` is passed, so fairness is guarded by default.
 

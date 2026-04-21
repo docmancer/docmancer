@@ -108,10 +108,28 @@ class QdrantBackend:
         start = time.perf_counter()
         try:
             vec = next(iter(self._embedder.embed([question])))
-            hits = self._client.search(collection_name=self._collection, query_vector=list(vec), limit=k)
+            # `query_points` is the modern API (qdrant-client >= 1.10). On
+            # older supported clients (>=1.7) we fall back to `search`. Some
+            # very new clients may remove `search` entirely, so probe in
+            # order: new first, then legacy.
+            if hasattr(self._client, "query_points"):
+                resp = self._client.query_points(
+                    collection_name=self._collection,
+                    query=list(vec),
+                    limit=k,
+                    with_payload=True,
+                )
+                hits = resp.points
+            else:
+                hits = self._client.search(
+                    collection_name=self._collection,
+                    query_vector=list(vec),
+                    limit=k,
+                )
             chunks = [
                 RetrievedChunk(
                     source=h.payload.get("source", ""),
+                    chunk_index=int(h.payload.get("chunk_index") or 0),
                     text=h.payload.get("text", ""),
                     score=float(h.score),
                     metadata={"section_id": h.payload.get("section_id")},

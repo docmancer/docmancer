@@ -91,3 +91,75 @@ def test_auto_picks_first_available_provider(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert "anthropic" in (result.output or "").lower()
+
+
+def test_auto_falls_through_when_first_provider_sdk_missing(monkeypatch, tmp_path):
+    """If OPENAI_API_KEY is set but openai SDK isn't installed, auto should try the next provider."""
+    _clear_keys(monkeypatch)
+    # Both env vars set. Detection order is anthropic → openai, so anthropic
+    # is tried first. We stub anthropic as "SDK missing" and openai as working
+    # to prove the iterator actually tries the second one.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k1")
+    monkeypatch.setenv("OPENAI_API_KEY", "k2")
+    monkeypatch.chdir(tmp_path)
+    corpus = _make_corpus(tmp_path)
+
+    from docmancer.bench import llm_providers
+
+    def fake_factory(provider, model=None):
+        if provider == "anthropic":
+            raise llm_providers.ProviderUnavailableError(
+                "Anthropic SDK not installed. Run: pipx inject docmancer 'docmancer[llm]'."
+            )
+        if provider == "openai":
+            return lambda _p: '{"questions": [{"question": "q", "expected_answer": "a", "difficulty": "easy"}]}'
+        raise llm_providers.ProviderUnavailableError(f"no stub for {provider}")
+
+    monkeypatch.setattr(llm_providers, "get_generator", fake_factory)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "bench", "dataset", "create",
+            "--from-corpus", str(corpus),
+            "--size", "1",
+            "--name", "x",
+            "--provider", "auto",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    out = result.output or ""
+    assert "Skipped providers with missing SDKs: anthropic" in out
+    assert "Using provider: openai" in out
+
+
+def test_auto_fails_cleanly_when_all_provider_sdks_missing(monkeypatch, tmp_path):
+    _clear_keys(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k1")
+    monkeypatch.setenv("OPENAI_API_KEY", "k2")
+    monkeypatch.chdir(tmp_path)
+    corpus = _make_corpus(tmp_path)
+
+    from docmancer.bench import llm_providers
+
+    def always_missing(provider, model=None):
+        raise llm_providers.ProviderUnavailableError(f"{provider} SDK not installed")
+
+    monkeypatch.setattr(llm_providers, "get_generator", always_missing)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "bench", "dataset", "create",
+            "--from-corpus", str(corpus),
+            "--size", "1",
+            "--name", "x",
+            "--provider", "auto",
+        ],
+    )
+    assert result.exit_code != 0
+    out = (result.output or "") + (result.stderr or "")
+    assert "All auto-detected providers failed" in out
+    assert "--provider heuristic" in out

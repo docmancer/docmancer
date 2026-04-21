@@ -91,8 +91,10 @@ def bench_dataset_group():
 
 @bench_dataset_group.command("validate", cls=DocmancerCommand)
 @click.argument("path")
-def bench_dataset_validate_cmd(path: str):
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def bench_dataset_validate_cmd(path: str, config_path: str | None):
     """Validate a YAML or legacy JSON dataset against the v1 schema."""
+    del config_path  # accepted for interface symmetry with other bench commands
     from docmancer.bench.dataset import load_dataset
 
     try:
@@ -204,24 +206,45 @@ def _dataset_from_corpus(corpus_dir: Path, *, size: int, provider_choice: str, m
         return generate_scaffold_from_corpus_dir(corpus_dir, max_entries=size)
 
     if provider_choice == "auto":
-        detected = detect_provider()
-        if detected is None:
+        candidates = available_providers()
+        if not candidates:
             click.echo(no_provider_message(), err=True)
             sys.exit(2)
-        click.echo(f"Using provider: {detected} (auto-detected from env).")
-        provider_name = detected
+        # Try each env-detected provider in order; skip any whose SDK is
+        # not installed. Users often have a key set for a provider whose
+        # Python SDK is in a different venv.
+        generator = None
+        provider_name = ""
+        skipped: list[str] = []
+        for candidate in candidates:
+            try:
+                generator = get_generator(candidate, model=model)
+                provider_name = candidate
+                break
+            except ProviderUnavailableError as exc:
+                skipped.append(f"{candidate}: {exc}")
+        if generator is None:
+            click.echo(
+                "All auto-detected providers failed to initialize:\n  "
+                + "\n  ".join(skipped)
+                + "\n\nInstall SDKs with: pipx inject docmancer 'docmancer[llm]'\n"
+                "Or pass --provider heuristic to skip LLM generation.",
+                err=True,
+            )
+            sys.exit(2)
+        if skipped:
+            click.echo(
+                "Skipped providers with missing SDKs: "
+                + ", ".join(s.split(":", 1)[0] for s in skipped)
+            )
+        click.echo(f"Using provider: {provider_name} (auto-detected from env).")
     else:
         provider_name = provider_choice
-
-    try:
-        generator = get_generator(provider_name, model=model)
-    except ProviderUnavailableError as exc:
-        click.echo(f"Provider '{provider_name}' unavailable: {exc}", err=True)
-        if provider_choice == "auto":
-            others = [p for p in available_providers() if p != provider_name]
-            if others:
-                click.echo(f"Other detected providers: {', '.join(others)}", err=True)
-        sys.exit(2)
+        try:
+            generator = get_generator(provider_name, model=model)
+        except ProviderUnavailableError as exc:
+            click.echo(f"Provider '{provider_name}' unavailable: {exc}", err=True)
+            sys.exit(2)
 
     click.echo(f"Generating up to {size} questions from {corpus_dir} ...")
     questions = generate_questions_llm(
@@ -348,8 +371,10 @@ def _bundled_dataset_path(name: str) -> Path | None:
 
 
 @bench_dataset_group.command("list-builtin", cls=DocmancerCommand)
-def bench_dataset_list_builtin_cmd():
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def bench_dataset_list_builtin_cmd(config_path: str | None):
     """List the built-in benchmark datasets available via `bench dataset use`."""
+    del config_path  # accepted for interface symmetry with other bench commands
     from docmancer.bench.corpora import is_fetched, list_builtin
 
     items = list_builtin()
@@ -371,9 +396,14 @@ def bench_dataset_list_builtin_cmd():
 @click.option("--k-retrieve", "k_retrieve", default=None, type=int)
 @click.option("--k-answer", "k_answer", default=None, type=int)
 @click.option("--timeout-s", "timeout_s", default=None, type=float)
-@click.option("--sandbox", default=None, help="RLM only: local (default) or docker.")
+@click.option("--sandbox", default=None, help="RLM only: execution environment (local, docker, modal, prime, daytona, e2b).")
+@click.option("--rlm-provider", "rlm_provider", default=None,
+              help="RLM only: override provider (anthropic, openai, gemini, azure_openai, openrouter, portkey, vercel, vllm, litellm).")
+@click.option("--rlm-model", "rlm_model", default=None, help="RLM only: override the provider's default model.")
+@click.option("--rlm-max-chars", "rlm_max_chars", default=None, type=int,
+              help="RLM only: cap the corpus fed to the model (default 120000).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, sandbox, config_path):
+def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, sandbox, rlm_provider, rlm_model, rlm_max_chars, config_path):
     """Run a dataset against one backend and write artifacts."""
     from docmancer.bench.backends import get_backend
     from docmancer.bench.dataset import load_dataset
@@ -407,8 +437,21 @@ def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, san
         }[backend_name]
 
     extra: dict = {}
-    if backend_name == "rlm" and sandbox:
-        extra["sandbox"] = sandbox
+    if backend_name == "rlm":
+        # Precedence: CLI flag > bench config value > (unset; backend picks default).
+        cfg_backends = config.bench.backends
+        effective_sandbox = sandbox or cfg_backends.__dict__.get("sandbox") or None
+        if effective_sandbox:
+            extra["sandbox"] = effective_sandbox
+        effective_provider = rlm_provider or cfg_backends.rlm_provider or ""
+        if effective_provider:
+            extra["rlm_provider"] = effective_provider
+        effective_model = rlm_model or cfg_backends.rlm_model or ""
+        if effective_model:
+            extra["rlm_model"] = effective_model
+        effective_max_chars = rlm_max_chars or cfg_backends.rlm_max_chars
+        if effective_max_chars:
+            extra["rlm_max_chars"] = effective_max_chars
 
     if not run_id:
         run_id = f"{backend_name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"

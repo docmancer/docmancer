@@ -60,8 +60,13 @@ def recall_at_k(ranked_results: list[str], relevant: set[str], k: int | None = N
     if not relevant:
         return 0.0
     top_k = ranked_results[:k] if k is not None else ranked_results
-    found = sum(1 for r in top_k if _source_matches(r, relevant))
-    return found / len(relevant)
+    matched_gts: set[str] = set()
+    for r in top_k:
+        for gt in relevant:
+            if _source_matches(r, {gt}):
+                matched_gts.add(gt)
+                break
+    return len(matched_gts) / len(relevant)
 
 
 def precision_at_k(ranked_results: list[str], relevant: set[str], k: int | None = None) -> float:

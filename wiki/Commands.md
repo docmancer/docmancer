@@ -52,13 +52,33 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | Command | Description |
 |---------|-------------|
 | `docmancer bench init` | Scaffold `.docmancer/bench/{datasets,runs}/` in the current project. |
-| `docmancer bench dataset create --from-corpus <dir>` | Scaffold a YAML v1 dataset by sampling markdown files from a directory. |
+| `docmancer bench dataset use <name>` | Install a built-in dataset (e.g. `lenny`). Fetches the corpus on first use, caches it under `~/.docmancer/bench/corpora/<name>/`, and auto-ingests into the index. Pass `--refresh` to re-fetch; `--no-ingest` to skip ingest. |
+| `docmancer bench dataset list-builtin` | List built-in datasets available via `dataset use`. |
+| `docmancer bench dataset create --from-corpus <dir>` | Generate a YAML v1 dataset by sampling markdown from a directory. Default `--provider auto` uses an LLM to author grounded questions with expected answers; pass `--provider heuristic` for the old shallow heading-based path. |
 | `docmancer bench dataset create --from-legacy <path.json>` | Convert a pre-bench `.docmancer/eval_dataset.json` into the new YAML format. |
 | `docmancer bench dataset validate <path>` | Schema-check a YAML or legacy JSON dataset. |
 | `docmancer bench run --backend <fts\|qdrant\|rlm> --dataset <name>` | Run a dataset against one backend and write artifacts. |
 | `docmancer bench compare <run_id> <run_id> [...]` | Emit a side-by-side comparison of two or more runs. |
 | `docmancer bench report <run_id>` | Reprint a single-run report. Pass `--format json` for machine-readable output. |
 | `docmancer bench list` | List local datasets and runs. |
+
+### Bench dataset create options
+
+| Option | Description |
+|--------|-------------|
+| `--provider <name>` | Question-generation provider. One of `auto` (default; picks the first env-detected provider whose SDK is installed), `anthropic`, `openai`, `gemini`, `ollama`, or `heuristic` (shallow, no LLM). |
+| `--model <name>` | Override the provider's default model. |
+| `--questions-per-file <n>` | How many questions the LLM is asked to draft per source file (default: 3). |
+| `--size <n>` | Total question cap across the corpus (default: 30). |
+| `--name <name>` | Dataset directory name under `datasets/`. |
+
+### Bench dataset use options
+
+| Option | Description |
+|--------|-------------|
+| `--refresh` | Force re-fetch of the corpus even if it is already cached. |
+| `--yes` / `-y` | Pre-accept the corpus license non-interactively. |
+| `--no-ingest` | Skip the auto-ingest step. You will need to run `docmancer add <corpus-path>` manually before `bench run`. |
 
 ### Bench run options
 
@@ -68,7 +88,10 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `--k-retrieve <n>` | Top-k passed to the backend for retrieval metrics (default: from `bench.backends.k_retrieve`, usually 10). |
 | `--k-answer <n>` | Top-k passed to answer-capable backends (default: from `bench.backends.k_answer`, usually 5). |
 | `--timeout-s <s>` | Per-question timeout (default: 60 for `fts`/`qdrant`, 300 for `rlm`). |
-| `--sandbox <local\|docker>` | RLM only. Default: `local`. |
+| `--sandbox <name>` | RLM only. Execution environment: `local` (default), `docker`, `modal`, `prime`, `daytona`, `e2b`. |
+| `--rlm-provider <name>` | RLM only. Override the LLM provider: `anthropic`, `openai`, `gemini`, `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, `litellm`. |
+| `--rlm-model <name>` | RLM only. Override the provider's default model. |
+| `--rlm-max-chars <n>` | RLM only. Cap on the corpus fed to the model (default: 120000). |
 | `--config <path>` | Path to `docmancer.yaml`. |
 
 ### Bench compare options
@@ -88,7 +111,9 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 |-------|-----------------|
 | `docmancer[browser]` | Playwright fetcher for JS-heavy sites (used by `add --browser`). |
 | `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites. |
-| `docmancer[vector]` | Qdrant vector backend for `docmancer bench`. |
-| `docmancer[rlm]` | RLM backend for `docmancer bench` (`rlms`). |
+| `docmancer[llm]` | LLM provider SDKs (`anthropic`, `openai`, `google-genai`) for `bench dataset create --provider` and the RLM backend's answer step. |
+| `docmancer[vector]` | Qdrant vector backend for `docmancer bench`. Transitively installs `[llm]`. |
+| `docmancer[rlm]` | RLM backend for `docmancer bench` (`rlms`). Transitively installs `[llm]` (required at runtime). |
 | `docmancer[judge]` | LLM-as-judge answer scoring via ragas. |
+| `docmancer[bench]` | Meta-extra: full benchmark stack = `[vector]` + `[rlm]` + `[judge]` + `[llm]`. One install gets every backend and every provider SDK. |
 | `docmancer[ragas]` | Deprecated alias for `[judge]`; removed in the next minor. |

@@ -94,9 +94,8 @@ Pass `--provider heuristic` for a no-key shallow fallback that derives one quest
 ### Running and comparing
 
 ```bash
-# Optional experimental backends. Install the extras up front so pipx
-# records them for the docmancer app. The RLM extra depends on `rlms`.
-pipx install 'docmancer[vector,rlm,judge]' --python python3.13
+# Full benchmark stack in one shot (vector + rlm + judge + llm provider SDKs).
+pipx install 'docmancer[bench]' --python python3.13
 
 docmancer bench run --backend qdrant --dataset lenny --run-id lenny_qdrant
 docmancer bench run --backend rlm    --dataset lenny --run-id lenny_rlm
@@ -225,31 +224,33 @@ Claude Desktop receives a zip package that can be uploaded through Claude Deskto
 | --------------------- | ----------------------------------------------------------------- |
 | `docmancer[browser]`  | Playwright-backed fetcher for JS-heavy sites                      |
 | `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites                      |
-| `docmancer[vector]`   | Qdrant vector backend for `docmancer bench`                       |
-| `docmancer[rlm]`      | RLM backend for `docmancer bench` (`rlms`)                       |
+| `docmancer[llm]`      | LLM provider SDKs for `bench dataset create` and the RLM backend (Anthropic, OpenAI, Gemini) |
+| `docmancer[vector]`   | Qdrant vector backend for `docmancer bench` (includes `[llm]`) |
+| `docmancer[rlm]`      | RLM backend for `docmancer bench` (`rlms`; includes `[llm]`) |
 | `docmancer[judge]`    | LLM-as-judge answer scoring via ragas                             |
-| `docmancer[llm]`      | LLM-powered question generation for `bench dataset create` (Anthropic, OpenAI, Gemini) |
+| `docmancer[bench]`    | Full benchmark stack (all of the above): vector + rlm + judge + llm |
 | `docmancer[ragas]`    | Deprecated alias for `[judge]`; will be removed in the next minor |
 
-**Fresh install with extras (recommended):**
+**Fresh install with the full bench stack (recommended):**
 
 ```bash
-pipx install 'docmancer[vector,rlm,judge]' --python python3.13
+pipx install 'docmancer[bench]' --python python3.13
 ```
 
-The `rlm` extra resolves to the PyPI distribution `rlms`, which imports as `rlm` at runtime.
+`[bench]` resolves to `[vector] + [rlm] + [judge] + [llm]`, giving you every backend plus the LLM provider SDKs needed for question generation and RLM answering. The `rlm` extra resolves to the PyPI distribution `rlms`, which imports as `rlm` at runtime.
 
 Note: if `docmancer` is already installed via pipx, the command above silently no-ops (pipx prints "already seems to be installed" and does not re-evaluate extras). In that case, use the **Adding extras to an existing pipx install** block below.
 
 **Adding extras to an existing pipx install** (pipx won't re-read extras on a second `pipx install`; inject the deps into the existing venv instead):
 
 ```bash
-pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'   # [vector]
-pipx inject docmancer 'rlms>=0.1.0'                               # [rlm]
-pipx inject docmancer 'ragas>=0.2.0'                              # [judge]
+pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'        # [vector]
+pipx inject docmancer 'rlms>=0.1.0'                                    # [rlm]
+pipx inject docmancer 'ragas>=0.2.0'                                   # [judge]
+pipx inject docmancer 'anthropic>=0.40' 'openai>=1.50' 'google-genai>=0.3'  # [llm]
 ```
 
-Or reinstall with `pipx install 'docmancer[...]' --force --python python3.13`. Plain `pip` users can install any combination directly: `pip install 'docmancer[vector,rlm,judge]'`.
+Or reinstall with `pipx install 'docmancer[bench]' --force --python python3.13`. Plain `pip` users can install the whole stack directly: `pip install 'docmancer[bench]'`.
 
 ---
 

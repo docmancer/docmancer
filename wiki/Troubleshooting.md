@@ -90,27 +90,75 @@ Re-run `docmancer setup` or `docmancer install <target>` to update the skill fil
 
 ## `docmancer bench run --backend qdrant` says "requires: pipx install 'docmancer[vector]'"
 
-The Qdrant backend is an optional extra. Two ways to install it:
-
-**Fresh install** (or reinstall to pick up extras):
+The Qdrant backend is an optional extra. Easiest path is the meta-extra that installs every bench backend plus the LLM provider SDKs in one go:
 
 ```bash
-pipx install 'docmancer[vector]' --python python3.13
-# or
-pipx install 'docmancer[vector,rlm,judge]' --python python3.13 --force
+pipx install 'docmancer[bench]' --python python3.13
+# or, if docmancer is already installed via pipx:
+pipx install 'docmancer[bench]' --python python3.13 --force
 ```
 
-**Existing pipx install** (pipx ignores extras on a second `pipx install`, so inject the deps into the docmancer venv directly):
+Or install a narrower set:
 
 ```bash
-pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'
+pipx install 'docmancer[vector]' --python python3.13        # just Qdrant + LLM SDKs
+pipx install 'docmancer[rlm]' --python python3.13           # just RLM + LLM SDKs
 ```
 
-The equivalent pairs are `'rlms>=0.1.0'` for `[rlm]` and `'ragas>=0.2.0'` for `[judge]`. `pip` users can install any combination directly, e.g. `pip install 'docmancer[vector,rlm,judge]'`.
+`[vector]` and `[rlm]` both transitively install `[llm]` (the LLM provider SDKs), so you do not need to add `[llm]` separately.
+
+**Existing pipx install** (pipx ignores extras on a second `pipx install` of an already-installed package, so inject the deps into the docmancer venv directly):
+
+```bash
+pipx inject docmancer 'qdrant-client>=1.7.0' 'fastembed>=0.2.0'               # [vector]
+pipx inject docmancer 'rlms>=0.1.0'                                            # [rlm]
+pipx inject docmancer 'ragas>=0.2.0'                                           # [judge]
+pipx inject docmancer 'anthropic>=0.40' 'openai>=1.50' 'google-genai>=0.3'     # [llm]
+```
+
+`pip` users can install any combination directly, e.g. `pip install 'docmancer[bench]'`.
+
+## `docmancer bench dataset create --provider auto` fails with "All auto-detected providers failed to initialize"
+
+The CLI auto-detected an LLM provider from your env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`) but the corresponding Python SDK is not importable. This happens most often when the key is set in your shell but docmancer was installed without the `[llm]` extra (for example, a fresh `pipx install docmancer` without `[bench]`).
+
+Fix by installing the SDKs, ideally via the meta-extra:
+
+```bash
+pipx install 'docmancer[bench]' --python python3.13 --force
+```
+
+Or opt out of LLM generation for this run:
+
+```bash
+docmancer bench dataset create --from-corpus ./my-docs --size 30 --name mydocs --provider heuristic
+```
+
+`--provider heuristic` produces shallow heading-based questions without any LLM.
+
+## `docmancer bench run --backend rlm` fails with "RLM backend needs an Anthropic, OpenAI, or Gemini key"
+
+The RLM backend's answer step requires an LLM provider. Docmancer auto-detects Anthropic, OpenAI, or Gemini from env vars. For local-only setups, set an explicit provider:
+
+```bash
+docmancer bench run --backend rlm --dataset lenny \
+    --rlm-provider vllm --rlm-model meta-llama/Llama-3.1-8B
+```
+
+Or in `docmancer.yaml`:
+
+```yaml
+bench:
+  backends:
+    rlm_provider: vllm
+    rlm_model: meta-llama/Llama-3.1-8B
+```
+
+Accepted values are every backend the upstream `rlm` library supports: `anthropic`, `openai`, `gemini`, `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, `litellm`.
 
 ## `docmancer bench run` fails with "No canonical sections in the SQLite store"
 
-The Qdrant and RLM backends need an indexed corpus to prepare against. Run `docmancer add <url-or-path>` first so there is content in the SQLite store, then retry.
+The Qdrant and RLM backends need an indexed corpus to prepare against. If you used `docmancer bench dataset use lenny` this should happen automatically (the command auto-runs `docmancer add` on the fetched corpus). If you passed `--no-ingest` or are working with a custom corpus, run `docmancer add <corpus-path-or-url>` manually, then retry.
 
 ## `docmancer bench compare` says "Runs use different ingest hashes"
 

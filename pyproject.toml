@@ -26,21 +26,39 @@ dependencies = [
 [project.optional-dependencies]
 browser = ["playwright>=1.40.0"]
 crawl4ai = ["crawl4ai>=0.4.0"]
-# Canonical name for the LLM-as-judge extra used by `docmancer bench`.
-judge = ["ragas>=0.2.0"]
-# Deprecated alias for `judge`. Kept for one release; will be removed in the next minor.
-ragas = ["ragas>=0.2.0"]
-# Experimental vector backend for `docmancer bench`.
-vector = ["qdrant-client>=1.7.0", "fastembed>=0.2.0"]
-# Experimental RLM backend for `docmancer bench`.
-# The import surface is `rlm`, and the published PyPI distribution is `rlms`.
-rlm = ["rlms>=0.1.0"]
-# LLM providers for `docmancer bench dataset create --provider`.
-# Ollama needs no SDK (reuses the base `httpx` dependency).
+# LLM providers for `docmancer bench dataset create --provider` and for the
+# RLM backend's answer step. Ollama needs no SDK (uses base `httpx`).
 llm = [
     "anthropic>=0.40",
     "openai>=1.50",
     "google-genai>=0.3",
+]
+# Canonical name for the LLM-as-judge extra used by `docmancer bench`.
+judge = ["ragas>=0.2.0"]
+# Deprecated alias for `judge`. Kept for one release; will be removed in the next minor.
+ragas = ["ragas>=0.2.0"]
+# Experimental vector backend for `docmancer bench`. Pulls in `[llm]` so that
+# `bench dataset create --provider auto` has a working provider SDK to
+# generate questions against the corpus you just embedded.
+vector = [
+    "qdrant-client>=1.7.0",
+    "fastembed>=0.2.0",
+    "docmancer[llm]",
+]
+# Experimental RLM backend for `docmancer bench`. RLM's answer step requires
+# an LLM provider SDK at runtime, so `[llm]` is a hard dependency here.
+# The import surface is `rlm`, and the published PyPI distribution is `rlms`.
+rlm = [
+    "rlms>=0.1.0",
+    "docmancer[llm]",
+]
+# Convenience meta-extra: install everything needed to run the full bench
+# stack in one go. Equivalent to `docmancer[vector,rlm,judge,llm]`.
+bench = [
+    "docmancer[vector]",
+    "docmancer[rlm]",
+    "docmancer[judge]",
+    "docmancer[llm]",
 ]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 

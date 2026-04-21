@@ -14,7 +14,6 @@ if [[ "${DOCMANCER_LIVE_NO_LOG:-0}" != "1" ]]; then
 fi
 
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
-VENV_PIP="$ROOT_DIR/.venv/bin/pip"
 CLI_CMD=("$VENV_PYTHON" -m docmancer)
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
@@ -31,7 +30,7 @@ GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pydantic/pydant
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_BENCH_QDRANT="${DOCMANCER_RUN_BENCH_QDRANT:-0}"
 RUN_BENCH_RLM="${DOCMANCER_RUN_BENCH_RLM:-0}"
-BENCH_DATASET_NAME="${DOCMANCER_BENCH_DATASET_NAME:-live-bun}"
+BENCH_DATASET_NAME="${DOCMANCER_BENCH_DATASET_NAME:-mydocs}"
 BENCH_CORPUS_OVERRIDE="${DOCMANCER_BENCH_CORPUS_DIR:-}"
 SKIP_NETWORK="${DOCMANCER_SKIP_NETWORK:-0}"
 # Set to 1 to keep the temp dir for inspection; default removes it on every exit.
@@ -251,6 +250,37 @@ print(
 PY
 }
 
+_sdk_importable() {
+  # Returns 0 if the given Python module can be imported by the test venv.
+  "$VENV_PYTHON" -c "import $1" >/dev/null 2>&1
+}
+
+detect_llm_provider() {
+  # A provider is only considered "configured" when both its env var is set
+  # AND its Python SDK is importable by the test venv. Without the second
+  # check, `bench dataset create --provider auto` will error out when the
+  # SDK is missing even though a key is set. See
+  # scripts/live_cli_integration_20260421_150024.log:1734-1738.
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]] && _sdk_importable anthropic; then
+    printf 'anthropic\n'
+    return
+  fi
+  if [[ -n "${OPENAI_API_KEY:-}" ]] && _sdk_importable openai; then
+    printf 'openai\n'
+    return
+  fi
+  if [[ -n "${GEMINI_API_KEY:-}" ]] && _sdk_importable google.genai; then
+    printf 'gemini\n'
+    return
+  fi
+  if [[ -n "${OLLAMA_HOST:-}" ]] || command -v ollama >/dev/null 2>&1; then
+    # Ollama uses base httpx; no SDK check needed.
+    printf 'ollama\n'
+    return
+  fi
+  printf '\n'
+}
+
 print_banner "docmancer live CLI integration"
 echo "Repo root: $ROOT_DIR"
 echo "Using venv python: $VENV_PYTHON"
@@ -280,15 +310,21 @@ print_info "Registry commands were removed. Legacy eval/dataset stubs should poi
 cd "$ROOT_DIR"
 
 print_banner "Refreshing local editable install"
-if "$VENV_PYTHON" -c "import hatchling.build" >/dev/null 2>&1; then
-  run "$VENV_PIP" install --no-build-isolation -e ".[dev]"
-  print_ok "Editable install refreshed from the current source tree."
+if "$VENV_PYTHON" -c "import hatchling.build, editables" >/dev/null 2>&1; then
+  if run "$VENV_PYTHON" -m pip install --no-build-isolation -e ".[dev]"; then
+    print_ok "Editable install refreshed from the current source tree."
+  elif [[ "$REQUIRE_REFRESH" == "1" ]]; then
+    print_warn "Editable reinstall failed and DOCMANCER_REQUIRE_REFRESH=1 was set."
+    exit 1
+  else
+    print_warn "Editable reinstall failed. Continuing with the repo source tree via PYTHONPATH."
+  fi
 elif [[ "$REQUIRE_REFRESH" == "1" ]]; then
-  print_warn "Editable reinstall required, but hatchling.build is unavailable in $VENV_PYTHON."
-  print_warn "Install the build backend into the repo venv or recreate the venv, then rerun."
+  print_warn "Editable reinstall required, but hatchling.build and/or editables is unavailable in $VENV_PYTHON."
+  print_warn "Install the editable build dependencies into the repo venv or recreate the venv, then rerun."
   exit 1
 else
-  print_warn "Skipping editable reinstall because hatchling.build is unavailable in the repo venv."
+  print_warn "Skipping editable reinstall because hatchling.build and/or editables is unavailable in the repo venv."
   print_info "Continuing with the repo source tree via: ${CLI_CMD[*]}"
 fi
 run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); print('docmancer=', docmancer.__file__)"
@@ -302,7 +338,7 @@ done
 for command in init run compare report list dataset; do
   run "${CLI_CMD[@]}" bench "$command" --help
 done
-for command in create validate; do
+for command in create validate use list-builtin; do
   run "${CLI_CMD[@]}" bench dataset "$command" --help
 done
 
@@ -359,32 +395,57 @@ run "${CLI_CMD[@]}" query "How do I create an account?" --limit 5 --config "$CON
 run "${CLI_CMD[@]}" query "How do I create an account?" --limit 1 --expand page --config "$CONFIG_PATH"
 
 print_banner "Bench local indexed corpus"
-print_info "docmancer list shows the indexed source, while bench uses the same configured SQLite index for backend runs."
+print_info "First exercise the zero-config built-in Lenny flow from the README, then exercise custom-corpus dataset generation."
 BENCH_CORPUS_DIR="$(ensure_bench_corpus_dir)"
 BENCH_DATASET_PATH="$PROJECT_DIR/.docmancer/bench/datasets/$BENCH_DATASET_NAME/dataset.yaml"
+BENCH_PROVIDER="$(detect_llm_provider)"
 (
   cd "$PROJECT_DIR"
   run "${CLI_CMD[@]}" bench init --config "$CONFIG_PATH"
-  print_info "Creating a bench dataset scaffold from markdown corpus: $BENCH_CORPUS_DIR"
-  run "${CLI_CMD[@]}" bench dataset create --from-corpus "$BENCH_CORPUS_DIR" --size 2 --name "$BENCH_DATASET_NAME" --config "$CONFIG_PATH"
-  run fill_bench_dataset_questions "$BENCH_DATASET_PATH" "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench dataset validate "$BENCH_DATASET_PATH"
-  run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id live_fts_a --k-retrieve 5 --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id live_fts_b --k-retrieve 3 --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench report live_fts_a --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench report live_fts_a --format json --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench compare live_fts_a live_fts_b --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench dataset list-builtin --config "$CONFIG_PATH"
+  print_info "Installing the built-in Lenny dataset and corpus into the isolated config."
+  run "${CLI_CMD[@]}" bench dataset use lenny --yes --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench run --backend fts --dataset lenny --run-id lenny_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench report lenny_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench report lenny_fts --format json --config "$CONFIG_PATH"
   if [[ "$RUN_BENCH_QDRANT" == "1" ]]; then
     print_info "Running qdrant bench backend. Requires the vector extra in the current venv."
-    run "${CLI_CMD[@]}" bench run --backend qdrant --dataset "$BENCH_DATASET_NAME" --run-id live_qdrant --k-retrieve 5 --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" bench report live_qdrant --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" bench run --backend qdrant --dataset lenny --run-id lenny_qdrant --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" bench report lenny_qdrant --config "$CONFIG_PATH"
   fi
   if [[ "$RUN_BENCH_RLM" == "1" ]]; then
-    print_info "Running rlm bench backend. Requires the rlm extra and compatible upstream Runner API."
-    run "${CLI_CMD[@]}" bench run --backend rlm --dataset "$BENCH_DATASET_NAME" --run-id live_rlm --k-retrieve 5 --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" bench report live_rlm --config "$CONFIG_PATH"
+    print_info "Running rlm bench backend. Requires the rlm extra and a working upstream rlms setup."
+    run "${CLI_CMD[@]}" bench run --backend rlm --dataset lenny --run-id lenny_rlm --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" bench report lenny_rlm --config "$CONFIG_PATH"
   fi
+  if [[ "$RUN_BENCH_QDRANT" == "1" && "$RUN_BENCH_RLM" == "1" ]]; then
+    run "${CLI_CMD[@]}" bench compare lenny_fts lenny_qdrant lenny_rlm --config "$CONFIG_PATH"
+  elif [[ "$RUN_BENCH_QDRANT" == "1" ]]; then
+    run "${CLI_CMD[@]}" bench compare lenny_fts lenny_qdrant --config "$CONFIG_PATH"
+  elif [[ "$RUN_BENCH_RLM" == "1" ]]; then
+    run "${CLI_CMD[@]}" bench compare lenny_fts lenny_rlm --config "$CONFIG_PATH"
+  fi
+  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
+
+  print_info "Creating a bench dataset scaffold from markdown corpus: $BENCH_CORPUS_DIR"
+  if [[ -n "$BENCH_PROVIDER" ]]; then
+    print_info "Using README auto-provider flow via detected provider with importable SDK: $BENCH_PROVIDER"
+    run "${CLI_CMD[@]}" bench dataset create --from-corpus "$BENCH_CORPUS_DIR" --size 2 --name "$BENCH_DATASET_NAME" --provider auto --config "$CONFIG_PATH"
+  else
+    print_info "No configured LLM provider with an importable SDK detected; verifying the README auto-provider failure path first."
+    print_info "(If an API key is set but the provider SDK is missing, install the full bench stack with: pipx install 'docmancer[bench]' --force)"
+    if "${CLI_CMD[@]}" bench dataset create --from-corpus "$BENCH_CORPUS_DIR" --size 2 --name "$BENCH_DATASET_NAME" --provider auto --config "$CONFIG_PATH"; then
+      print_warn "Expected --provider auto to fail without configured providers, but it succeeded."
+      exit 1
+    fi
+    print_info "Falling back to heuristic generation for the no-key smoke path."
+    run "${CLI_CMD[@]}" bench dataset create --from-corpus "$BENCH_CORPUS_DIR" --size 2 --name "$BENCH_DATASET_NAME" --provider heuristic --config "$CONFIG_PATH"
+    run fill_bench_dataset_questions "$BENCH_DATASET_PATH" "$CONFIG_PATH"
+  fi
+  run "${CLI_CMD[@]}" bench dataset validate "$BENCH_DATASET_PATH"
+  run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id mydocs_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench report mydocs_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
 )
 
 print_banner "Update all indexed sources"

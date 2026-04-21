@@ -65,3 +65,29 @@ def test_windows_style_separators_accepted():
 
 def test_windows_retrieved_matches_forward_slash_ground_truth():
     assert _source_matches("C:\\corpus\\newsletters\\foo.md", {"newsletters/foo.md"})
+
+
+def test_recall_does_not_exceed_one_with_duplicate_retrievals():
+    # Three retrieved chunks from the same ground-truth file: recall must be 1.0, not 3.0.
+    retrieved = [
+        "/c/newsletters/foo.md",
+        "/c/newsletters/foo.md#section-2",
+        "/c/newsletters/foo.md#section-3",
+    ]
+    assert recall_at_k(retrieved, {"newsletters/foo.md"}) == 1.0
+
+
+def test_recall_counts_unique_ground_truth_items():
+    retrieved = [
+        "/c/newsletters/foo.md",
+        "/c/newsletters/foo.md#again",
+        "/c/newsletters/other.md",
+    ]
+    gt = {"newsletters/foo.md", "newsletters/bar.md"}
+    # Only one of two ground-truth files matched despite two hits on foo.md.
+    assert recall_at_k(retrieved, gt) == 0.5
+
+
+def test_recall_zero_when_no_matches():
+    retrieved = ["/c/other/one.md", "/c/other/two.md"]
+    assert recall_at_k(retrieved, {"newsletters/foo.md"}) == 0.0

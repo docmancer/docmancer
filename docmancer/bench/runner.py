@@ -282,7 +282,15 @@ def _accumulate_metrics(
         prec_scores.append(precision_at_k(retrieved_sources, relevant))
 
     if q.expected_answer:
-        overlap_scores.append(chunk_overlap_score(retrieved_texts, q.expected_answer))
+        # Answer-generating backends (e.g. RLM) may return an empty
+        # `retrieved` list because they manage retrieval internally. Fall
+        # back to the generated answer so chunk_overlap is still a
+        # meaningful coverage metric for those backends.
+        overlap_texts = retrieved_texts if retrieved_texts else []
+        if result.answer:
+            overlap_texts = overlap_texts + [result.answer]
+        if overlap_texts:
+            overlap_scores.append(chunk_overlap_score(overlap_texts, q.expected_answer))
 
     if q.accepted_answers and result.answer:
         exact_scores.append(

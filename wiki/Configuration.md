@@ -44,6 +44,9 @@ The `bench:` block configures the benchmarking harness (see [Commands › Bench]
 | `bench.backends.timeout_s_fts` | `60` | Per-question timeout for the FTS backend |
 | `bench.backends.timeout_s_qdrant` | `60` | Per-question timeout for the Qdrant backend |
 | `bench.backends.timeout_s_rlm` | `300` | Per-question timeout for the RLM backend |
+| `bench.backends.rlm_provider` | _(empty)_ | RLM-only: override the LLM provider name. Empty means "auto-detect from env". Accepts any upstream `rlm` backend: `anthropic`, `openai`, `gemini`, `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, `litellm`. |
+| `bench.backends.rlm_model` | _(empty)_ | RLM-only: override the provider's default model. |
+| `bench.backends.rlm_max_chars` | `120000` | RLM-only: cap the corpus chunk budget handed to the model. Head+tail elision kicks in when the corpus exceeds this. |
 
 ### Environment variables
 
@@ -52,7 +55,9 @@ The `bench:` block configures the benchmarking harness (see [Commands › Bench]
 | `DOCMANCER_INDEX_*` | Override any `index.*` field (for example `DOCMANCER_INDEX_DB_PATH`) |
 | `DOCMANCER_QUERY_*` | Override any `query.*` field |
 | `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
-| `DOCMANCER_BENCH_*` | Override any `bench.*` field (for example `DOCMANCER_BENCH_K_RETRIEVE`) |
+| `DOCMANCER_BENCH_*` | Override any `bench.*` field (for example `DOCMANCER_BENCH_K_RETRIEVE`, `DOCMANCER_BENCH_RLM_PROVIDER`, `DOCMANCER_BENCH_RLM_MAX_CHARS`) |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Bench `--provider auto` auto-detects which LLM provider to use for `bench dataset create` (question generation) and the RLM backend's answer step, in that order. |
+| `OLLAMA_HOST` | Override the Ollama endpoint (default `http://localhost:11434`) when using `--provider ollama` for question generation. |
 
 ## Example `docmancer.yaml`
 
@@ -81,6 +86,9 @@ bench:
     timeout_s_fts: 60
     timeout_s_qdrant: 60
     timeout_s_rlm: 300
+    rlm_provider: ""      # empty = auto-detect from env; or "anthropic"/"openai"/"gemini"/"vllm"/etc.
+    rlm_model: ""         # empty = provider default
+    rlm_max_chars: 120000
 ```
 
 ## Deprecated and removed keys

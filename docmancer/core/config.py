@@ -39,6 +39,11 @@ class BenchBackendConfig(BaseSettings):
     timeout_s_fts: float = Field(default=60.0, gt=0)
     timeout_s_qdrant: float = Field(default=60.0, gt=0)
     timeout_s_rlm: float = Field(default=300.0, gt=0)
+    # RLM-specific knobs (see docmancer/bench/backends/rlm.py). Empty string
+    # means "auto" (detect provider from env vars, use default model).
+    rlm_provider: str = ""
+    rlm_model: str = ""
+    rlm_max_chars: int = Field(default=120_000, ge=1_000)
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_BENCH_", extra="ignore")
 
 

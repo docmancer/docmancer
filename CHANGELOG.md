@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - Unreleased
+
+### Added
+
+- **`docmancer[bench]`** optional extra: one install path for **vector + rlm + judge + llm** (full local bench stack). **`docmancer[vector]`** and **`docmancer[rlm]`** now include **`docmancer[llm]`** so Qdrant question generation and RLM answering have provider SDKs in the same venv.
+- **Bench config (`bench.backends`):** **`rlm_provider`**, **`rlm_model`**, **`rlm_max_chars`** (env **`DOCMANCER_BENCH_*`**) for the RLM backend; **`bench run`** adds **`--rlm-provider`**, **`--rlm-model`**, **`--rlm-max-chars`**, and documents **`--sandbox`** for upstream RLM environments.
+
+### Changed
+
+- **RLM bench backend:** uses **`rlm.RLM`** with auto-detected Anthropic / OpenAI / Gemini (or explicit provider passthrough), corpus truncation (**`rlm_max_chars`**, default **120000**), capabilities **`answer`** only (no synthetic **`retrieved`** list; retrieval metrics for RLM stay zero by design). Chunk overlap for expected answers falls back to the generated answer when **`retrieved`** is empty.
+- **`bench dataset create --provider auto`:** tries each env-detected provider until an LLM SDK loads (skips missing SDKs with a clear message).
+- **Qdrant bench backend:** prefers **`query_points`** on newer **qdrant-client** with fallback to **`search`**; populates **`chunk_index`** on retrieved chunks.
+- **Recall@k:** counts distinct matched ground-truth sources (fixes over-counting when one hit matched multiple labels).
+- **README / wiki / agent templates:** recommend **`pipx install 'docmancer[bench]'`**, pipx **`inject`** line for **`[llm]`** deps, and refreshed bench troubleshooting.
+
+### Tests
+
+- **`test_qdrant_backend`**, **`test_rlm_backend`**, **`test_answer_overlap_fallback`**, **`test_cli_config_flag_surface`**, and extended provider / metrics tests.
+
 ## [0.4.3] - 2026-04-21
 ### Added
 
@@ -440,6 +459,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.4.3]: https://github.com/docmancer/docmancer/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/docmancer/docmancer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/docmancer/docmancer/compare/v0.3.4...v0.4.0
