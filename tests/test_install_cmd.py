@@ -48,9 +48,13 @@ def test_install_claude_code_creates_rebooted_skill_file():
         content = skill_file.read_text()
         assert "allowed-tools" in content
         assert "docmancer add" in content
+        assert "docmancer bench" in content
         assert "docmancer ingest" not in content
+        # Pre-bench registry narrative concepts must stay gone.
         assert "vault" not in content.lower()
-        assert "qdrant" not in content.lower()
+        assert "docmancer pull" not in content
+        assert "docmancer search" not in content
+        assert "registry" not in content.lower()
 
 
 def test_install_codex_creates_native_and_shared_skills():

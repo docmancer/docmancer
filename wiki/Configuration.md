@@ -30,48 +30,29 @@ These settings control the SQLite FTS5 index described in [Architecture](./Archi
 | `web_fetch.default_page_cap` | `500` | Default maximum pages for URL sources |
 | `web_fetch.browser_fallback` | `false` | Enable Playwright browser fallback by default |
 
-### Eval
+### Bench
 
-These settings control the optional eval/benchmark layer.
-
-| Key | Default | What it controls |
-|-----|---------|------------------|
-| `eval.dataset_path` | `.docmancer/eval_dataset.json` | Default eval dataset path |
-| `eval.output_dir` | `.docmancer/eval` | Default directory for eval artifacts |
-| `eval.judge_provider` | _(unset)_ | Reserved for judge-based evals |
-| `eval.default_k` | `5` | Default top-K for eval runs |
-
-### Registry
-
-The registry block only configures the optional hosted service (`search`, `pull`, `publish`, `auth`). Local indexing and `query` do not require it.
+The `bench:` block configures the benchmarking harness (see [Commands › Bench](./Commands.md#bench-commands)).
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `registry.url` | `https://www.docmancer.dev` | Base URL for the public registry (HTTPS) |
-| `registry.cache_dir` | `~/.docmancer/cache/packs` | Local cache for downloaded pack archives |
-| `registry.auth_path` | `~/.docmancer/auth.json` | Path to stored auth token |
-| `registry.auto_update` | `true` | Reserved on `RegistryConfig`; not yet consumed by CLI commands (safe to omit from YAML) |
-| `registry.timeout` | `30` | HTTP request timeout in seconds |
-
-### Packs (project manifest)
-
-The `packs` section declares registry packs for the project:
-
-```yaml
-packs:
-  pytest: "9.0"
-  uv: "0.11"
-  langgraph-sdk: "0.3"
-```
-
-Running `docmancer pull` with no arguments installs all declared packs. Use `docmancer pull <name> --save` to add a pack to the manifest.
+| `bench.datasets_dir` | `.docmancer/bench/datasets` | Where `bench dataset create` writes YAML datasets |
+| `bench.runs_dir` | `.docmancer/bench/runs` | Where `bench run` writes artifacts (`metrics.json`, `report.md`, `traces/`, etc.) |
+| `bench.judge_provider` | _(unset)_ | Provider for LLM-as-judge scoring (`openai`, `anthropic`). Requires `docmancer[judge]`. |
+| `bench.backends.k_retrieve` | `10` | Default top-k for retrieval metrics |
+| `bench.backends.k_answer` | `5` | Default top-k passed to answer-capable backends |
+| `bench.backends.timeout_s_fts` | `60` | Per-question timeout for the FTS backend |
+| `bench.backends.timeout_s_qdrant` | `60` | Per-question timeout for the Qdrant backend |
+| `bench.backends.timeout_s_rlm` | `300` | Per-question timeout for the RLM backend |
 
 ### Environment variables
 
 | Variable | What it does |
 |----------|--------------|
-| `DOCMANCER_REGISTRY_URL` | Override registry URL |
-| `DOCMANCER_REGISTRY_TOKEN` | Override auth token (takes precedence over `auth.json`) |
+| `DOCMANCER_INDEX_*` | Override any `index.*` field (for example `DOCMANCER_INDEX_DB_PATH`) |
+| `DOCMANCER_QUERY_*` | Override any `query.*` field |
+| `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
+| `DOCMANCER_BENCH_*` | Override any `bench.*` field (for example `DOCMANCER_BENCH_K_RETRIEVE`) |
 
 ## Example `docmancer.yaml`
 
@@ -90,23 +71,33 @@ web_fetch:
   workers: 8
   default_page_cap: 500
 
-packs:
-  pytest: "9.0"
-  uv: "0.11"
-
-registry:
-  url: https://www.docmancer.dev
-  timeout: 30
-
-eval:
-  dataset_path: .docmancer/eval_dataset.json
-  output_dir: .docmancer/eval
-  default_k: 5
+bench:
+  datasets_dir: .docmancer/bench/datasets
+  runs_dir: .docmancer/bench/runs
+  judge_provider: ""
+  backends:
+    k_retrieve: 10
+    k_answer: 5
+    timeout_s_fts: 60
+    timeout_s_qdrant: 60
+    timeout_s_rlm: 300
 ```
+
+## Deprecated and removed keys
+
+- **`registry:`** is ignored with a one-time `DeprecationWarning`. It used to configure the hosted registry, which has been removed from the CLI.
+- **`packs:`** is dropped silently. It used to declare registry pack pins for `docmancer pull`; both the key and the command are gone.
+- **`eval:`** is translated to `bench:` automatically with a `DeprecationWarning`:
+  - `eval.dataset_path` → `bench.datasets_dir` (parent directory of the legacy JSON path)
+  - `eval.output_dir` → `bench.runs_dir`
+  - `eval.judge_provider` → `bench.judge_provider`
+  - `eval.default_k` → both `bench.backends.k_retrieve` and `bench.backends.k_answer`
+
+  Rename your config to `bench:` to silence the warning. `eval:` will stop being translated in the next minor.
 
 ## Notes
 
 - Relative `index.db_path` values are resolved relative to the location of `docmancer.yaml`, not the current shell directory.
 - Project-local configs are created by `docmancer init` and point to `.docmancer/docmancer.db` inside the project.
-- The `eval`, `registry`, and `packs` sections are optional. If omitted, commands use defaults.
-- Old config files without `packs:` or `registry:` keys load without errors.
+- All `bench.*` keys are optional. If omitted, commands use the defaults above.
+- Legacy `eval:` configs and `.docmancer/eval_dataset.json` datasets continue to load without errors; see [Commands › Bench](./Commands.md#bench-commands) for the migration path.

@@ -1,7 +1,7 @@
 ---
 name: docmancer
 description: Search and query local documentation knowledge bases using docmancer CLI. Use when the user asks about third-party library docs, API references, vendor documentation, version-specific API behavior, GitBook or Mintlify public docs, offline or local doc search, or needs to ground agent responses in up-to-date external documentation.
-version: 0.3.2
+version: 0.4.0
 author: docmancer
 tags:
   - documentation
@@ -14,9 +14,9 @@ install: pipx install docmancer --python python3.13
 
 # docmancer
 
-Compress documentation context so coding agents spend tokens on code, not docs. Fetch from public sites (GitBook, Mintlify, GitHub, generic web), index locally with SQLite FTS5, and retrieve compact context packs with source attribution. No API keys, no vector database, no background daemons.
+Compress documentation context so coding agents spend tokens on code, not docs. Fetch from public sites (GitBook, Mintlify, GitHub, generic web), index locally with SQLite FTS5, and retrieve compact context packs with source attribution. No API keys, no vector database, no background daemons on the core path.
 
-The **PyPI package is MIT open source**; local indexing and `query` stay the core free product. The **hosted registry** at `www.docmancer.dev` is optional, with paid or team offerings (for example organization registry use and priority support) attached to that service, not to removing open source access to the CLI.
+**MIT open source.** The CLI is the full product: add docs, query them, and install skills into coding agents, all running locally on your machine. An optional benchmarking harness (`docmancer bench`) compares retrieval backends (FTS, Qdrant vector, RLM) on your own corpus.
 
 ## When to Use
 
@@ -24,16 +24,14 @@ The **PyPI package is MIT open source**; local indexing and `query` stay the cor
 - User references docs from a public site (GitBook, Mintlify, or any web-hosted docs).
 - You need to verify version-specific API behavior or check exact method signatures.
 - User asks you to search or query previously ingested documentation.
-- User wants to pull a pre-indexed pack from the registry instead of crawling a site.
+- User wants to benchmark or compare retrieval quality on their own docs.
 
 ## Workflow
 
 1. **Check if docs are already indexed:** `docmancer list`
-2. **Search the registry for a pre-built pack:** `docmancer search <library>`
-3. **Pull a pack if available:** `docmancer pull <pack>` (or `docmancer pull <pack>@<version>`)
-4. **If no pack exists and the user approves the source:** `docmancer add <url-or-path>`
-5. **Query for relevant context:** `docmancer query "<question>"`
-6. **Use the returned context** to ground your response with source-attributed sections.
+2. **If missing and the user approves the source:** `docmancer add <url-or-path>`
+3. **Query for relevant context:** `docmancer query "<question>"`
+4. **Use the returned context** to ground your response with source-attributed sections.
 
 ## Commands
 
@@ -69,19 +67,6 @@ Returns a compact markdown context pack with source attribution and token saving
 | `--expand page` | Include full page content within budget |
 | `--format <markdown\|json>` | Output format (default: markdown) |
 
-### Registry Commands
-
-```bash
-docmancer search <query>              # search the public registry
-docmancer pull <pack>                 # install latest trusted version
-docmancer pull <pack>@<version>       # pin to a specific version
-docmancer pull                        # install all packs from docmancer.yaml
-docmancer packs                       # list installed registry packs
-docmancer packs sync                  # sync with manifest (--prune to drop extras)
-docmancer publish <url>               # submit a docs URL for community indexing
-docmancer audit <path>                # scan a local pack archive for suspicious patterns
-```
-
 ### Update Sources
 
 ```bash
@@ -97,7 +82,7 @@ Re-fetch and re-index all sources, or a specific one. Use when docs may have cha
 | `docmancer list` | Show indexed documentation sources |
 | `docmancer list --all` | Show every stored page/file |
 | `docmancer inspect` | Show index stats and extract locations |
-| `docmancer remove <source>` | Remove a source or installed pack |
+| `docmancer remove <source>` | Remove a source or docset root |
 | `docmancer remove --all` | Clear the entire index |
 
 ### Setup and Diagnostics
@@ -106,8 +91,9 @@ Re-fetch and re-index all sources, or a specific one. Use when docs may have cha
 |---------|---------|
 | `docmancer setup` | Create config/database and install detected agent skills |
 | `docmancer setup --all` | Install all agent integrations non-interactively |
-| `docmancer doctor` | Check config, index health, registry connectivity, and agent skill installs |
+| `docmancer doctor` | Check config, index health, and agent skill installs |
 | `docmancer init` | Create project-local `docmancer.yaml` |
+| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing |
 
 ### Agent Integration
 
@@ -115,27 +101,31 @@ Re-fetch and re-index all sources, or a specific one. Use when docs may have cha
 docmancer install <agent>
 ```
 
-Supported agents: `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `opencode`. Add `--project` for project-local installation instead of global.
+Supported agents: `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `github-copilot`, `opencode`. Add `--project` for project-local installation instead of global.
 
-### Authentication
+### Benchmarking
 
-| Command | Purpose |
-|---------|---------|
-| `docmancer auth login` | Authenticate with the registry (OAuth device code flow) |
-| `docmancer auth logout` | Remove stored credentials |
-| `docmancer auth status` | Show authentication status and subscription tier |
+`docmancer bench` compares retrieval backends over the same canonical chunks with reproducible artifacts. FTS ships in core; Qdrant and RLM are experimental extras.
 
-### Evals
+```bash
+docmancer bench init
+docmancer bench dataset create --from-corpus <dir> --size 30 --name <name>
+docmancer bench dataset create --from-legacy <path.json> --name <name>
+docmancer bench dataset validate <path>
+docmancer bench run --backend <fts|qdrant|rlm> --dataset <name> [--run-id ...] [--k-retrieve ...] [--k-answer ...] [--timeout-s ...]
+docmancer bench compare <run_id> <run_id> [...]
+docmancer bench report <run_id> [--format markdown|json]
+docmancer bench list
+```
 
-| Command | Purpose |
-|---------|---------|
-| `docmancer dataset generate --source <dir>` | Generate eval dataset scaffold (default: 50 entries) |
-| `docmancer eval --dataset <path>` | Run retrieval evaluation (MRR, hit rate, latency) |
-| `docmancer eval --dataset <path> --judge` | Add LLM-as-judge scoring (requires API key) |
+Artifacts per run live under `.docmancer/bench/runs/<run_id>/` (`config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, `report.md`, `traces/`). A content-hashed `ingest_hash` prevents comparing runs across drifted corpora.
+
+Optional extras: `pipx install 'docmancer[vector]'` (Qdrant), `pipx install 'docmancer[rlm]'` (RLM), `pipx install 'docmancer[judge]'` (LLM-as-judge answer scoring via ragas).
 
 ## Common Mistakes
 
 - Do not use `docmancer ingest`; it is deprecated. Use `docmancer add` instead.
-- Do not run `docmancer query` before adding a source with `docmancer add` or pulling a pack with `docmancer pull`. Check `docmancer list` first.
+- Do not use `docmancer eval` or `docmancer dataset generate/eval`; they were removed. Use `docmancer bench run` and `docmancer bench dataset create`.
+- Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
 - Do not assume docs are indexed. Always verify with `docmancer list` before querying.
-- Prefer `docmancer search` and `docmancer pull` for well-known libraries before falling back to `docmancer add`.
+- Do not mix runs from different corpora in `docmancer bench compare` without understanding the `ingest_hash` guard; if you need to, pass `--allow-mixed-ingest` explicitly.

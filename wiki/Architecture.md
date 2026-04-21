@@ -1,24 +1,16 @@
 # Architecture
 
-Docmancer has two sources for documentation context: the **public registry** (pre-indexed packs you pull) and **local indexing** (URLs and files you add). Both feed into the same SQLite FTS5 index on disk, so `query` searches everything in one pass. There is no separate retrieval service: the CLI talks to the registry only for search, download, publish, and auth; context packs are assembled locally.
+Docmancer has a single local pipeline: fetch documentation with `docmancer add`, normalize it into sections, index those sections in a local SQLite FTS5 database, and retrieve compact context packs on `docmancer query`. There is no separate retrieval service, no background daemon, and no hosted query API. An optional benchmarking harness (`docmancer bench`) runs the same question set against multiple retrieval backends over the same canonical chunks.
 
 For the full command reference, see [Commands](./Commands.md). For configuration options, see [Configuration](./Configuration.md).
 
-## Registry packs
-
-The registry is a hosted catalog (default base URL `https://www.docmancer.dev`) of pre-indexed, version-aware documentation packs. Each pack is a `.docmancer-pack` archive containing a `pack.json` manifest, a SQLite `index.db`, and extracted markdown files.
-
-When you run `docmancer pull pytest`, the CLI downloads the archive, verifies SHA-256 checksums for the archive and the bundled index database, and imports the pack's sections into your local SQLite database using `ATTACH DATABASE`. Sources from packs are namespaced with a `registry://` prefix to avoid collisions with locally indexed docs.
-
-Packs are built and published by the hosted registry from package metadata and public documentation sites. The PyPI package is only the CLI and skills: it downloads published packs and merges them into your local index; it does not run registry-side indexing for you.
-
-## Local indexing
+## Indexing
 
 Documentation is fetched from URLs or read from local files, then normalized into semantic sections based on heading structure. Each section is stored in SQLite with its title, heading level, source URL, content hash, and token estimate. A FTS5 virtual table indexes titles and section text for fast full-text search.
 
 Extracted markdown and JSON files are written to `.docmancer/extracted/` so the indexed content is always inspectable on disk.
 
-No embeddings are generated. No vector database is required. For which documentation sites and file types work with `add`, see [Supported Sources](./Supported-Sources.md).
+No embeddings are generated and no vector database is required on the core path. For which documentation sites and file types work with `add`, see [Supported Sources](./Supported-Sources.md).
 
 ## Retrieval
 
@@ -35,9 +27,21 @@ The output of `docmancer query` is a compact context pack: the top matching sect
 
 This feedback loop makes the compression value visible on every query.
 
+## Benchmarking (optional)
+
+`docmancer bench` is a local harness for comparing retrieval backends on your own corpus. It runs the same dataset against one or more backends over the same canonical section chunks (sourced directly from the FTS `sections` table), writes reproducible artifacts under `.docmancer/bench/runs/<run_id>/`, and emits a side-by-side comparison report.
+
+Three backends ship:
+
+- **`fts` (stable, core).** Wraps the SQLite FTS5 store and returns BM25-ranked sections.
+- **`qdrant` (experimental, `docmancer[vector]`).** Embeds the canonical sections with FastEmbed and searches a local embedded Qdrant collection, reusing the same `section_id` as its point id.
+- **`rlm` (experimental, `docmancer[rlm]`).** Delegates to the upstream `rlm` package with the canonical sections as its document context. Local REPL by default; `--sandbox docker` opt-in.
+
+Every run records a content-based `ingest_hash` of the SQLite snapshot (source count, section count, max `id`, max `ingested_at`). `docmancer bench compare` refuses to compare runs across different hashes unless `--allow-mixed-ingest` is passed, so fairness is guarded by default.
+
 ## Concurrency
 
-Multiple CLI calls from parallel agents or terminals are safe. SQLite handles concurrent reads natively, and write operations are serialized by SQLite's built-in locking.
+Multiple CLI calls from parallel agents or terminals are safe. SQLite handles concurrent reads natively, and write operations are serialized by SQLite's built-in locking. The experimental Qdrant backend uses `filelock` to serialize prepare-time collection upserts against an embedded local Qdrant.
 
 ## Flow
 
@@ -45,25 +49,30 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  DOCMANCER FLOW                                                          │
 │                                                                          │
-│  REGISTRY                 INDEX                    QUERY                 │
-│  ┌────────────┐           ┌────────────┐           ┌──────────────────┐  │
-│  │ docmancer  │           │            │           │ docmancer query  │  │
-│  │ pull pytest│    ──►    │ SQLite     │    ──►    │ "how to auth?"   │  │
-│  │            │           │ FTS5 index │           │                  │  │
-│  │ ADD        │           │            │           │ → compact pack   │  │
-│  │ GitBook    │    ──►    │ registry + │           │   + token savings│  │
-│  │ Mintlify   │           │ local docs │           │                  │  │
-│  │ Web docs   │           │ combined   │           │                  │  │
-│  │ GitHub     │           │            │           │                  │  │
-│  │ Local .md  │           │            │           │                  │  │
-│  └────────────┘           └────────────┘           └──────────────────┘  │
+│  ADD                       INDEX                   QUERY                 │
+│  ┌────────────┐            ┌────────────┐          ┌──────────────────┐  │
+│  │ GitBook    │    ──►     │            │   ──►    │ docmancer query  │  │
+│  │ Mintlify   │            │ SQLite     │          │ "how to auth?"   │  │
+│  │ Web crawl  │            │ FTS5 index │          │ → context pack   │  │
+│  │ GitHub     │            │ sections   │          │   + token savings│  │
+│  │ Local md   │            │            │          │                  │  │
+│  └────────────┘            └────────────┘          └──────────────────┘  │
+│                                   │                                      │
+│                                   ▼                                      │
+│  BENCH (optional)          ┌────────────────────────────────────────┐    │
+│                            │ docmancer bench run --backend <name>    │    │
+│                            │ ├─ fts     (core)                       │    │
+│                            │ ├─ qdrant  (experimental, [vector])     │    │
+│                            │ └─ rlm     (experimental, [rlm])        │    │
+│                            │ → metrics.json, report.md, traces/      │    │
+│                            └────────────────────────────────────────┘    │
 │                                                                          │
-│  SETUP                              AGENTS                               │
-│  ┌──────────────────────┐           ┌──────────────────────────────┐     │
-│  │ docmancer setup      │           │ Claude Code, Cursor, Codex,  │     │
-│  │ auto-detect agents   │    ──►    │ Cline, Gemini, OpenCode      │     │
-│  │ install skill files  │           │ call the CLI via SKILL.md    │     │
-│  └──────────────────────┘           └──────────────────────────────┘     │
+│  SETUP                             AGENTS                                │
+│  ┌──────────────────────┐          ┌──────────────────────────────┐      │
+│  │ docmancer setup      │          │ Claude Code, Cursor, Codex,  │      │
+│  │ auto-detect agents   │   ──►    │ Cline, Gemini, OpenCode,     │      │
+│  │ install skill files  │          │ GitHub Copilot, Claude Desktop│     │
+│  └──────────────────────┘          └──────────────────────────────┘      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 

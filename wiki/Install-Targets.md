@@ -15,21 +15,21 @@
 | `docmancer install opencode` | `~/.config/opencode/skills/docmancer/SKILL.md` |
 | `docmancer install gemini` | `~/.gemini/skills/docmancer/SKILL.md` |
 | `docmancer install claude-desktop` | `~/.docmancer/exports/claude-desktop/docmancer.zip`: upload via **Customize > Skills** |
+| `docmancer install github-copilot` | `~/.copilot/copilot-instructions.md` (user) or `.github/copilot-instructions.md` (with `--project`) |
 
 ## Project-local installs
 
-Use `--project` with `claude-code`, `gemini`, or `cline` to install under `.claude/skills/...`, `.gemini/skills/...`, or `.cline/skills/...` in the current working directory. This is useful when different projects need different docmancer configurations.
+Use `--project` with `claude-code`, `gemini`, `cline`, or `github-copilot` to install under the current working directory (`.claude/skills/...`, `.gemini/skills/...`, `.cline/skills/...`, or `.github/copilot-instructions.md`). This is useful when different projects need different docmancer configurations.
 
 ## What the skill teaches agents
 
 Installed skills cover the core workflow:
 
-- `docmancer pull` / `docmancer search` / `docmancer packs` for registry packs
 - `docmancer add` to index new documentation sources
 - `docmancer update` to refresh existing sources
 - `docmancer query` to get compact context packs with token savings
 - `docmancer list`, `docmancer inspect`, `docmancer remove`, `docmancer doctor` for index management
-- `docmancer auth` when the registry requires sign-in (for example `publish`)
+- `docmancer bench run` / `docmancer bench compare` when the user wants to compare retrieval backends on their own corpus
 
 Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data.
 
