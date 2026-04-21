@@ -19,6 +19,7 @@ _BENCH_SUBCOMMANDS_WITH_CONFIG = [
     ("bench", "dataset", "list-builtin", "--config", "/does/not/exist.yaml"),
     ("bench", "dataset", "validate", "/dev/null", "--config", "/does/not/exist.yaml"),
     ("bench", "list", "--config", "/does/not/exist.yaml"),
+    ("bench", "remove", "x", "--config", "/does/not/exist.yaml"),
 ]
 
 

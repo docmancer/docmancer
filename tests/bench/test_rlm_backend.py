@@ -114,6 +114,27 @@ def test_run_question_maps_response_to_answer_and_closes(monkeypatch, stub_store
     assert kinds[-1] == "close"  # close even on success
 
 
+def test_run_question_passes_model_name_kwarg_to_rlm(monkeypatch, stub_store, stub_rlm):
+    """Regression: upstream rlm expects `model_name`, not `model`, in backend_kwargs.
+
+    Passing `model` silently lands in BaseLM's **kwargs and self.model_name stays None,
+    causing every completion to raise `Model name is required for <provider> client.`.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+
+    from docmancer.bench.backends.rlm import RLMBackend
+
+    backend = RLMBackend()
+    backend.prepare(_corpus(), _config())
+    backend.run_question("q?", k=5, timeout_s=10.0)
+
+    init_kwargs = next(kw for kind, kw in stub_rlm if kind == "init")
+    assert "backend_kwargs" in init_kwargs
+    assert "model_name" in init_kwargs["backend_kwargs"]
+    assert "model" not in init_kwargs["backend_kwargs"]
+    assert init_kwargs["backend_kwargs"]["model_name"] == backend._model
+
+
 def test_run_question_returns_error_on_exception_and_still_closes(monkeypatch, stub_store):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
 

@@ -446,6 +446,8 @@ BENCH_PROVIDER="$(detect_llm_provider)"
   run "${CLI_CMD[@]}" bench run --backend fts --dataset "$BENCH_DATASET_NAME" --run-id mydocs_fts --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench report mydocs_fts --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench remove "$BENCH_DATASET_NAME" mydocs_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
 )
 
 print_banner "Update all indexed sources"

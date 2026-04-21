@@ -35,6 +35,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
         'docmancer query "How do I authenticate?"',
         "docmancer bench run --backend fts --dataset my-dataset",
         "docmancer install claude-code",
+        "docmancer install github-copilot --project",
     ),
 )
 @click.option(

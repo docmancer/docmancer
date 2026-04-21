@@ -1125,13 +1125,19 @@ def _ensure_config_and_db(config_path: str | None) -> Path:
         "docmancer setup",
         "docmancer setup --all",
         "docmancer setup --agent codex --agent claude-desktop",
+        "docmancer setup --agent github-copilot",
     ),
 )
 @click.option("--all", "install_all", is_flag=True, default=False, help="Install every supported agent integration non-interactively.")
 @click.option("--agent", "agents", multiple=True, type=click.Choice(INSTALL_TARGETS, case_sensitive=False), help="Agent integration to install. Can be repeated.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def setup_cmd(install_all: bool, agents: tuple[str, ...], config_path: str | None):
-    """Create config/database and install selected agent skills."""
+    """Create the local index and install selected agent integrations.
+
+    This bootstraps `docmancer.yaml`, initializes the local SQLite index, and
+    installs one or more agent skill/instruction files. Use `--agent` to pick
+    explicit targets such as `codex`, `claude-code`, or `github-copilot`.
+    """
     config_path = _effective_config(config_path)
     config_file = _ensure_config_and_db(config_path)
     _emit_brand_header("docmancer setup", "Create the SQLite index and connect coding agents.")

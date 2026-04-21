@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,13 +69,32 @@ def _load_config_and_corpus(config_path: str | None):
     ),
 )
 def bench_group():
-    """Compare FTS, Qdrant vector, and RLM backends on the same corpus."""
+    """Compare retrieval and answer quality across local bench backends.
+
+    Use built-in datasets such as `lenny` for a zero-config first run, or
+    create your own dataset from a local markdown corpus. Every run writes
+    metrics and artifacts under `.docmancer/bench/runs/` so you can report,
+    compare, and remove them later.
+    """
 
 
-@bench_group.command("init", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@bench_group.command(
+    "init",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Create local bench datasets/ and runs/ folders.",
+    epilog=format_examples(
+        "docmancer bench init",
+        "docmancer bench init --config ./docmancer.yaml",
+    ),
+)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_init_cmd(config_path: str | None):
-    """Scaffold .docmancer/bench/{datasets,runs}/ under the current project."""
+    """Create the local bench workspace under the current project.
+
+    This prepares `.docmancer/bench/datasets/` and `.docmancer/bench/runs/`.
+    Run it once before creating datasets or bench runs in a new repo.
+    """
     from docmancer.cli.commands import _effective_config, _load_config
 
     config = _load_config(_effective_config(config_path))
@@ -84,16 +104,44 @@ def bench_init_cmd(config_path: str | None):
     click.echo(f"Initialized {root}/")
 
 
-@bench_group.group("dataset", cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Manage bench datasets.")
+@bench_group.group(
+    "dataset",
+    cls=DocmancerGroup,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Create, validate, and install bench datasets.",
+    epilog=format_examples(
+        "docmancer bench dataset list-builtin",
+        "docmancer bench dataset use lenny",
+        "docmancer bench dataset create --from-corpus ./docs --size 30 --provider auto",
+        "docmancer bench dataset validate .docmancer/bench/datasets/mydocs/dataset.yaml",
+    ),
+)
 def bench_dataset_group():
-    """Create and validate bench datasets (YAML v1, legacy JSON supported)."""
+    """Manage benchmark datasets used by `docmancer bench run`.
+
+    Datasets are stored as YAML under `.docmancer/bench/datasets/`. You can
+    use a built-in dataset, scaffold one from local markdown files, or validate
+    an existing YAML or legacy JSON dataset before running a benchmark.
+    """
 
 
-@bench_dataset_group.command("validate", cls=DocmancerCommand)
+@bench_dataset_group.command(
+    "validate",
+    cls=DocmancerCommand,
+    short_help="Validate a bench dataset file.",
+    epilog=format_examples(
+        "docmancer bench dataset validate .docmancer/bench/datasets/lenny/dataset.yaml",
+        "docmancer bench dataset validate ./eval_dataset.json",
+    ),
+)
 @click.argument("path")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_dataset_validate_cmd(path: str, config_path: str | None):
-    """Validate a YAML or legacy JSON dataset against the v1 schema."""
+    """Validate a bench dataset before running it.
+
+    Accepts YAML v1 datasets and legacy JSON datasets. This is useful after
+    editing a generated dataset by hand or converting an older eval dataset.
+    """
     del config_path  # accepted for interface symmetry with other bench commands
     from docmancer.bench.dataset import load_dataset
 
@@ -108,7 +156,16 @@ def bench_dataset_validate_cmd(path: str, config_path: str | None):
 _PROVIDER_CHOICES = ["auto", "anthropic", "openai", "gemini", "ollama", "heuristic"]
 
 
-@bench_dataset_group.command("create", cls=DocmancerCommand)
+@bench_dataset_group.command(
+    "create",
+    cls=DocmancerCommand,
+    short_help="Create a dataset from markdown docs or legacy JSON.",
+    epilog=format_examples(
+        "docmancer bench dataset create --from-corpus ./docs --size 30 --name mydocs --provider auto",
+        "docmancer bench dataset create --from-corpus ./docs --provider heuristic",
+        "docmancer bench dataset create --from-legacy .docmancer/eval_dataset.json --name migrated",
+    ),
+)
 @click.option("--from-corpus", "from_corpus", default=None, help="Directory of markdown docs to scaffold from.")
 @click.option("--from-legacy", "from_legacy", default=None, help="Legacy eval_dataset.json to convert.")
 @click.option("--size", default=30, show_default=True, type=int, help="Max entries to sample.")
@@ -267,7 +324,17 @@ def _dataset_from_corpus(corpus_dir: Path, *, size: int, provider_choice: str, m
     return ds
 
 
-@bench_dataset_group.command("use", cls=DocmancerCommand)
+@bench_dataset_group.command(
+    "use",
+    cls=DocmancerCommand,
+    short_help="Fetch and install a built-in dataset such as lenny.",
+    epilog=format_examples(
+        "docmancer bench dataset use lenny",
+        "docmancer bench dataset use lenny --yes",
+        "docmancer bench dataset use lenny --refresh",
+        "docmancer bench dataset use lenny --no-ingest",
+    ),
+)
 @click.argument("name")
 @click.option("--refresh", is_flag=True, default=False, help="Force re-fetch even if the corpus is already cached.")
 @click.option("--yes", "-y", is_flag=True, default=False, help="Pre-accept the corpus license non-interactively.")
@@ -370,10 +437,21 @@ def _bundled_dataset_path(name: str) -> Path | None:
     return fallback if fallback.exists() else None
 
 
-@bench_dataset_group.command("list-builtin", cls=DocmancerCommand)
+@bench_dataset_group.command(
+    "list-builtin",
+    cls=DocmancerCommand,
+    short_help="List packaged datasets available via `dataset use`.",
+    epilog=format_examples(
+        "docmancer bench dataset list-builtin",
+    ),
+)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_dataset_list_builtin_cmd(config_path: str | None):
-    """List the built-in benchmark datasets available via `bench dataset use`."""
+    """List built-in datasets shipped with docmancer.
+
+    This shows what can be installed with `docmancer bench dataset use`,
+    whether the corpus is already cached locally, and the source/license links.
+    """
     del config_path  # accepted for interface symmetry with other bench commands
     from docmancer.bench.corpora import is_fetched, list_builtin
 
@@ -389,13 +467,23 @@ def bench_dataset_list_builtin_cmd(config_path: str | None):
         click.echo(f"  license: {spec.license_url}")
 
 
-@bench_group.command("run", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@bench_group.command(
+    "run",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Run one backend against one dataset and write artifacts.",
+    epilog=format_examples(
+        "docmancer bench run --backend fts --dataset lenny --run-id lenny_fts",
+        "docmancer bench run --backend qdrant --dataset lenny --run-id lenny_qdrant",
+        "docmancer bench run --backend rlm --dataset lenny --run-id lenny_rlm --rlm-provider vllm",
+    ),
+)
 @click.option("--backend", required=True, type=click.Choice(["fts", "qdrant", "rlm"], case_sensitive=False))
 @click.option("--dataset", required=True, help="Dataset name under datasets/ or full path to .yaml/.json.")
 @click.option("--run-id", "run_id", default=None, help="Run directory name. Default: <backend>_<timestamp>.")
-@click.option("--k-retrieve", "k_retrieve", default=None, type=int)
-@click.option("--k-answer", "k_answer", default=None, type=int)
-@click.option("--timeout-s", "timeout_s", default=None, type=float)
+@click.option("--k-retrieve", "k_retrieve", default=None, type=int, help="How many chunks to retrieve before scoring.")
+@click.option("--k-answer", "k_answer", default=None, type=int, help="How many retrieved chunks to pass into answer generation.")
+@click.option("--timeout-s", "timeout_s", default=None, type=float, help="Per-question timeout in seconds for the selected backend.")
 @click.option("--sandbox", default=None, help="RLM only: execution environment (local, docker, modal, prime, daytona, e2b).")
 @click.option("--rlm-provider", "rlm_provider", default=None,
               help="RLM only: override provider (anthropic, openai, gemini, azure_openai, openrouter, portkey, vercel, vllm, litellm).")
@@ -404,7 +492,12 @@ def bench_dataset_list_builtin_cmd(config_path: str | None):
               help="RLM only: cap the corpus fed to the model (default 120000).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, sandbox, rlm_provider, rlm_model, rlm_max_chars, config_path):
-    """Run a dataset against one backend and write artifacts."""
+    """Execute one benchmark run and save metrics under `.docmancer/bench/runs/`.
+
+    The dataset can be a dataset name under `.docmancer/bench/datasets/` or a
+    direct path to a YAML or legacy JSON file. Use `bench report` for a single
+    run summary and `bench compare` to compare multiple runs side by side.
+    """
     from docmancer.bench.backends import get_backend
     from docmancer.bench.dataset import load_dataset
     from docmancer.bench.runner import run_bench
@@ -470,13 +563,28 @@ def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, san
     click.echo(f"Wrote run artifacts to {run_dir}")
 
 
-@bench_group.command("compare", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@bench_group.command(
+    "compare",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Compare two or more saved bench runs.",
+    epilog=format_examples(
+        "docmancer bench compare lenny_fts lenny_qdrant",
+        "docmancer bench compare lenny_fts lenny_qdrant lenny_rlm",
+        "docmancer bench compare run_a run_b --allow-mixed-ingest",
+    ),
+)
 @click.argument("run_ids", nargs=-1, required=True)
 @click.option("--output", default=None, help="Path to write comparison markdown. Defaults to stdout.")
 @click.option("--allow-mixed-ingest", is_flag=True, default=False, help="Allow comparing runs across different ingest hashes.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
-    """Compare two or more bench runs and emit a side-by-side report."""
+    """Compare two or more saved runs and print a side-by-side report.
+
+    By default, runs must share the same ingest hash so the comparison is
+    meaningful. Pass `--allow-mixed-ingest` only when you intentionally want
+    to compare runs produced from different indexed corpora.
+    """
     from docmancer.bench.report import load_run_metrics, render_comparison_markdown
     from docmancer.cli.commands import _effective_config, _load_config
 
@@ -514,12 +622,32 @@ def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
         click.echo(md)
 
 
-@bench_group.command("report", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@bench_group.command(
+    "report",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Render a markdown or JSON report for one run.",
+    epilog=format_examples(
+        "docmancer bench report lenny_fts",
+        "docmancer bench report lenny_fts --format json",
+    ),
+)
 @click.argument("run_id")
-@click.option("--format", "output_format", type=click.Choice(["markdown", "json"], case_sensitive=False), default="markdown")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["markdown", "json"], case_sensitive=False),
+    default="markdown",
+    show_default=True,
+    help="Output format for the rendered report.",
+)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_report_cmd(run_id, output_format, config_path):
-    """Print or regenerate a report for a single run."""
+    """Render a report for one saved bench run.
+
+    Use the default markdown format for a human-readable summary, or `json`
+    when you want to feed the metrics into another tool or CI step.
+    """
     from docmancer.bench.report import load_run_metrics, render_single_run_markdown
     from docmancer.cli.commands import _effective_config, _load_config
 
@@ -538,10 +666,23 @@ def bench_report_cmd(run_id, output_format, config_path):
         click.echo(render_single_run_markdown(metrics, snap))
 
 
-@bench_group.command("list", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@bench_group.command(
+    "list",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="List local bench datasets and saved runs.",
+    epilog=format_examples(
+        "docmancer bench list",
+    ),
+)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def bench_list_cmd(config_path):
-    """List local datasets and runs."""
+    """List the datasets and run artifacts available in the current bench workspace.
+
+    Use this to see which dataset names can be passed to `bench run` and which
+    saved run IDs can be used with `bench report`, `bench compare`, or
+    `bench remove`.
+    """
     from docmancer.cli.commands import _effective_config, _load_config
 
     config = _load_config(_effective_config(config_path))
@@ -558,3 +699,70 @@ def bench_list_cmd(config_path):
         for p in sorted(runs_dir.iterdir()):
             if p.is_dir() and (p / "metrics.json").exists():
                 click.echo(f"  {p.name}")
+
+
+@bench_group.command(
+    "remove",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Remove datasets and/or saved run artifacts.",
+    epilog=format_examples(
+        "docmancer bench remove mydocs",
+        "docmancer bench remove mydocs_fts --run",
+        "docmancer bench remove mydocs mydocs_fts",
+    ),
+)
+@click.argument("targets", nargs=-1, required=True)
+@click.option("--dataset", "remove_dataset", is_flag=True, default=False, help="Only remove dataset entries.")
+@click.option("--run", "remove_run", is_flag=True, default=False, help="Only remove run entries.")
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def bench_remove_cmd(targets, remove_dataset, remove_run, config_path):
+    """Remove local bench datasets and run artifacts from the bench workspace.
+
+    This only removes entries shown by `docmancer bench list`. It does not
+    remove indexed docs from the SQLite index and it does not clear cached
+    built-in corpora under `~/.docmancer/bench/corpora/`.
+    """
+    from docmancer.cli.commands import _effective_config, _load_config
+
+    config = _load_config(_effective_config(config_path))
+    datasets_dir = Path(config.bench.datasets_dir)
+    runs_dir = Path(config.bench.runs_dir)
+
+    if not remove_dataset and not remove_run:
+        remove_dataset = True
+        remove_run = True
+
+    removed: list[tuple[str, str]] = []
+    missing: list[str] = []
+
+    for target in targets:
+        matched = False
+        if remove_dataset:
+            ds_dir = datasets_dir / target
+            if ds_dir.is_dir() and (ds_dir / "dataset.yaml").exists():
+                shutil.rmtree(ds_dir)
+                removed.append(("dataset", target))
+                matched = True
+        if remove_run:
+            run_dir = runs_dir / target
+            if run_dir.is_dir() and (run_dir / "metrics.json").exists():
+                shutil.rmtree(run_dir)
+                removed.append(("run", target))
+                matched = True
+        if not matched:
+            missing.append(target)
+
+    for kind, name in removed:
+        click.echo(f"Removed {kind}: {name}")
+
+    if missing:
+        available_kinds = []
+        if remove_dataset:
+            available_kinds.append("datasets")
+        if remove_run:
+            available_kinds.append("runs")
+        kinds_str = " and ".join(available_kinds) or "bench artifacts"
+        raise click.ClickException(
+            f"Not found in {kinds_str}: {', '.join(missing)}"
+        )

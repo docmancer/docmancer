@@ -61,6 +61,7 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `docmancer bench compare <run_id> <run_id> [...]` | Emit a side-by-side comparison of two or more runs. |
 | `docmancer bench report <run_id>` | Reprint a single-run report. Pass `--format json` for machine-readable output. |
 | `docmancer bench list` | List local datasets and runs. |
+| `docmancer bench remove <name> [...]` | Remove dataset directories and/or run artifact directories from `bench list`. |
 
 ### Bench dataset create options
 
@@ -117,3 +118,17 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `docmancer[judge]` | LLM-as-judge answer scoring via ragas. |
 | `docmancer[bench]` | Meta-extra: full benchmark stack = `[vector]` + `[rlm]` + `[judge]` + `[llm]`. One install gets every backend and every provider SDK. |
 | `docmancer[ragas]` | Deprecated alias for `[judge]`; removed in the next minor. |
+
+### Bench remove behavior
+
+`docmancer bench remove` only removes:
+
+- dataset directories under `.docmancer/bench/datasets/<name>/`
+- run directories under `.docmancer/bench/runs/<run_id>/`
+
+It does not remove:
+
+- indexed documents from the SQLite database
+- cached built-in corpora under `~/.docmancer/bench/corpora/`
+
+Use `--dataset` or `--run` to restrict which side it touches. With no flag, it removes any matching dataset and/or run name.

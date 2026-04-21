@@ -149,7 +149,7 @@ class RLMBackend:
                 "max_timeout": timeout_s,
             }
             if self._model:
-                kwargs["backend_kwargs"] = {"model": self._model}
+                kwargs["backend_kwargs"] = {"model_name": self._model}
             client = rlm.RLM(**kwargs)
             prompt = (
                 "Answer the question using the documents below. Cite the source "

@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - Unreleased
+
+### Added
+
+- **`docmancer bench remove`:** delete local bench **datasets** and/or **run** directories under **`.docmancer/bench/`** (optional **`--dataset`** / **`--run`** to restrict which side is removed). Does not drop SQLite index rows or cached built-in corpora.
+
+### Changed
+
+- **Bench CLI:** richer **`short_help`**, **`epilog`** examples, and docstrings across **`bench init`**, **`dataset`**, **`run`**, **`report`**, **`list`**, and **`remove`** so `docmancer bench --help` and subcommand help read clearly in the terminal.
+- **`docmancer setup`:** help and examples mention **`github-copilot`**; root **`--help`** epilog includes **`install github-copilot --project`**.
+
+### Fixed
+
+- **RLM bench backend:** pass **`model_name`** (not **`model`**) in **`backend_kwargs`** when constructing **`rlm.RLM`**, matching the upstream client contract (**`BaseLM`** / **`OpenAIClient`** et al.). Previously every question failed with **`ValueError: Model name is required for OpenAI client.`** because the **`model=...`** kwarg silently fell through into **`**kwargs`** and **`model_name`** stayed **`None`**.
+
+### Tests
+
+- **`test_remove_command`:** **`bench remove`** deletes dataset and run trees; **`--dataset`** / **`--run`** flags.
+- **`test_rlm_backend`:** asserts **`model_name`** is passed through to **`rlm.RLM`**.
+
 ## [0.4.4] - 2026-04-21
 ### Added
 
@@ -458,6 +478,7 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.4.4]: https://github.com/docmancer/docmancer/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/docmancer/docmancer/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/docmancer/docmancer/compare/v0.4.0...v0.4.1

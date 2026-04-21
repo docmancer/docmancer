@@ -101,9 +101,12 @@ docmancer bench run --backend qdrant --dataset lenny --run-id lenny_qdrant
 docmancer bench run --backend rlm    --dataset lenny --run-id lenny_rlm
 docmancer bench compare lenny_fts lenny_qdrant lenny_rlm
 docmancer bench list
+docmancer bench remove mydocs mydocs_fts
 ```
 
 Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, and `report.md` under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` guards against comparing runs across drifted corpora. All backends see the same canonical section chunks so metrics are apples-to-apples. See [wiki/Commands.md](./wiki/Commands.md#bench-commands) for the full command list and [wiki/Configuration.md](./wiki/Configuration.md#bench) for tunables.
+
+`docmancer bench remove <name>...` removes dataset directories and/or run artifact directories from `bench list`. It does not remove the indexed corpus from SQLite and it does not clear built-in cached corpora under `~/.docmancer/bench/corpora/`.
 
 Legacy `.docmancer/eval_dataset.json` files are accepted read-only; convert them with `docmancer bench dataset create --from-legacy <path>`.
 
