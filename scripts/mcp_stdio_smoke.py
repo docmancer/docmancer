@@ -14,9 +14,10 @@ Verifies:
 Exits non-zero on any assertion failure. Prints a structured PASS/FAIL summary.
 
 Usage:
+  # Same interpreter that has docmancer + `mcp` (e.g. after: pip install -e ".[dev]"):
   ./scripts/mcp_stdio_smoke.py           # from repo docmancer/ (uses a fresh tempdir)
-  python3 scripts/mcp_stdio_smoke.py     # same, if execute bit is off
-  DOCMANCER_HOME=/path ./scripts/...     # override storage root
+  python3 scripts/mcp_stdio_smoke.py       # if execute bit is off
+  DOCMANCER_HOME=/path ./scripts/mcp_stdio_smoke.py   # override storage root
 """
 from __future__ import annotations
 
@@ -29,8 +30,23 @@ import sys
 import tempfile
 from pathlib import Path
 
-from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+try:
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+except ImportError:
+    print(
+        "mcp_stdio_smoke.py: no module `mcp` for this interpreter:\n"
+        f"  {sys.executable}\n"
+        "The official MCP client SDK is a dependency of docmancer; this script must run\n"
+        "with a Python that has docmancer installed (editable or venv), not an unrelated\n"
+        "`python3` on PATH.\n"
+        "Example:\n"
+        '  cd docmancer && python3 -m venv .venv && . .venv/bin/activate\n'
+        '  pip install -e ".[dev]"\n'
+        "  ./scripts/mcp_stdio_smoke.py",
+        file=sys.stderr,
+    )
+    raise SystemExit(2) from None
 
 
 HERE = Path(__file__).resolve().parent

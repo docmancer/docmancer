@@ -4,11 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.6] - Unreleased
+## [0.4.6] - 2026-04-27
 ### Added
 
 - **RLM bench backend controls:** new flags on **`docmancer bench run`** to keep RLM runs bounded and debuggable. **`--rlm-max-iterations`** caps the root LM's iteration count per question (docmancer default **6**; upstream **`rlm.RLM`** default is **30**). **`--rlm-verbose`** enables the upstream rich trace. **`--rlm-log-dir PATH`** wires an **`RLMLogger`** so each completion writes a **`.jsonl`** trajectory that can be opened in the upstream visualizer. Matching fields added to **`BenchBackendConfig`** (**`rlm_max_iterations`**, **`rlm_verbose`**, **`rlm_log_dir`**).
 - **`docmancer bench` elapsed timer:** every bench subcommand prints a final **`Elapsed: <seconds>s`** line via **`ctx.call_on_close`** on the group, so runs, datasets, reports, etc. show wall-clock time without extra flags.
+- **`docmancer mcp`:** **`serve`** (stdio Model Context Protocol server with Tool Search meta-tools **`docmancer_search_tools`** and **`docmancer_call_tool`**), **`doctor`**, **`list`**, **`enable`**, and **`disable`** for packs under **`DOCMANCER_HOME`**.
+- **`docmancer install-pack`** / **`docmancer uninstall`:** install or remove version-pinned API packs from a local registry (**`DOCMANCER_REGISTRY_DIR`**), with **`--expanded`**, **`--allow-destructive`**, and **`--allow-execute`**; **`http`**, **`noop_doc`**, and **`python_import`** executors; dispatcher applies credential resolution, wire-pinned headers, destructive-call gating, idempotency fingerprinting, SHA-256 artifact verification, and structured **`~/.docmancer/mcp/calls.jsonl`** logging (argument keys only, not values).
+- **`docmancer install <agent>`:** registers the stdio MCP server in supported agent configs when installing skills, where applicable.
+- **`scripts/mcp_stdio_smoke.py`:** executable smoke test that drives **`docmancer mcp serve`** via the official MCP client SDK (must run with the same Python environment as an editable **`pip install -e ".[dev]"`** install).
+
+### Changed
+
+- **Dependencies:** add **`mcp>=1.0.0`** so installs include the MCP SDK used by **`docmancer mcp serve`** and the packaged agent guidance.
 
 ### Fixed
 
@@ -17,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Tests
 
 - **`test_rlm_backend`:** new asserts that **`--rlm-max-iterations`**, **`--rlm-verbose`**, and **`--rlm-log-dir`** flow from CLI into **`BackendConfig.extra`** and onto **`rlm.RLM(...)`**; CLI output contains **`Elapsed:`**.
+- **MCP:** new **`tests/test_mcp_*.py`** modules covering CLI wiring, dispatcher, installers, executors, credentials, idempotency, doctor, paths, logging, slug parsing, SHA verification, and agent **`install`** MCP handshake behavior.
 
 ## [0.4.5] - 2026-04-21
 ### Added
@@ -495,6 +504,8 @@ This release adds an optional **knowledge vault** workflow on top of the existin
 
 - Initial release on the restarted version line: fetch GitBook/Mintlify docs, local FastEmbed + Qdrant ingest, `docmancer query` / `list` / `remove` / `inspect` / `doctor`, and agent skill install targets (Claude Code, Cursor, Codex, OpenCode, Claude Desktop, Gemini, etc.).
 
+[0.4.6]: https://github.com/docmancer/docmancer/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/docmancer/docmancer/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/docmancer/docmancer/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/docmancer/docmancer/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/docmancer/docmancer/compare/v0.4.1...v0.4.2

@@ -1,7 +1,7 @@
 ---
 name: docmancer
 description: Search and query local documentation knowledge bases using docmancer CLI. Use when the user asks about third-party library docs, API references, vendor documentation, version-specific API behavior, GitBook or Mintlify public docs, offline or local doc search, or needs to ground agent responses in up-to-date external documentation.
-version: 0.4.4
+version: 0.4.6
 author: docmancer
 tags:
   - documentation
