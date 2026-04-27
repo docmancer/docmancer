@@ -57,7 +57,6 @@ Installed skills cover the core workflow:
 - `docmancer list`, `docmancer inspect`, `docmancer remove`, `docmancer doctor` for index management
 - `docmancer install-pack <pkg>@<version>` to install API MCP packs; the registered `docmancer mcp serve` exposes them through the Tool Search pattern (`docmancer_search_tools`, `docmancer_call_tool`)
 - `docmancer mcp doctor` and `docmancer mcp list` to verify pack state and credentials
-- `docmancer bench run` / `docmancer bench compare` when the user wants to compare retrieval backends on their own corpus
 
 Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data, and to call MCP packs through the resolved tool name (e.g. `stripe__2026_02_25_clover__payment_intents_list`) for live API work without losing track of the pinned version.
 

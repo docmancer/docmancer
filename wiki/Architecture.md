@@ -2,7 +2,7 @@
 
 Docmancer runs two cooperating local pipelines.
 
-The **docs-RAG pipeline** fetches documentation with `docmancer add`, normalizes it into sections, indexes those sections in a local SQLite FTS5 database, and retrieves compact context packs on `docmancer query`. There is no separate retrieval service, no background daemon, and no hosted query API. An optional benchmarking harness (`docmancer bench`) runs the same question set against multiple retrieval backends over the same canonical chunks.
+The **docs-RAG pipeline** fetches documentation with `docmancer add`, normalizes it into sections, indexes those sections in a local SQLite FTS5 database, and retrieves compact context packs on `docmancer query`. There is no separate retrieval service, no background daemon, and no hosted query API.
 
 The **MCP runtime** installs version-pinned API packs from a registry with `docmancer install-pack <package>@<version>`, then exposes every installed pack to your agent through a single shared stdio MCP server (`docmancer mcp serve`) using the Tool Search pattern: two meta-tools regardless of how many packs you install. The dispatcher enforces auth, destructive-call gating, schema validation, idempotency-key auto-injection and reuse, version pinning on the wire, and SHA-256 verification of every artifact before install.
 
@@ -31,20 +31,6 @@ The output of `docmancer query` is a compact context pack: the top matching sect
 
 This feedback loop makes the compression value visible on every query.
 
-## Benchmarking (optional)
-
-`docmancer bench` is a local harness for comparing retrieval backends on your own corpus. It runs the same dataset against one or more backends over the same canonical section chunks (sourced directly from the FTS `sections` table), writes reproducible artifacts under `.docmancer/bench/runs/<run_id>/`, and emits a side-by-side comparison report.
-
-Three backends ship:
-
-- **`fts` (stable, core).** Wraps the SQLite FTS5 store and returns BM25-ranked sections.
-- **`qdrant` (experimental, `docmancer[vector]`).** Embeds the canonical sections with FastEmbed and searches a local embedded Qdrant collection, reusing the same `section_id` as its point id. Uses the modern `query_points` API with a fallback to legacy `search` for older qdrant-client releases.
-- **`rlm` (experimental, `docmancer[rlm]`).** Delegates to the `rlm` library (PyPI: `rlms`). Requires an LLM provider key at runtime: auto-detects Anthropic, OpenAI, or Gemini from env, and accepts explicit pass-through for `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, and `litellm` via `--rlm-provider` or `bench.backends.rlm_provider`. Execution environments: `local` (default), `docker`, `modal`, `prime`, `daytona`, `e2b`. RLM manages its own retrieval, so retrieval metrics (MRR/Hit/Recall) do not apply; Chunk Overlap is computed from the generated answer.
-
-Built-in datasets (e.g. `lenny`) are available via `bench dataset use <name>`, which fetches the corpus on first use to `~/.docmancer/bench/corpora/<name>/`, caches it for subsequent runs, and auto-runs `docmancer add` so `bench run` can retrieve from it. Portable relative paths like `newsletters/foo.md` in a dataset's `ground_truth_sources` match retrieved absolute paths via suffix matching in the metrics helpers.
-
-Every run records a content-based `ingest_hash` of the SQLite snapshot (source count, section count, max `id`, max `ingested_at`). `docmancer bench compare` refuses to compare runs across different hashes unless `--allow-mixed-ingest` is passed, so fairness is guarded by default.
-
 ## MCP runtime
 
 `docmancer install-pack <package>@<version>` downloads the pack's five artifacts (`contract.json`, `tools.curated.json`, `tools.full.json`, `auth.schema.json`, `provenance.json`) plus a `manifest.json` with SHA-256s, verifies every artifact hash, and writes them under `~/.docmancer/servers/<package>@<version>/`. The package is added to `~/.docmancer/mcp/manifest.json` with per-package state (mode = curated/expanded, allow_destructive, allow_execute, enabled).
@@ -68,7 +54,7 @@ Pack paths are validated and resolved before use: `..` segments, NUL, backslashe
 
 ## Concurrency
 
-Multiple CLI calls from parallel agents or terminals are safe. SQLite handles concurrent reads natively, and write operations are serialized by SQLite's built-in locking. The experimental Qdrant backend uses `filelock` to serialize prepare-time collection upserts against an embedded local Qdrant.
+Multiple CLI calls from parallel agents or terminals are safe. SQLite handles concurrent reads natively, and write operations are serialized by SQLite's built-in locking.
 
 ## Flow
 
@@ -84,15 +70,6 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 │  │ GitHub     │            │ sections   │          │   + token savings│  │
 │  │ Local md   │            │            │          │                  │  │
 │  └────────────┘            └────────────┘          └──────────────────┘  │
-│                                   │                                      │
-│                                   ▼                                      │
-│  BENCH (optional)          ┌────────────────────────────────────────┐    │
-│                            │ docmancer bench run --backend <name>    │    │
-│                            │ ├─ fts     (core)                       │    │
-│                            │ ├─ qdrant  (experimental, [vector])     │    │
-│                            │ └─ rlm     (experimental, [rlm])        │    │
-│                            │ → metrics.json, report.md, traces/      │    │
-│                            └────────────────────────────────────────┘    │
 │                                                                          │
 │  SETUP                             AGENTS                                │
 │  ┌──────────────────────┐          ┌──────────────────────────────┐      │

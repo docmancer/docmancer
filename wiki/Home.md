@@ -3,14 +3,14 @@
 Docmancer is a local-first toolkit with two product surfaces:
 
 - **Docs RAG.** Fetch documentation, normalize it into inspectable sections, index those sections with SQLite FTS5, and return compact context packs with source attribution.
-- **API MCP packs.** Install version-pinned MCP servers compiled from any public OpenAPI, GraphQL, TypeDoc, or Sphinx source. One `docmancer mcp serve` process exposes every installed pack to your agent through the Tool Search pattern (two meta-tools regardless of pack count). Auth is gated, destructive calls are gated behind explicit opt-in, idempotency keys are auto-injected and reused on retry, and version pins are enforced on the wire.
+- **API MCP packs.** Install version-pinned MCP servers compiled from public OpenAPI, GraphQL, TypeDoc, or Sphinx sources. One `docmancer mcp serve` process exposes every installed pack to your agent through the Tool Search pattern (two meta-tools regardless of pack count). Auth is gated, destructive calls are gated behind explicit opt-in, idempotency keys are auto-injected and reused on retry, and version pins are enforced on the wire.
 
-An optional benchmarking harness (`docmancer bench`) compares retrieval backends on your own corpus. See the [README](../README.md) for the full overview and quickstart.
+See the [README](../README.md) for the full overview and quickstart.
 
 ## Quickstart
 
 ```bash
-pipx install docmancer --python python3.13
+pipx install docmancer    # Python 3.11, 3.12, or 3.13
 
 docmancer setup
 docmancer add https://docs.pytest.org              # docs RAG
@@ -27,12 +27,12 @@ docmancer mcp doctor                                # verify pack + credentials
 
 | Page | What it covers |
 | --- | --- |
-| [Architecture](./Architecture.md) | Docs-RAG pipeline, MCP dispatcher runtime, bench harness, and context packs |
-| [Commands](./Commands.md) | Every CLI command with options and examples (`add`/`query`, `install-pack`/`mcp ...`, `bench`) |
-| [Configuration](./Configuration.md) | Full `docmancer.yaml` reference: index, query, web fetch, MCP runtime, bench |
+| [Architecture](./Architecture.md) | Docs-RAG pipeline, MCP dispatcher runtime, and context packs |
+| [Commands](./Commands.md) | Every CLI command with options and examples (`add`/`query`, `install-pack`/`mcp ...`) |
+| [Configuration](./Configuration.md) | Full `docmancer.yaml` reference: index, query, web fetch, MCP runtime |
 | [Supported Sources](./Supported-Sources.md) | GitBook, Mintlify, generic web, GitHub, local files (docs); OpenAPI / GraphQL / TypeDoc / Sphinx (MCP packs) |
 | [Install Targets](./Install-Targets.md) | Where skill files land for each supported agent + MCP server registration |
-| [Troubleshooting](./Troubleshooting.md) | Common install, runtime, MCP pack, and bench issues |
+| [Troubleshooting](./Troubleshooting.md) | Common install, runtime, and MCP pack issues |
 
 ## Core workflows
 
@@ -49,18 +49,8 @@ docmancer mcp doctor                                # verify pack + credentials
 3. **Inspect** with `docmancer mcp list` (mode, destructive gate, tool counts) and toggle with `docmancer mcp enable|disable <pkg>`.
 4. **Serve** is automatic: agents launch `docmancer mcp serve` over stdio; you usually do not run it yourself. See [Architecture › MCP runtime](./Architecture.md#mcp-runtime).
 
-**Benchmarking (optional)**
-
-`docmancer bench` is an internal harness for comparing retrieval backends on your own corpus. The fastest path is the zero-config built-in dataset: `docmancer bench init && docmancer bench dataset use lenny && docmancer bench run --backend fts --dataset lenny`. See [Commands › Bench](./Commands.md#bench-commands).
-
 Agents call docs-RAG commands through installed skill files and call MCP packs through the registered `docmancer mcp serve` server. No background daemon is involved beyond the per-session stdio MCP server the agent launches itself.
 
 ## Licensing
 
-The PyPI package is MIT-licensed open source. The core path (`add`, `update`, `query`, and bench's FTS backend) runs entirely on your machine with no API keys. Optional extras unlock the experimental bench backends and LLM-driven question generation:
-
-- `docmancer[llm]`: provider SDKs (`anthropic`, `openai`, `google-genai`) for LLM-powered question generation and the RLM answer step.
-- `docmancer[vector]`: Qdrant vector backend (includes `[llm]`).
-- `docmancer[rlm]`: RLM backend (includes `[llm]`; the `rlm` import surface ships on PyPI as `rlms`).
-- `docmancer[judge]`: LLM-as-judge answer scoring via ragas.
-- `docmancer[bench]`: meta-extra that installs the full benchmark stack in one go (`[vector]` + `[rlm]` + `[judge]` + `[llm]`).
+The PyPI package is MIT-licensed open source. The core path (`add`, `update`, `query`, `install-pack`, `mcp serve`) runs entirely on your machine with no API keys.

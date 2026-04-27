@@ -46,24 +46,6 @@ Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Ov
 
 Credentials are resolved per call by the four-source order, first hit wins: per-call `args._docmancer_auth.<scheme>` override → process env (`STRIPE_API_KEY`, etc.) → agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`) → user-managed env file under `~/.docmancer/secrets/`.
 
-### Bench
-
-The `bench:` block configures the benchmarking harness (see [Commands › Bench](./Commands.md#bench-commands)).
-
-| Key | Default | What it controls |
-|-----|---------|------------------|
-| `bench.datasets_dir` | `.docmancer/bench/datasets` | Where `bench dataset create` writes YAML datasets |
-| `bench.runs_dir` | `.docmancer/bench/runs` | Where `bench run` writes artifacts (`metrics.json`, `report.md`, `traces/`, etc.) |
-| `bench.judge_provider` | _(unset)_ | Provider for LLM-as-judge scoring (`openai`, `anthropic`). Requires `docmancer[judge]`. |
-| `bench.backends.k_retrieve` | `10` | Default top-k for retrieval metrics |
-| `bench.backends.k_answer` | `5` | Default top-k passed to answer-capable backends |
-| `bench.backends.timeout_s_fts` | `60` | Per-question timeout for the FTS backend |
-| `bench.backends.timeout_s_qdrant` | `60` | Per-question timeout for the Qdrant backend |
-| `bench.backends.timeout_s_rlm` | `300` | Per-question timeout for the RLM backend |
-| `bench.backends.rlm_provider` | _(empty)_ | RLM-only: override the LLM provider name. Empty means "auto-detect from env". Accepts any upstream `rlm` backend: `anthropic`, `openai`, `gemini`, `azure_openai`, `openrouter`, `portkey`, `vercel`, `vllm`, `litellm`. |
-| `bench.backends.rlm_model` | _(empty)_ | RLM-only: override the provider's default model. |
-| `bench.backends.rlm_max_chars` | `120000` | RLM-only: cap the corpus chunk budget handed to the model. Head+tail elision kicks in when the corpus exceeds this. |
-
 ### Environment variables
 
 | Variable | What it does |
@@ -71,9 +53,8 @@ The `bench:` block configures the benchmarking harness (see [Commands › Bench]
 | `DOCMANCER_INDEX_*` | Override any `index.*` field (for example `DOCMANCER_INDEX_DB_PATH`) |
 | `DOCMANCER_QUERY_*` | Override any `query.*` field |
 | `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
-| `DOCMANCER_BENCH_*` | Override any `bench.*` field (for example `DOCMANCER_BENCH_K_RETRIEVE`, `DOCMANCER_BENCH_RLM_PROVIDER`, `DOCMANCER_BENCH_RLM_MAX_CHARS`) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Bench `--provider auto` auto-detects which LLM provider to use for `bench dataset create` (question generation) and the RLM backend's answer step, in that order. |
-| `OLLAMA_HOST` | Override the Ollama endpoint (default `http://localhost:11434`) when using `--provider ollama` for question generation. |
+| `DOCMANCER_HOME` | Override the storage root (defaults to `~/.docmancer`) |
+| `DOCMANCER_REGISTRY_DIR` | Override the registry directory used by `install-pack` |
 
 ## Example `docmancer.yaml`
 
@@ -91,37 +72,14 @@ query:
 web_fetch:
   workers: 8
   default_page_cap: 500
-
-bench:
-  datasets_dir: .docmancer/bench/datasets
-  runs_dir: .docmancer/bench/runs
-  judge_provider: ""
-  backends:
-    k_retrieve: 10
-    k_answer: 5
-    timeout_s_fts: 60
-    timeout_s_qdrant: 60
-    timeout_s_rlm: 300
-    rlm_provider: ""      # empty = auto-detect from env; or "anthropic"/"openai"/"gemini"/"vllm"/etc.
-    rlm_model: ""         # empty = provider default
-    rlm_max_chars: 120000
 ```
 
 ## Deprecated and removed keys
 
 - **`registry:`** is ignored with a one-time `DeprecationWarning`. It used to configure the hosted registry, which has been removed from the CLI.
 - **`packs:`** is dropped silently. It used to declare registry pack pins for `docmancer pull`; both the key and the command are gone.
-- **`eval:`** is translated to `bench:` automatically with a `DeprecationWarning`:
-  - `eval.dataset_path` → `bench.datasets_dir` (parent directory of the legacy JSON path)
-  - `eval.output_dir` → `bench.runs_dir`
-  - `eval.judge_provider` → `bench.judge_provider`
-  - `eval.default_k` → both `bench.backends.k_retrieve` and `bench.backends.k_answer`
-
-  Rename your config to `bench:` to silence the warning. `eval:` will stop being translated in the next minor.
 
 ## Notes
 
 - Relative `index.db_path` values are resolved relative to the location of `docmancer.yaml`, not the current shell directory.
 - Project-local configs are created by `docmancer init` and point to `.docmancer/docmancer.db` inside the project.
-- All `bench.*` keys are optional. If omitted, commands use the defaults above.
-- Legacy `eval:` configs and `.docmancer/eval_dataset.json` datasets continue to load without errors; see [Commands › Bench](./Commands.md#bench-commands) for the migration path.
