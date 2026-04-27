@@ -53,6 +53,17 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 
 Artifacts live under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` stops `bench compare` from mixing runs against drifted corpora unless you pass `--allow-mixed-ingest`.
 
+## API tools via MCP (when packs are installed)
+
+If the user has run `docmancer install-pack <pkg>@<version>`, Cursor launches `docmancer mcp serve` (auto-registered during `docmancer install cursor`). Two meta-tools are exposed:
+
+- `docmancer_search_tools(query, package?, limit?)`: discover tools by task; top match returns its input schema inlined.
+- `docmancer_call_tool(name, args)`: invoke a tool returned by search.
+
+Cursor is GUI-launched. Add credentials to `mcpServers.docmancer.env` in `~/.cursor/mcp.json`, or write `~/.docmancer/secrets/<package>.env`. Run `docmancer mcp doctor` to verify.
+
+Destructive calls are blocked unless the user installed the pack with `--allow-destructive`. Non-idempotent successes return `_docmancer.idempotency_key`; pass it back as `args._docmancer_idempotency_key` on retry.
+
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.

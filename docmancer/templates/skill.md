@@ -97,6 +97,27 @@ Per-run artifacts live under `.docmancer/bench/runs/<run_id>/` (`config.snapshot
 
 Optional extras: `pipx install 'docmancer[vector]'`, `pipx install 'docmancer[rlm]'`, `pipx install 'docmancer[judge]'`.
 
+## API tools via MCP (when packs are installed)
+
+If the user has run `docmancer install-pack <pkg>@<version>` (e.g. `stripe@2026-02-25.clover`), the agent host launches a local stdio MCP server (`docmancer mcp serve`) that exposes exactly two meta-tools:
+
+- `docmancer_search_tools(query, package?, limit?)`: search for tools by task description. Always call this first to discover the fully qualified tool name and its input schema.
+- `docmancer_call_tool(name, args)`: invoke a specific tool returned from search.
+
+Workflow when the user asks to do something against a real API:
+
+1. Call `docmancer_search_tools` with a short task description (and `package` if you know which pack is in use). The top match returns its full input schema inlined.
+2. Validate that the returned `safety` block is acceptable. If `destructive: true`, the call is blocked unless the user has installed with `--allow-destructive`.
+3. Call `docmancer_call_tool` with the fully qualified `name` and an `args` object that conforms to the inlined schema.
+4. If the response includes `_docmancer.idempotency_key`, retry with the same `args._docmancer_idempotency_key` to deduplicate safely.
+
+Credential setup the user may need:
+
+- Shell-launched agents (Claude Code, Codex CLI): `export <PACK>_API_KEY=...` in the shell.
+- GUI-launched agents (Cursor, Claude Desktop): edit the agent's MCP config and add `"env": {"<PACK>_API_KEY": "..."}` under the `docmancer` server entry, or write `~/.docmancer/secrets/<package>.env` with `<PACK>_API_KEY=...`.
+
+Run `docmancer mcp doctor` to verify which credential source resolves for each installed pack.
+
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.

@@ -21,6 +21,8 @@ dependencies = [
     "w3lib>=2.0.0",
     "ultimate-sitemap-parser>=0.12",
     "beautifulsoup4>=4.12.0",
+    "jsonschema>=4.0.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]

@@ -21,6 +21,32 @@
 
 Use `--project` with `claude-code`, `gemini`, `cline`, or `github-copilot` to install under the current working directory (`.claude/skills/...`, `.gemini/skills/...`, `.cline/skills/...`, or `.github/copilot-instructions.md`). This is useful when different projects need different docmancer configurations.
 
+## MCP server registration
+
+In addition to writing the skill file, `docmancer install <agent>` (and `docmancer setup`) registers the local MCP server into the agent's MCP config so installed API packs are immediately available. The entry is written idempotently; reruns do not duplicate it.
+
+| Agent | MCP config file written |
+|-------|--------------------------|
+| `claude-code` | `~/.claude/mcp_servers.json` (or `~/.claude/settings.json`) |
+| `cursor` | `~/.cursor/mcp.json` |
+| `claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
+
+The entry has the shape:
+
+```json
+{
+  "mcpServers": {
+    "docmancer": {
+      "command": "docmancer",
+      "args": ["mcp", "serve"],
+      "env": {}
+    }
+  }
+}
+```
+
+Add per-pack credentials (e.g. `STRIPE_API_KEY`) to the `env: {}` block when launching from a GUI-launched agent (Cursor, Claude Desktop) that does not inherit the shell environment. Shell-launched agents (Claude Code, Codex CLI) read process env directly. See [Configuration › MCP runtime](./Configuration.md#mcp-runtime) for the full credential resolution order.
+
 ## What the skill teaches agents
 
 Installed skills cover the core workflow:
@@ -29,9 +55,11 @@ Installed skills cover the core workflow:
 - `docmancer update` to refresh existing sources
 - `docmancer query` to get compact context packs with token savings
 - `docmancer list`, `docmancer inspect`, `docmancer remove`, `docmancer doctor` for index management
+- `docmancer install-pack <pkg>@<version>` to install API MCP packs; the registered `docmancer mcp serve` exposes them through the Tool Search pattern (`docmancer_search_tools`, `docmancer_call_tool`)
+- `docmancer mcp doctor` and `docmancer mcp list` to verify pack state and credentials
 - `docmancer bench run` / `docmancer bench compare` when the user wants to compare retrieval backends on their own corpus
 
-Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data.
+Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data, and to call MCP packs through the resolved tool name (e.g. `stripe__2026_02_25_clover__payment_intents_list`) for live API work without losing track of the pinned version.
 
 ## Shared index
 

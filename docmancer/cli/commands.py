@@ -340,6 +340,17 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
         dest.write_text(marker_block, encoding="utf-8")
 
 
+def _register_mcp_for_agent(agent_name: str) -> None:
+    """Register `docmancer mcp serve` into a known agent's MCP config (best-effort)."""
+    try:
+        from docmancer.cli.mcp_commands import register_docmancer_mcp_in_agent
+    except Exception:
+        return
+    msg = register_docmancer_mcp_in_agent(agent_name)
+    if msg:
+        _emit_status_line(msg, indent=0)
+
+
 def _install_vscode_copilot_settings(dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     settings: dict[str, object] = {}
@@ -880,14 +891,16 @@ def list_cmd(show_all: bool, config_path: str | None):
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
-    Teaches the agent to call docmancer CLI commands directly. No server
-    required. Run 'docmancer add <url-or-path>' first to populate the knowledge base.
+    Teaches the agent to call docmancer CLI commands directly. Also registers
+    the local `docmancer mcp serve` entry into the agent's MCP config so any
+    installed API packs are immediately available.
 
     AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
     codex-app, codex-desktop, gemini, github-copilot, opencode
     """
     config_path = _effective_config(config_path)
     normalized = agent.lower()
+    _register_mcp_for_agent(normalized)
     home = Path.home()
     user_config_exists_before = _get_user_config_path().exists()
     effective_config_path = _resolve_install_config_path(config_path, project)

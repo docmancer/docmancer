@@ -45,6 +45,32 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `--max-pages <n>` | Maximum pages to fetch when refreshing web sources (default: 500). |
 | `--browser` | Enable Playwright browser fallback for JS-heavy sites. |
 
+## MCP pack commands
+
+`docmancer install-pack` installs version-pinned API MCP packs from a registry; `docmancer mcp` manages the local MCP server and installed packs. See [Architecture › MCP runtime](./Architecture.md#mcp-runtime) for how dispatch, safety gating, and idempotency reuse work.
+
+| Command | Description |
+|---------|-------------|
+| `docmancer install-pack <pkg>@<version>` | Install a pack from the registry. Verifies SHA-256 of every artifact and registers it in `~/.docmancer/mcp/manifest.json`. Spec parses from the rightmost `@` so npm-scoped names like `@scope/pkg@1.2.3` work. |
+| `docmancer uninstall <pkg>[@<version>]` | Remove an installed pack (all versions if no version given). |
+| `docmancer mcp serve` | Run the stdio MCP server. Agents launch this; humans usually do not. |
+| `docmancer mcp list` | Show installed packs with mode (curated/expanded), per-pack tool counts, and destructive gate state (`block` or `ALLOW`). |
+| `docmancer mcp doctor` | Verify pack SHA-256s, credential resolution per scheme, and agent-config registrations. Reports actionable warnings. |
+| `docmancer mcp enable <pkg> [--version <v>]` | Re-enable a previously disabled pack without reinstalling. |
+| `docmancer mcp disable <pkg> [--version <v>]` | Hide a pack from the dispatcher's tool surface without removing it on disk. |
+
+### install-pack options
+
+| Option | Description |
+|--------|-------------|
+| `--expanded` | Use the full tool surface (`tools.full.json`) instead of the curated subset. |
+| `--allow-destructive` | Permit destructive calls (POST/PUT/PATCH/DELETE) for this pack. Off by default; the dispatcher refuses such calls and surfaces the exact reinstall command in the error message. |
+| `--allow-execute` | Permit executor types like `python_import` that run code in a subprocess. Off by default. |
+
+### MCP runtime behavior
+
+When the agent calls `docmancer_call_tool`, the dispatcher resolves the slug `package__version__operation` (D15: double-underscore field separators), validates `args` against the operation's input schema, resolves credentials by the four-source order (per-call override → process env → agent-config env → user-managed env file), runs the safety gate, auto-injects an `Idempotency-Key` for non-idempotent operations on sources that declare an idempotency header (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), merges `auth.required_headers` (e.g. `Stripe-Version: 2026-02-25.clover`), and dispatches via the operation's executor. Path parameters are percent-encoded as one segment so values like `feat/x?ref=main` do not alter the URL structure. Logs at `~/.docmancer/mcp/calls.jsonl` record `arg_keys` only, never values.
+
 ## Bench commands
 
 `docmancer bench` is a local benchmarking harness that compares retrieval backends (SQLite FTS, Qdrant vector, RLM) on the same dataset and corpus. Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, `report.md`, and `traces/` under `.docmancer/bench/runs/<run_id>/`. See [Architecture › Benchmarking](./Architecture.md#benchmarking-optional) for how the harness treats canonical chunks and the `ingest_hash` fairness guard.

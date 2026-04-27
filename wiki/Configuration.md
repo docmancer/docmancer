@@ -30,6 +30,22 @@ These settings control the SQLite FTS5 index described in [Architecture](./Archi
 | `web_fetch.default_page_cap` | `500` | Default maximum pages for URL sources |
 | `web_fetch.browser_fallback` | `false` | Enable Playwright browser fallback by default |
 
+### MCP runtime
+
+The MCP runtime (see [Architecture › MCP runtime](./Architecture.md#mcp-runtime)) does not require entries in `docmancer.yaml`. State is managed through dedicated files under `~/.docmancer/`:
+
+| Path | Role |
+|------|------|
+| `~/.docmancer/mcp/manifest.json` | Installed packs and per-pack state (mode, allow_destructive, allow_execute, enabled) |
+| `~/.docmancer/mcp/calls.jsonl` | Append-only call log; records `arg_keys` only, never values |
+| `~/.docmancer/mcp/idempotency.db` | SQLite fingerprint cache for `Idempotency-Key` reuse on retry (24-hour TTL) |
+| `~/.docmancer/servers/<package>@<version>/` | Pack artifacts (`contract.json`, `tools.curated.json`, `tools.full.json`, `auth.schema.json`, `provenance.json`, `manifest.json` with SHA-256s) |
+| `~/.docmancer/secrets/<package>.env` | Per-package env file (4th in the credential resolution order; OS keychain stubbed for v1.1) |
+
+Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Override the registry source for `install-pack` with `DOCMANCER_REGISTRY_DIR` (defaults to the bundled remote registry).
+
+Credentials are resolved per call by the four-source order, first hit wins: per-call `args._docmancer_auth.<scheme>` override → process env (`STRIPE_API_KEY`, etc.) → agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`) → user-managed env file under `~/.docmancer/secrets/`.
+
 ### Bench
 
 The `bench:` block configures the benchmarking harness (see [Commands › Bench](./Commands.md#bench-commands)).

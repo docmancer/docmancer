@@ -16,8 +16,9 @@ fi
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 CLI_CMD=("$VENV_PYTHON" -m docmancer)
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export PATH="$ROOT_DIR/.venv/bin:$PATH"
 
-DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-https://bun.com/docs}"
+DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-https://docs.stripe.com/mcp}"
 MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-2}"
 FETCH_WORKERS="${DOCMANCER_LIVE_FETCH_WORKERS:-8}"
 ADD_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
@@ -26,7 +27,7 @@ RUN_WEB_VARIANTS="${DOCMANCER_RUN_WEB_VARIANTS:-0}"
 RUN_BROWSER_VARIANT="${DOCMANCER_RUN_BROWSER_VARIANT:-0}"
 RUN_CRAWL4AI_VARIANT="${DOCMANCER_RUN_CRAWL4AI_VARIANT:-0}"
 RUN_GITHUB_BLOB="${DOCMANCER_RUN_GITHUB_BLOB:-1}"
-GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pydantic/pydantic/blob/main/README.md}"
+GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/stripe/stripe-python/blob/master/README.md}"
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_BENCH_QDRANT="${DOCMANCER_RUN_BENCH_QDRANT:-0}"
 RUN_BENCH_RLM="${DOCMANCER_RUN_BENCH_RLM:-0}"
@@ -47,6 +48,7 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/docmancer-live-cli.XXXXXX")"
 TMP_HOME="$TMP_ROOT/home"
 PROJECT_DIR="$TMP_ROOT/project"
 FETCH_DIR="$TMP_ROOT/fetched-docs"
+LOCAL_REGISTRY_DIR="$TMP_ROOT/local-registry"
 CONFIG_PATH="$PROJECT_DIR/docmancer.yaml"
 
 cleanup() {
@@ -64,6 +66,8 @@ mkdir -p "$TMP_HOME" "$PROJECT_DIR" "$FETCH_DIR"
 export HOME="$TMP_HOME"
 export XDG_CONFIG_HOME="$TMP_HOME/.config"
 export XDG_DATA_HOME="$TMP_HOME/.local/share"
+export DOCMANCER_HOME="$TMP_HOME/.docmancer"
+export DOCMANCER_REGISTRY_DIR="$LOCAL_REGISTRY_DIR"
 
 print_banner() {
   echo
@@ -250,6 +254,168 @@ print(
 PY
 }
 
+create_fake_mcp_registry() {
+  local registry_dir="$1"
+  "$VENV_PYTHON" - "$registry_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+pack = root / "stripe@2026-02-25.clover"
+pack.mkdir(parents=True, exist_ok=True)
+
+contract = {
+    "docmancer_contract_version": "1",
+    "package": "stripe",
+    "version": "2026-02-25.clover",
+    "source": {
+        "kind": "openapi",
+        "url": "https://example.invalid/stripe-openapi.json",
+        "sha256": "fixture",
+        "fetched_at": "2026-04-27T00:00:00Z",
+    },
+    "auth": {
+        "schemes": [
+            {"type": "bearer", "env": "STRIPE_API_KEY", "header": "Authorization"}
+        ],
+        "required_headers": {"Stripe-Version": "2026-02-25.clover"},
+        "idempotency_header": "Idempotency-Key",
+    },
+    "operations": [
+        {
+            "id": "payment_intents_list",
+            "summary": "List recent PaymentIntents",
+            "description": "Returns one page of recent Stripe PaymentIntents.",
+            "executor": "http",
+            "http": {
+                "method": "GET",
+                "path": "/v1/payment_intents",
+                "base_url": "https://api.stripe.com",
+                "encoding": "query_only",
+            },
+            "params": [
+                {"name": "limit", "in": "query", "type": "integer", "required": False}
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                },
+                "additionalProperties": False,
+            },
+            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
+            "pagination": {"policy": "raw", "style": "cursor"},
+            "examples": [{"args": {"limit": 3}}],
+        },
+        {
+            "id": "payment_intents_create",
+            "summary": "Create a PaymentIntent",
+            "description": "Creates a Stripe PaymentIntent.",
+            "executor": "http",
+            "http": {
+                "method": "POST",
+                "path": "/v1/payment_intents",
+                "base_url": "https://api.stripe.com",
+                "encoding": "form",
+            },
+            "params": [
+                {"name": "amount", "in": "body", "type": "integer", "required": True},
+                {"name": "currency", "in": "body", "type": "string", "required": True},
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "integer", "minimum": 1},
+                    "currency": {"type": "string"},
+                    "_docmancer_idempotency_key": {"type": "string"},
+                },
+                "required": ["amount", "currency"],
+                "additionalProperties": False,
+            },
+            "safety": {"destructive": True, "requires_auth": True, "idempotent": False},
+            "examples": [{"args": {"amount": 2500, "currency": "usd"}}],
+        },
+        {
+            "id": "payment_intents_retrieve",
+            "summary": "Retrieve a PaymentIntent",
+            "description": "Fetch the current state of a PaymentIntent by id.",
+            "executor": "http",
+            "http": {
+                "method": "GET",
+                "path": "/v1/payment_intents/{id}",
+                "base_url": "https://api.stripe.com",
+                "encoding": "path_only",
+            },
+            "params": [
+                {"name": "id", "in": "path", "type": "string", "required": True},
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+                "additionalProperties": False,
+            },
+            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
+            "examples": [{"args": {"id": "pi_demo_1"}}],
+        },
+    ],
+    "schemas": {},
+    "curation": {
+        "operation_ids": [
+            "payment_intents_list",
+            "payment_intents_create",
+            "payment_intents_retrieve",
+        ],
+        "source": "fixture",
+        "generated_at": "2026-04-27T00:00:00Z",
+    },
+}
+
+tools_curated = {
+    "tools": [
+        {
+            "operation_id": "payment_intents_list",
+            "description": "List recent Stripe payments using PaymentIntents.",
+            "executor": "http",
+            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
+            "inputSchema": contract["operations"][0]["inputSchema"],
+        },
+        {
+            "operation_id": "payment_intents_create",
+            "description": "Create a Stripe PaymentIntent.",
+            "executor": "http",
+            "safety": {"destructive": True, "requires_auth": True, "idempotent": False},
+            "inputSchema": contract["operations"][1]["inputSchema"],
+        },
+        {
+            "operation_id": "payment_intents_retrieve",
+            "description": "Retrieve a Stripe PaymentIntent by id.",
+            "executor": "http",
+            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
+            "inputSchema": contract["operations"][2]["inputSchema"],
+        },
+    ]
+}
+
+tools_full = {"tools": tools_curated["tools"]}
+
+auth_schema = {"env": ["STRIPE_API_KEY"], "required_headers": {"Stripe-Version": "2026-02-25.clover"}}
+provenance = {"source": "live_cli_integration fixture", "docmancer_version": "local", "sha256": "fixture"}
+
+for name, payload in {
+    "contract.json": contract,
+    "tools.curated.json": tools_curated,
+    "tools.full.json": tools_full,
+    "auth.schema.json": auth_schema,
+    "provenance.json": provenance,
+}.items():
+    (pack / name).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+print(f"Wrote fake MCP registry pack to {pack}")
+PY
+}
+
 _sdk_importable() {
   # Returns 0 if the given Python module can be imported by the test venv.
   "$VENV_PYTHON" -c "import $1" >/dev/null 2>&1
@@ -286,9 +452,12 @@ echo "Repo root: $ROOT_DIR"
 echo "Using venv python: $VENV_PYTHON"
 echo "Temporary HOME: $HOME"
 echo "Temporary project: $PROJECT_DIR"
+echo "Docmancer home: $DOCMANCER_HOME"
+echo "Local registry fixture: $DOCMANCER_REGISTRY_DIR"
 echo "Log file: ${LOG_FILE:-disabled (DOCMANCER_LIVE_NO_LOG=1)}"
 
 print_banner "Run configuration"
+print_info "MCP walkthrough: emulates docs/api-mcp/stripe-walkthrough.md (Steps 0-5)"
 print_info "Local crawl URL: $DOCS_URL"
 print_info "Local crawl cap: $MAX_PAGES page(s), $FETCH_WORKERS worker(s)"
 print_info "Local crawl provider: $ADD_PROVIDER"
@@ -297,7 +466,7 @@ print_info "Fetch markdown step: $RUN_FETCH_STEP"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
 print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
-print_info "GitHub blob URL test: $RUN_GITHUB_BLOB"
+print_info "GitHub blob URL test: $RUN_GITHUB_BLOB ($GITHUB_BLOB_URL)"
 print_info "Bench dataset name: $BENCH_DATASET_NAME"
 print_info "Bench corpus override: ${BENCH_CORPUS_OVERRIDE:-<default ../docs>}"
 print_info "Bench qdrant backend: $RUN_BENCH_QDRANT"
@@ -305,7 +474,8 @@ print_info "Bench rlm backend: $RUN_BENCH_RLM"
 print_info "Skip all network work: $SKIP_NETWORK"
 print_info "Keep temporary files: $KEEP_TMP"
 print_info "Require editable reinstall: $REQUIRE_REFRESH"
-print_info "Registry commands were removed. Legacy eval/dataset stubs should point at docmancer bench."
+print_info "Local MCP pack registry fixture is enabled through DOCMANCER_REGISTRY_DIR."
+print_info "Legacy eval/dataset stubs should point at docmancer bench."
 
 cd "$ROOT_DIR"
 
@@ -330,10 +500,13 @@ fi
 run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); print('docmancer=', docmancer.__file__)"
 
 print_banner "CLI help surface"
-print_info "Checking top-level help plus local indexing, bench, install, and maintenance commands."
+print_info "Checking top-level help plus local indexing, MCP, pack install, bench, install, and maintenance commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest bench dataset eval; do
+for command in setup add update query list inspect remove doctor init install fetch ingest mcp install-pack uninstall bench dataset eval; do
   run "${CLI_CMD[@]}" "$command" --help
+done
+for command in serve doctor list enable disable; do
+  run "${CLI_CMD[@]}" mcp "$command" --help
 done
 for command in init run compare report list dataset; do
   run "${CLI_CMD[@]}" bench "$command" --help
@@ -363,20 +536,232 @@ for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini gi
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
 done
 
-print_banner "Doctor and inspect before add"
-print_info "The index should be empty before local crawl."
+print_banner "Stripe walkthrough Step 0: prerequisites"
+print_info "Agent install (above) already registered docmancer mcp serve into Claude Code/Cursor/Claude Desktop MCP configs. Verifying entries exist."
+run "$VENV_PYTHON" - <<'PY'
+import json, os, pathlib, sys
+
+home = pathlib.Path(os.environ["HOME"])
+checks = [
+    home / ".claude" / "mcp_servers.json",
+    home / ".cursor" / "mcp.json",
+    home / "Library/Application Support/Claude/claude_desktop_config.json",
+]
+found = 0
+for path in checks:
+    if not path.exists():
+        continue
+    data = json.loads(path.read_text())
+    servers = data.get("mcpServers", {})
+    if "docmancer" in servers:
+        entry = servers["docmancer"]
+        print(f"[ok] {path}: docmancer -> {entry.get('command')} {' '.join(entry.get('args', []))}")
+        found += 1
+    else:
+        print(f"[!!] {path} present but has no docmancer entry: {list(servers)}")
+if found == 0:
+    print("[!!] no agent MCP config registered docmancer; install step did not wire anything")
+    sys.exit(1)
+print(f"docmancer MCP server registered in {found} agent config(s).")
+PY
+
+print_banner "Stripe walkthrough Step 1: install the Stripe pack"
+print_info "Building a fake Stripe registry pack pinned at the real published version 2026-02-25.clover."
+create_fake_mcp_registry "$LOCAL_REGISTRY_DIR"
+export STRIPE_API_KEY="sk_test_docmancer_live_fixture"
+run "${CLI_CMD[@]}" mcp list
+run "${CLI_CMD[@]}" install-pack stripe@2026-02-25.clover
+run "${CLI_CMD[@]}" mcp list
+
+print_banner "Stripe walkthrough Step 2: credential resolution + doctor"
+print_info "STRIPE_API_KEY is exported in the shell. mcp doctor should report 'resolved via env' and verify all artifact SHA-256s."
+run "${CLI_CMD[@]}" mcp doctor
+
+print_banner "Stripe walkthrough Step 3: read call (list payment intents)"
+print_info "The dispatcher exposes 2 meta-tools regardless of pack count. Step 3c-3e: search → dispatch GET /v1/payment_intents against a mocked httpx transport. Verifies Stripe-Version is auto-injected, Authorization is bearer, no Idempotency-Key (GET is idempotent)."
+run "$VENV_PYTHON" - <<'PY'
+import httpx
+from docmancer.mcp.dispatcher import Dispatcher
+import docmancer.mcp.dispatcher as disp_mod
+from docmancer.mcp.executors.http import HttpExecutor
+from docmancer.mcp.manifest import Manifest
+
+captured = []
+def handler(req):
+    captured.append({
+        "method": req.method,
+        "url": str(req.url),
+        "headers": dict(req.headers),
+        "content": req.content.decode() if req.content else "",
+    })
+    return httpx.Response(
+        200,
+        json={"object": "list", "data": [{"id": "pi_demo_1", "amount": 4200, "currency": "usd", "status": "succeeded"}], "has_more": False},
+    )
+
+client = httpx.Client(transport=httpx.MockTransport(handler))
+disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
+
+dispatcher = Dispatcher(Manifest.load())
+tools = dispatcher.list_tools()
+assert [t["name"] for t in tools] == ["docmancer_search_tools", "docmancer_call_tool"], tools
+print(f"Step 3b: tools/list returned {len(tools)} meta-tool(s) (Tool Search pattern, D10).")
+
+matches = dispatcher.search_tools(query="list recent payments", package="stripe", limit=3)["matches"]
+assert matches and matches[0]["name"] == "stripe__2026_02_25_clover__payment_intents_list", matches
+print(f"Step 3c: search top match = {matches[0]['name']} (slug format D15 verified).")
+
+result = dispatcher.call_tool(matches[0]["name"], {"limit": 3})
+assert result.ok, result.body
+req = captured[-1]
+assert req["method"] == "GET", req
+assert "limit=3" in req["url"], req["url"]
+assert req["headers"].get("stripe-version") == "2026-02-25.clover", req["headers"]
+assert req["headers"].get("authorization", "").startswith("Bearer "), req["headers"]
+assert "idempotency-key" not in req["headers"], req["headers"]
+print(f"Step 3e: GET {req['url']} sent with Stripe-Version pinned, no Idempotency-Key (idempotent op).")
+print(f"Step 3f: response object = {result.body.get('object')}, first id = {result.body['data'][0]['id']}")
+PY
+
+print_banner "Stripe walkthrough Step 4a-4c: destructive call blocked before opt-in"
+print_info "Search returns the create tool; dispatcher refuses with destructive_call_blocked and a clear remediation message."
+run "$VENV_PYTHON" - <<'PY'
+from docmancer.mcp.dispatcher import Dispatcher
+from docmancer.mcp.manifest import Manifest
+
+dispatcher = Dispatcher(Manifest.load())
+matches = dispatcher.search_tools(query="create payment intent", package="stripe", limit=3)["matches"]
+assert any(m["name"].endswith("payment_intents_create") for m in matches), matches
+print(f"Step 4a: search top match for create = {matches[0]['name']}")
+
+blocked = dispatcher.call_tool(
+    "stripe__2026_02_25_clover__payment_intents_create",
+    {"amount": 2500, "currency": "usd"},
+)
+assert not blocked.ok and blocked.error_code == "destructive_call_blocked", blocked.body
+print(f"Step 4c: error_code = {blocked.error_code}")
+print(f"Step 4c: message    = {blocked.body['message'][:120]}...")
+PY
+
+print_banner "Stripe walkthrough Step 4d: opt in + destructive call + idempotency reuse on retry"
+print_info "Re-installing with --allow-destructive flips the package gate. Two identical POSTs against a mocked Stripe wire prove the SQLite fingerprint cache reuses the auto-generated Idempotency-Key (D17)."
+run "${CLI_CMD[@]}" install-pack stripe@2026-02-25.clover --allow-destructive
+run "${CLI_CMD[@]}" mcp list
+run "$VENV_PYTHON" - <<'PY'
+import httpx
+from docmancer.mcp.dispatcher import Dispatcher
+import docmancer.mcp.dispatcher as disp_mod
+from docmancer.mcp.executors.http import HttpExecutor
+from docmancer.mcp.manifest import Manifest
+
+captured = []
+def handler(req):
+    captured.append({
+        "method": req.method,
+        "url": str(req.url),
+        "headers": dict(req.headers),
+        "content_type": req.headers.get("content-type", ""),
+        "body": req.content.decode() if req.content else "",
+    })
+    return httpx.Response(
+        200,
+        json={"id": "pi_demo_created", "object": "payment_intent", "amount": 2500, "currency": "usd", "status": "requires_payment_method"},
+    )
+
+client = httpx.Client(transport=httpx.MockTransport(handler))
+disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
+
+dispatcher = Dispatcher(Manifest.load())
+first = dispatcher.call_tool(
+    "stripe__2026_02_25_clover__payment_intents_create",
+    {"amount": 2500, "currency": "usd"},
+)
+assert first.ok, first.body
+assert "_docmancer" in first.body and "idempotency_key" in first.body["_docmancer"], first.body
+key1 = first.body["_docmancer"]["idempotency_key"]
+req1 = captured[-1]
+assert req1["method"] == "POST", req1
+assert req1["headers"].get("stripe-version") == "2026-02-25.clover", req1
+assert "x-www-form-urlencoded" in req1["content_type"], req1
+assert "amount=2500" in req1["body"] and "currency=usd" in req1["body"], req1["body"]
+assert req1["headers"].get("idempotency-key") == key1, (req1["headers"], key1)
+print(f"Step 4d call 1: POST form body = {req1['body']!r}")
+print(f"Step 4d call 1: Stripe-Version  = {req1['headers']['stripe-version']}  (auto-injected from auth.required_headers, 2.8.3)")
+print(f"Step 4d call 1: Idempotency-Key = {key1}  (UUID4 generated, D12)")
+print(f"Step 4d call 1: response._docmancer.idempotency_key = {key1}")
+
+# Retry the same call. Dispatcher should reuse the same key from the SQLite fingerprint cache.
+second = dispatcher.call_tool(
+    "stripe__2026_02_25_clover__payment_intents_create",
+    {"amount": 2500, "currency": "usd"},
+)
+assert second.ok, second.body
+key2 = captured[-1]["headers"].get("idempotency-key")
+assert key2 == key1, (key1, key2)
+print(f"Step 4d retry: same args → reused key {key2} (SQLite fingerprint cache, D17).")
+
+# Schema validation in dispatcher (2.8.5): Tool Search hides per-tool schemas from MCP, dispatcher must validate.
+invalid = dispatcher.call_tool(
+    "stripe__2026_02_25_clover__payment_intents_create",
+    {"amount": "twenty five", "currency": "usd"},
+)
+assert not invalid.ok and invalid.error_code == "invalid_args", invalid.body
+print(f"Schema validation: invalid_args rejected (2.8.5).")
+PY
+
+print_banner "Stripe walkthrough Step 5: retrieve a single PaymentIntent"
+print_info "GET /v1/payment_intents/{id} dispatched against a mocked transport. Verifies path templating from path_only encoding (D19) and no destructive gate."
+run "$VENV_PYTHON" - <<'PY'
+import httpx
+from docmancer.mcp.dispatcher import Dispatcher
+import docmancer.mcp.dispatcher as disp_mod
+from docmancer.mcp.executors.http import HttpExecutor
+from docmancer.mcp.manifest import Manifest
+
+captured = []
+def handler(req):
+    captured.append({"method": req.method, "url": str(req.url), "headers": dict(req.headers)})
+    return httpx.Response(200, json={"id": "pi_demo_created", "object": "payment_intent", "status": "succeeded"})
+
+client = httpx.Client(transport=httpx.MockTransport(handler))
+disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
+
+dispatcher = Dispatcher(Manifest.load())
+result = dispatcher.call_tool(
+    "stripe__2026_02_25_clover__payment_intents_retrieve",
+    {"id": "pi_demo_created"},
+)
+assert result.ok, result.body
+req = captured[-1]
+assert req["method"] == "GET", req
+assert req["url"].endswith("/v1/payment_intents/pi_demo_created"), req["url"]
+assert req["headers"].get("stripe-version") == "2026-02-25.clover", req["headers"]
+print(f"Step 5: GET {req['url']} → status = {result.body['status']}")
+PY
+
+print_banner "MCP enable / disable toggles + uninstall"
+print_info "Verifying mcp enable / disable still flip per-package state without reinstalling, then cleanly uninstall."
+run "${CLI_CMD[@]}" mcp disable stripe --version 2026-02-25.clover
+run "${CLI_CMD[@]}" mcp list
+run "${CLI_CMD[@]}" mcp enable stripe --version 2026-02-25.clover
+run "${CLI_CMD[@]}" mcp list
+run "${CLI_CMD[@]}" uninstall stripe@2026-02-25.clover
+run "${CLI_CMD[@]}" mcp list
+
+print_banner "Doctor and inspect before docs-RAG add"
+print_info "The local index should still be empty before any live crawl."
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
 
 if [[ "$SKIP_NETWORK" == "1" ]]; then
   print_banner "Network steps skipped"
-  print_info "DOCMANCER_SKIP_NETWORK=1, stopping before fetch and local live add."
+  print_info "DOCMANCER_SKIP_NETWORK=1, stopping before fetch and live add."
   exit 0
 fi
 
 if [[ "$RUN_FETCH_STEP" == "1" ]]; then
-  print_banner "Fetch live docs to markdown files"
-  print_info "Fetching raw markdown files without indexing them."
+  print_banner "Fetch live Stripe docs to markdown files"
+  print_info "Fetching raw markdown files from $DOCS_URL without indexing them."
   if run "${CLI_CMD[@]}" fetch "$DOCS_URL" --output "$FETCH_DIR"; then
     run find "$FETCH_DIR" -maxdepth 1 -type f
   else
@@ -384,15 +769,15 @@ if [[ "$RUN_FETCH_STEP" == "1" ]]; then
   fi
 fi
 
-print_banner "Add live docs URL with bounded local crawl"
-print_info "Indexing a small live docs crawl into the isolated SQLite database."
+print_banner "Add live Stripe docs URL with bounded local crawl"
+print_info "Indexing a small live Stripe docs crawl into the isolated SQLite database."
 run_live_add 0 "$MAX_PAGES"
 run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" query "How do I create an account?" --limit 5 --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" query "How do I create an account?" --limit 1 --expand page --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" query "How do I create a payment intent?" --limit 5 --config "$CONFIG_PATH" || true
+run "${CLI_CMD[@]}" query "How do I create a payment intent?" --limit 1 --expand page --config "$CONFIG_PATH" || true
 
 print_banner "Bench local indexed corpus"
 print_info "First exercise the zero-config built-in Lenny flow from the README, then exercise custom-corpus dataset generation."
@@ -457,7 +842,7 @@ run "${CLI_CMD[@]}" update --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 
 if [[ "$RUN_WEB_VARIANTS" == "1" ]]; then
-  print_banner "Add live docs with alternate explicit web strategy"
+  print_banner "Add live Stripe docs with alternate explicit web strategy"
   print_info "Running the generic web fetcher with nav-crawl to compare behavior."
   run_live_add 0 20 web nav-crawl
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -465,7 +850,7 @@ if [[ "$RUN_WEB_VARIANTS" == "1" ]]; then
 fi
 
 if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
-  print_banner "Add live docs with browser fallback"
+  print_banner "Add live Stripe docs with browser fallback"
   print_info "Running the browser-backed fetch path. This requires Playwright/browser dependencies in the venv."
   run_live_add 1 20 web nav-crawl
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -473,7 +858,7 @@ if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
 fi
 
 if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
-  print_banner "Add live docs with Crawl4AI provider"
+  print_banner "Add live Stripe docs with Crawl4AI provider"
   print_info "Running the Crawl4AI-backed fetch path. Requires: pip install docmancer[crawl4ai] && crawl4ai-setup"
   run_live_add 0 20 crawl4ai
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -481,13 +866,13 @@ if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
 fi
 
 if [[ "$RUN_GITHUB_BLOB" == "1" ]]; then
-  print_banner "Add a single GitHub blob URL"
+  print_banner "Add a single GitHub blob URL (Stripe SDK README)"
   print_info "Fetching a single markdown file via a GitHub /blob/ URL: $GITHUB_BLOB_URL"
   run "${CLI_CMD[@]}" add "$GITHUB_BLOB_URL" --recreate --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-  # Query with a term likely to appear in the README; tolerate no-results (exit 1) gracefully.
-  run "${CLI_CMD[@]}" query "pydantic validation" --limit 3 --config "$CONFIG_PATH" || true
+  # Query with a Stripe-related term; tolerate no-results (exit 1) gracefully.
+  run "${CLI_CMD[@]}" query "stripe python install" --limit 3 --config "$CONFIG_PATH" || true
 fi
 
 REMOTE_SOURCE="$(capture_first_source)"

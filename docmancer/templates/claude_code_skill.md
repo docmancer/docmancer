@@ -102,6 +102,17 @@ Optional extras to install the experimental backends and the judge scorer:
 - `pipx install 'docmancer[rlm]'`
 - `pipx install 'docmancer[judge]'`
 
+## API tools via MCP (when packs are installed)
+
+If the user has run `docmancer install-pack <pkg>@<version>`, the agent host launches `docmancer mcp serve` (registered in your MCP config during `docmancer install claude-code`). Two meta-tools are exposed regardless of how many packs are installed:
+
+- `docmancer_search_tools(query, package?, limit?)`: discover tools by task description; the top match returns its input schema inlined.
+- `docmancer_call_tool(name, args)`: invoke a tool returned by search.
+
+For any real-API task: search first, then call. If `safety.destructive` is true, the call is blocked unless the user installed with `--allow-destructive`. Successful non-idempotent calls return `_docmancer.idempotency_key` in the body so retries can pass it back via `args._docmancer_idempotency_key`.
+
+Credentials: shell agents read `export FOO_API_KEY=...`; GUI agents read the `env` block in the agent MCP config or `~/.docmancer/secrets/<package>.env`. Run `docmancer mcp doctor` to verify resolution.
+
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.

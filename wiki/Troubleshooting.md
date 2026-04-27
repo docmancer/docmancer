@@ -88,6 +88,48 @@ This requires the `browser` optional dependency: `pip install docmancer[browser]
 
 Re-run `docmancer setup` or `docmancer install <target>` to update the skill file. Older skill installations may not include newer commands. See [Install Targets](./Install-Targets.md) for where skills land.
 
+## MCP packs
+
+### `docmancer install-pack` says `Spec must be \`<package>@<version>\``
+
+Pack specs must include both name and version. The parser splits from the rightmost `@` so npm-scoped names like `@scope/pkg@1.2.3` work; if the spec has no `@`, supply one explicitly:
+
+```bash
+docmancer install-pack stripe@2026-02-25.clover
+docmancer install-pack @acme/widgets@1.4.2
+```
+
+### Tool returns `destructive_call_blocked`
+
+The pack was installed without `--allow-destructive`. The error message names the exact remediation command. Reinstall with the flag, then restart your agent:
+
+```bash
+docmancer install-pack stripe@2026-02-25.clover --allow-destructive
+```
+
+`docmancer mcp list` will show `destructive=ALLOW` once the gate is open.
+
+### Tool returns `missing_credentials`
+
+The dispatcher tried every source in the four-source order (per-call override → process env → agent-config env → user-managed env file) and none resolved. For shell-launched agents, export the env var and restart the agent. For GUI-launched agents (Cursor, Claude Desktop), add the env var to the `env: {}` block in the agent's `mcp.json`, or write it to `~/.docmancer/secrets/<package>.env`. `docmancer mcp doctor` reports which source resolved each credential.
+
+### `docmancer mcp doctor` reports SHA-256 mismatch
+
+The pack on disk does not match the SHA-256 in `manifest.json`. Either the registry was tampered with, the file was edited locally, or an install failed mid-write. Reinstall the pack:
+
+```bash
+docmancer uninstall stripe@2026-02-25.clover
+docmancer install-pack stripe@2026-02-25.clover
+```
+
+### Path with `/` or `?` returns the wrong resource
+
+The HTTP executor percent-encodes path parameters as one segment, so values like branch names (`feat/x`) or S3 keys with slashes are sent as `feat%2Fx`. If your API expects multiple path segments from one parameter, the contract should declare separate parameters; otherwise the encoded value is correct.
+
+### `docmancer install-pack` rejects the spec with `path traversal`
+
+Pack and version components cannot contain `..`, NUL, backslashes, absolute paths, or (for the version component) a leading `@`. This protects the storage root from escape via crafted registry metadata. The npm scope form (`@scope/pkg`) is allowed in the package name, but the version cannot start with `@`.
+
 ## `docmancer bench run --backend qdrant` says "requires: pipx install 'docmancer[vector]'"
 
 The Qdrant backend is an optional extra. Easiest path is the meta-extra that installs every bench backend plus the LLM provider SDKs in one go:

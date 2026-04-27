@@ -54,6 +54,17 @@ The `bench` namespace compares retrieval backends (FTS, vector, and an RLM path)
 
 Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, `report.md`, and `traces/` under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` stops `bench compare` from mixing runs against drifted corpora unless you pass `--allow-mixed-ingest`.
 
+## API tools via MCP (when packs are installed)
+
+If the user has run `docmancer install-pack <pkg>@<version>`, Claude Desktop launches `docmancer mcp serve`. Two meta-tools are exposed:
+
+- `docmancer_search_tools(query, package?, limit?)`: discover tools by task; top match returns its input schema inlined.
+- `docmancer_call_tool(name, args)`: invoke a tool returned by search.
+
+Claude Desktop is GUI-launched, so shell `export` will not propagate. Add credentials to the `env` block under the `docmancer` server in `claude_desktop_config.json`, or write `~/.docmancer/secrets/<package>.env`. Run `docmancer mcp doctor` to verify.
+
+Destructive calls are blocked unless the user installed the pack with `--allow-destructive`. Non-idempotent successes return `_docmancer.idempotency_key`; retry with `args._docmancer_idempotency_key` to deduplicate.
+
 ## Common mistakes
 
 - Do not run `docmancer query` before adding a source with `docmancer add`. Check `docmancer list` first.
