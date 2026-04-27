@@ -114,6 +114,21 @@ def test_run_question_maps_response_to_answer_and_closes(monkeypatch, stub_store
     assert kinds[-1] == "close"  # close even on success
 
 
+def test_run_question_passes_max_iterations_and_verbose_to_rlm(monkeypatch, stub_store, stub_rlm):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+
+    from docmancer.bench.backends.rlm import RLMBackend
+
+    backend = RLMBackend()
+    backend.prepare(_corpus(), _config(rlm_max_iterations=4, rlm_verbose=True))
+    backend.run_question("q?", k=5, timeout_s=10.0)
+
+    init_kwargs = next(kw for kind, kw in stub_rlm if kind == "init")
+    assert init_kwargs["max_iterations"] == 4
+    assert init_kwargs["verbose"] is True
+    assert "logger" not in init_kwargs  # no log dir set
+
+
 def test_run_question_passes_model_name_kwarg_to_rlm(monkeypatch, stub_store, stub_rlm):
     """Regression: upstream rlm expects `model_name`, not `model`, in backend_kwargs.
 
@@ -258,6 +273,9 @@ def test_cli_run_passes_rlm_knobs_into_backend_extra(monkeypatch, tmp_path):
             "--rlm-provider", "vllm",
             "--rlm-model", "meta-llama/Llama-3.1-8B",
             "--rlm-max-chars", "50000",
+            "--rlm-max-iterations", "4",
+            "--rlm-verbose",
+            "--rlm-log-dir", str(tmp_path / "rlm-logs"),
             "--config", str(cfg_yaml),
             "--run-id", "rlm_cli_test",
         ],
@@ -267,6 +285,10 @@ def test_cli_run_passes_rlm_knobs_into_backend_extra(monkeypatch, tmp_path):
     assert captured["extra"]["rlm_provider"] == "vllm"
     assert captured["extra"]["rlm_model"] == "meta-llama/Llama-3.1-8B"
     assert captured["extra"]["rlm_max_chars"] == 50000
+    assert captured["extra"]["rlm_max_iterations"] == 4
+    assert captured["extra"]["rlm_verbose"] is True
+    assert captured["extra"]["rlm_log_dir"] == str(tmp_path / "rlm-logs")
+    assert "Elapsed:" in result.output
 
 
 def test_corpus_truncation_respects_max_chars(monkeypatch, stub_rlm):

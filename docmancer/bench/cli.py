@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +55,18 @@ def _load_config_and_corpus(config_path: str | None):
     return config, corpus
 
 
+def _reset_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _bench_index_roots() -> list[Path]:
+    from docmancer.bench.corpora import corpora_root
+
+    return [corpora_root().resolve()]
+
+
 @click.group(
     "bench",
     cls=DocmancerGroup,
@@ -66,9 +78,11 @@ def _load_config_and_corpus(config_path: str | None):
         "docmancer bench dataset create --from-corpus ./docs --size 30 --provider auto",
         "docmancer bench run --backend fts --dataset lenny",
         "docmancer bench compare run_a run_b",
+        "docmancer bench reset",
     ),
 )
-def bench_group():
+@click.pass_context
+def bench_group(ctx):
     """Compare retrieval and answer quality across local bench backends.
 
     Use built-in datasets such as `lenny` for a zero-config first run, or
@@ -76,6 +90,8 @@ def bench_group():
     metrics and artifacts under `.docmancer/bench/runs/` so you can report,
     compare, and remove them later.
     """
+    start = time.perf_counter()
+    ctx.call_on_close(lambda: click.echo(f"Elapsed: {time.perf_counter() - start:.1f}s"))
 
 
 @bench_group.command(
@@ -490,8 +506,14 @@ def bench_dataset_list_builtin_cmd(config_path: str | None):
 @click.option("--rlm-model", "rlm_model", default=None, help="RLM only: override the provider's default model.")
 @click.option("--rlm-max-chars", "rlm_max_chars", default=None, type=int,
               help="RLM only: cap the corpus fed to the model (default 120000).")
+@click.option("--rlm-max-iterations", "rlm_max_iterations", default=None, type=int,
+              help="RLM only: cap the root LM's iteration count per question (default 6). Upstream default is 30.")
+@click.option("--rlm-verbose", "rlm_verbose", is_flag=True, default=False,
+              help="RLM only: print iteration trace to the console via rlm's rich logger.")
+@click.option("--rlm-log-dir", "rlm_log_dir", default=None,
+              help="RLM only: directory to write per-completion .jsonl trajectories for the rlm visualizer.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, sandbox, rlm_provider, rlm_model, rlm_max_chars, config_path):
+def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, sandbox, rlm_provider, rlm_model, rlm_max_chars, rlm_max_iterations, rlm_verbose, rlm_log_dir, config_path):
     """Execute one benchmark run and save metrics under `.docmancer/bench/runs/`.
 
     The dataset can be a dataset name under `.docmancer/bench/datasets/` or a
@@ -545,6 +567,14 @@ def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, san
         effective_max_chars = rlm_max_chars or cfg_backends.rlm_max_chars
         if effective_max_chars:
             extra["rlm_max_chars"] = effective_max_chars
+        effective_max_iter = rlm_max_iterations or cfg_backends.rlm_max_iterations
+        if effective_max_iter:
+            extra["rlm_max_iterations"] = effective_max_iter
+        if rlm_verbose or cfg_backends.rlm_verbose:
+            extra["rlm_verbose"] = True
+        effective_log_dir = rlm_log_dir or cfg_backends.rlm_log_dir or ""
+        if effective_log_dir:
+            extra["rlm_log_dir"] = effective_log_dir
 
     if not run_id:
         run_id = f"{backend_name}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
@@ -559,6 +589,7 @@ def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, san
         k_answer=k_answer,
         timeout_s=timeout_s,
         backend_extra=extra,
+        dataset_path=str(dataset_path.resolve()),
     )
     click.echo(f"Wrote run artifacts to {run_dir}")
 
@@ -571,21 +602,28 @@ def bench_run_cmd(backend, dataset, run_id, k_retrieve, k_answer, timeout_s, san
     epilog=format_examples(
         "docmancer bench compare lenny_fts lenny_qdrant",
         "docmancer bench compare lenny_fts lenny_qdrant lenny_rlm",
+        "docmancer bench compare lenny_fts lenny_qdrant lenny_rlm --csv compare.csv",
         "docmancer bench compare run_a run_b --allow-mixed-ingest",
     ),
 )
 @click.argument("run_ids", nargs=-1, required=True)
 @click.option("--output", default=None, help="Path to write comparison markdown. Defaults to stdout.")
+@click.option("--csv", "csv_path", default=None, help="Also write a CSV with metrics and per-question answers side by side.")
 @click.option("--allow-mixed-ingest", is_flag=True, default=False, help="Allow comparing runs across different ingest hashes.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
+def bench_compare_cmd(run_ids, output, csv_path, allow_mixed_ingest, config_path):
     """Compare two or more saved runs and print a side-by-side report.
 
     By default, runs must share the same ingest hash so the comparison is
     meaningful. Pass `--allow-mixed-ingest` only when you intentionally want
     to compare runs produced from different indexed corpora.
     """
-    from docmancer.bench.report import load_run_metrics, render_comparison_markdown
+    from docmancer.bench.report import (
+        load_run_metrics,
+        load_run_qa_rows,
+        render_comparison_csv,
+        render_comparison_markdown,
+    )
     from docmancer.cli.commands import _effective_config, _load_config
 
     if len(run_ids) < 2:
@@ -595,6 +633,7 @@ def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
     runs_dir = Path(config.bench.runs_dir)
 
     runs = []
+    qa_by_run: dict[str, list[dict]] = {}
     for rid in run_ids:
         rdir = runs_dir / rid
         if not rdir.exists():
@@ -603,6 +642,7 @@ def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
             raise click.ClickException(f"Run not found: {rid}")
         metrics, snap = load_run_metrics(rdir)
         runs.append((rid, metrics, snap))
+        qa_by_run[rid] = load_run_qa_rows(rdir)
 
     hashes = {m.ingest_hash for _, m, _ in runs}
     if len(hashes) > 1 and not allow_mixed_ingest:
@@ -621,34 +661,30 @@ def bench_compare_cmd(run_ids, output, allow_mixed_ingest, config_path):
     else:
         click.echo(md)
 
+    if csv_path:
+        csv_text = render_comparison_csv(runs, qa_by_run)
+        Path(csv_path).write_text(csv_text, encoding="utf-8")
+        click.echo(f"Wrote {csv_path}")
+
 
 @bench_group.command(
     "report",
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Render a markdown or JSON report for one run.",
+    short_help="Render a native terminal report for one run.",
     epilog=format_examples(
         "docmancer bench report lenny_fts",
-        "docmancer bench report lenny_fts --format json",
     ),
 )
 @click.argument("run_id")
-@click.option(
-    "--format",
-    "output_format",
-    type=click.Choice(["markdown", "json"], case_sensitive=False),
-    default="markdown",
-    show_default=True,
-    help="Output format for the rendered report.",
-)
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def bench_report_cmd(run_id, output_format, config_path):
-    """Render a report for one saved bench run.
-
-    Use the default markdown format for a human-readable summary, or `json`
-    when you want to feed the metrics into another tool or CI step.
-    """
-    from docmancer.bench.report import load_run_metrics, render_single_run_markdown
+def bench_report_cmd(run_id, config_path):
+    """Render a clean terminal report for one saved bench run."""
+    from docmancer.bench.report import (
+        load_run_metrics,
+        load_run_qa_rows,
+        render_single_run_text,
+    )
     from docmancer.cli.commands import _effective_config, _load_config
 
     config = _load_config(_effective_config(config_path))
@@ -659,11 +695,8 @@ def bench_report_cmd(run_id, output_format, config_path):
     if not rdir.exists():
         raise click.ClickException(f"Run not found: {run_id}")
     metrics, snap = load_run_metrics(rdir)
-
-    if output_format == "json":
-        click.echo(json.dumps(metrics.to_dict(), indent=2))
-    else:
-        click.echo(render_single_run_markdown(metrics, snap))
+    qa_rows = load_run_qa_rows(rdir)
+    click.echo(render_single_run_text(metrics, snap, qa_rows=qa_rows))
 
 
 @bench_group.command(
@@ -766,3 +799,48 @@ def bench_remove_cmd(targets, remove_dataset, remove_run, config_path):
         raise click.ClickException(
             f"Not found in {kinds_str}: {', '.join(missing)}"
         )
+
+
+@bench_group.command(
+    "reset",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Clear the local bench workspace and bench-owned index entries.",
+    epilog=format_examples(
+        "docmancer bench reset",
+        "docmancer bench reset --config ./docmancer.yaml",
+    ),
+)
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+def bench_reset_cmd(config_path):
+    """Reset local bench state without touching normal `docmancer add` docs.
+
+    This removes `.docmancer/bench/datasets/`, `.docmancer/bench/runs/`, and
+    cached built-in corpora, then recreates empty bench directories. It also
+    deletes SQLite rows and extracted artifacts for sources whose source or
+    docset root lives under the bench corpora cache root.
+
+    Normal sources added through `docmancer add` remain intact unless they
+    were ingested from the bench corpora cache itself.
+    """
+    from docmancer.cli.commands import _effective_config, _load_config, _get_agent_class
+
+    config = _load_config(_effective_config(config_path))
+    datasets_dir = Path(config.bench.datasets_dir)
+    runs_dir = Path(config.bench.runs_dir)
+    corpora_roots = _bench_index_roots()
+
+    agent = _get_agent_class()(config=config)
+    deleted_sources = agent.store.delete_sources_under_roots(corpora_roots)
+
+    _reset_dir(datasets_dir)
+    _reset_dir(runs_dir)
+    for corpora_root in corpora_roots:
+        if corpora_root.exists():
+            shutil.rmtree(corpora_root)
+
+    click.echo(f"Removed {deleted_sources} bench source(s) from the SQLite index.")
+    click.echo(f"Reset datasets: {datasets_dir}")
+    click.echo(f"Reset runs: {runs_dir}")
+    for corpora_root in corpora_roots:
+        click.echo(f"Cleared built-in corpora cache: {corpora_root}")

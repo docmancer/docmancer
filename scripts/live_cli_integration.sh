@@ -407,7 +407,6 @@ BENCH_PROVIDER="$(detect_llm_provider)"
   run "${CLI_CMD[@]}" bench dataset use lenny --yes --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench run --backend fts --dataset lenny --run-id lenny_fts --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench report lenny_fts --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" bench report lenny_fts --format json --config "$CONFIG_PATH"
   if [[ "$RUN_BENCH_QDRANT" == "1" ]]; then
     print_info "Running qdrant bench backend. Requires the vector extra in the current venv."
     run "${CLI_CMD[@]}" bench run --backend qdrant --dataset lenny --run-id lenny_qdrant --config "$CONFIG_PATH"
@@ -447,6 +446,8 @@ BENCH_PROVIDER="$(detect_llm_provider)"
   run "${CLI_CMD[@]}" bench report mydocs_fts --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench remove "$BENCH_DATASET_NAME" mydocs_fts --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" bench reset --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" bench list --config "$CONFIG_PATH"
 )
 

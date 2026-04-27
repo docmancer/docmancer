@@ -81,6 +81,9 @@ class RLMBackend:
         self._provider: str = ""
         self._model: str = ""
         self._environment: str = "local"
+        self._max_iterations: int | None = None
+        self._verbose: bool = False
+        self._log_dir: str = ""
 
     def prepare(self, corpus: CorpusHandle, config: BackendConfig) -> None:
         from docmancer.bench.llm_providers import (
@@ -121,6 +124,10 @@ class RLMBackend:
         self._model = extra.get("rlm_model") or default_model
         self._environment = extra.get("sandbox") or "local"
         max_chars = int(extra.get("rlm_max_chars") or _DEFAULT_MAX_CHARS)
+        max_iter = extra.get("rlm_max_iterations")
+        self._max_iterations = int(max_iter) if max_iter else None
+        self._verbose = bool(extra.get("rlm_verbose") or False)
+        self._log_dir = str(extra.get("rlm_log_dir") or "")
 
         store = SQLiteStore(corpus.db_path, extracted_dir=corpus.extracted_dir)
         sections = store.list_sections_for_embedding()
@@ -147,9 +154,16 @@ class RLMBackend:
                 "backend": self._provider,
                 "environment": self._environment,
                 "max_timeout": timeout_s,
+                "verbose": self._verbose,
             }
             if self._model:
                 kwargs["backend_kwargs"] = {"model_name": self._model}
+            if self._max_iterations:
+                kwargs["max_iterations"] = self._max_iterations
+            if self._log_dir:
+                from rlm.logger import RLMLogger
+
+                kwargs["logger"] = RLMLogger(log_dir=self._log_dir)
             client = rlm.RLM(**kwargs)
             prompt = (
                 "Answer the question using the documents below. Cite the source "

@@ -102,11 +102,14 @@ docmancer bench run --backend rlm    --dataset lenny --run-id lenny_rlm
 docmancer bench compare lenny_fts lenny_qdrant lenny_rlm
 docmancer bench list
 docmancer bench remove mydocs mydocs_fts
+docmancer bench reset
 ```
 
 Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, and `report.md` under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` guards against comparing runs across drifted corpora. All backends see the same canonical section chunks so metrics are apples-to-apples. See [wiki/Commands.md](./wiki/Commands.md#bench-commands) for the full command list and [wiki/Configuration.md](./wiki/Configuration.md#bench) for tunables.
 
 `docmancer bench remove <name>...` removes dataset directories and/or run artifact directories from `bench list`. It does not remove the indexed corpus from SQLite and it does not clear built-in cached corpora under `~/.docmancer/bench/corpora/`.
+
+`docmancer bench reset` clears the local bench workspace end to end: datasets, runs, and built-in cached corpora. It also removes bench-owned corpus entries from the shared SQLite index, specifically sources whose source or docset root lives under the bench corpora cache root. It does not touch normal docs added through `docmancer add` outside that cache.
 
 Legacy `.docmancer/eval_dataset.json` files are accepted read-only; convert them with `docmancer bench dataset create --from-legacy <path>`.
 
@@ -133,6 +136,7 @@ Legacy `.docmancer/eval_dataset.json` files are accepted read-only; convert them
 | `docmancer init`                       | Create a project-local `docmancer.yaml`                          |
 | `docmancer install <agent>`            | Manual skill installation for a single agent                     |
 | `docmancer bench ...`                  | Benchmarking harness (see the section above)                     |
+| `docmancer bench reset`                | Clear bench workspace state without wiping normal indexed docs   |
 
 ---
 

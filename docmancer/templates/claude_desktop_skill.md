@@ -49,7 +49,7 @@ The `bench` namespace compares retrieval backends (FTS, vector, and an RLM path)
 - `docmancer bench run --backend qdrant --dataset <name>`: run the experimental vector backend (`docmancer[vector]`).
 - `docmancer bench run --backend rlm --dataset <name>`: run the experimental RLM backend (`docmancer[rlm]`).
 - `docmancer bench compare <run_id_a> <run_id_b> [...]`: side-by-side comparison report.
-- `docmancer bench report <run_id>`: reprint a single-run report (`--format json` for machine-readable).
+- `docmancer bench report <run_id>`: reprint a single-run report in clean terminal text.
 - `docmancer bench list`: list local datasets and runs.
 
 Every run writes `config.snapshot.yaml`, `retrievals.jsonl`, `answers.jsonl`, `metrics.json`, `report.md`, and `traces/` under `.docmancer/bench/runs/<run_id>/`. A content-hashed `ingest_hash` stops `bench compare` from mixing runs against drifted corpora unless you pass `--allow-mixed-ingest`.

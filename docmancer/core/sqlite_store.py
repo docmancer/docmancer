@@ -52,6 +52,10 @@ def _slug(value: str) -> str:
     return f"{stem}-{digest}"
 
 
+def _normalize_source_like(value: str | Path) -> str:
+    return str(value).replace("\\", "/").rstrip("/")
+
+
 def _split_sections(content: str) -> list[tuple[str, int, str]]:
     matches = list(HEADING_RE.finditer(content))
     if not matches:
@@ -576,6 +580,61 @@ class SQLiteStore:
             conn.execute("DELETE FROM sections WHERE source_id = ?", (source_id,))
             conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
             return True
+
+    def delete_sources_under_roots(self, roots: Iterable[str | Path]) -> int:
+        """Delete sources whose source/docset_root live under any local root."""
+        normalized_roots = [
+            _normalize_source_like(root)
+            for root in roots
+            if str(root).strip()
+        ]
+        if not normalized_roots:
+            return 0
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source, docset_root, markdown_path, json_path FROM sources"
+            ).fetchall()
+
+        sources_to_delete: list[str] = []
+        artifact_paths: set[Path] = set()
+        for row in rows:
+            source = str(row["source"] or "")
+            docset_root = str(row["docset_root"] or "")
+            source_norm = _normalize_source_like(source)
+            docset_norm = _normalize_source_like(docset_root)
+
+            matched = False
+            for root in normalized_roots:
+                prefix = root + "/"
+                if source_norm == root or source_norm.startswith(prefix):
+                    matched = True
+                    break
+                if docset_norm == root or docset_norm.startswith(prefix):
+                    matched = True
+                    break
+
+            if not matched:
+                continue
+
+            sources_to_delete.append(source)
+            for path_value in (row["markdown_path"], row["json_path"]):
+                if path_value:
+                    artifact_paths.add(Path(str(path_value)))
+
+        deleted = 0
+        for source in sources_to_delete:
+            if self.delete_source(source):
+                deleted += 1
+
+        for artifact_path in artifact_paths:
+            try:
+                artifact_path.unlink(missing_ok=True)
+            except TypeError:
+                if artifact_path.exists():
+                    artifact_path.unlink()
+
+        return deleted
 
     def delete_all(self) -> bool:
         stats = self.collection_stats()

@@ -80,6 +80,7 @@ def run_bench(
     k_answer: int = 5,
     timeout_s: float = 60.0,
     backend_extra: dict | None = None,
+    dataset_path: str | None = None,
 ) -> Path:
     """Run a dataset against a backend. Returns the run directory path."""
 
@@ -116,6 +117,7 @@ def run_bench(
         "k_answer": k_answer,
         "timeout_s": timeout_s,
         "dataset_corpus_ref": dataset.corpus_ref,
+        "dataset_path": dataset_path,
         "dataset_version": dataset.version,
         "num_questions": len(dataset.questions),
         "backend_extra": backend_extra or {},

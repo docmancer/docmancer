@@ -5,7 +5,7 @@ Docmancer compresses documentation context so coding agents spend tokens on code
 
 **MIT open source.** Everything runs locally. An optional benchmarking harness (`docmancer bench`) compares retrieval backends on your own corpus.
 
-Executable: `/Users/gaurangtorvekar/.local/pipx/venvs/docmancer/bin/docmancer --config /private/var/folders/fj/87wdckpn2j7fhjysk511vt3m0000gn/T/docmancer-live-cli.Og8QVO/project/docmancer.yaml`
+Executable: `/Users/gaurangtorvekar/.local/pipx/venvs/docmancer/bin/docmancer --config /private/var/folders/fj/87wdckpn2j7fhjysk511vt3m0000gn/T/docmancer-live-cli.I056kc/project/docmancer.yaml`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 

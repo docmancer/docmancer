@@ -59,9 +59,10 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `docmancer bench dataset validate <path>` | Schema-check a YAML or legacy JSON dataset. |
 | `docmancer bench run --backend <fts\|qdrant\|rlm> --dataset <name>` | Run a dataset against one backend and write artifacts. |
 | `docmancer bench compare <run_id> <run_id> [...]` | Emit a side-by-side comparison of two or more runs. |
-| `docmancer bench report <run_id>` | Reprint a single-run report. Pass `--format json` for machine-readable output. |
+| `docmancer bench report <run_id>` | Reprint a single-run report in clean terminal text. |
 | `docmancer bench list` | List local datasets and runs. |
 | `docmancer bench remove <name> [...]` | Remove dataset directories and/or run artifact directories from `bench list`. |
+| `docmancer bench reset` | Clear datasets, runs, built-in cached corpora, and bench-owned SQLite entries, without touching normal docs added through `docmancer add`. |
 
 ### Bench dataset create options
 
@@ -132,3 +133,18 @@ It does not remove:
 - cached built-in corpora under `~/.docmancer/bench/corpora/`
 
 Use `--dataset` or `--run` to restrict which side it touches. With no flag, it removes any matching dataset and/or run name.
+
+### Bench reset behavior
+
+`docmancer bench reset` removes:
+
+- dataset directories under `.docmancer/bench/datasets/`
+- run directories under `.docmancer/bench/runs/`
+- cached built-in corpora under `~/.docmancer/bench/corpora/`
+- SQLite rows whose `source` or `docset_root` lives under the bench corpora cache root
+
+It does not remove:
+
+- normal docs added through `docmancer add` from anywhere outside the bench corpora cache root
+- the SQLite database file itself
+- non-bench extracted artifacts tied to normal indexed docs

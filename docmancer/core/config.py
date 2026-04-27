@@ -44,6 +44,9 @@ class BenchBackendConfig(BaseSettings):
     rlm_provider: str = ""
     rlm_model: str = ""
     rlm_max_chars: int = Field(default=120_000, ge=1_000)
+    rlm_max_iterations: int = Field(default=6, ge=1)
+    rlm_verbose: bool = False
+    rlm_log_dir: str = ""
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_BENCH_", extra="ignore")
 
 

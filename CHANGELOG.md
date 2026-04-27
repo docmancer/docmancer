@@ -4,10 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - Unreleased
+### Added
+
+- **RLM bench backend controls:** new flags on **`docmancer bench run`** to keep RLM runs bounded and debuggable. **`--rlm-max-iterations`** caps the root LM's iteration count per question (docmancer default **6**; upstream **`rlm.RLM`** default is **30**). **`--rlm-verbose`** enables the upstream rich trace. **`--rlm-log-dir PATH`** wires an **`RLMLogger`** so each completion writes a **`.jsonl`** trajectory that can be opened in the upstream visualizer. Matching fields added to **`BenchBackendConfig`** (**`rlm_max_iterations`**, **`rlm_verbose`**, **`rlm_log_dir`**).
+- **`docmancer bench` elapsed timer:** every bench subcommand prints a final **`Elapsed: <seconds>s`** line via **`ctx.call_on_close`** on the group, so runs, datasets, reports, etc. show wall-clock time without extra flags.
+
+### Fixed
+
+- **RLM bench backend:** runs no longer default to **30 iterations** per question, which made long datasets appear to hang and get killed by outer harnesses before the per-question timeout fired. The new iteration cap plus exposed logger make slow questions diagnosable instead of silent.
+
+### Tests
+
+- **`test_rlm_backend`:** new asserts that **`--rlm-max-iterations`**, **`--rlm-verbose`**, and **`--rlm-log-dir`** flow from CLI into **`BackendConfig.extra`** and onto **`rlm.RLM(...)`**; CLI output contains **`Elapsed:`**.
+
 ## [0.4.5] - 2026-04-21
 ### Added
 
 - **`docmancer bench remove`:** delete local bench **datasets** and/or **run** directories under **`.docmancer/bench/`** (optional **`--dataset`** / **`--run`** to restrict which side is removed). Does not drop SQLite index rows or cached built-in corpora.
+- **`docmancer bench report`:** markdown output now includes a **Per-question results** table (id, question, expected answer, actual answer) so you can see exactly how each backend answered each dataset question. JSON output gains a **`per_question`** array with the same data plus top-retrieved source / excerpt / status / latency. Answers for retrieval-only backends (fts, qdrant) fall back to the top retrieved chunk excerpt since those backends do not generate text.
+- **`docmancer bench compare --csv PATH`:** writes a CSV with two sections (metrics and per-question answers) so all runs' metrics and generated/retrieved answers can be inspected side by side in a spreadsheet.
+- **Run snapshot:** **`config.snapshot.yaml`** records **`dataset_path`**, so reports can resolve the original dataset and show each question's expected answer alongside the backend's actual answer. Legacy runs without this field still render per-question tables with an empty expected column.
 
 ### Changed
 
@@ -22,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **`test_remove_command`:** **`bench remove`** deletes dataset and run trees; **`--dataset`** / **`--run`** flags.
 - **`test_rlm_backend`:** asserts **`model_name`** is passed through to **`rlm.RLM`**.
+- **`test_runner_and_report`:** per-question loader merges retrievals/answers with dataset expected answers; single-run markdown renders the **Per-question results** table; **`bench compare --csv`** emits metrics + per-question sections; legacy runs without **`dataset_path`** in the snapshot still load with empty expected answers.
 
 ## [0.4.4] - 2026-04-21
 ### Added

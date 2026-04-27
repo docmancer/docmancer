@@ -114,7 +114,7 @@ docmancer bench dataset create --from-legacy <path.json> --name <name>
 docmancer bench dataset validate <path>
 docmancer bench run --backend <fts|qdrant|rlm> --dataset <name> [--run-id ...] [--k-retrieve ...] [--k-answer ...] [--timeout-s ...]
 docmancer bench compare <run_id> <run_id> [...]
-docmancer bench report <run_id> [--format markdown|json]
+docmancer bench report <run_id>
 docmancer bench list
 ```
 
