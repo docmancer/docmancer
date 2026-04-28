@@ -6,8 +6,8 @@ has `allow_execute=True`. By default SDK-style packages stay on `noop_doc`.
 
 Operation contract for this executor:
     operation["python_import"] = {
-        "module": "stripe",
-        "callable": "Charge.create",     # dot-path resolved at runtime
+        "module": "httpx",
+        "callable": "get",               # dot-path resolved at runtime
         "via_kwargs": True,              # if True, args dict expands to kwargs; else first positional arg
     }
 """

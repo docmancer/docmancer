@@ -70,7 +70,7 @@ def test_query_falls_back_to_or_when_all_terms_do_not_match_one_section(tmp_path
                 source="docs/terminal-moto.md",
                 content=(
                     "# Process MOTO payments\n\n"
-                    "Use Stripe Terminal to process MOTO payments.\n\n"
+                    "Use Acme Terminal to process MOTO payments.\n\n"
                     "## Android\n\n"
                     "Set a non-null MotoConfiguration on the CollectPaymentIntentConfiguration."
                 ),

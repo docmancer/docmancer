@@ -28,24 +28,24 @@ def test_install_writes_artifacts_and_manifest(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCMANCER_REGISTRY_DIR", str(registry_dir))
 
     contract = {
-        "auth": {"schemes": [{"type": "bearer", "env": "STRIPE_API_KEY"}],
-                 "required_headers": {"Stripe-Version": "x"}},
+        "auth": {"schemes": [{"type": "bearer", "env": "ACME_API_KEY"}],
+                 "required_headers": {"Acme-Version": "x"}},
         "operations": [
             {"id": "a", "safety": {"destructive": False}},
             {"id": "b", "safety": {"destructive": True}},
         ],
     }
     tools = {"tools": [{"operation_id": "a", "description": "a"}]}
-    _seed_registry(registry_dir, "stripe", "2026-02-25.clover", contract, tools, tools_full={"tools": [{"operation_id": "a"}, {"operation_id": "b"}]})
+    _seed_registry(registry_dir, "acme", "v1", contract, tools, tools_full={"tools": [{"operation_id": "a"}, {"operation_id": "b"}]})
 
-    result = install_package("stripe", "2026-02-25.clover")
+    result = install_package("acme", "v1")
     assert result.curated_count == 1
     assert result.full_count == 2
-    assert result.auth_envs == ["STRIPE_API_KEY"]
-    assert result.required_headers == {"Stripe-Version": "x"}
+    assert result.auth_envs == ["ACME_API_KEY"]
+    assert result.required_headers == {"Acme-Version": "x"}
     assert result.destructive_count == 1
 
-    pkg_dir = paths.package_dir("stripe", "2026-02-25.clover")
+    pkg_dir = paths.package_dir("acme", "v1")
     assert (pkg_dir / "contract.json").exists()
     assert (pkg_dir / "tools.curated.json").exists()
     assert paths.manifest_path().exists()
@@ -55,13 +55,13 @@ def test_uninstall_removes_files_and_manifest_entry(tmp_path, monkeypatch):
     registry_dir = tmp_path / "registry"
     monkeypatch.setenv("DOCMANCER_REGISTRY_DIR", str(registry_dir))
     _seed_registry(
-        registry_dir, "stripe", "v1",
+        registry_dir, "acme", "v1",
         {"operations": []}, {"tools": []},
     )
-    install_package("stripe", "v1")
-    n = uninstall_package("stripe", "v1")
+    install_package("acme", "v1")
+    n = uninstall_package("acme", "v1")
     assert n == 1
-    assert not paths.package_dir("stripe", "v1").exists()
+    assert not paths.package_dir("acme", "v1").exists()
 
 
 def test_install_idempotent_reinstall(tmp_path, monkeypatch):

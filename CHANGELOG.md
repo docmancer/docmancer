@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - Unreleased
+### Added
+
+- **Open-Meteo built-in pack:** **`KnownOpenAPIRegistry`** can compile **`open-meteo@v1`** from the upstream OpenAPI **YAML** (override URL with **`DOCMANCER_OPEN_METEO_OPENAPI_URL`**). Injects **`servers`**, a stable **`operationId`** for **`/v1/forecast`**, and a no-auth contract so **`install-pack`** demos work without credentials.
+- **Root `SKILL.md`:** MCP Tool Search workflow (search → validate safety → call → idempotency retry) aligned with installed packs.
+
+### Changed
+
+- **Known-source fallback:** replaces the Stripe-only compile path with a small **`_builders`** registry (**`open-meteo`** today); removes Stripe-specific **`operationId`** derivation from **`compile_openapi`**.
+- **README:** hero uses **`readme-assets/api-mcp.gif`**; quickstart and API MCP walkthrough use **Open-Meteo**; **Commands** defers to **[wiki › Commands](./wiki/Commands.md)**; **What the agent sees** example slug and dispatcher wording updated.
+- **Templates / wiki:** examples and copy use **`open-meteo@v1`** instead of Stripe where a keyless demo is intended.
+- **`install-pack` usage errors:** examples cite **`open-meteo@v1`**.
+- **`scripts/live_cli_integration.sh`** / **`scripts/mcp_stdio_smoke.py`:** integration and smoke paths follow Open-Meteo fixtures and neutral docs defaults (e.g. pytest docs / README).
+- **Comments:** credential resolver docstring uses a neutral env example; idempotency TTL comment is vendor-agnostic.
+
+### Tests
+
+- MCP and agent tests updated for Open-Meteo slugs, contracts, and registry fallback behavior.
+
 ## [0.4.8] - 2026-04-28
 ### Added
 

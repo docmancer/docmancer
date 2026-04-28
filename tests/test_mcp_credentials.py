@@ -13,51 +13,51 @@ def isolated_home(tmp_path, monkeypatch):
 
 
 def test_per_call_override_wins(monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "from-env")
-    scheme = {"type": "bearer", "env": "STRIPE_API_KEY", "name": "stripe"}
-    args = {credentials.DOCMANCER_AUTH_KEY: {"stripe": "from-call"}}
-    res = credentials.resolve("stripe", scheme, args)
+    monkeypatch.setenv("ACME_API_KEY", "from-env")
+    scheme = {"type": "bearer", "env": "ACME_API_KEY", "name": "acme"}
+    args = {credentials.DOCMANCER_AUTH_KEY: {"acme": "from-call"}}
+    res = credentials.resolve("acme", scheme, args)
     assert res.value == "from-call"
     assert res.source == "per_call"
 
 
 def test_env_resolution(monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test_1")
-    res = credentials.resolve("stripe", {"type": "bearer", "env": "STRIPE_API_KEY"})
+    monkeypatch.setenv("ACME_API_KEY", "sk_test_1")
+    res = credentials.resolve("acme", {"type": "bearer", "env": "ACME_API_KEY"})
     assert res.value == "sk_test_1"
     assert res.source == "env"
 
 
 def test_secrets_file_resolution(monkeypatch, tmp_path):
-    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    paths.secrets_env_file("stripe").write_text('STRIPE_API_KEY="sk_test_2"\n# comment\n')
-    res = credentials.resolve("stripe", {"type": "bearer", "env": "STRIPE_API_KEY"})
+    monkeypatch.delenv("ACME_API_KEY", raising=False)
+    paths.secrets_env_file("acme").write_text('ACME_API_KEY="sk_test_2"\n# comment\n')
+    res = credentials.resolve("acme", {"type": "bearer", "env": "ACME_API_KEY"})
     assert res.value == "sk_test_2"
     assert res.source == "secrets_file"
 
 
 def test_missing_lists_all_sources(monkeypatch):
-    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    res = credentials.resolve("stripe", {"type": "bearer", "env": "STRIPE_API_KEY"})
+    monkeypatch.delenv("ACME_API_KEY", raising=False)
+    res = credentials.resolve("acme", {"type": "bearer", "env": "ACME_API_KEY"})
     assert res.value is None
     assert res.source == "missing"
-    assert any("STRIPE_API_KEY" in c for c in res.checked)
+    assert any("ACME_API_KEY" in c for c in res.checked)
     assert any("secrets" in c for c in res.checked)
 
 
 def test_build_auth_headers_bearer(monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test")
-    auth = {"schemes": [{"type": "bearer", "env": "STRIPE_API_KEY"}]}
-    headers, missing = credentials.build_auth_headers("stripe", auth)
+    monkeypatch.setenv("ACME_API_KEY", "sk_test")
+    auth = {"schemes": [{"type": "bearer", "env": "ACME_API_KEY"}]}
+    headers, missing = credentials.build_auth_headers("acme", auth)
     assert headers == {"Authorization": "Bearer sk_test"}
     assert missing == []
 
 
 def test_build_auth_headers_missing(monkeypatch):
-    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    auth = {"schemes": [{"type": "bearer", "env": "STRIPE_API_KEY", "name": "stripe"}]}
-    _, missing = credentials.build_auth_headers("stripe", auth)
-    assert missing == ["stripe"]
+    monkeypatch.delenv("ACME_API_KEY", raising=False)
+    auth = {"schemes": [{"type": "bearer", "env": "ACME_API_KEY", "name": "acme"}]}
+    _, missing = credentials.build_auth_headers("acme", auth)
+    assert missing == ["acme"]
 
 
 def test_build_auth_apikey_in_query(monkeypatch):

@@ -99,7 +99,7 @@ Optional extras: `pipx install 'docmancer[vector]'`, `pipx install 'docmancer[rl
 
 ## API tools via MCP (when packs are installed)
 
-If the user has run `docmancer install-pack <pkg>@<version>` (e.g. `stripe@2026-02-25.clover`), the agent host launches a local stdio MCP server (`docmancer mcp serve`) that exposes exactly two meta-tools:
+If the user has run `docmancer install-pack <pkg>@<version>` (e.g. `open-meteo@v1` for the keyless weather demo), the agent host launches a local stdio MCP server (`docmancer mcp serve`) that exposes exactly two meta-tools:
 
 - `docmancer_search_tools(query, package?, limit?)`: search for tools by task description. Always call this first to discover the fully qualified tool name and its input schema.
 - `docmancer_call_tool(name, args)`: invoke a specific tool returned from search.

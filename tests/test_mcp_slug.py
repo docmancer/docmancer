@@ -9,8 +9,8 @@ def test_version_slug_replaces_dots_dashes_slashes():
 
 
 def test_tool_name_uses_double_underscore_between_fields():
-    name = tool_name("stripe", "2026-02-25.clover", "payment_intents_create")
-    assert name == "stripe__2026_02_25_clover__payment_intents_create"
+    name = tool_name("acme", "2026-02-25.clover", "widgets_create")
+    assert name == "acme__2026_02_25_clover__widgets_create"
 
 
 def test_split_tool_name_roundtrip():

@@ -129,14 +129,14 @@ def _parse_pack_spec(spec: str, *, require_version: bool) -> tuple[str, str | No
     if idx <= 0:
         if require_version:
             raise click.UsageError(
-                "Spec must be `<package>@<version>`, e.g. `stripe@2026-02-25.clover`."
+                "Spec must be `<package>@<version>`, e.g. `open-meteo@v1`."
             )
         return spec, None
     package, version = spec[:idx], spec[idx + 1 :]
     if not version:
         if require_version:
             raise click.UsageError(
-                "Spec must be `<package>@<version>`, e.g. `stripe@2026-02-25.clover`."
+                "Spec must be `<package>@<version>`, e.g. `open-meteo@v1`."
             )
         return package, None
     return package, version

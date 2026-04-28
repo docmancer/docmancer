@@ -21,7 +21,7 @@ CLI_CMD=("$VENV_PYTHON" -m docmancer)
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$ROOT_DIR/.venv/bin:$PATH"
 
-DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-https://docs.stripe.com/mcp}"
+DOCS_URL="${DOCMANCER_LIVE_DOCS_URL:-https://docs.pytest.org}"
 MAX_PAGES="${DOCMANCER_LIVE_MAX_PAGES:-2}"
 FETCH_WORKERS="${DOCMANCER_LIVE_FETCH_WORKERS:-8}"
 ADD_PROVIDER="${DOCMANCER_LIVE_PROVIDER:-auto}"
@@ -30,7 +30,7 @@ RUN_WEB_VARIANTS="${DOCMANCER_RUN_WEB_VARIANTS:-0}"
 RUN_BROWSER_VARIANT="${DOCMANCER_RUN_BROWSER_VARIANT:-0}"
 RUN_CRAWL4AI_VARIANT="${DOCMANCER_RUN_CRAWL4AI_VARIANT:-0}"
 RUN_GITHUB_BLOB="${DOCMANCER_RUN_GITHUB_BLOB:-1}"
-GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/stripe/stripe-python/blob/master/README.md}"
+GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pytest-dev/pytest/blob/main/README.rst}"
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_BENCH_QDRANT="${DOCMANCER_RUN_BENCH_QDRANT:-0}"
 RUN_BENCH_RLM="${DOCMANCER_RUN_BENCH_RLM:-0}"
@@ -265,111 +265,54 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-pack = root / "stripe@2026-02-25.clover"
+pack = root / "open-meteo@v1"
 pack.mkdir(parents=True, exist_ok=True)
 
 contract = {
     "docmancer_contract_version": "1",
-    "package": "stripe",
-    "version": "2026-02-25.clover",
+    "package": "open-meteo",
+    "version": "v1",
     "source": {
         "kind": "openapi",
-        "url": "https://example.invalid/stripe-openapi.json",
+        "url": "https://example.invalid/open-meteo-openapi.yml",
         "sha256": "fixture",
         "fetched_at": "2026-04-27T00:00:00Z",
     },
-    "auth": {
-        "schemes": [
-            {"type": "bearer", "env": "STRIPE_API_KEY", "header": "Authorization"}
-        ],
-        "required_headers": {"Stripe-Version": "2026-02-25.clover"},
-        "idempotency_header": "Idempotency-Key",
-    },
+    "auth": {"schemes": []},
     "operations": [
         {
-            "id": "payment_intents_list",
-            "summary": "List recent PaymentIntents",
-            "description": "Returns one page of recent Stripe PaymentIntents.",
+            "id": "forecast",
+            "summary": "Current and 7-day weather forecast",
+            "description": "Returns weather variables for a given lat/lon. No API key required.",
             "executor": "http",
             "http": {
                 "method": "GET",
-                "path": "/v1/payment_intents",
-                "base_url": "https://api.stripe.com",
+                "path": "/v1/forecast",
+                "base_url": "https://api.open-meteo.com",
                 "encoding": "query_only",
             },
             "params": [
-                {"name": "limit", "in": "query", "type": "integer", "required": False}
+                {"name": "latitude", "in": "query", "type": "number", "required": True},
+                {"name": "longitude", "in": "query", "type": "number", "required": True},
+                {"name": "current_weather", "in": "query", "type": "boolean", "required": False},
             ],
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                    "latitude": {"type": "number"},
+                    "longitude": {"type": "number"},
+                    "current_weather": {"type": "boolean"},
                 },
+                "required": ["latitude", "longitude"],
                 "additionalProperties": False,
             },
-            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
-            "pagination": {"policy": "raw", "style": "cursor"},
-            "examples": [{"args": {"limit": 3}}],
-        },
-        {
-            "id": "payment_intents_create",
-            "summary": "Create a PaymentIntent",
-            "description": "Creates a Stripe PaymentIntent.",
-            "executor": "http",
-            "http": {
-                "method": "POST",
-                "path": "/v1/payment_intents",
-                "base_url": "https://api.stripe.com",
-                "encoding": "form",
-            },
-            "params": [
-                {"name": "amount", "in": "body", "type": "integer", "required": True},
-                {"name": "currency", "in": "body", "type": "string", "required": True},
-            ],
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "amount": {"type": "integer", "minimum": 1},
-                    "currency": {"type": "string"},
-                    "_docmancer_idempotency_key": {"type": "string"},
-                },
-                "required": ["amount", "currency"],
-                "additionalProperties": False,
-            },
-            "safety": {"destructive": True, "requires_auth": True, "idempotent": False},
-            "examples": [{"args": {"amount": 2500, "currency": "usd"}}],
-        },
-        {
-            "id": "payment_intents_retrieve",
-            "summary": "Retrieve a PaymentIntent",
-            "description": "Fetch the current state of a PaymentIntent by id.",
-            "executor": "http",
-            "http": {
-                "method": "GET",
-                "path": "/v1/payment_intents/{id}",
-                "base_url": "https://api.stripe.com",
-                "encoding": "path_only",
-            },
-            "params": [
-                {"name": "id", "in": "path", "type": "string", "required": True},
-            ],
-            "inputSchema": {
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-                "required": ["id"],
-                "additionalProperties": False,
-            },
-            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
-            "examples": [{"args": {"id": "pi_demo_1"}}],
+            "safety": {"destructive": False, "requires_auth": False, "idempotent": True},
+            "examples": [{"args": {"latitude": 40.785091, "longitude": -73.968285, "current_weather": True}}],
         },
     ],
     "schemas": {},
     "curation": {
-        "operation_ids": [
-            "payment_intents_list",
-            "payment_intents_create",
-            "payment_intents_retrieve",
-        ],
+        "operation_ids": ["forecast"],
         "source": "fixture",
         "generated_at": "2026-04-27T00:00:00Z",
     },
@@ -378,32 +321,18 @@ contract = {
 tools_curated = {
     "tools": [
         {
-            "operation_id": "payment_intents_list",
-            "description": "List recent Stripe payments using PaymentIntents.",
+            "operation_id": "forecast",
+            "description": "Current and 7-day weather forecast for a lat/lon. No API key required.",
             "executor": "http",
-            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
+            "safety": {"destructive": False, "requires_auth": False, "idempotent": True},
             "inputSchema": contract["operations"][0]["inputSchema"],
-        },
-        {
-            "operation_id": "payment_intents_create",
-            "description": "Create a Stripe PaymentIntent.",
-            "executor": "http",
-            "safety": {"destructive": True, "requires_auth": True, "idempotent": False},
-            "inputSchema": contract["operations"][1]["inputSchema"],
-        },
-        {
-            "operation_id": "payment_intents_retrieve",
-            "description": "Retrieve a Stripe PaymentIntent by id.",
-            "executor": "http",
-            "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
-            "inputSchema": contract["operations"][2]["inputSchema"],
         },
     ]
 }
 
 tools_full = {"tools": tools_curated["tools"]}
 
-auth_schema = {"env": ["STRIPE_API_KEY"], "required_headers": {"Stripe-Version": "2026-02-25.clover"}}
+auth_schema = {"schemes": []}
 provenance = {"source": "live_cli_integration fixture", "docmancer_version": "local", "sha256": "fixture"}
 
 for name, payload in {
@@ -460,7 +389,7 @@ echo "Local registry fixture: $LOCAL_REGISTRY_DIR"
 echo "Log file: ${LOG_FILE:-disabled (DOCMANCER_LIVE_NO_LOG=1)}"
 
 print_banner "Run configuration"
-print_info "MCP walkthrough: emulates docs/api-mcp/stripe-walkthrough.md (Steps 0-5)"
+print_info "MCP walkthrough: emulates docs/api-mcp/open-meteo-walkthrough.md (Steps 0-3)"
 print_info "Local crawl URL: $DOCS_URL"
 print_info "Local crawl cap: $MAX_PAGES page(s), $FETCH_WORKERS worker(s)"
 print_info "Local crawl provider: $ADD_PROVIDER"
@@ -480,7 +409,7 @@ print_info "Require editable reinstall: $REQUIRE_REFRESH"
 if [[ "$SKIP_NETWORK" == "1" ]]; then
   print_info "MCP pack install uses a local registry fixture because DOCMANCER_SKIP_NETWORK=1."
 else
-  print_info "MCP pack install uses the zero-config resolver: local cache, hosted registry, then Stripe OpenAPI fallback."
+  print_info "MCP pack install uses the zero-config resolver: local cache, hosted registry, then Open-Meteo OpenAPI fallback."
 fi
 print_info "Legacy eval/dataset stubs should point at docmancer bench."
 
@@ -543,7 +472,7 @@ for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini gi
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
 done
 
-print_banner "Stripe walkthrough Step 0: prerequisites"
+print_banner "Open-Meteo walkthrough Step 0: prerequisites"
 print_info "Agent install (above) already registered docmancer mcp serve into Claude Code/Cursor/Claude Desktop MCP configs. Verifying entries exist."
 run "$VENV_PYTHON" - <<'PY'
 import json, os, pathlib, sys
@@ -572,27 +501,26 @@ if found == 0:
 print(f"docmancer MCP server registered in {found} agent config(s).")
 PY
 
-print_banner "Stripe walkthrough Step 1: install the Stripe pack"
+print_banner "Open-Meteo walkthrough Step 1: install the Open-Meteo pack"
 if [[ "$SKIP_NETWORK" == "1" ]]; then
-  print_info "Building a fake Stripe registry pack pinned at the real published version 2026-02-25.clover."
+  print_info "Building a fake Open-Meteo registry pack pinned at v1."
   create_fake_mcp_registry "$LOCAL_REGISTRY_DIR"
   export DOCMANCER_REGISTRY_DIR="$LOCAL_REGISTRY_DIR"
 else
-  print_info "Installing Stripe through the zero-config resolver. No registry env vars are set for users."
+  print_info "Installing Open-Meteo through the zero-config resolver. No registry env vars are set for users."
   unset DOCMANCER_REGISTRY_DIR
   unset DOCMANCER_REGISTRY_API_URL
 fi
-export STRIPE_API_KEY="sk_test_docmancer_live_fixture"
 run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" install-pack stripe@2026-02-25.clover
+run "${CLI_CMD[@]}" install-pack open-meteo@v1
 run "${CLI_CMD[@]}" mcp list
 
-print_banner "Stripe walkthrough Step 2: credential resolution + doctor"
-print_info "STRIPE_API_KEY is exported in the shell. mcp doctor should report 'resolved via env' and verify all artifact SHA-256s."
+print_banner "Open-Meteo walkthrough Step 2: doctor (no credentials required)"
+print_info "Open-Meteo is keyless. mcp doctor should pass with no FAIL and skip credential resolution entirely."
 run "${CLI_CMD[@]}" mcp doctor
 
-print_banner "Stripe walkthrough Step 3: read call (list payment intents)"
-print_info "The dispatcher exposes 2 meta-tools regardless of pack count. Step 3c-3e: search → dispatch GET /v1/payment_intents against a mocked httpx transport. Verifies Stripe-Version is auto-injected, Authorization is bearer, no Idempotency-Key (GET is idempotent)."
+print_banner "Open-Meteo walkthrough Step 3: forecast call against a mocked transport"
+print_info "The dispatcher exposes 2 meta-tools regardless of pack count. Step 3: search → dispatch GET /v1/forecast against a mocked httpx transport. Verifies no Authorization header is sent (no auth required) and no Idempotency-Key (GET is idempotent)."
 run "$VENV_PYTHON" - <<'PY'
 import httpx
 from docmancer.mcp.dispatcher import Dispatcher
@@ -610,7 +538,17 @@ def handler(req):
     })
     return httpx.Response(
         200,
-        json={"object": "list", "data": [{"id": "pi_demo_1", "amount": 4200, "currency": "usd", "status": "succeeded"}], "has_more": False},
+        json={
+            "latitude": 40.785,
+            "longitude": -73.968,
+            "current_weather": {
+                "time": "2026-04-28T14:00",
+                "temperature": 15.4,
+                "windspeed": 7.3,
+                "weathercode": 3,
+                "is_day": 1,
+            },
+        },
     )
 
 client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -619,154 +557,46 @@ disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "htt
 dispatcher = Dispatcher(Manifest.load())
 tools = dispatcher.list_tools()
 assert [t["name"] for t in tools] == ["docmancer_search_tools", "docmancer_call_tool"], tools
-print(f"Step 3b: tools/list returned {len(tools)} meta-tool(s) (Tool Search pattern, D10).")
+print(f"Step 3a: tools/list returned {len(tools)} meta-tool(s) (Tool Search pattern, D10).")
 
-matches = dispatcher.search_tools(query="payment intents list", package="stripe", limit=20)["matches"]
-match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_list"), None)
+matches = dispatcher.search_tools(query="current temperature forecast latitude longitude", package="open-meteo", limit=20)["matches"]
+match = next((m for m in matches if m["name"] == "open_meteo__v1__forecast"), None)
 assert match, matches
-print(f"Step 3c: search selected match = {match['name']} (slug format D15 verified).")
+print(f"Step 3b: search selected match = {match['name']} (slug format D15 verified).")
 
-result = dispatcher.call_tool(match["name"], {"limit": 3})
+result = dispatcher.call_tool(
+    match["name"],
+    {"latitude": 40.785091, "longitude": -73.968285, "current_weather": True},
+)
 assert result.ok, result.body
 req = captured[-1]
 assert req["method"] == "GET", req
-assert "limit=3" in req["url"], req["url"]
-assert req["headers"].get("stripe-version") == "2026-02-25.clover", req["headers"]
-assert req["headers"].get("authorization", "").startswith("Bearer "), req["headers"]
-assert "idempotency-key" not in req["headers"], req["headers"]
-print(f"Step 3e: GET {req['url']} sent with Stripe-Version pinned, no Idempotency-Key (idempotent op).")
-print(f"Step 3f: response object = {result.body.get('object')}, first id = {result.body['data'][0]['id']}")
-PY
-
-print_banner "Stripe walkthrough Step 4a-4c: destructive call blocked before opt-in"
-print_info "Search returns the create tool; dispatcher refuses with destructive_call_blocked and a clear remediation message."
-run "$VENV_PYTHON" - <<'PY'
-from docmancer.mcp.dispatcher import Dispatcher
-from docmancer.mcp.manifest import Manifest
-
-dispatcher = Dispatcher(Manifest.load())
-matches = dispatcher.search_tools(query="payment intents create amount currency", package="stripe", limit=20)["matches"]
-match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_create"), None)
-assert match, matches
-print(f"Step 4a: search selected match for create = {match['name']}")
-
-blocked = dispatcher.call_tool(
-    match["name"],
-    {"amount": 2500, "currency": "usd"},
-)
-assert not blocked.ok and blocked.error_code == "destructive_call_blocked", blocked.body
-print(f"Step 4c: error_code = {blocked.error_code}")
-print(f"Step 4c: message    = {blocked.body['message'][:120]}...")
-PY
-
-print_banner "Stripe walkthrough Step 4d: opt in + destructive call + idempotency reuse on retry"
-print_info "Re-installing with --allow-destructive flips the package gate. Two identical POSTs against a mocked Stripe wire prove the SQLite fingerprint cache reuses the auto-generated Idempotency-Key (D17)."
-run "${CLI_CMD[@]}" install-pack stripe@2026-02-25.clover --allow-destructive
-run "${CLI_CMD[@]}" mcp list
-run "$VENV_PYTHON" - <<'PY'
-import httpx
-from docmancer.mcp.dispatcher import Dispatcher
-import docmancer.mcp.dispatcher as disp_mod
-from docmancer.mcp.executors.http import HttpExecutor
-from docmancer.mcp.manifest import Manifest
-
-captured = []
-def handler(req):
-    captured.append({
-        "method": req.method,
-        "url": str(req.url),
-        "headers": dict(req.headers),
-        "content_type": req.headers.get("content-type", ""),
-        "body": req.content.decode() if req.content else "",
-    })
-    return httpx.Response(
-        200,
-        json={"id": "pi_demo_created", "object": "payment_intent", "amount": 2500, "currency": "usd", "status": "requires_payment_method"},
-    )
-
-client = httpx.Client(transport=httpx.MockTransport(handler))
-disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
-
-dispatcher = Dispatcher(Manifest.load())
-first = dispatcher.call_tool(
-    "stripe__2026_02_25_clover__payment_intents_create",
-    {"amount": 2500, "currency": "usd"},
-)
-assert first.ok, first.body
-assert "_docmancer" in first.body and "idempotency_key" in first.body["_docmancer"], first.body
-key1 = first.body["_docmancer"]["idempotency_key"]
-req1 = captured[-1]
-assert req1["method"] == "POST", req1
-assert req1["headers"].get("stripe-version") == "2026-02-25.clover", req1
-assert "x-www-form-urlencoded" in req1["content_type"], req1
-assert "amount=2500" in req1["body"] and "currency=usd" in req1["body"], req1["body"]
-assert req1["headers"].get("idempotency-key") == key1, (req1["headers"], key1)
-print(f"Step 4d call 1: POST form body = {req1['body']!r}")
-print(f"Step 4d call 1: Stripe-Version  = {req1['headers']['stripe-version']}  (auto-injected from auth.required_headers, 2.8.3)")
-print(f"Step 4d call 1: Idempotency-Key = {key1}  (UUID4 generated, D12)")
-print(f"Step 4d call 1: response._docmancer.idempotency_key = {key1}")
-
-# Retry the same call. Dispatcher should reuse the same key from the SQLite fingerprint cache.
-second = dispatcher.call_tool(
-    "stripe__2026_02_25_clover__payment_intents_create",
-    {"amount": 2500, "currency": "usd"},
-)
-assert second.ok, second.body
-key2 = captured[-1]["headers"].get("idempotency-key")
-assert key2 == key1, (key1, key2)
-print(f"Step 4d retry: same args → reused key {key2} (SQLite fingerprint cache, D17).")
+assert "latitude=40.785091" in req["url"], req["url"]
+assert "longitude=-73.968285" in req["url"], req["url"]
+assert "current_weather=true" in req["url"].lower(), req["url"]
+assert "authorization" not in (k.lower() for k in req["headers"]), req["headers"]
+assert "idempotency-key" not in (k.lower() for k in req["headers"]), req["headers"]
+print(f"Step 3c: GET {req['url']} sent with no Authorization header (keyless), no Idempotency-Key (idempotent op).")
+temp = result.body.get("current_weather", {}).get("temperature")
+assert isinstance(temp, (int, float)), result.body
+print(f"Step 3d: response.current_weather.temperature = {temp}°C (Central Park, NYC, mocked transport).")
 
 # Schema validation in dispatcher (2.8.5): Tool Search hides per-tool schemas from MCP, dispatcher must validate.
 invalid = dispatcher.call_tool(
-    "stripe__2026_02_25_clover__payment_intents_create",
-    {"amount": "twenty five", "currency": "usd"},
+    "open_meteo__v1__forecast",
+    {"latitude": "not-a-number", "longitude": -73.96},
 )
 assert not invalid.ok and invalid.error_code == "invalid_args", invalid.body
-print(f"Schema validation: invalid_args rejected (2.8.5).")
-PY
-
-print_banner "Stripe walkthrough Step 5: retrieve a single PaymentIntent"
-print_info "GET /v1/payment_intents/{id} dispatched against a mocked transport. Verifies path templating from path_only encoding (D19) and no destructive gate."
-run "$VENV_PYTHON" - <<'PY'
-import httpx
-from docmancer.mcp.dispatcher import Dispatcher
-import docmancer.mcp.dispatcher as disp_mod
-from docmancer.mcp.executors.http import HttpExecutor
-from docmancer.mcp.manifest import Manifest
-
-captured = []
-def handler(req):
-    captured.append({"method": req.method, "url": str(req.url), "headers": dict(req.headers)})
-    return httpx.Response(200, json={"id": "pi_demo_created", "object": "payment_intent", "status": "succeeded"})
-
-client = httpx.Client(transport=httpx.MockTransport(handler))
-disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
-
-dispatcher = Dispatcher(Manifest.load())
-matches = dispatcher.search_tools("retrieve payment intent", package="stripe", limit=5)["matches"]
-match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_retrieve"), matches[0])
-assert match["name"] == "stripe__2026_02_25_clover__payment_intents_retrieve", matches
-props = match.get("inputSchema", {}).get("properties", {})
-path_arg = "id" if "id" in props else "intent"
-result = dispatcher.call_tool(
-    match["name"],
-    {path_arg: "pi_demo_created"},
-)
-assert result.ok, result.body
-req = captured[-1]
-assert req["method"] == "GET", req
-assert req["url"].endswith("/v1/payment_intents/pi_demo_created"), req["url"]
-assert req["headers"].get("stripe-version") == "2026-02-25.clover", req["headers"]
-print(f"Step 5: GET {req['url']} → status = {result.body['status']}")
+print("Schema validation: invalid_args rejected (2.8.5).")
 PY
 
 print_banner "MCP enable / disable toggles + uninstall"
 print_info "Verifying mcp enable / disable still flip per-package state without reinstalling, then cleanly uninstall."
-run "${CLI_CMD[@]}" mcp disable stripe --version 2026-02-25.clover
+run "${CLI_CMD[@]}" mcp disable open-meteo --version v1
 run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" mcp enable stripe --version 2026-02-25.clover
+run "${CLI_CMD[@]}" mcp enable open-meteo --version v1
 run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" uninstall stripe@2026-02-25.clover
+run "${CLI_CMD[@]}" uninstall open-meteo@v1
 run "${CLI_CMD[@]}" mcp list
 
 print_banner "Doctor and inspect before docs-RAG add"
@@ -781,7 +611,7 @@ if [[ "$SKIP_NETWORK" == "1" ]]; then
 fi
 
 if [[ "$RUN_FETCH_STEP" == "1" ]]; then
-  print_banner "Fetch live Stripe docs to markdown files"
+  print_banner "Fetch live pytest docs to markdown files"
   print_info "Fetching raw markdown files from $DOCS_URL without indexing them."
   if run "${CLI_CMD[@]}" fetch "$DOCS_URL" --output "$FETCH_DIR"; then
     run find "$FETCH_DIR" -maxdepth 1 -type f
@@ -790,15 +620,15 @@ if [[ "$RUN_FETCH_STEP" == "1" ]]; then
   fi
 fi
 
-print_banner "Add live Stripe docs URL with bounded local crawl"
-print_info "Indexing a small live Stripe docs crawl into the isolated SQLite database."
+print_banner "Add live pytest docs URL with bounded local crawl"
+print_info "Indexing a small live pytest docs crawl into the isolated SQLite database."
 run_live_add 0 "$MAX_PAGES"
 run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" query "How do I create a payment intent?" --limit 5 --config "$CONFIG_PATH" || true
-run "${CLI_CMD[@]}" query "How do I create a payment intent?" --limit 1 --expand page --config "$CONFIG_PATH" || true
+run "${CLI_CMD[@]}" query "How do I parametrize a fixture?" --limit 5 --config "$CONFIG_PATH" || true
+run "${CLI_CMD[@]}" query "How do I parametrize a fixture?" --limit 1 --expand page --config "$CONFIG_PATH" || true
 
 print_banner "Bench local indexed corpus"
 print_info "First exercise the zero-config built-in Lenny flow from the README, then exercise custom-corpus dataset generation."
@@ -863,7 +693,7 @@ run "${CLI_CMD[@]}" update --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 
 if [[ "$RUN_WEB_VARIANTS" == "1" ]]; then
-  print_banner "Add live Stripe docs with alternate explicit web strategy"
+  print_banner "Add live pytest docs with alternate explicit web strategy"
   print_info "Running the generic web fetcher with nav-crawl to compare behavior."
   run_live_add 0 20 web nav-crawl
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -871,7 +701,7 @@ if [[ "$RUN_WEB_VARIANTS" == "1" ]]; then
 fi
 
 if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
-  print_banner "Add live Stripe docs with browser fallback"
+  print_banner "Add live pytest docs with browser fallback"
   print_info "Running the browser-backed fetch path. This requires Playwright/browser dependencies in the venv."
   run_live_add 1 20 web nav-crawl
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -879,7 +709,7 @@ if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
 fi
 
 if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
-  print_banner "Add live Stripe docs with Crawl4AI provider"
+  print_banner "Add live pytest docs with Crawl4AI provider"
   print_info "Running the Crawl4AI-backed fetch path. Requires: pip install docmancer[crawl4ai] && crawl4ai-setup"
   run_live_add 0 20 crawl4ai
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
@@ -887,13 +717,13 @@ if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
 fi
 
 if [[ "$RUN_GITHUB_BLOB" == "1" ]]; then
-  print_banner "Add a single GitHub blob URL (Stripe SDK README)"
+  print_banner "Add a single GitHub blob URL (pytest README)"
   print_info "Fetching a single markdown file via a GitHub /blob/ URL: $GITHUB_BLOB_URL"
   run "${CLI_CMD[@]}" add "$GITHUB_BLOB_URL" --recreate --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-  # Query with a Stripe-related term; tolerate no-results (exit 1) gracefully.
-  run "${CLI_CMD[@]}" query "stripe python install" --limit 3 --config "$CONFIG_PATH" || true
+  # Query with a pytest-related term; tolerate no-results (exit 1) gracefully.
+  run "${CLI_CMD[@]}" query "pytest install" --limit 3 --config "$CONFIG_PATH" || true
 fi
 
 REMOTE_SOURCE="$(capture_first_source)"

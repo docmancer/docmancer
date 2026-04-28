@@ -122,6 +122,27 @@ Artifacts per run live under `.docmancer/bench/runs/<run_id>/` (`config.snapshot
 
 Optional extras: `pipx install 'docmancer[vector]'` (Qdrant), `pipx install 'docmancer[rlm]'` (RLM), `pipx install 'docmancer[judge]'` (LLM-as-judge answer scoring via ragas).
 
+## API tools via MCP (when packs are installed)
+
+If the user has run `docmancer install-pack <pkg>@<version>` (e.g. `open-meteo@v1` for the keyless weather demo), the agent host launches a local stdio MCP server (`docmancer mcp serve`) that exposes exactly two meta-tools:
+
+- `docmancer_search_tools(query, package?, limit?)`: search for tools by task description. Always call this first to discover the fully qualified tool name and its input schema.
+- `docmancer_call_tool(name, args)`: invoke a specific tool returned from search.
+
+Workflow when the user asks to do something against a real API:
+
+1. Call `docmancer_search_tools` with a short task description (and `package` if you know which pack is in use). The top match returns its full input schema inlined.
+2. Validate that the returned `safety` block is acceptable. If `destructive: true`, the call is blocked unless the user has installed with `--allow-destructive`.
+3. Call `docmancer_call_tool` with the fully qualified `name` and an `args` object that conforms to the inlined schema.
+4. If the response includes `_docmancer.idempotency_key`, retry with the same `args._docmancer_idempotency_key` to deduplicate safely.
+
+Credential setup the user may need (only for packs that require it, not for `open-meteo`):
+
+- Shell-launched agents (Claude Code, Codex CLI): `export <PACK>_API_KEY=...` in the shell.
+- GUI-launched agents (Cursor, Claude Desktop): edit the agent's MCP config and add `"env": {"<PACK>_API_KEY": "..."}` under the `docmancer` server entry, or write `~/.docmancer/secrets/<package>.env` with `<PACK>_API_KEY=...`.
+
+Run `docmancer mcp doctor` to verify which credential source resolves for each installed pack.
+
 ## Common Mistakes
 
 - Do not use `docmancer ingest`; it is deprecated. Use `docmancer add` instead.

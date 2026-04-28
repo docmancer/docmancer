@@ -51,9 +51,9 @@ def test_pagination_response_returned_untouched():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={
             "object": "list",
-            "data": [{"id": "pi_1"}, {"id": "pi_2"}],
+            "data": [{"id": "wgt_1"}, {"id": "wgt_2"}],
             "has_more": True,
-            "url": "/v1/payment_intents",
+            "url": "/v1/widgets",
         })
 
     transport = httpx.MockTransport(handler)
@@ -63,8 +63,8 @@ def test_pagination_response_returned_untouched():
     op = {
         "http": {
             "method": "GET",
-            "path": "/v1/payment_intents",
-            "base_url": "https://api.stripe.com",
+            "path": "/v1/widgets",
+            "base_url": "https://api.acme.test",
             "encoding": "query_only",
         },
         "params": [{"name": "limit", "in": "query", "type": "integer"}],

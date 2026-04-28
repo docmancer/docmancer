@@ -10,24 +10,26 @@ from docmancer.mcp.executors import http as http_executor
 from docmancer.mcp.manifest import InstalledPackage, Manifest
 
 
-STRIPE_CONTRACT = {
+# Synthetic fixture exercising bearer auth, form-encoded bodies, wire-pinned
+# version headers, and idempotency-key injection. Not modelled on any real API.
+ACME_CONTRACT = {
     "docmancer_contract_version": "1",
-    "package": "stripe",
-    "version": "2026-02-25.clover",
+    "package": "acme",
+    "version": "v1",
     "auth": {
-        "schemes": [{"type": "bearer", "env": "STRIPE_API_KEY", "header": "Authorization"}],
-        "required_headers": {"Stripe-Version": "2026-02-25.clover"},
+        "schemes": [{"type": "bearer", "env": "ACME_API_KEY", "header": "Authorization"}],
+        "required_headers": {"Acme-Version": "v1"},
         "idempotency_header": "Idempotency-Key",
     },
     "operations": [
         {
-            "id": "payment_intents_list",
-            "summary": "List PaymentIntents",
+            "id": "widgets_list",
+            "summary": "List widgets",
             "executor": "http",
             "http": {
                 "method": "GET",
-                "path": "/v1/payment_intents",
-                "base_url": "https://api.stripe.com",
+                "path": "/v1/widgets",
+                "base_url": "https://api.acme.test",
                 "encoding": "query_only",
             },
             "params": [
@@ -36,13 +38,13 @@ STRIPE_CONTRACT = {
             "safety": {"destructive": False, "idempotent": True, "requires_auth": True},
         },
         {
-            "id": "payment_intents_create",
-            "summary": "Create a PaymentIntent",
+            "id": "widgets_create",
+            "summary": "Create a widget",
             "executor": "http",
             "http": {
                 "method": "POST",
-                "path": "/v1/payment_intents",
-                "base_url": "https://api.stripe.com",
+                "path": "/v1/widgets",
+                "base_url": "https://api.acme.test",
                 "encoding": "form",
             },
             "params": [
@@ -57,8 +59,8 @@ STRIPE_CONTRACT = {
 CURATED_TOOLS = {
     "tools": [
         {
-            "operation_id": "payment_intents_list",
-            "description": "List PaymentIntents (paginated; one page per call).",
+            "operation_id": "widgets_list",
+            "description": "List widgets (paginated; one page per call).",
             "safety": {"destructive": False, "requires_auth": True, "idempotent": True},
             "inputSchema": {
                 "type": "object",
@@ -66,8 +68,8 @@ CURATED_TOOLS = {
             },
         },
         {
-            "operation_id": "payment_intents_create",
-            "description": "Create a PaymentIntent.",
+            "operation_id": "widgets_create",
+            "description": "Create a widget.",
             "safety": {"destructive": True, "requires_auth": True, "idempotent": False},
             "inputSchema": {
                 "type": "object",
@@ -83,58 +85,58 @@ CURATED_TOOLS = {
 
 
 @pytest.fixture
-def stripe_pack(tmp_path, monkeypatch):
+def acme_pack(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
-    pkg_dir = paths.package_dir("stripe", "2026-02-25.clover")
+    pkg_dir = paths.package_dir("acme", "v1")
     pkg_dir.mkdir(parents=True, exist_ok=True)
-    (pkg_dir / "contract.json").write_text(json.dumps(STRIPE_CONTRACT))
+    (pkg_dir / "contract.json").write_text(json.dumps(ACME_CONTRACT))
     (pkg_dir / "tools.curated.json").write_text(json.dumps(CURATED_TOOLS))
-    return InstalledPackage(package="stripe", version="2026-02-25.clover")
+    return InstalledPackage(package="acme", version="v1")
 
 
 @pytest.fixture
-def manifest_with_stripe(stripe_pack):
-    m = Manifest(packages=[stripe_pack])
+def manifest_with_acme(acme_pack):
+    m = Manifest(packages=[acme_pack])
     return m
 
 
-def test_list_tools_returns_only_two_meta_tools(manifest_with_stripe):
-    d = Dispatcher(manifest_with_stripe)
+def test_list_tools_returns_only_two_meta_tools(manifest_with_acme):
+    d = Dispatcher(manifest_with_acme)
     tools = d.list_tools()
     names = [t["name"] for t in tools]
     assert names == [SEARCH_TOOL, CALL_TOOL]
 
 
-def test_search_tools_returns_matches_with_inlined_schema(manifest_with_stripe):
-    d = Dispatcher(manifest_with_stripe)
-    res = d.search_tools(query="list payment intents", package="stripe")
+def test_search_tools_returns_matches_with_inlined_schema(manifest_with_acme):
+    d = Dispatcher(manifest_with_acme)
+    res = d.search_tools(query="list widgets", package="acme")
     assert len(res["matches"]) >= 1
     top = res["matches"][0]
-    assert top["name"] == "stripe__2026_02_25_clover__payment_intents_list"
+    assert top["name"] == "acme__v1__widgets_list"
     assert "inputSchema" in top
     # safety metadata included
     assert top["safety"]["destructive"] is False
 
 
-def test_search_tools_returns_no_match_for_garbage(manifest_with_stripe):
-    d = Dispatcher(manifest_with_stripe)
-    res = d.search_tools(query="zzzzqqqqxxxxnomatchforthis", package="stripe")
+def test_search_tools_returns_no_match_for_garbage(manifest_with_acme):
+    d = Dispatcher(manifest_with_acme)
+    res = d.search_tools(query="zzzzqqqqxxxxnomatchforthis", package="acme")
     assert res["matches"] == []
 
 
-def test_call_tool_unknown_returns_fuzzy(manifest_with_stripe):
-    d = Dispatcher(manifest_with_stripe)
-    out = d.call_tool("stripe__2026_02_25_clover__payment_intents_lst", {})
+def test_call_tool_unknown_returns_fuzzy(manifest_with_acme):
+    d = Dispatcher(manifest_with_acme)
+    out = d.call_tool("acme__v1__widgets_lst", {})
     assert out.ok is False
     assert out.error_code == "tool_not_found"
     assert isinstance(out.body["did_you_mean"], list)
 
 
-def test_call_tool_validates_args(manifest_with_stripe, monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test")
-    d = Dispatcher(manifest_with_stripe)
+def test_call_tool_validates_args(manifest_with_acme, monkeypatch):
+    monkeypatch.setenv("ACME_API_KEY", "ak_test")
+    d = Dispatcher(manifest_with_acme)
     out = d.call_tool(
-        "stripe__2026_02_25_clover__payment_intents_create",
+        "acme__v1__widgets_create",
         {"amount": "not-a-number", "currency": "usd"},
     )
     assert out.ok is False
@@ -142,19 +144,19 @@ def test_call_tool_validates_args(manifest_with_stripe, monkeypatch):
     assert "schema" in out.body
 
 
-def test_call_tool_blocks_missing_credentials(manifest_with_stripe, monkeypatch):
-    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
-    d = Dispatcher(manifest_with_stripe)
-    out = d.call_tool("stripe__2026_02_25_clover__payment_intents_list", {"limit": 3})
+def test_call_tool_blocks_missing_credentials(manifest_with_acme, monkeypatch):
+    monkeypatch.delenv("ACME_API_KEY", raising=False)
+    d = Dispatcher(manifest_with_acme)
+    out = d.call_tool("acme__v1__widgets_list", {"limit": 3})
     assert out.ok is False
     assert out.error_code == "missing_credentials"
 
 
-def test_call_tool_blocks_destructive_without_optin(manifest_with_stripe, monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test")
-    d = Dispatcher(manifest_with_stripe)
+def test_call_tool_blocks_destructive_without_optin(manifest_with_acme, monkeypatch):
+    monkeypatch.setenv("ACME_API_KEY", "ak_test")
+    d = Dispatcher(manifest_with_acme)
     out = d.call_tool(
-        "stripe__2026_02_25_clover__payment_intents_create",
+        "acme__v1__widgets_create",
         {"amount": 2500, "currency": "usd"},
     )
     assert out.ok is False
@@ -162,12 +164,12 @@ def test_call_tool_blocks_destructive_without_optin(manifest_with_stripe, monkey
     assert "allow-destructive" in out.body["message"]
     # Recovery command must reference install-pack with the pinned version, not the
     # agent-skill installer `install` (which has no --allow-destructive flag).
-    assert "install-pack stripe@2026-02-25.clover --allow-destructive" in out.body["message"]
-    assert "docmancer install stripe " not in out.body["message"]
+    assert "install-pack acme@v1 --allow-destructive" in out.body["message"]
+    assert "docmancer install acme " not in out.body["message"]
 
 
-def test_call_tool_dispatches_get_with_headers(manifest_with_stripe, monkeypatch):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test")
+def test_call_tool_dispatches_get_with_headers(manifest_with_acme, monkeypatch):
+    monkeypatch.setenv("ACME_API_KEY", "ak_test")
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -192,18 +194,18 @@ def test_call_tool_dispatches_get_with_headers(manifest_with_stripe, monkeypatch
 
     monkeypatch.setattr("docmancer.mcp.dispatcher.get_executor", patched)
 
-    d = Dispatcher(manifest_with_stripe)
-    out = d.call_tool("stripe__2026_02_25_clover__payment_intents_list", {"limit": 3})
+    d = Dispatcher(manifest_with_acme)
+    out = d.call_tool("acme__v1__widgets_list", {"limit": 3})
     assert out.ok is True
     assert "limit=3" in captured["url"]
-    assert captured["headers"].get("authorization") == "Bearer sk_test"
-    assert captured["headers"].get("stripe-version") == "2026-02-25.clover"
+    assert captured["headers"].get("authorization") == "Bearer ak_test"
+    assert captured["headers"].get("acme-version") == "v1"
 
 
-def test_call_tool_post_injects_idempotency_and_form_encoding(manifest_with_stripe, monkeypatch, tmp_path):
-    monkeypatch.setenv("STRIPE_API_KEY", "sk_test")
+def test_call_tool_post_injects_idempotency_and_form_encoding(manifest_with_acme, monkeypatch, tmp_path):
+    monkeypatch.setenv("ACME_API_KEY", "ak_test")
     # Allow destructive
-    manifest_with_stripe.packages[0].allow_destructive = True
+    manifest_with_acme.packages[0].allow_destructive = True
 
     captured = {}
 
@@ -211,7 +213,7 @@ def test_call_tool_post_injects_idempotency_and_form_encoding(manifest_with_stri
         captured["headers"] = dict(request.headers)
         captured["body"] = request.content.decode()
         captured["content_type"] = request.headers.get("content-type", "")
-        return httpx.Response(200, json={"id": "pi_1", "amount": 2500})
+        return httpx.Response(200, json={"id": "wgt_1", "amount": 2500})
 
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
@@ -223,9 +225,9 @@ def test_call_tool_post_injects_idempotency_and_form_encoding(manifest_with_stri
         lambda kind: http_executor.HttpExecutor(client=client) if kind == "http" else original(kind),
     )
 
-    d = Dispatcher(manifest_with_stripe)
+    d = Dispatcher(manifest_with_acme)
     out = d.call_tool(
-        "stripe__2026_02_25_clover__payment_intents_create",
+        "acme__v1__widgets_create",
         {"amount": 2500, "currency": "usd"},
     )
     assert out.ok is True, out.body

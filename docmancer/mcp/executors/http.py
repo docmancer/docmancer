@@ -131,7 +131,7 @@ def _render_path(template: str, path_args: dict[str, Any]) -> str:
 
 
 def _flatten_form(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
-    """Stripe-style bracket flattening for form bodies."""
+    """Bracket flattening for form-encoded request bodies (e.g. `metadata[key]=value`)."""
     out: list[tuple[str, str]] = []
     if isinstance(obj, dict):
         for k, v in obj.items():

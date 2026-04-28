@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """End-to-end stdio smoke test: launches `docmancer mcp serve` as a subprocess
-and drives it via the official MCP client SDK.
+and drives it via the official MCP client SDK against the keyless Open-Meteo
+demo pack.
 
 Verifies:
   1. The server initializes over stdio.
   2. tools/list returns the two meta-tools.
-  3. docmancer_search_tools returns a Stripe payment_intents_list match.
-  4. docmancer_call_tool dispatches a read-only call (mocked HTTP wire).
-  5. A destructive call without opt-in returns destructive_call_blocked.
-  6. After --allow-destructive, the same call succeeds and surfaces an
-     idempotency_key in the response.
+  3. docmancer_search_tools returns the open_meteo forecast tool.
+  4. docmancer_call_tool dispatches a real call and returns a current temperature.
 
-Exits non-zero on any assertion failure. Prints a structured PASS/FAIL summary.
+Open-Meteo is keyless and read-only, so this script doubles as a live demo:
+  python3 scripts/mcp_stdio_smoke.py
+
+Exits non-zero on any assertion failure. Prints a structured PASS/FAIL summary
+plus the live temperature reading for Central Park, NYC.
 
 Usage:
-  # Same interpreter that has docmancer + `mcp` (e.g. after: pip install -e ".[dev]"):
   ./scripts/mcp_stdio_smoke.py           # from repo docmancer/ (uses a fresh tempdir)
-  python3 scripts/mcp_stdio_smoke.py       # if execute bit is off
+  python3 scripts/mcp_stdio_smoke.py     # if execute bit is off
   DOCMANCER_HOME=/path ./scripts/mcp_stdio_smoke.py   # override storage root
 """
 from __future__ import annotations
@@ -51,28 +52,20 @@ except ImportError:
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-BUILD_PACK = ROOT / ".." / "docs" / "api-mcp" / "demo" / "build_stripe_pack.py"
+
+# Central Park, NYC. Used as the demo coordinates.
+LATITUDE = 40.785091
+LONGITUDE = -73.968285
 
 
-def _build_fixture_pack(registry_dir: Path) -> None:
-    """Compile the downsized real Stripe OpenAPI fixture into a registry pack."""
-    registry_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [sys.executable, str(BUILD_PACK.resolve()), str(registry_dir)],
-        check=True,
-        cwd=ROOT,
-    )
-
-
-def _install_pack(home: Path, registry: Path, *, allow_destructive: bool) -> None:
-    cmd = [sys.executable, "-m", "docmancer", "install-pack", "stripe@2026-02-25.clover"]
-    if allow_destructive:
-        cmd.append("--allow-destructive")
-    env = {**os.environ, "DOCMANCER_HOME": str(home), "DOCMANCER_REGISTRY_DIR": str(registry)}
+def _install_pack(home: Path) -> None:
+    """Install open-meteo@v1 via the built-in known-source fallback. No registry needed."""
+    cmd = [sys.executable, "-m", "docmancer", "install-pack", "open-meteo@v1"]
+    env = {**os.environ, "DOCMANCER_HOME": str(home)}
     subprocess.run(cmd, check=True, env=env, cwd=ROOT)
 
 
-async def _smoke(home: Path, registry: Path) -> int:
+async def _smoke(home: Path) -> int:
     failures: list[str] = []
 
     def expect(label: str, cond: bool, detail: str = "") -> None:
@@ -84,12 +77,7 @@ async def _smoke(home: Path, registry: Path) -> int:
         if not cond:
             failures.append(label)
 
-    server_env = {
-        **os.environ,
-        "DOCMANCER_HOME": str(home),
-        "DOCMANCER_REGISTRY_DIR": str(registry),
-        "STRIPE_API_KEY": "sk_test_smoke",
-    }
+    server_env = {**os.environ, "DOCMANCER_HOME": str(home)}
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "docmancer", "mcp", "serve"],
@@ -97,7 +85,7 @@ async def _smoke(home: Path, registry: Path) -> int:
         cwd=str(ROOT),
     )
 
-    print("\n=== stdio smoke (round 1: read + destructive blocked) ===")
+    print("\n=== stdio smoke (open-meteo, no credentials) ===")
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as session:
             await session.initialize()
@@ -109,51 +97,39 @@ async def _smoke(home: Path, registry: Path) -> int:
 
             search = await session.call_tool(
                 "docmancer_search_tools",
-                {"query": "list recent payments", "package": "stripe", "limit": 3},
+                {"query": "current temperature forecast latitude longitude",
+                 "package": "open-meteo", "limit": 3},
             )
             search_payload = json.loads(search.content[0].text)
-            top = (search_payload.get("matches") or [{}])[0].get("name", "")
             names_returned = [m.get("name") for m in (search_payload.get("matches") or [])]
-            expect("search includes a payment_intents tool in top results",
-                   any("paymentintent" in (n or "") for n in names_returned),
+            expect("search returns the open-meteo forecast tool",
+                   "open_meteo__v1__forecast" in names_returned,
                    detail=f"got {names_returned}")
 
-            create_call = await session.call_tool(
+            call = await session.call_tool(
                 "docmancer_call_tool",
                 {
-                    "name": "stripe__2026_02_25_clover__paymentintentcreate",
-                    "args": {"amount": 2500, "currency": "usd"},
+                    "name": "open_meteo__v1__forecast",
+                    "args": {
+                        "latitude": LATITUDE,
+                        "longitude": LONGITUDE,
+                        "current_weather": True,
+                    },
                 },
             )
-            create_body = json.loads(create_call.content[0].text)
-            expect("destructive call blocked before opt-in",
-                   create_body.get("error") == "destructive_call_blocked",
-                   detail=f"got {create_body!r}")
-            expect("remediation references install-pack",
-                   "install-pack" in (create_body.get("message") or ""),
-                   detail=create_body.get("message", "<empty>"))
-
-    # Reinstall with --allow-destructive and retry.
-    _install_pack(home, registry, allow_destructive=True)
-
-    print("\n=== stdio smoke (round 2: destructive allowed; live HTTP not mocked, expect network_error or 4xx) ===")
-    async with stdio_client(params) as (r, w):
-        async with ClientSession(r, w) as session:
-            await session.initialize()
-            create_call = await session.call_tool(
-                "docmancer_call_tool",
-                {
-                    "name": "stripe__2026_02_25_clover__paymentintentcreate",
-                    "args": {"amount": 2500, "currency": "usd"},
-                },
-            )
-            body = json.loads(create_call.content[0].text)
-            # The real Stripe wire will reject our fake key; what we care about is
-            # that the gate is *open* now (we no longer see destructive_call_blocked)
-            # and that idempotency_key surfaces under _docmancer regardless of HTTP outcome.
-            expect("destructive gate open after opt-in",
-                   body.get("error") != "destructive_call_blocked",
+            body = json.loads(call.content[0].text)
+            expect("forecast call returns a non-error response",
+                   body.get("error") is None,
                    detail=str(body)[:200])
+
+            current = (body.get("current_weather") or {})
+            temp = current.get("temperature")
+            expect("response includes current_weather.temperature",
+                   isinstance(temp, (int, float)),
+                   detail=f"current_weather={current!r}")
+
+            if isinstance(temp, (int, float)):
+                print(f"\n  Central Park, NYC: {temp}°C  (as of {current.get('time')})")
 
     print()
     if failures:
@@ -166,13 +142,11 @@ async def _smoke(home: Path, registry: Path) -> int:
 def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="docmancer-stdio-smoke."))
     try:
-        registry = work / "registry"
         home = work / "home"
         home.mkdir()
         print(f"workdir = {work}")
-        _build_fixture_pack(registry)
-        _install_pack(home, registry, allow_destructive=False)
-        return asyncio.run(_smoke(home, registry))
+        _install_pack(home)
+        return asyncio.run(_smoke(home))
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

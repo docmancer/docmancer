@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="readme-assets/wizard-logo.png" alt="docmancer logo" width="120" />
+<img src="readme-assets/api-mcp.gif" alt="API MCP pack: install-pack open-meteo, mcp doctor, mcp list" style="width: 67%; max-width: 720px; height: auto;" />
 
-<h1>docmancer</h1>
+</div>
 
 **Local docs context for coding agents, plus version-pinned API tool surfaces.**
 
@@ -20,12 +20,6 @@ Docmancer is an MIT-licensed CLI on PyPI with two local surfaces:
 
 - **Docs RAG.** Fetch documentation with `add`, normalize it into sections, index with **SQLite FTS5**, and return compact context packs with source attribution on `query`. No vector DB, no embedding downloads, no remote query API.
 - **API MCP packs.** Install version-pinned MCP packs compiled from public OpenAPI / GraphQL / TypeDoc / Sphinx sources, then expose them to your agent through one shared `mcp serve` process. Two meta-tools regardless of how many packs you install (Tool Search). Auth, destructive-call gating, idempotency-key reuse, and version pinning all run inside the local dispatcher.
-
-<div align="center">
-
-<img src="readme-assets/demo.gif" alt="CLI demo" style="width: 67%; max-width: 720px; height: auto;" />
-
-</div>
 
 ---
 
@@ -48,10 +42,11 @@ docmancer query "How do I use fixtures?"
 **API MCP pack flow** (see [API MCP packs](#api-mcp-packs) for the full walkthrough):
 
 ```bash
-docmancer install-pack stripe@2026-02-25.clover
-export STRIPE_API_KEY=sk_test_...
+docmancer install-pack open-meteo@v1
 docmancer mcp doctor
 ```
+
+Open-Meteo is a public read-only weather API that needs no API key, so the install above produces a usable pack with zero credentials. For packs that do require credentials, set the relevant `_API_KEY` env var before running `docmancer mcp doctor`.
 
 Agents call docs RAG through installed skills and API packs through the auto-registered MCP server. All agents on the same machine share one local SQLite index and one MCP manifest.
 
@@ -63,95 +58,38 @@ Runtime support ships in the PyPI build. `install-pack` resolves artifacts in th
 
 1. Local cache.
 2. The hosted Docmancer artifact API.
-3. Built-in known-source fallback. Stripe packs are compiled locally from Stripe's public OpenAPI spec when precompiled artifacts are not already available.
+3. Built-in known-source fallback. Open-Meteo packs are compiled locally from the public OpenAPI spec when precompiled artifacts are not already available, so the demo install works even without registry access.
 
 ```bash
-# 1. Install. Output reports tool-surface size, required credentials, wire-pinned
-#    headers, and how many destructive endpoints the pack exposes.
-docmancer install-pack stripe@2026-02-25.clover
-# Active tool surface: 8 (mode=curated; full=8)
-# Required credentials: STRIPE_API_KEY
-# Wire-pinned header: Stripe-Version: 2026-02-25.clover
-# Destructive endpoints: 2 (gated)
-# To enable: docmancer install-pack stripe@2026-02-25.clover --allow-destructive
+docmancer install-pack open-meteo@v1
+# Open-Meteo is keyless, so no credential setup is needed.
 
-# 2. Supply credentials. Process env is the second source in the four-source
-#    resolution order (per-call override > env > agent-config env > secrets file).
-export STRIPE_API_KEY=sk_test_...
-
-# 3. Verify. Doctor checks SHA-256 per artifact, credential resolution, and
-#    agent-config registration.
 docmancer mcp doctor
-
-# 4. Inspect. List shows mode, tool counts, and destructive gate state.
 docmancer mcp list
-# stripe@2026-02-25.clover  [enabled] mode=curated curated=8 full=8 destructive=block
 
-# 5. Toggle without reinstalling.
-docmancer mcp disable stripe --version 2026-02-25.clover
-docmancer mcp enable  stripe --version 2026-02-25.clover
+docmancer mcp disable open-meteo --version v1
+docmancer mcp enable  open-meteo --version v1
 
-# 6. Opt in to destructive calls. The dispatcher refuses POST/PUT/PATCH/DELETE
-#    by default and the error message names this exact reinstall command.
-docmancer install-pack stripe@2026-02-25.clover --allow-destructive
+docmancer install-pack open-meteo@v1 --expanded
 
-# 7. Use the full surface (every operation, not just the curated subset).
-docmancer install-pack stripe@2026-02-25.clover --expanded
-
-# 8. Uninstall.
-docmancer uninstall stripe@2026-02-25.clover
+docmancer uninstall open-meteo@v1
 ```
 
-**What the agent sees.** `tools/list` returns exactly **two** tools regardless of how many packs you install: `docmancer_search_tools` (token-overlap search across every enabled pack's curated surface, returns the top match's full input schema inlined) and `docmancer_call_tool` (dispatches the resolved tool by its slug, e.g. `stripe__2026_02_25_clover__payment_intents_create`). Per-call schema validation, destructive gating, idempotency-key auto-injection (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), version-header injection (`Stripe-Version: 2026-02-25.clover`), and call-log redaction (`arg_keys` only, never values) all happen inside the dispatcher.
+**What the agent sees.** `tools/list` returns exactly **two** tools regardless of how many packs you install: `docmancer_search_tools` (token-overlap search across every enabled pack's curated surface, returns the top match's full input schema inlined) and `docmancer_call_tool` (dispatches the resolved tool by its slug, e.g. `open_meteo__v1__forecast`). Per-call schema validation, destructive gating, schema-driven idempotency-key auto-injection (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), wire-pinned header injection (the dispatcher reads `auth.required_headers` from the contract for keyed APIs that need dated version headers), and call-log redaction (`arg_keys` only, never values) all happen inside the dispatcher. Open-Meteo itself needs none of those features, which is exactly what makes it a clean smoke-test pack.
 
 **Source-kind support today.**
 
-| Source | Compiled by pipeline | Runtime executor |
-|--------|----------------------|------------------|
-| OpenAPI 3.0 / 3.1 | yes | `http` (live wire calls) |
-| GraphQL introspection | yes | `noop_doc` (executor not yet wired) |
-| TypeDoc / Sphinx | yes | `noop_doc` (documentation only) |
+| Source                | Compiled by pipeline | Runtime executor                    |
+| --------------------- | -------------------- | ----------------------------------- |
+| OpenAPI 3.0 / 3.1     | yes                  | `http` (live wire calls)            |
+| GraphQL introspection | yes                  | `noop_doc` (executor not yet wired) |
+| TypeDoc / Sphinx      | yes                  | `noop_doc` (documentation only)     |
 
 ---
 
 ## Commands
 
-**Docs RAG**
-
-| Command | What it does |
-|---------|--------------|
-| `docmancer add <url-or-path>` | Fetch or read documentation and index normalized sections |
-| `docmancer update [<url>]` | Re-fetch and re-index existing sources (or one specific source) |
-| `docmancer query "<text>"` | Return a compact markdown context pack within a token budget |
-| `docmancer query "<text>" --format json` | Same context pack as JSON |
-| `docmancer query "<text>" --expand [page]` | Include adjacent sections, or the full matching page |
-| `docmancer list [--all]` | List indexed docsets, or every individual source |
-| `docmancer inspect` | SQLite index stats and extract locations |
-| `docmancer remove <source>` / `--all` | Remove one source (or everything indexed) |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing |
-
-**API MCP packs**
-
-| Command | What it does |
-|---------|--------------|
-| `docmancer install-pack <pkg>@<ver>` | Install a version-pinned API MCP pack from local cache, hosted registry, or known-source fallback |
-| `docmancer install-pack <pkg>@<ver> --allow-destructive` | Same, with the destructive-call gate open |
-| `docmancer install-pack <pkg>@<ver> --expanded` | Activate the full tool surface, not the curated subset |
-| `docmancer install-pack <pkg>@<ver> --allow-execute` | Permit `python_import` / shell executors (subprocess execution) |
-| `docmancer uninstall <pkg>[@<ver>]` | Remove an installed pack (all versions if no version given) |
-| `docmancer mcp serve` | Stdio MCP server bridging installed packs to your agent |
-| `docmancer mcp list` | Show installed packs, mode, tool counts, destructive gate state |
-| `docmancer mcp doctor` | Verify pack SHA-256s, credentials, and agent registrations |
-| `docmancer mcp enable\|disable <pkg> [--version <v>]` | Toggle per-pack visibility without reinstalling |
-
-**Setup, install, health**
-
-| Command | What it does |
-|---------|--------------|
-| `docmancer setup [--all]` | Create config/DB, install detected agent skills, register MCP server |
-| `docmancer install <agent>` | Manual skill installation for one agent (also registers MCP server) |
-| `docmancer init` | Create a project-local `docmancer.yaml` for a project-specific index |
-| `docmancer doctor` | Check config, SQLite FTS5, index stats, and agent skill installs |
+The full CLI surface (docs RAG, API MCP packs, `setup` / `install`, bench, and the rest) is documented in the repo wiki: **[Commands](./wiki/Commands.md)**.
 
 ---
 
@@ -207,10 +145,10 @@ Each agent install drops a skill file under the agent's conventional location an
 
 ## Optional extras
 
-| Extra | Enables |
-|-------|---------|
-| `docmancer[browser]` | Playwright fetcher for JS-heavy sites (used by `add --browser`) |
-| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites |
+| Extra                 | Enables                                                         |
+| --------------------- | --------------------------------------------------------------- |
+| `docmancer[browser]`  | Playwright fetcher for JS-heavy sites (used by `add --browser`) |
+| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites                    |
 
 ---
 

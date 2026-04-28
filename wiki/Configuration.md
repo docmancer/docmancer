@@ -44,7 +44,7 @@ The MCP runtime (see [Architecture › MCP runtime](./Architecture.md#mcp-runtim
 
 Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Override the registry source for `install-pack` with `DOCMANCER_REGISTRY_DIR` (defaults to `~/.docmancer/registry/`; the hosted Supabase registry client is not yet wired into the CLI).
 
-Credentials are resolved per call by the four-source order, first hit wins: per-call `args._docmancer_auth.<scheme>` override → process env (`STRIPE_API_KEY`, etc.) → agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`) → user-managed env file under `~/.docmancer/secrets/`.
+Credentials are resolved per call by the four-source order, first hit wins: per-call `args._docmancer_auth.<scheme>` override → process env (`<PACKAGE>_API_KEY`, etc.) → agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`) → user-managed env file under `~/.docmancer/secrets/`. Keyless packs (e.g. `open-meteo`) skip every step and resolve to no auth.
 
 ### Environment variables
 

@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import yaml
 
 from docmancer.mcp import paths
 
@@ -117,20 +118,23 @@ class HostedRegistry(RegistryClient):
 class KnownOpenAPIRegistry(RegistryClient):
     """Builds known public API packs locally when precompiled artifacts are absent."""
 
-    STRIPE_OPENAPI_URL = "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"
+    OPEN_METEO_OPENAPI_URL = "https://raw.githubusercontent.com/open-meteo/open-meteo/main/openapi.yml"
+    OPEN_METEO_BASE_URL = "https://api.open-meteo.com"
 
     def __init__(self, cache_root: Path | None = None, timeout: float = 60.0):
         self._cache_root = cache_root if cache_root is not None else paths.registry_dir()
         self._timeout = timeout
+        self._builders = {"open-meteo": self._build_open_meteo}
 
     def fetch(self, package: str, version: str, artifact: str) -> bytes:
-        if package != "stripe":
+        builder = self._builders.get(package)
+        if builder is None:
             raise FileNotFoundError(
                 f"No built-in OpenAPI fallback is available for {package}@{version}"
             )
         pkg_dir = self._cache_root / f"{package}@{version}"
         if not (pkg_dir / "contract.json").exists():
-            self._build_stripe(version, pkg_dir)
+            builder(version, pkg_dir)
         path = pkg_dir / artifact
         if not path.exists():
             raise FileNotFoundError(f"{artifact} not generated for {package}@{version}")
@@ -139,23 +143,30 @@ class KnownOpenAPIRegistry(RegistryClient):
     def expected_sha256(self, package: str, version: str, artifact: str) -> str | None:
         return LocalRegistry(self._cache_root).expected_sha256(package, version, artifact)
 
-    def _build_stripe(self, version: str, pkg_dir: Path) -> None:
-        source_url = os.environ.get("DOCMANCER_STRIPE_OPENAPI_URL", self.STRIPE_OPENAPI_URL)
+    def _build_open_meteo(self, version: str, pkg_dir: Path) -> None:
+        source_url = os.environ.get("DOCMANCER_OPEN_METEO_OPENAPI_URL", self.OPEN_METEO_OPENAPI_URL)
         with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
             response = client.get(source_url)
             response.raise_for_status()
         source = response.content
-        spec = json.loads(source)
+        spec = yaml.safe_load(source) or {}
+        # Open-Meteo's published spec omits servers and operationIds. Inject stable values
+        # so the dispatcher can reach the API and tool slugs are predictable.
+        if not spec.get("servers"):
+            spec["servers"] = [{"url": self.OPEN_METEO_BASE_URL}]
+        forecast = (spec.get("paths") or {}).get("/v1/forecast", {}).get("get")
+        if isinstance(forecast, dict) and not forecast.get("operationId"):
+            forecast["operationId"] = "forecast"
         source_sha = hashlib.sha256(source).hexdigest()
         build_openapi_pack(
-            package="stripe",
+            package="open-meteo",
             version=version,
             spec=spec,
             output_dir=pkg_dir,
             source_url=source_url,
             source_sha256=source_sha,
-            overrides=stripe_overrides(version),
-            curated_ids=STRIPE_CURATED_IDS,
+            overrides=open_meteo_overrides(),
+            curated_ids=None,
         )
 
 
@@ -320,52 +331,10 @@ def compile_openapi(
     return contract
 
 
-def stripe_overrides(version: str) -> dict[str, Any]:
-    return {
-        "auth": {
-            "required_headers": {"Stripe-Version": version},
-            "idempotency_header": "Idempotency-Key",
-            "schemes": [{
-                "name": "stripe",
-                "type": "bearer",
-                "header": "Authorization",
-                "env": "STRIPE_API_KEY",
-            }],
-        },
-        "default_encoding": "form",
-    }
-
-
-STRIPE_CURATED_IDS = [
-    "payment_intents_create",
-    "payment_intents_retrieve",
-    "payment_intents_list",
-    "payment_intents_update",
-    "payment_intents_capture",
-    "payment_intents_cancel",
-    "payment_intents_confirm",
-    "customers_create",
-    "customers_retrieve",
-    "customers_list",
-    "customers_update",
-    "customers_delete",
-    "charges_retrieve",
-    "charges_list",
-    "subscriptions_create",
-    "subscriptions_retrieve",
-    "subscriptions_list",
-    "subscriptions_update",
-    "subscriptions_cancel",
-    "invoices_create",
-    "invoices_retrieve",
-    "invoices_list",
-    "invoices_finalize",
-    "refunds_create",
-    "refunds_retrieve",
-    "refunds_list",
-    "balance_retrieve",
-    "balance_transactions_list",
-]
+def open_meteo_overrides() -> dict[str, Any]:
+    """No-auth override for Open-Meteo. Empty schemes signals the installer / dispatcher
+    that this pack requires no credentials."""
+    return {"auth": {"schemes": []}}
 
 
 def emit_tool_artifacts(
@@ -412,10 +381,6 @@ def _tool_entry(op: dict[str, Any]) -> dict[str, Any]:
 
 
 def _operation_id(package: str, method: str, path: str, op: dict[str, Any], seen: set[str]) -> str:
-    if package == "stripe":
-        derived = _stripe_operation_id(method, path)
-        if derived:
-            return _unique(derived, seen)
     raw = op.get("operationId")
     if raw:
         base = re.sub(r"[^A-Za-z0-9_]+", "_", raw).strip("_").lower()
@@ -423,37 +388,6 @@ def _operation_id(package: str, method: str, path: str, op: dict[str, Any], seen
         slug = re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_").lower()
         base = f"{method.lower()}_{slug}"
     return _unique(base, seen)
-
-
-def _stripe_operation_id(method: str, path: str) -> str | None:
-    method = method.lower()
-    parts = [p for p in path.strip("/").split("/") if p and not p.startswith("{")]
-    if parts and parts[0] == "v1":
-        parts = parts[1:]
-    if not parts:
-        return None
-    resource = "_".join(parts)
-    has_path_param = "{" in path
-    if resource == "balance" and method == "get":
-        return "balance_retrieve"
-    action = {
-        "get": "retrieve" if has_path_param else "list",
-        "post": "update" if has_path_param else "create",
-        "delete": "delete",
-    }.get(method)
-    if path.endswith("/capture"):
-        action = "capture"
-        resource = "_".join(parts[:-1])
-    elif path.endswith("/cancel"):
-        action = "cancel"
-        resource = "_".join(parts[:-1])
-    elif path.endswith("/confirm"):
-        action = "confirm"
-        resource = "_".join(parts[:-1])
-    elif path.endswith("/finalize"):
-        action = "finalize"
-        resource = "_".join(parts[:-1])
-    return f"{resource}_{action}" if action else None
 
 
 def _unique(base: str, seen: set[str]) -> str:

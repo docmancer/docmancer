@@ -13,16 +13,16 @@ def isolated_home(tmp_path, monkeypatch):
     "package, version",
     [
         ("..", "1.0"),
-        ("stripe", ".."),
+        ("acme", ".."),
         ("../etc", "1.0"),
-        ("stripe", "../../etc/passwd"),
+        ("acme", "../../etc/passwd"),
         ("foo/../bar", "1.0"),
-        ("stripe", "1.0/../../../etc"),
-        ("stripe\\evil", "1.0"),
-        ("stripe", "1.0\x00bad"),
+        ("acme", "1.0/../../../etc"),
+        ("acme\\evil", "1.0"),
+        ("acme", "1.0\x00bad"),
         ("/abs", "1.0"),
         ("", "1.0"),
-        ("stripe", " 1.0 "),
+        ("acme", " 1.0 "),
     ],
 )
 def test_package_dir_rejects_traversal_components(package, version):
@@ -37,8 +37,8 @@ def test_package_dir_accepts_npm_scoped_name():
 
 
 def test_package_dir_accepts_plain_spec():
-    p = paths.package_dir("stripe", "2026-02-25.clover")
-    assert p == paths.servers_dir().resolve() / "stripe@2026-02-25.clover"
+    p = paths.package_dir("acme", "v1")
+    assert p == paths.servers_dir().resolve() / "acme@v1"
 
 
 def test_secrets_env_file_rejects_traversal():

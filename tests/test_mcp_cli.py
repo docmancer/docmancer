@@ -36,7 +36,7 @@ def test_install_pack_command_registered():
 
 def test_install_pack_rejects_missing_at_sign():
     runner = CliRunner()
-    result = runner.invoke(cli, ["install-pack", "stripe"])
+    result = runner.invoke(cli, ["install-pack", "open-meteo"])
     assert result.exit_code != 0
     assert "package>@<version" in result.output or "Spec" in result.output
 
@@ -45,9 +45,9 @@ def test_parse_pack_spec_handles_scoped_npm_names():
     from docmancer.cli.mcp_commands import _parse_pack_spec
 
     # Plain spec.
-    assert _parse_pack_spec("stripe@2026-02-25.clover", require_version=True) == (
-        "stripe",
-        "2026-02-25.clover",
+    assert _parse_pack_spec("open-meteo@v1", require_version=True) == (
+        "open-meteo",
+        "v1",
     )
     # Scoped npm-style package: leading @ stays with package, version comes from rightmost @.
     assert _parse_pack_spec("@scope/pkg@1.2.3", require_version=True) == (
@@ -56,7 +56,7 @@ def test_parse_pack_spec_handles_scoped_npm_names():
     )
     # Uninstall path: version optional.
     assert _parse_pack_spec("@scope/pkg", require_version=False) == ("@scope/pkg", None)
-    assert _parse_pack_spec("stripe", require_version=False) == ("stripe", None)
+    assert _parse_pack_spec("open-meteo", require_version=False) == ("open-meteo", None)
 
 
 def test_uninstall_command_registered():

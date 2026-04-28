@@ -86,7 +86,7 @@ class TestWebFetcherDirectText:
     def test_direct_markdown_url_fetches_single_page(self):
         """Exact markdown URLs should not run site-wide discovery."""
 
-        page = "# Process MOTO payments\n\nUse Stripe Terminal to process MOTO payments."
+        page = "# Process MOTO payments\n\nUse Acme Terminal to process MOTO payments."
 
         def mock_get(url, **kwargs):
             assert url == "https://docs.example.com/terminal/moto.md"

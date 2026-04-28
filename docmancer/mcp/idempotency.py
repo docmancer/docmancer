@@ -12,7 +12,7 @@ from typing import Any
 from docmancer.mcp import paths
 
 EXPLICIT_KEY_ARG = "_docmancer_idempotency_key"
-DEFAULT_TTL_SECONDS = 24 * 60 * 60  # 24h, Stripe's documented retention
+DEFAULT_TTL_SECONDS = 24 * 60 * 60  # 24h matches the most common API idempotency window
 
 
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:

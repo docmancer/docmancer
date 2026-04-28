@@ -16,8 +16,7 @@ docmancer setup
 docmancer add https://docs.pytest.org              # docs RAG
 docmancer query "How do I use fixtures?"
 
-docmancer install-pack stripe@2026-02-25.clover    # API MCP pack
-export STRIPE_API_KEY=sk_test_...
+docmancer install-pack open-meteo@v1               # API MCP pack (keyless)
 docmancer mcp doctor                                # verify pack + credentials
 ```
 

@@ -29,7 +29,7 @@ def resolve(
 ) -> CredentialResult:
     """Resolve a credential for one auth scheme.
 
-    `scheme` is the contract entry, e.g. `{"type": "bearer", "env": "STRIPE_API_KEY"}`.
+    `scheme` is the contract entry, e.g. `{"type": "bearer", "env": "EXAMPLE_API_KEY"}`.
     Optional `args` lets the agent pass `_docmancer_auth.{name}` per call.
     """
     env_name = scheme.get("env")

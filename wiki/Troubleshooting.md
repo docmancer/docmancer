@@ -95,19 +95,19 @@ Re-run `docmancer setup` or `docmancer install <target>` to update the skill fil
 Pack specs must include both name and version. The parser splits from the rightmost `@` so npm-scoped names like `@scope/pkg@1.2.3` work; if the spec has no `@`, supply one explicitly:
 
 ```bash
-docmancer install-pack stripe@2026-02-25.clover
+docmancer install-pack open-meteo@v1
 docmancer install-pack @acme/widgets@1.4.2
 ```
 
 ### Tool returns `destructive_call_blocked`
 
-The pack was installed without `--allow-destructive`. The error message names the exact remediation command. Reinstall with the flag, then restart your agent:
+The pack was installed without `--allow-destructive`, and the agent tried to call a POST/PUT/PATCH/DELETE operation. The error message names the exact remediation command. Reinstall with the flag, then restart your agent:
 
 ```bash
-docmancer install-pack stripe@2026-02-25.clover --allow-destructive
+docmancer install-pack <package>@<version> --allow-destructive
 ```
 
-`docmancer mcp list` will show `destructive=ALLOW` once the gate is open.
+`docmancer mcp list` will show `destructive=ALLOW` once the gate is open. Read-only packs (e.g. `open-meteo@v1`) never trip this gate because their contracts declare no destructive operations.
 
 ### Tool returns `missing_credentials`
 
@@ -118,8 +118,8 @@ The dispatcher tried every source in the four-source order (per-call override â†
 The pack on disk does not match the SHA-256 in `manifest.json`. Either the registry was tampered with, the file was edited locally, or an install failed mid-write. Reinstall the pack:
 
 ```bash
-docmancer uninstall stripe@2026-02-25.clover
-docmancer install-pack stripe@2026-02-25.clover
+docmancer uninstall open-meteo@v1
+docmancer install-pack open-meteo@v1
 ```
 
 ### Path with `/` or `?` returns the wrong resource

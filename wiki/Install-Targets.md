@@ -45,7 +45,7 @@ The entry has the shape:
 }
 ```
 
-Add per-pack credentials (e.g. `STRIPE_API_KEY`) to the `env: {}` block when launching from a GUI-launched agent (Cursor, Claude Desktop) that does not inherit the shell environment. Shell-launched agents (Claude Code, Codex CLI) read process env directly. See [Configuration › MCP runtime](./Configuration.md#mcp-runtime) for the full credential resolution order.
+Add per-pack credentials (e.g. `<PACKAGE>_API_KEY`) to the `env: {}` block when launching from a GUI-launched agent (Cursor, Claude Desktop) that does not inherit the shell environment. Shell-launched agents (Claude Code, Codex CLI) read process env directly. Keyless packs like `open-meteo` skip the `env` block entirely. See [Configuration › MCP runtime](./Configuration.md#mcp-runtime) for the full credential resolution order.
 
 ## What the skill teaches agents
 
@@ -58,7 +58,7 @@ Installed skills cover the core workflow:
 - `docmancer install-pack <pkg>@<version>` to install API MCP packs; the registered `docmancer mcp serve` exposes them through the Tool Search pattern (`docmancer_search_tools`, `docmancer_call_tool`)
 - `docmancer mcp doctor` and `docmancer mcp list` to verify pack state and credentials
 
-Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data, and to call MCP packs through the resolved tool name (e.g. `stripe__2026_02_25_clover__payment_intents_list`) for live API work without losing track of the pinned version.
+Agents learn to call `docmancer query` for grounded answers instead of relying on stale training data, and to call MCP packs through the resolved tool name (e.g. `open_meteo__v1__forecast`) for live API work without losing track of the pinned version.
 
 ## Shared index
 
