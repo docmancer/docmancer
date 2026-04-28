@@ -1,79 +1,15 @@
-"""Pack install/uninstall: download artifacts and update local manifest.
-
-The downloader is pluggable. v1 ships a `LocalRegistry` (read from a
-filesystem path under DOCMANCER_REGISTRY_DIR) so the install flow can be
-exercised end-to-end before the Supabase registry-api endpoints land.
-"""
+"""Pack install/uninstall: resolve artifacts and update the local manifest."""
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
 
 from docmancer.mcp import paths
 from docmancer.mcp.manifest import InstalledPackage, Manifest
-
-ARTIFACT_FILES = [
-    "contract.json",
-    "tools.curated.json",
-    "tools.full.json",
-    "auth.schema.json",
-    "provenance.json",
-]
-
-
-class RegistryClient(Protocol):
-    def fetch(self, package: str, version: str, artifact: str) -> bytes: ...
-
-    def expected_sha256(self, package: str, version: str, artifact: str) -> str | None:
-        """Return the expected SHA-256 from a signed manifest, or None if unknown."""
-        ...
-
-
-class LocalRegistry:
-    """Reads packs from $DOCMANCER_REGISTRY_DIR/<pkg>@<ver>/<artifact>.
-
-    Optionally reads `manifest.json` (sibling of artifacts) with a `sha256` map
-    keyed by artifact filename. When present, every fetch is verified.
-    """
-
-    def __init__(self, root: Path | None = None):
-        # Default to ~/.docmancer/registry (overridable via DOCMANCER_REGISTRY_DIR);
-        # the hosted Supabase RegistryClient is not yet wired in v1.
-        self._root = root if root is not None else paths.registry_dir()
-
-    def fetch(self, package: str, version: str, artifact: str) -> bytes:
-        pack_dir = self._root / f"{package}@{version}"
-        path = pack_dir / artifact
-        if not path.exists():
-            if not pack_dir.exists():
-                raise FileNotFoundError(
-                    f"Pack {package}@{version} not found in registry {self._root}. "
-                    f"Build it from the pipeline repo and place its artifacts at "
-                    f"{pack_dir}/, or set DOCMANCER_REGISTRY_DIR to point at a registry "
-                    f"that already contains it."
-                )
-            raise FileNotFoundError(
-                f"{artifact} not found for {package}@{version} in {self._root}"
-            )
-        return path.read_bytes()
-
-    def expected_sha256(self, package: str, version: str, artifact: str) -> str | None:
-        manifest_path = self._root / f"{package}@{version}" / "manifest.json"
-        if not manifest_path.exists():
-            return None
-        try:
-            data = json.loads(manifest_path.read_text())
-        except json.JSONDecodeError:
-            return None
-        sha_map = data.get("sha256") or {}
-        if isinstance(sha_map, dict):
-            return sha_map.get(artifact)
-        return None
+from docmancer.mcp.registry import ARTIFACT_FILES, LocalRegistry, RegistryClient, default_registry
 
 
 @dataclass
@@ -96,7 +32,7 @@ def install_package(
     allow_execute: bool = False,
     manifest_path: Path | None = None,
 ) -> InstallResult:
-    registry = registry or LocalRegistry()
+    registry = registry or default_registry()
     paths.ensure_dirs()
     pkg_dir = paths.package_dir(package, version)
     pkg_dir.mkdir(parents=True, exist_ok=True)

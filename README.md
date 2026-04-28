@@ -59,14 +59,18 @@ Agents call docs RAG through installed skills and API packs through the auto-reg
 
 ## API MCP packs
 
-Runtime support ships in the PyPI build. The hosted pack registry is not yet wired into the CLI; today `install-pack` reads from `~/.docmancer/registry/` (override with `DOCMANCER_REGISTRY_DIR`). Build a pack with the `pipeline/` repo and drop its artifacts under `~/.docmancer/registry/<package>@<version>/`, then:
+Runtime support ships in the PyPI build. `install-pack` resolves artifacts in this order:
+
+1. Local cache.
+2. The hosted Docmancer artifact API.
+3. Built-in known-source fallback. Stripe packs are compiled locally from Stripe's public OpenAPI spec when precompiled artifacts are not already available.
 
 ```bash
-# 1. Install. Output reports tool-surface size, required env vars, wire-pinned
+# 1. Install. Output reports tool-surface size, required credentials, wire-pinned
 #    headers, and how many destructive endpoints the pack exposes.
 docmancer install-pack stripe@2026-02-25.clover
 # Active tool surface: 8 (mode=curated; full=8)
-# Required env vars: STRIPE_API_KEY
+# Required credentials: STRIPE_API_KEY
 # Wire-pinned header: Stripe-Version: 2026-02-25.clover
 # Destructive endpoints: 2 (gated)
 # To enable: docmancer install-pack stripe@2026-02-25.clover --allow-destructive
@@ -98,7 +102,7 @@ docmancer install-pack stripe@2026-02-25.clover --expanded
 docmancer uninstall stripe@2026-02-25.clover
 ```
 
-**What the agent sees.** `tools/list` returns exactly **two** tools regardless of how many packs you install: `docmancer_search_tools` (token-overlap search across every enabled pack's curated surface, returns the top match's full input schema inlined) and `docmancer_call_tool` (dispatches the resolved tool by its slug, e.g. `stripe__2026_02_25_clover__paymentintentcreate`). Per-call schema validation, destructive gating, idempotency-key auto-injection (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), version-header injection (`Stripe-Version: 2026-02-25.clover`), and call-log redaction (`arg_keys` only, never values) all happen inside the dispatcher.
+**What the agent sees.** `tools/list` returns exactly **two** tools regardless of how many packs you install: `docmancer_search_tools` (token-overlap search across every enabled pack's curated surface, returns the top match's full input schema inlined) and `docmancer_call_tool` (dispatches the resolved tool by its slug, e.g. `stripe__2026_02_25_clover__payment_intents_create`). Per-call schema validation, destructive gating, idempotency-key auto-injection (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), version-header injection (`Stripe-Version: 2026-02-25.clover`), and call-log redaction (`arg_keys` only, never values) all happen inside the dispatcher.
 
 **Source-kind support today.**
 
@@ -130,7 +134,7 @@ docmancer uninstall stripe@2026-02-25.clover
 
 | Command | What it does |
 |---------|--------------|
-| `docmancer install-pack <pkg>@<ver>` | Install a version-pinned API MCP pack from `~/.docmancer/registry/` |
+| `docmancer install-pack <pkg>@<ver>` | Install a version-pinned API MCP pack from local cache, hosted registry, or known-source fallback |
 | `docmancer install-pack <pkg>@<ver> --allow-destructive` | Same, with the destructive-call gate open |
 | `docmancer install-pack <pkg>@<ver> --expanded` | Activate the full tool surface, not the curated subset |
 | `docmancer install-pack <pkg>@<ver> --allow-execute` | Permit `python_import` / shell executors (subprocess execution) |

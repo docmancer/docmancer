@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - Unreleased
+### Added
+
+- **`docmancer.mcp.registry`:** **`default_registry()`** composes **`LocalRegistry`** (under **`~/.docmancer/registry/`** or **`DOCMANCER_REGISTRY_DIR`**), **`HostedRegistry`** (artifact API at **`DOCMANCER_REGISTRY_API_URL`** or **`https://docmancer.dev`** by default), and **`KnownOpenAPIRegistry`** (Stripe pack compiled from public OpenAPI when prebuilt artifacts are missing; override source with **`DOCMANCER_STRIPE_OPENAPI_URL`**).
+- **OpenAPI pack builder:** **`build_openapi_pack`** and helpers emit **`contract.json`**, tool JSON, auth schema, provenance, and **`manifest.json`** with SHA-256 entries for install verification.
+
+### Changed
+
+- **`install-pack`:** **`install_package`** uses the composite resolver instead of filesystem-only **`LocalRegistry`**.
+- **CLI:** **`install-pack`** prints **`Required credentials`** (was env vars) and propagates resolver **`FileNotFoundError`** text unchanged for clearer failures.
+- **README:** documents resolver order (local cache → hosted API → Stripe OpenAPI fallback) and refreshes the example tool slug.
+- **`scripts/live_cli_integration.sh`:** resolves temp **`HOME`** with **`pwd -P`**; network runs exercise the zero-config resolver (no **`DOCMANCER_REGISTRY_DIR`**); **`DOCMANCER_SKIP_NETWORK=1`** still seeds a local Stripe fixture; Stripe walkthrough search/assertions tolerate schema-driven path arg names.
+
+### Tests
+
+- **`test_mcp_registry_fallback`:** hosted vs local chain, Stripe **`build_openapi_pack`** smoke, and **`default_registry()`** integration.
+
 ## [0.4.7] - 2026-04-28
 ### Added
 

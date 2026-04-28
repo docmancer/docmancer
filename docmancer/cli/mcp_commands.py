@@ -97,13 +97,13 @@ def install_pack_cmd(spec: str, expanded: bool, allow_destructive: bool, allow_e
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except FileNotFoundError as exc:
-        raise click.ClickException(f"Registry missing required artifact: {exc}") from exc
+        raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Installed {package}@{version} to {result.package.directory}")
     mode = "expanded" if expanded else "curated"
     click.echo(f"Active tool surface: {result.curated_count} (mode={mode}; full={result.full_count})")
     if result.auth_envs:
-        click.echo(f"Required env vars: {', '.join(result.auth_envs)}")
+        click.echo(f"Required credentials: {', '.join(result.auth_envs)}")
     if result.required_headers:
         for k, v in result.required_headers.items():
             click.echo(f"Wire-pinned header: {k}: {v}")

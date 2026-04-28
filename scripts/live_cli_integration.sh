@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Command to run a quick smoke test: DOCMANCER_RUN_FETCH_STEP=0 DOCMANCER_RUN_GITHUB_BLOB=0 DOCMANCER_LIVE_MAX_PAGES=1 scripts/live_cli_integration.sh
+
 # Mirror all stdout/stderr to a log file while keeping the console. Default path is
 # scripts/live_cli_integration_YYYYMMDD_HHMMSS.log. Override with DOCMANCER_LIVE_LOG_FILE.
 # Set DOCMANCER_LIVE_NO_LOG=1 to skip the log file (terminal only).
@@ -45,6 +48,7 @@ if [[ ! -x "$VENV_PYTHON" ]]; then
 fi
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/docmancer-live-cli.XXXXXX")"
+TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 TMP_HOME="$TMP_ROOT/home"
 PROJECT_DIR="$TMP_ROOT/project"
 FETCH_DIR="$TMP_ROOT/fetched-docs"
@@ -67,7 +71,6 @@ export HOME="$TMP_HOME"
 export XDG_CONFIG_HOME="$TMP_HOME/.config"
 export XDG_DATA_HOME="$TMP_HOME/.local/share"
 export DOCMANCER_HOME="$TMP_HOME/.docmancer"
-export DOCMANCER_REGISTRY_DIR="$LOCAL_REGISTRY_DIR"
 
 print_banner() {
   echo
@@ -453,7 +456,7 @@ echo "Using venv python: $VENV_PYTHON"
 echo "Temporary HOME: $HOME"
 echo "Temporary project: $PROJECT_DIR"
 echo "Docmancer home: $DOCMANCER_HOME"
-echo "Local registry fixture: $DOCMANCER_REGISTRY_DIR"
+echo "Local registry fixture: $LOCAL_REGISTRY_DIR"
 echo "Log file: ${LOG_FILE:-disabled (DOCMANCER_LIVE_NO_LOG=1)}"
 
 print_banner "Run configuration"
@@ -474,7 +477,11 @@ print_info "Bench rlm backend: $RUN_BENCH_RLM"
 print_info "Skip all network work: $SKIP_NETWORK"
 print_info "Keep temporary files: $KEEP_TMP"
 print_info "Require editable reinstall: $REQUIRE_REFRESH"
-print_info "Local MCP pack registry fixture is enabled through DOCMANCER_REGISTRY_DIR."
+if [[ "$SKIP_NETWORK" == "1" ]]; then
+  print_info "MCP pack install uses a local registry fixture because DOCMANCER_SKIP_NETWORK=1."
+else
+  print_info "MCP pack install uses the zero-config resolver: local cache, hosted registry, then Stripe OpenAPI fallback."
+fi
 print_info "Legacy eval/dataset stubs should point at docmancer bench."
 
 cd "$ROOT_DIR"
@@ -566,8 +573,15 @@ print(f"docmancer MCP server registered in {found} agent config(s).")
 PY
 
 print_banner "Stripe walkthrough Step 1: install the Stripe pack"
-print_info "Building a fake Stripe registry pack pinned at the real published version 2026-02-25.clover."
-create_fake_mcp_registry "$LOCAL_REGISTRY_DIR"
+if [[ "$SKIP_NETWORK" == "1" ]]; then
+  print_info "Building a fake Stripe registry pack pinned at the real published version 2026-02-25.clover."
+  create_fake_mcp_registry "$LOCAL_REGISTRY_DIR"
+  export DOCMANCER_REGISTRY_DIR="$LOCAL_REGISTRY_DIR"
+else
+  print_info "Installing Stripe through the zero-config resolver. No registry env vars are set for users."
+  unset DOCMANCER_REGISTRY_DIR
+  unset DOCMANCER_REGISTRY_API_URL
+fi
 export STRIPE_API_KEY="sk_test_docmancer_live_fixture"
 run "${CLI_CMD[@]}" mcp list
 run "${CLI_CMD[@]}" install-pack stripe@2026-02-25.clover
@@ -607,11 +621,12 @@ tools = dispatcher.list_tools()
 assert [t["name"] for t in tools] == ["docmancer_search_tools", "docmancer_call_tool"], tools
 print(f"Step 3b: tools/list returned {len(tools)} meta-tool(s) (Tool Search pattern, D10).")
 
-matches = dispatcher.search_tools(query="list recent payments", package="stripe", limit=3)["matches"]
-assert matches and matches[0]["name"] == "stripe__2026_02_25_clover__payment_intents_list", matches
-print(f"Step 3c: search top match = {matches[0]['name']} (slug format D15 verified).")
+matches = dispatcher.search_tools(query="payment intents list", package="stripe", limit=20)["matches"]
+match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_list"), None)
+assert match, matches
+print(f"Step 3c: search selected match = {match['name']} (slug format D15 verified).")
 
-result = dispatcher.call_tool(matches[0]["name"], {"limit": 3})
+result = dispatcher.call_tool(match["name"], {"limit": 3})
 assert result.ok, result.body
 req = captured[-1]
 assert req["method"] == "GET", req
@@ -630,12 +645,13 @@ from docmancer.mcp.dispatcher import Dispatcher
 from docmancer.mcp.manifest import Manifest
 
 dispatcher = Dispatcher(Manifest.load())
-matches = dispatcher.search_tools(query="create payment intent", package="stripe", limit=3)["matches"]
-assert any(m["name"].endswith("payment_intents_create") for m in matches), matches
-print(f"Step 4a: search top match for create = {matches[0]['name']}")
+matches = dispatcher.search_tools(query="payment intents create amount currency", package="stripe", limit=20)["matches"]
+match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_create"), None)
+assert match, matches
+print(f"Step 4a: search selected match for create = {match['name']}")
 
 blocked = dispatcher.call_tool(
-    "stripe__2026_02_25_clover__payment_intents_create",
+    match["name"],
     {"amount": 2500, "currency": "usd"},
 )
 assert not blocked.ok and blocked.error_code == "destructive_call_blocked", blocked.body
@@ -727,9 +743,14 @@ client = httpx.Client(transport=httpx.MockTransport(handler))
 disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
 
 dispatcher = Dispatcher(Manifest.load())
+matches = dispatcher.search_tools("retrieve payment intent", package="stripe", limit=5)["matches"]
+match = next((m for m in matches if m["name"] == "stripe__2026_02_25_clover__payment_intents_retrieve"), matches[0])
+assert match["name"] == "stripe__2026_02_25_clover__payment_intents_retrieve", matches
+props = match.get("inputSchema", {}).get("properties", {})
+path_arg = "id" if "id" in props else "intent"
 result = dispatcher.call_tool(
-    "stripe__2026_02_25_clover__payment_intents_retrieve",
-    {"id": "pi_demo_created"},
+    match["name"],
+    {path_arg: "pi_demo_created"},
 )
 assert result.ok, result.body
 req = captured[-1]
