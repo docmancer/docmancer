@@ -275,6 +275,33 @@ def test_display_path_shortens_home_and_cwd(tmp_path):
         assert display_path(project_dir / "docmancer.yaml") == "./docmancer.yaml"
 
 
+def test_query_without_config_flag_falls_back_to_default():
+    fake_config = MagicMock()
+    fake_config.query.default_budget = 1200
+    fake_agent = MagicMock()
+    fake_agent.query.return_value = [
+        MagicMock(
+            text="result",
+            score=1.0,
+            source="doc.md",
+            metadata={
+                "title": "Install",
+                "token_estimate": 10,
+                "docmancer_tokens": 100,
+                "raw_tokens": 500,
+                "savings_percent": 80.0,
+                "runway_multiplier": 5.0,
+            },
+        )
+    ]
+    with patch("docmancer.cli.commands._load_config", return_value=fake_config) as mock_load_config, \
+         patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
+        result = CliRunner().invoke(cli, ["query", "how to install uv"])
+
+    assert result.exit_code == 0, result.output
+    mock_load_config.assert_called_once_with(None)
+
+
 def test_doctor_runs():
     fake_config = MagicMock()
     fake_config.index.db_path = "/tmp/docmancer.db"
