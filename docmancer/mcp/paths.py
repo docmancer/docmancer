@@ -36,6 +36,14 @@ def servers_dir() -> Path:
     return docmancer_home() / "servers"
 
 
+def registry_dir() -> Path:
+    """Default local registry root: `$DOCMANCER_REGISTRY_DIR` or `~/.docmancer/registry`."""
+    override = os.environ.get("DOCMANCER_REGISTRY_DIR")
+    if override:
+        return Path(override).expanduser()
+    return docmancer_home() / "registry"
+
+
 def _validate_pack_component(value: str, *, kind: str) -> str:
     """Reject pack/version components that could escape the storage root.
 
@@ -89,3 +97,4 @@ def secrets_env_file(package: str) -> Path:
 def ensure_dirs() -> None:
     mcp_dir().mkdir(parents=True, exist_ok=True)
     servers_dir().mkdir(parents=True, exist_ok=True)
+    registry_dir().mkdir(parents=True, exist_ok=True)

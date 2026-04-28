@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7]
+### Added
+
+- **Default local pack registry:** **`~/.docmancer/registry/`** is created via **`ensure_dirs()`** and used when **`DOCMANCER_REGISTRY_DIR`** is unset. New **`paths.registry_dir()`** centralizes resolution (override still wins).
+
+### Changed
+
+- **`LocalRegistry`:** resolves packs from the default registry directory instead of requiring **`DOCMANCER_REGISTRY_DIR`** or an explicit client root; missing pack directories and missing artifacts raise clearer **`FileNotFoundError`** messages (expected **`{package}@{version}/`** layout and pointer to the pipeline repo).
+- **README:** refreshed positioning for docs RAG vs API MCP packs, quickstart, and API MCP walkthrough aligned with the default registry path.
+- **Wiki:** **`Configuration.md`** documents default **`~/.docmancer/registry/`** for **`install-pack`**; **`Troubleshooting.md`** removes the duplicated bench-specific FAQ (bench install paths remain in README, prior releases, and **`docmancer bench --help`**).
+
 ## [0.4.6] - 2026-04-27
 ### Added
 

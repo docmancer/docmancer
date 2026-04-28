@@ -4,23 +4,22 @@
 
 <h1>docmancer</h1>
 
-**Compress documentation context so coding agents spend tokens on code, not docs.**
+**Local docs context for coding agents, plus version-pinned API tool surfaces.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 
-[Get Started](#quickstart) | [What It Does](#what-it-does) | [Supported Agents](#supported-agents) | [Docs](https://www.docmancer.dev)
+[Quickstart](#quickstart) | [API MCP packs](#api-mcp-packs) | [Commands](#commands) | [Supported Agents](#supported-agents) | [Docs](https://www.docmancer.dev)
 
 </div>
 
 ---
 
-Docmancer fetches documentation, normalizes it into inspectable sections, indexes those sections with **SQLite FTS5**, and returns compact context packs with source attribution. The goal is agentic runway: your agent should burn tokens on implementation, tests, and debugging, not on rereading entire documentation sites.
+Docmancer is an MIT-licensed CLI on PyPI with two local surfaces:
 
-**Product shape:** an MIT-licensed CLI on PyPI. You point it at a docs URL or local path with `add`, it indexes sections into a local SQLite database, and your coding agent calls `docmancer query` through an installed skill. There is no hosted query API, no servers, and no API keys on the core path.
-
-In a typical agentic coding session, raw docs pages can consume a sizable chunk of the context window. Docmancer's context packs are usually a small fraction of the original page weight (each `query` reports the actual savings on that call), so the agent stays sharp longer and produces more output per session.
+- **Docs RAG.** Fetch documentation with `add`, normalize it into sections, index with **SQLite FTS5**, and return compact context packs with source attribution on `query`. No vector DB, no embedding downloads, no remote query API.
+- **API MCP packs.** Install version-pinned MCP packs compiled from public OpenAPI / GraphQL / TypeDoc / Sphinx sources, then expose them to your agent through one shared `mcp serve` process. Two meta-tools regardless of how many packs you install (Tool Search). Auth, destructive-call gating, idempotency-key reuse, and version pinning all run inside the local dispatcher.
 
 <div align="center">
 
@@ -34,46 +33,37 @@ In a typical agentic coding session, raw docs pages can consume a sizable chunk 
 
 ```bash
 pipx install docmancer    # Python 3.11, 3.12, or 3.13
+docmancer setup           # config + DB + agent skills + MCP server registration
+```
 
-docmancer setup
+`setup` creates `~/.docmancer/`, writes the config, initializes the SQLite database, installs detected agent skills, and registers `docmancer mcp serve` into each agent's MCP config. Use `setup --all` for non-interactive installation across every supported agent. If `pipx` picks an unsupported interpreter, pin one explicitly: `pipx install docmancer --python python3.13`.
+
+**Docs RAG flow:**
+
+```bash
 docmancer add https://docs.pytest.org
 docmancer query "How do I use fixtures?"
 ```
 
-`setup` creates `~/.docmancer/docmancer.yaml`, initializes `~/.docmancer/docmancer.db`, and installs detected agent skills. Use `setup --all` for non-interactive installation across all supported agents. If `pipx` picks an unsupported interpreter, pin one explicitly: `pipx install docmancer --python python3.13`.
+**API MCP pack flow** (see [API MCP packs](#api-mcp-packs) for the full walkthrough):
 
----
+```bash
+docmancer install-pack stripe@2026-02-25.clover
+export STRIPE_API_KEY=sk_test_...
+docmancer mcp doctor
+```
 
-## What It Does
-
-Two complementary surfaces, both running entirely on your machine:
-
-**Docs RAG (the original):** fetch documentation, index normalized sections with SQLite FTS5, return compact context packs with source attribution. Your agent burns tokens on implementation, not on rereading docs.
-
-**API MCP packs (runtime support landing):** install version-pinned MCP packs compiled from public OpenAPI, GraphQL, TypeDoc, and Sphinx sources, then expose them to your agent through one shared `docmancer mcp serve` process. Today's runtime is uneven by source kind:
-
-- **OpenAPI 3.0 / 3.1:** live wire calls via the `http` executor. Auth is gated, destructive calls are gated behind explicit opt-in, idempotency keys are auto-injected and reused on retry, version pins are enforced on the wire (e.g. `Stripe-Version: 2026-02-25.clover`).
-- **GraphQL:** the pipeline compiles introspection JSON into operations; a dedicated GraphQL executor is not yet wired in the runtime, so calls return documentation only.
-- **TypeDoc / Sphinx:** documentation-only (`noop_doc` executor); calls return the documented signature and snippet, not a live invocation.
-
-The Tool Search pattern (two meta-tools regardless of how many packs you install) and SHA-256 artifact verification apply to every pack regardless of source kind.
-
-- Fetch docs from URLs, GitHub repos, or local paths and index them locally with SQLite FTS5.
-- No vector database, no embedding model downloads, and no external API calls on the docs-RAG core path.
-- Stores normalized sections in SQLite and writes extracted markdown/json files under `.docmancer/extracted/` for inspection.
-- Supports GitBook, Mintlify, generic web crawl, GitHub markdown, local directories, and plain text/markdown files.
-- Returns compact context packs with estimated token savings and source attribution.
-- Installs MCP packs from a local registry directory (`DOCMANCER_REGISTRY_DIR`) today; the hosted Supabase registry client is implemented in pipeline + registry-api but not yet wired into the CLI install path.
+Agents call docs RAG through installed skills and API packs through the auto-registered MCP server. All agents on the same machine share one local SQLite index and one MCP manifest.
 
 ---
 
 ## API MCP packs
 
-The runtime is wired end-to-end and ships in the PyPI build, but the hosted pack registry that would make `install-pack <pkg>@<ver>` work out of the box is not yet wired into the CLI. Today you point `install-pack` at a local registry directory built by the `pipeline/` repo:
+Runtime support ships in the PyPI build. The hosted pack registry is not yet wired into the CLI; today `install-pack` reads from `~/.docmancer/registry/` (override with `DOCMANCER_REGISTRY_DIR`). Build a pack with the `pipeline/` repo and drop its artifacts under `~/.docmancer/registry/<package>@<version>/`, then:
 
 ```bash
-# Build a pack locally (requires the pipeline checkout) and point the CLI at it.
-export DOCMANCER_REGISTRY_DIR=/path/to/local-registry
+# 1. Install. Output reports tool-surface size, required env vars, wire-pinned
+#    headers, and how many destructive endpoints the pack exposes.
 docmancer install-pack stripe@2026-02-25.clover
 # Active tool surface: 8 (mode=curated; full=8)
 # Required env vars: STRIPE_API_KEY
@@ -81,90 +71,108 @@ docmancer install-pack stripe@2026-02-25.clover
 # Destructive endpoints: 2 (gated)
 # To enable: docmancer install-pack stripe@2026-02-25.clover --allow-destructive
 
+# 2. Supply credentials. Process env is the second source in the four-source
+#    resolution order (per-call override > env > agent-config env > secrets file).
 export STRIPE_API_KEY=sk_test_...
-docmancer mcp doctor    # verify SHA-256 of every artifact + credential resolution
-docmancer mcp list      # inspect installed packs and per-pack state
+
+# 3. Verify. Doctor checks SHA-256 per artifact, credential resolution, and
+#    agent-config registration.
+docmancer mcp doctor
+
+# 4. Inspect. List shows mode, tool counts, and destructive gate state.
+docmancer mcp list
+# stripe@2026-02-25.clover  [enabled] mode=curated curated=8 full=8 destructive=block
+
+# 5. Toggle without reinstalling.
+docmancer mcp disable stripe --version 2026-02-25.clover
+docmancer mcp enable  stripe --version 2026-02-25.clover
+
+# 6. Opt in to destructive calls. The dispatcher refuses POST/PUT/PATCH/DELETE
+#    by default and the error message names this exact reinstall command.
+docmancer install-pack stripe@2026-02-25.clover --allow-destructive
+
+# 7. Use the full surface (every operation, not just the curated subset).
+docmancer install-pack stripe@2026-02-25.clover --expanded
+
+# 8. Uninstall.
+docmancer uninstall stripe@2026-02-25.clover
 ```
 
-Inside your agent (Claude Code, Cursor, Claude Desktop, etc.), `tools/list` always returns just **two** meta-tools (`docmancer_search_tools`, `docmancer_call_tool`), regardless of how many packs you install. The agent searches across every installed pack, then dispatches the resolved tool. Per-call destructive gating, idempotency-key auto-generation, fingerprint-cache reuse on retry, four-source credential resolution, and SHA-256 artifact verification all run inside the dispatcher. The full end-to-end flow lives in the workspace under `docs/api-mcp/stripe-walkthrough.md` (it is a workspace doc, not a file inside the `docmancer/` repo); the runnable demos under `docs/api-mcp/demo/` exercise it against a mocked Stripe wire.
+**What the agent sees.** `tools/list` returns exactly **two** tools regardless of how many packs you install: `docmancer_search_tools` (token-overlap search across every enabled pack's curated surface, returns the top match's full input schema inlined) and `docmancer_call_tool` (dispatches the resolved tool by its slug, e.g. `stripe__2026_02_25_clover__paymentintentcreate`). Per-call schema validation, destructive gating, idempotency-key auto-injection (UUID4, reused on retry from a 24-hour SQLite fingerprint cache), version-header injection (`Stripe-Version: 2026-02-25.clover`), and call-log redaction (`arg_keys` only, never values) all happen inside the dispatcher.
+
+**Source-kind support today.**
+
+| Source | Compiled by pipeline | Runtime executor |
+|--------|----------------------|------------------|
+| OpenAPI 3.0 / 3.1 | yes | `http` (live wire calls) |
+| GraphQL introspection | yes | `noop_doc` (executor not yet wired) |
+| TypeDoc / Sphinx | yes | `noop_doc` (documentation only) |
 
 ---
 
 ## Commands
 
-| Command                                | What it does                                                     |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| `docmancer setup`                      | Create config/database and install detected agent skills         |
-| `docmancer setup --all`                | Non-interactively install all supported agent integrations       |
-| `docmancer add <url-or-path>`          | Fetch or read documentation and index normalized sections        |
-| `docmancer update`                     | Re-fetch and re-index all existing docs sources                  |
-| `docmancer query <text>`               | Return a compact markdown context pack                           |
-| `docmancer query <text> --format json` | Return the same context pack as JSON                             |
-| `docmancer query <text> --expand`      | Include adjacent sections around matches                         |
-| `docmancer query <text> --expand page` | Include the full matching page, subject to the token budget      |
-| `docmancer list`                       | List indexed docsets or sources                                  |
-| `docmancer inspect`                    | Show SQLite index stats and extract locations                    |
-| `docmancer remove <source>`            | Remove a source or docset root                                   |
-| `docmancer remove --all`               | Remove everything indexed (keeps the config)                     |
-| `docmancer doctor`                     | Check config, SQLite FTS5, index stats, and agent skill installs |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing                 |
-| `docmancer init`                       | Create a project-local `docmancer.yaml`                          |
-| `docmancer install <agent>`            | Manual skill installation for a single agent                     |
-| `docmancer install-pack <pkg>@<ver>`   | Install a version-pinned API MCP pack (`--expanded`, `--allow-destructive`, `--allow-execute`) |
-| `docmancer uninstall <pkg>[@<ver>]`    | Remove an installed pack                                          |
-| `docmancer mcp serve`                  | Stdio MCP server bridging installed packs to your agent           |
-| `docmancer mcp list`                   | Show installed packs, mode, destructive gate state                |
-| `docmancer mcp doctor`                 | Verify pack SHA-256s, credentials, and agent registrations        |
-| `docmancer mcp enable\|disable <pkg>`  | Toggle per-pack visibility without reinstalling                   |
+**Docs RAG**
+
+| Command | What it does |
+|---------|--------------|
+| `docmancer add <url-or-path>` | Fetch or read documentation and index normalized sections |
+| `docmancer update [<url>]` | Re-fetch and re-index existing sources (or one specific source) |
+| `docmancer query "<text>"` | Return a compact markdown context pack within a token budget |
+| `docmancer query "<text>" --format json` | Same context pack as JSON |
+| `docmancer query "<text>" --expand [page]` | Include adjacent sections, or the full matching page |
+| `docmancer list [--all]` | List indexed docsets, or every individual source |
+| `docmancer inspect` | SQLite index stats and extract locations |
+| `docmancer remove <source>` / `--all` | Remove one source (or everything indexed) |
+| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing |
+
+**API MCP packs**
+
+| Command | What it does |
+|---------|--------------|
+| `docmancer install-pack <pkg>@<ver>` | Install a version-pinned API MCP pack from `~/.docmancer/registry/` |
+| `docmancer install-pack <pkg>@<ver> --allow-destructive` | Same, with the destructive-call gate open |
+| `docmancer install-pack <pkg>@<ver> --expanded` | Activate the full tool surface, not the curated subset |
+| `docmancer install-pack <pkg>@<ver> --allow-execute` | Permit `python_import` / shell executors (subprocess execution) |
+| `docmancer uninstall <pkg>[@<ver>]` | Remove an installed pack (all versions if no version given) |
+| `docmancer mcp serve` | Stdio MCP server bridging installed packs to your agent |
+| `docmancer mcp list` | Show installed packs, mode, tool counts, destructive gate state |
+| `docmancer mcp doctor` | Verify pack SHA-256s, credentials, and agent registrations |
+| `docmancer mcp enable\|disable <pkg> [--version <v>]` | Toggle per-pack visibility without reinstalling |
+
+**Setup, install, health**
+
+| Command | What it does |
+|---------|--------------|
+| `docmancer setup [--all]` | Create config/DB, install detected agent skills, register MCP server |
+| `docmancer install <agent>` | Manual skill installation for one agent (also registers MCP server) |
+| `docmancer init` | Create a project-local `docmancer.yaml` for a project-specific index |
+| `docmancer doctor` | Check config, SQLite FTS5, index stats, and agent skill installs |
 
 ---
 
-## Retrieval Shape
+## Retrieval shape
 
-By default, `query` uses a 2400 token budget and returns markdown with a summary like:
+`query` defaults to a 2400-token budget and returns markdown with a per-call savings summary:
 
 ```text
 Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.33x agentic runway)
 ```
 
-The savings are estimates, but the direction is explicit: compress docs overhead so the remaining token budget goes into useful agent work.
+The numbers are estimates; the point is that the docs portion of the context shrinks so the agent has more room for actual work.
 
 ---
 
-## Workflow
+## Project-local config
 
-```bash
-# 1. Add the docs your agent should see
-docmancer add https://docs.pytest.org
-docmancer add ./docs
-
-# 2. Install a skill into your agent
-docmancer install claude-code
-
-# 3. Query from the CLI or from the agent
-docmancer query "How do I use fixtures?"
-```
-
-All agents you install share the same local SQLite index.
-
----
-
-## Keeping Docs Up To Date
-
-Run `docmancer update` to refresh all locally-added sources. Docmancer re-fetches each URL or re-reads each local path and updates the index in place.
-
----
-
-## Project-Local Config
-
-Global config is stored under `~/.docmancer/` by default. To use a project-local index:
+Global config lives under `~/.docmancer/`. For a project-specific index:
 
 ```bash
 docmancer init
 docmancer add ./docs
 ```
 
-The generated `docmancer.yaml` points to `.docmancer/docmancer.db` and `.docmancer/extracted` inside the project. If no project config exists, docmancer falls back to the global config.
+`docmancer init` writes a `docmancer.yaml` pointing at `.docmancer/docmancer.db` and `.docmancer/extracted/` inside the project. Without a project config, docmancer falls back to the global one.
 
 ```yaml
 index:
@@ -174,31 +182,31 @@ index:
 
 ---
 
-## Supported Agents
+## Supported agents
 
-`setup` detects common agent installations. Manual installation remains available:
+`setup` auto-detects installed agents. Manual install for a single target:
 
 ```bash
-docmancer install claude-code
-docmancer install claude-desktop
+docmancer install claude-code      # ~/.claude/skills + MCP server entry
+docmancer install cursor           # ~/.cursor/skills + ~/.cursor/mcp.json
+docmancer install claude-desktop   # zip via Claude Desktop's Skills UI
 docmancer install codex
-docmancer install cursor
 docmancer install cline
 docmancer install gemini
 docmancer install github-copilot
 docmancer install opencode
 ```
 
-Claude Desktop receives a zip package that can be uploaded through Claude Desktop's Skills UI.
+Each agent install drops a skill file under the agent's conventional location and writes an idempotent `docmancer` entry into its MCP config so installed packs are picked up immediately. See the [wiki › Install Targets](./wiki/Install-Targets.md) for the exact paths per agent.
 
 ---
 
-## Optional Extras
+## Optional extras
 
-| Extra                 | Enables                                                           |
-| --------------------- | ----------------------------------------------------------------- |
-| `docmancer[browser]`  | Playwright-backed fetcher for JS-heavy sites                      |
-| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites                      |
+| Extra | Enables |
+|-------|---------|
+| `docmancer[browser]` | Playwright fetcher for JS-heavy sites (used by `add --browser`) |
+| `docmancer[crawl4ai]` | Alternative fetcher for hard-to-scrape sites |
 
 ---
 

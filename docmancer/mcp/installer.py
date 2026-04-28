@@ -42,20 +42,24 @@ class LocalRegistry:
     """
 
     def __init__(self, root: Path | None = None):
-        if root is None:
-            override = os.environ.get("DOCMANCER_REGISTRY_DIR")
-            root = Path(override).expanduser() if override else None
-        if root is None:
-            raise RuntimeError(
-                "No registry configured. Set DOCMANCER_REGISTRY_DIR or pass an explicit "
-                "RegistryClient. The Supabase registry client is not yet wired up in v1."
-            )
-        self._root = root
+        # Default to ~/.docmancer/registry (overridable via DOCMANCER_REGISTRY_DIR);
+        # the hosted Supabase RegistryClient is not yet wired in v1.
+        self._root = root if root is not None else paths.registry_dir()
 
     def fetch(self, package: str, version: str, artifact: str) -> bytes:
-        path = self._root / f"{package}@{version}" / artifact
+        pack_dir = self._root / f"{package}@{version}"
+        path = pack_dir / artifact
         if not path.exists():
-            raise FileNotFoundError(f"{artifact} not found for {package}@{version} in {self._root}")
+            if not pack_dir.exists():
+                raise FileNotFoundError(
+                    f"Pack {package}@{version} not found in registry {self._root}. "
+                    f"Build it from the pipeline repo and place its artifacts at "
+                    f"{pack_dir}/, or set DOCMANCER_REGISTRY_DIR to point at a registry "
+                    f"that already contains it."
+                )
+            raise FileNotFoundError(
+                f"{artifact} not found for {package}@{version} in {self._root}"
+            )
         return path.read_bytes()
 
     def expected_sha256(self, package: str, version: str, artifact: str) -> str | None:

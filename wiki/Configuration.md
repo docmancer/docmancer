@@ -42,7 +42,7 @@ The MCP runtime (see [Architecture › MCP runtime](./Architecture.md#mcp-runtim
 | `~/.docmancer/servers/<package>@<version>/` | Pack artifacts (`contract.json`, `tools.curated.json`, `tools.full.json`, `auth.schema.json`, `provenance.json`, `manifest.json` with SHA-256s) |
 | `~/.docmancer/secrets/<package>.env` | Per-package env file (4th in the credential resolution order; OS keychain stubbed for v1.1) |
 
-Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Override the registry source for `install-pack` with `DOCMANCER_REGISTRY_DIR` (defaults to the bundled remote registry).
+Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Override the registry source for `install-pack` with `DOCMANCER_REGISTRY_DIR` (defaults to `~/.docmancer/registry/`; the hosted Supabase registry client is not yet wired into the CLI).
 
 Credentials are resolved per call by the four-source order, first hit wins: per-call `args._docmancer_auth.<scheme>` override → process env (`STRIPE_API_KEY`, etc.) → agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`) → user-managed env file under `~/.docmancer/secrets/`.
 
@@ -54,7 +54,7 @@ Credentials are resolved per call by the four-source order, first hit wins: per-
 | `DOCMANCER_QUERY_*` | Override any `query.*` field |
 | `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
 | `DOCMANCER_HOME` | Override the storage root (defaults to `~/.docmancer`) |
-| `DOCMANCER_REGISTRY_DIR` | Override the registry directory used by `install-pack` |
+| `DOCMANCER_REGISTRY_DIR` | Override the registry directory used by `install-pack` (defaults to `~/.docmancer/registry/`) |
 
 ## Example `docmancer.yaml`
 
