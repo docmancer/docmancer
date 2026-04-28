@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any
 
 import click
+import httpx
 
 from docmancer.mcp import agent_config, doctor, installer, paths
 from docmancer.mcp.installer import install_package, set_enabled, uninstall_package
 from docmancer.mcp.manifest import Manifest
+from docmancer.mcp.registry import UnsupportedSpecError, compile_pack_from_url
 
 
 @click.group(name="mcp", help="Manage the local Docmancer MCP server and installed packs.")
@@ -81,13 +84,25 @@ def mcp_disable_cmd(package: str, version: str | None) -> None:
     click.echo(f"Disabled {n} package(s).")
 
 
+@mcp_group.command("remove", help="Remove an installed pack: `docmancer mcp remove <package>[@<version>]`.")
+@click.argument("spec")
+def mcp_remove_cmd(spec: str) -> None:
+    package, version = _parse_pack_spec(spec, require_version=False)
+    n = uninstall_package(package, version)
+    target = f"{package}@{version}" if version else package
+    click.echo(f"Removed {n} package entry/entries for {target}.")
+
+
 @click.command("install-pack", help="Install an API pack: `docmancer install-pack <package>@<version>`.")
 @click.argument("spec")
 @click.option("--expanded", is_flag=True, default=False, help="Activate the full tool surface (not the curated subset).")
 @click.option("--allow-destructive", is_flag=True, default=False, help="Permit destructive calls for this pack.")
 @click.option("--allow-execute", is_flag=True, default=False, help="Permit executor types like python_import (subprocess execution).")
-def install_pack_cmd(spec: str, expanded: bool, allow_destructive: bool, allow_execute: bool) -> None:
+@click.option("--from-url", "from_url", default=None, help="OpenAPI 3.x / Swagger 2.0 spec URL. Compiles the pack locally and skips the prompt on miss.")
+def install_pack_cmd(spec: str, expanded: bool, allow_destructive: bool, allow_execute: bool, from_url: str | None) -> None:
     package, version = _parse_pack_spec(spec, require_version=True)
+    if from_url:
+        _compile_from_url_or_die(package, version, from_url)
     try:
         result = install_package(
             package, version,
@@ -97,7 +112,18 @@ def install_pack_cmd(spec: str, expanded: bool, allow_destructive: bool, allow_e
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except FileNotFoundError as exc:
-        raise click.ClickException(str(exc)) from exc
+        url = _prompt_for_spec_url(package, version, str(exc))
+        if url is None:
+            raise click.ClickException(str(exc)) from exc
+        _compile_from_url_or_die(package, version, url)
+        try:
+            result = install_package(
+                package, version,
+                expanded=expanded, allow_destructive=allow_destructive,
+                allow_execute=allow_execute,
+            )
+        except (RuntimeError, FileNotFoundError) as inner:
+            raise click.ClickException(str(inner)) from inner
 
     click.echo(f"Installed {package}@{version} to {result.package.directory}")
     mode = "expanded" if expanded else "curated"
@@ -140,6 +166,36 @@ def _parse_pack_spec(spec: str, *, require_version: bool) -> tuple[str, str | No
             )
         return package, None
     return package, version
+
+
+def _prompt_for_spec_url(package: str, version: str, miss_message: str) -> str | None:
+    """Show the resolver miss, then prompt for a user-supplied OpenAPI spec URL.
+    Returns the URL, or None when stdin is not a TTY (non-interactive caller should
+    fall through to the original error).
+    """
+    if not sys.stdin.isatty():
+        return None
+    click.echo(click.style(f"Notice: {miss_message}", fg="yellow"))
+    click.echo(
+        f"\nDocmancer can compile {package}@{version} locally if you point it at a public "
+        "OpenAPI 3.x or Swagger 2.0 spec URL."
+    )
+    try:
+        url = click.prompt("OpenAPI spec URL (leave blank to abort)", default="", show_default=False)
+    except click.Abort:
+        return None
+    url = (url or "").strip()
+    return url or None
+
+
+def _compile_from_url_or_die(package: str, version: str, url: str) -> None:
+    try:
+        pkg_dir = compile_pack_from_url(package, version, url)
+    except UnsupportedSpecError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"Could not fetch {url}: {exc}") from exc
+    click.echo(f"Compiled {package}@{version} from {url} into {pkg_dir}")
 
 
 def register_docmancer_mcp_in_agent(agent_name: str) -> str | None:

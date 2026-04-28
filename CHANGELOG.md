@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **Open-Meteo built-in pack:** **`KnownOpenAPIRegistry`** can compile **`open-meteo@v1`** from the upstream OpenAPI **YAML** (override URL with **`DOCMANCER_OPEN_METEO_OPENAPI_URL`**). Injects **`servers`**, a stable **`operationId`** for **`/v1/forecast`**, and a no-auth contract so **`install-pack`** demos work without credentials.
 - **Root `SKILL.md`:** MCP Tool Search workflow (search → validate safety → call → idempotency retry) aligned with installed packs.
+- **`docmancer mcp remove`:** remove installed pack entries via **`docmancer mcp remove <package>[@<version>]`** (same uninstall plumbing as **`docmancer uninstall`**).
+- **`docmancer install-pack --from-url`:** compile **`package@version`** from a public OpenAPI **3.x** or Swagger **2.0** spec URL into the local registry cache.
+- **`compile_pack_from_url`** and **`UnsupportedSpecError`** (**`docmancer.mcp.registry`**): fetch a spec URL, validate shape, and emit pack artifacts.
 
 ### Changed
 
@@ -16,12 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **README:** hero uses **`readme-assets/api-mcp.gif`**; quickstart and API MCP walkthrough use **Open-Meteo**; **Commands** defers to **[wiki › Commands](./wiki/Commands.md)**; **What the agent sees** example slug and dispatcher wording updated.
 - **Templates / wiki:** examples and copy use **`open-meteo@v1`** instead of Stripe where a keyless demo is intended.
 - **`install-pack` usage errors:** examples cite **`open-meteo@v1`**.
+- **`install-pack`:** on resolver miss, interactive TTY sessions prompt for an OpenAPI/Swagger URL, compile into **`~/.docmancer/registry/`**, then retry; non-TTY callers see the original error unless **`--from-url`** is passed.
 - **`scripts/live_cli_integration.sh`** / **`scripts/mcp_stdio_smoke.py`:** integration and smoke paths follow Open-Meteo fixtures and neutral docs defaults (e.g. pytest docs / README).
 - **Comments:** credential resolver docstring uses a neutral env example; idempotency TTL comment is vendor-agnostic.
+- **Wiki:** **`Commands.md`** documents **`--from-url`**; **`Troubleshooting.md`** covers resolver-miss message, interactive prompt, and **`--from-url`** for CI.
 
 ### Tests
 
 - MCP and agent tests updated for Open-Meteo slugs, contracts, and registry fallback behavior.
+- **`scripts/live_cli_integration.sh`:** **`mcp remove`** help surface and post-reinstall removal flow.
 
 ## [0.4.8] - 2026-04-28
 ### Added

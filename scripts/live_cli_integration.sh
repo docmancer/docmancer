@@ -441,7 +441,7 @@ run "${CLI_CMD[@]}" --help
 for command in setup add update query list inspect remove doctor init install fetch ingest mcp install-pack uninstall bench dataset eval; do
   run "${CLI_CMD[@]}" "$command" --help
 done
-for command in serve doctor list enable disable; do
+for command in serve doctor list enable disable remove; do
   run "${CLI_CMD[@]}" mcp "$command" --help
 done
 for command in init run compare report list dataset; do
@@ -590,13 +590,19 @@ assert not invalid.ok and invalid.error_code == "invalid_args", invalid.body
 print("Schema validation: invalid_args rejected (2.8.5).")
 PY
 
-print_banner "MCP enable / disable toggles + uninstall"
+print_banner "MCP enable / disable toggles + uninstall + mcp remove"
 print_info "Verifying mcp enable / disable still flip per-package state without reinstalling, then cleanly uninstall."
 run "${CLI_CMD[@]}" mcp disable open-meteo --version v1
 run "${CLI_CMD[@]}" mcp list
 run "${CLI_CMD[@]}" mcp enable open-meteo --version v1
 run "${CLI_CMD[@]}" mcp list
 run "${CLI_CMD[@]}" uninstall open-meteo@v1
+run "${CLI_CMD[@]}" mcp list
+
+print_info "Reinstalling open-meteo so we can exercise the new docmancer mcp remove subcommand."
+run "${CLI_CMD[@]}" install-pack open-meteo@v1
+run "${CLI_CMD[@]}" mcp list
+run "${CLI_CMD[@]}" mcp remove open-meteo@v1
 run "${CLI_CMD[@]}" mcp list
 
 print_banner "Doctor and inspect before docs-RAG add"

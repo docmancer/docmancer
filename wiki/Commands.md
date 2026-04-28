@@ -66,6 +66,7 @@ Full reference for every docmancer CLI command. For how these fit into the overa
 | `--expanded` | Use the full tool surface (`tools.full.json`) instead of the curated subset. |
 | `--allow-destructive` | Permit destructive calls (POST/PUT/PATCH/DELETE) for this pack. Off by default; the dispatcher refuses such calls and surfaces the exact reinstall command in the error message. |
 | `--allow-execute` | Permit executor types like `python_import` that run code in a subprocess. Off by default. |
+| `--from-url <url>` | Compile the pack locally from a public OpenAPI 3.x or Swagger 2.0 spec URL. Use this when the package is not in the hosted registry. Without the flag, an interactive shell will prompt for the same URL on a resolver miss. |
 
 ### MCP runtime behavior
 

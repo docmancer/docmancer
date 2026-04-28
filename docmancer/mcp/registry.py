@@ -337,6 +337,63 @@ def open_meteo_overrides() -> dict[str, Any]:
     return {"auth": {"schemes": []}}
 
 
+class UnsupportedSpecError(ValueError):
+    """Raised when a user-supplied URL does not look like an OpenAPI 3.x or Swagger 2.0 spec."""
+
+
+def compile_pack_from_url(
+    package: str,
+    version: str,
+    source_url: str,
+    *,
+    cache_root: Path | None = None,
+    timeout: float = 60.0,
+) -> Path:
+    """Fetch an OpenAPI spec from a user-supplied URL and write a pack into the local
+    registry cache. Raises UnsupportedSpecError if the document is not recognizably
+    OpenAPI 3.x or Swagger 2.0. Returns the directory the artifacts were written to.
+    """
+    cache_root = cache_root if cache_root is not None else paths.registry_dir()
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        response = client.get(source_url)
+        response.raise_for_status()
+    body = response.content
+    try:
+        spec = yaml.safe_load(body) or {}
+    except yaml.YAMLError as exc:
+        raise UnsupportedSpecError(
+            f"{source_url} is not parseable as JSON or YAML: {exc}"
+        ) from exc
+    if not isinstance(spec, dict):
+        raise UnsupportedSpecError(
+            f"{source_url} did not parse to a JSON/YAML object (got {type(spec).__name__})."
+        )
+    openapi = spec.get("openapi")
+    swagger = spec.get("swagger")
+    paths_obj = spec.get("paths")
+    if not (
+        (isinstance(openapi, str) and openapi.startswith("3."))
+        or (isinstance(swagger, str) and swagger.startswith("2."))
+    ) or not isinstance(paths_obj, dict):
+        raise UnsupportedSpecError(
+            f"{source_url} does not look like an OpenAPI 3.x or Swagger 2.0 document "
+            f"(missing top-level `openapi: 3.x` / `swagger: 2.0` plus a `paths` map)."
+        )
+    pkg_dir = cache_root / f"{package}@{version}"
+    source_sha = hashlib.sha256(body).hexdigest()
+    build_openapi_pack(
+        package=package,
+        version=version,
+        spec=spec,
+        output_dir=pkg_dir,
+        source_url=source_url,
+        source_sha256=source_sha,
+        overrides=None,
+        curated_ids=None,
+    )
+    return pkg_dir
+
+
 def emit_tool_artifacts(
     contract: dict[str, Any],
     curation: dict[str, Any],

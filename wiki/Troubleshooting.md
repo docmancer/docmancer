@@ -99,6 +99,18 @@ docmancer install-pack open-meteo@v1
 docmancer install-pack @acme/widgets@1.4.2
 ```
 
+### `Pack <pkg>@<version> is not available locally, from the hosted registry, or from a known OpenAPI fallback`
+
+The resolver tried local cache, the hosted Docmancer artifact API, and the built-in known-source fallback, and none of them had the pack. From an interactive shell, `install-pack` then prompts you for an OpenAPI 3.x or Swagger 2.0 spec URL. Paste the URL of any public spec for the API and Docmancer will compile a pack locally.
+
+For non-interactive use (CI, scripts), pass the URL up front:
+
+```bash
+docmancer install-pack bun@v1 --from-url https://example.com/openapi.yaml
+```
+
+If the URL does not look like an OpenAPI 3.x or Swagger 2.0 document (no top-level `openapi: 3.x` / `swagger: 2.0`, or no `paths` map), the install fails with `<url> does not look like an OpenAPI 3.x or Swagger 2.0 document`.
+
 ### Tool returns `destructive_call_blocked`
 
 The pack was installed without `--allow-destructive`, and the agent tried to call a POST/PUT/PATCH/DELETE operation. The error message names the exact remediation command. Reinstall with the flag, then restart your agent:
