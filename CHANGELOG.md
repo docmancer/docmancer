@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.8] - Unreleased
+## [0.4.8] - 2026-04-28
 ### Added
 
 - **`docmancer.mcp.registry`:** **`default_registry()`** composes **`LocalRegistry`** (under **`~/.docmancer/registry/`** or **`DOCMANCER_REGISTRY_DIR`**), **`HostedRegistry`** (artifact API at **`DOCMANCER_REGISTRY_API_URL`** or **`https://docmancer.dev`** by default), and **`KnownOpenAPIRegistry`** (Stripe pack compiled from public OpenAPI when prebuilt artifacts are missing; override source with **`DOCMANCER_STRIPE_OPENAPI_URL`**).
