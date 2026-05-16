@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import warnings
 from typing import Any
 
 from .base import VectorHit, VectorPoint, VectorStore
@@ -69,22 +68,23 @@ class QdrantStore(VectorStore):
         QdrantClient, qm = _import_qdrant()
         self._qm = qm
         self._QdrantClient = QdrantClient
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*Qdrant client version.*")
-            self._client = QdrantClient(url=self._url, api_key=self._api_key)
+        self._client = QdrantClient(
+            url=self._url,
+            api_key=self._api_key,
+            check_compatibility=False,
+        )
         self._grpc_client: Any = None
 
     # ---------- internal helpers ----------
 
     def _bulk_client(self):
         if self._grpc_client is None:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*Qdrant client version.*")
-                self._grpc_client = self._QdrantClient(
-                    url=self._url,
-                    api_key=self._api_key,
-                    prefer_grpc=True,
-                )
+            self._grpc_client = self._QdrantClient(
+                url=self._url,
+                api_key=self._api_key,
+                prefer_grpc=True,
+                check_compatibility=False,
+            )
         return self._grpc_client
 
     def _build_vectors_config(self, dimensions: int, options: dict):

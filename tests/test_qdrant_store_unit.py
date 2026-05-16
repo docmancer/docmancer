@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import docmancer.stores.qdrant_store as qdrant_store_module
 from docmancer.stores.qdrant_store import QdrantStore
 
 
@@ -63,3 +64,25 @@ def test_collection_metadata_reads_ownership_sentinel_payload():
         "dim": 768,
         "sparse_model": "prithivida/Splade_PP_en_v1",
     }
+
+
+def test_qdrant_clients_disable_compatibility_warning(monkeypatch):
+    class FakeQdrantClient:
+        calls = []
+
+        def __init__(self, **kwargs):
+            self.calls.append(kwargs)
+
+    monkeypatch.setattr(
+        qdrant_store_module,
+        "_import_qdrant",
+        lambda: (FakeQdrantClient, SimpleNamespace()),
+    )
+
+    store = QdrantStore(url="http://localhost:6333", embeddings_dim=4)
+
+    assert FakeQdrantClient.calls[-1]["check_compatibility"] is False
+    store._bulk_client()
+
+    assert FakeQdrantClient.calls[-1]["check_compatibility"] is False
+    assert FakeQdrantClient.calls[-1]["prefer_grpc"] is True
