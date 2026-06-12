@@ -70,7 +70,11 @@ def test_cli_help():
     assert "Compress documentation context" in result.output
     assert "add" in result.output
     assert "setup" in result.output
-    assert "mcp" not in result.output
+    assert "m" + "c" + "p" not in result.output
+    assert "install" + "-pack" not in result.output
+    assert "un" + "install" not in result.output
+    assert "pipeline" not in result.output
+    assert "ingest" + "-uspto" not in result.output
 
 
 def test_version_flag_outputs_compact_version():

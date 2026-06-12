@@ -36,17 +36,6 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 `query` prints estimated raw docs tokens, context-pack tokens, percent saved, and agentic runway. Prefer the compact default first.
 
-## Advanced: API Tools via MCP
-
-Only use the MCP surface if the user is explicitly working with installed API packs. If the user has run `docmancer install-pack <pkg>@<version>`, Claude Desktop can launch `docmancer mcp serve` and expose two meta-tools:
-
-- `docmancer_search_tools(query, package?, limit?)`
-- `docmancer_call_tool(name, args)`
-
-Claude Desktop is GUI-launched, so shell `export` will not propagate. Add credentials to the `env` block under the `docmancer` server in `claude_desktop_config.json`, or write `~/.docmancer/secrets/<package>.env`. Run `docmancer mcp doctor` to verify.
-
-Destructive calls are blocked unless the user installed the pack with `--allow-destructive`.
-
 ## Common Mistakes
 
 - Do not use `docmancer add` for new local files. Use `docmancer ingest <path>`.

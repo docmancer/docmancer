@@ -430,17 +430,6 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
         dest.write_text(marker_block, encoding="utf-8")
 
 
-def _register_mcp_for_agent(agent_name: str) -> None:
-    """Register `docmancer mcp serve` into a known agent's MCP config (best-effort)."""
-    try:
-        from docmancer.cli.mcp_commands import register_docmancer_mcp_in_agent
-    except Exception:
-        return
-    msg = register_docmancer_mcp_in_agent(agent_name)
-    if msg:
-        _emit_status_line(msg, indent=0)
-
-
 def _install_vscode_copilot_settings(dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     settings: dict[str, object] = {}
@@ -799,89 +788,6 @@ def fetch_cmd(url: str, output_dir: str):
         click.echo(f"  Saved {display_path(file_path)}")
 
     click.echo(f"Downloaded {len(documents)} document(s) to {output_dir}/")
-
-
-@click.command(
-    cls=DocmancerCommand,
-    context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Stream-ingest a USPTO trademark XML / ZIP bulk file.",
-    epilog=format_examples(
-        "docmancer ingest-uspto apc18840407-20240102-xx.xml",
-        "docmancer ingest-uspto bulk-trademarks-2024.zip --include-dead",
-        "docmancer ingest-uspto daily.xml.gz --no-vectors --batch-size 5000",
-    ),
-)
-@click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
-@click.option("--recreate", is_flag=True, help="Clear the index before ingesting.")
-@click.option("--include-dead", is_flag=True, help="Index dead/abandoned marks too (default: live only).")
-@click.option("--no-vectors", is_flag=True, help="Skip embedding/vector upsert; index FTS5 only.")
-@click.option("--batch-size", default=1000, type=int, show_default=True, help="Commit batch size for streaming ingest.")
-@click.option("--limit", default=None, type=int, help="Stop after N records (smoke testing).")
-@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def ingest_uspto_cmd(
-    path: str,
-    recreate: bool,
-    include_dead: bool,
-    no_vectors: bool,
-    batch_size: int,
-    limit: int | None,
-    config_path: str | None,
-):
-    """Stream USPTO trademark case-files into the local index.
-
-    Accepts an `.xml`, `.xml.gz`, or `.zip` archive containing the USPTO bulk
-    trademark XML. Each `<case-file>` becomes one Section in SQLite (no
-    heading splitting). Memory stays flat thanks to streaming iterparse and
-    batched SQLite commits.
-    """
-    from docmancer.connectors.fetchers.uspto_tm import (
-        ParseStats,
-        iter_uspto_documents,
-    )
-
-    config_path = _effective_config(config_path)
-    _configure_ingest_logging()
-    config = _load_config(config_path)
-    agent = _get_agent_class()(config=config)
-
-    stats = ParseStats()
-
-    def _records():
-        count = 0
-        for doc in iter_uspto_documents(path, live_only=not include_dead, stats=stats):
-            yield doc
-            count += 1
-            if limit is not None and count >= limit:
-                break
-
-    def _progress(sources: int, sections: int) -> None:
-        click.echo(
-            f"  ... {sources} record(s) ingested ({stats.parsed} parsed, "
-            f"{stats.skipped_dead} skipped dead, {stats.failed} failed)"
-        )
-
-    try:
-        total = agent.ingest_records(
-            _records(),
-            recreate=recreate,
-            batch_size=batch_size,
-            with_vectors=not no_vectors,
-            progress_callback=_progress,
-        )
-    except Exception as exc:
-        click.echo(f"USPTO ingest failed: {type(exc).__name__}: {exc}", err=True)
-        sys.exit(1)
-
-    click.echo()
-    click.echo(f"Parsed:        {stats.parsed}")
-    click.echo(f"Emitted:       {stats.emitted}")
-    click.echo(f"Skipped dead:  {stats.skipped_dead}")
-    click.echo(f"Failed:        {stats.failed}")
-    if stats.failures_by_reason:
-        click.echo("Failure reasons:")
-        for reason, count in sorted(stats.failures_by_reason.items()):
-            click.echo(f"  {reason}: {count}")
-    click.echo(f"Sections indexed: {total}")
 
 
 @click.command(
@@ -1347,7 +1253,7 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
 
     \b
     - ~/.docmancer/ (config, SQLite FTS5 index, extracted docs, embeddings cache,
-      managed Qdrant storage, MCP packs)
+      managed Qdrant storage)
     - ~/.cache/fastembed/ (FastEmbed ONNX model cache)
     - ~/.cache/huggingface/hub/models--Qdrant--* (Qdrant-published models that
       docmancer pulled via the qdrant_client embedding helper)
@@ -1478,16 +1384,13 @@ def list_cmd(show_all: bool, config_path: str | None):
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
-    Teaches the agent to call docmancer CLI commands directly. Also registers
-    the local `docmancer mcp serve` entry into the agent's MCP config so any
-    installed API packs are immediately available.
+    Teaches the agent to call docmancer CLI commands directly.
 
     AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
     codex-app, codex-desktop, gemini, github-copilot, opencode
     """
     config_path = _effective_config(config_path)
     normalized = agent.lower()
-    _register_mcp_for_agent(normalized)
     home = Path.home()
     user_config_exists_before = _get_user_config_path().exists()
     effective_config_path = _resolve_install_config_path(config_path, project)

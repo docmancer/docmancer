@@ -123,7 +123,7 @@ def _sections_for_document(doc: Document) -> list[tuple[str, int, str, dict[str,
         return sections
 
     if strategy == "single":
-        # Atomic-record sources (e.g. USPTO case files): the whole document is one
+        # Atomic-record sources: the whole document is one
         # section. We do not split on headings — heading-aware splitting would
         # otherwise carve each record into two or three sub-sections, which is
         # the wrong shape for "match the mark against every case file".
@@ -259,7 +259,7 @@ class SQLiteStore:
     ) -> IndexResult:
         """Stream-ingest an iterable of documents, committing in batches.
 
-        Use this for atomic-record corpora (USPTO case files, court filings,
+        Use this for atomic-record corpora (court filings,
         product catalogs) where the iterator would yield millions of records
         and ``list(documents)`` would OOM. Commits every ``batch_size`` rows
         so a killed process loses at most one batch.
@@ -877,7 +877,7 @@ class SQLiteStore:
 
         Pulled from ``metadata_json`` because the field is loader-set and
         not promoted to a top-level column. Empty hash means the loader
-        did not record one (USPTO atomic records, etc.) and the section
+        did not record one (atomic records, etc.) and the section
         should not participate in document-level grouping.
         """
         if not section_ids:

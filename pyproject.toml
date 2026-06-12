@@ -22,7 +22,6 @@ dependencies = [
     "ultimate-sitemap-parser>=0.12",
     "beautifulsoup4>=4.12.0",
     "jsonschema>=4.0.0",
-    "mcp>=1.0.0",
     "sqlite-vec>=0.1.0",
     "qdrant-client>=1.10.0",
     "fastembed>=0.4.0",

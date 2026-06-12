@@ -49,15 +49,6 @@ docmancer doctor
 
 Use `ingest` for local files and `add` for URLs. `query` is the primary retrieval command. It returns compact, source-attributed context plus estimated token savings.
 
-## Advanced: API Tools via MCP
-
-Only use the MCP surface if the user is explicitly working with installed API packs. If the user has run `docmancer install-pack <pkg>@<version>`, the agent host can launch `docmancer mcp serve` and expose two meta-tools:
-
-- `docmancer_search_tools(query, package?, limit?)`
-- `docmancer_call_tool(name, args)`
-
-For API tasks, search first, inspect the returned schema and safety block, then call the resolved tool. Destructive calls are blocked unless the pack was installed with `--allow-destructive`. Run `docmancer mcp doctor` when pack credentials need verification.
-
 ## Common Mistakes
 
 - Do not use `docmancer add` for new local files. Use `docmancer ingest <path>`.

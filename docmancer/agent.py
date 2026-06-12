@@ -98,7 +98,7 @@ class DocmancerAgent:
     ) -> int:
         """Stream-ingest an iterable of ``Document`` records.
 
-        Designed for atomic-record sources (USPTO case files, court filings)
+        Designed for atomic-record sources (court filings)
         where the iterator would yield millions of records. The iterable is
         consumed lazily and committed every ``batch_size`` rows.
         """

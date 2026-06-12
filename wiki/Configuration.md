@@ -83,22 +83,6 @@ A fresh install runs hybrid retrieval by default: ingest auto-starts a managed Q
 | `retrieval.budget` | unset | Optional override for `query.default_budget` |
 | `retrieval.limit` | unset | Optional override for `query.default_limit` |
 
-### MCP runtime
-
-The MCP runtime (see [Architecture > MCP runtime](./Architecture.md#mcp-runtime)) does not require entries in `docmancer.yaml`. State is managed through dedicated files under `~/.docmancer/`:
-
-| Path | Role |
-|------|------|
-| `~/.docmancer/mcp/manifest.json` | Installed packs and per-pack state (mode, allow_destructive, allow_execute, enabled) |
-| `~/.docmancer/mcp/calls.jsonl` | Append-only call log; records `arg_keys` only, never values |
-| `~/.docmancer/mcp/idempotency.db` | SQLite fingerprint cache for `Idempotency-Key` reuse on retry (24-hour TTL) |
-| `~/.docmancer/servers/<package>@<version>/` | Pack artifacts (`contract.json`, `tools.curated.json`, `tools.full.json`, `auth.schema.json`, `provenance.json`, `manifest.json` with SHA-256s) |
-| `~/.docmancer/secrets/<package>.env` | Per-package credential fallback used by the MCP runtime |
-
-Override the storage root with `DOCMANCER_HOME` (defaults to `~/.docmancer`). Override the registry source for `install-pack` with `DOCMANCER_REGISTRY_DIR` (defaults to `~/.docmancer/registry/`; the hosted Supabase registry client is not yet wired into the CLI).
-
-Credentials are resolved per call, first hit wins: per-call `args._docmancer_auth.<scheme>` override, process env (`<PACKAGE>_API_KEY`, etc.), agent-config env (the `env: {}` block in `~/.cursor/mcp.json` or `~/.claude/mcp_servers.json`), then the per-package credential fallback under `~/.docmancer/secrets/`. Keyless packs (e.g. `open-meteo`) skip every step and resolve to no auth.
-
 ### Environment variables
 
 | Variable | What it does |
@@ -107,7 +91,6 @@ Credentials are resolved per call, first hit wins: per-call `args._docmancer_aut
 | `DOCMANCER_QUERY_*` | Override any `query.*` field |
 | `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
 | `DOCMANCER_HOME` | Override the storage root (defaults to `~/.docmancer`) |
-| `DOCMANCER_REGISTRY_DIR` | Override the registry directory used by `install-pack` (defaults to `~/.docmancer/registry/`) |
 | `DOCMANCER_VECTOR_STORE_*` | Override any `vector_store.*` field (for example `DOCMANCER_VECTOR_STORE_PROVIDER=sqlite-vec`) |
 | `DOCMANCER_EMBEDDINGS_*` | Override any `embeddings.*` field (for example `DOCMANCER_EMBEDDINGS_MODEL`) |
 | `DOCMANCER_RETRIEVAL_*` | Override any `retrieval.*` field (for example `DOCMANCER_RETRIEVAL_DEFAULT_MODE=hybrid`) |
@@ -236,11 +219,6 @@ embeddings:
 ```
 
 Set `OPENAI_API_KEY` (see [API keys](#api-keys) above).
-
-## Deprecated and removed keys
-
-- **`registry:`** is ignored with a one-time `DeprecationWarning`. It used to configure the hosted registry, which has been removed from the CLI.
-- **`packs:`** is dropped silently. It used to declare registry pack pins for `docmancer pull`; both the key and the command are gone.
 
 ## Notes
 

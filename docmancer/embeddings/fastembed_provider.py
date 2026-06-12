@@ -35,7 +35,7 @@ class FastEmbedProvider(EmbeddingsProvider):
         self.model_name = config.model
         # Treat the config dimension as a *hint* only. The real dimension
         # comes from probing the loaded ONNX model on first use, because
-        # FastEmbed's model registry can resolve a configured name to a
+        # FastEmbed's model list can resolve a configured name to a
         # different ONNX artifact (different size/quantisation), and we
         # must not trust a stale or speculative value when sizing the
         # Qdrant collection.

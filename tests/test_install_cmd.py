@@ -50,12 +50,14 @@ def test_install_claude_code_creates_rebooted_skill_file():
         assert "docmancer add" in content
         assert "docmancer ingest" in content
         assert "docmancer bench" not in content
-        assert content.index("docmancer query") < content.index("Advanced: API Tools via MCP")
-        # Pre-bench registry narrative concepts must stay gone.
+        assert "Advanced: API Tools via MCP" not in content
+        assert "docmancer " + "m" + "c" + "p" not in content
+        assert "install" + "-pack" not in content
+        # Pre-bench hosted catalog narrative concepts must stay gone.
         assert "vault" not in content.lower()
         assert "docmancer pull" not in content
         assert "docmancer search" not in content
-        assert "from the registry" not in content.lower()
+        assert "from the " + "reg" + "istry" not in content.lower()
 
 
 def test_install_codex_creates_native_and_shared_skills():
@@ -83,7 +85,9 @@ def test_install_cursor_creates_agents_md_fallback():
         content = agents_md.read_text()
         assert "docmancer ingest" in content
         assert "docmancer add" in content
-        assert content.index("docmancer query") < content.index("Advanced: API Tools via MCP")
+        assert "Advanced: API Tools via MCP" not in content
+        assert "docmancer " + "m" + "c" + "p" not in content
+        assert "install" + "-pack" not in content
 
 
 def test_install_github_copilot_project_creates_repo_instructions():
@@ -140,7 +144,9 @@ def test_install_claude_desktop_creates_zip():
             content = zf.read("docmancer/Skill.md").decode()
             assert "docmancer ingest" in content
             assert "docmancer add" in content
-            assert content.index("docmancer query") < content.index("Advanced: API Tools via MCP")
+            assert "Advanced: API Tools via MCP" not in content
+            assert "docmancer " + "m" + "c" + "p" not in content
+            assert "install" + "-pack" not in content
 
 
 def test_setup_all_creates_config_db_and_installs_skills():

@@ -65,12 +65,11 @@ The wiki is the authoritative reference for everything else. Pick a page based o
 
 | Page | When to read it |
 |------|-----------------|
-| **[Commands](./wiki/Commands.md)** | Core docs commands and advanced pack commands |
+| **[Commands](./wiki/Commands.md)** | Core docs commands and Qdrant lifecycle commands |
 | **[Configuration](./wiki/Configuration.md)** | All YAML keys, env vars, and the API-key reference |
-| **[Architecture](./wiki/Architecture.md)** | How ingest, retrieval, and MCP runtime actually work |
+| **[Architecture](./wiki/Architecture.md)** | How ingest, retrieval, and Qdrant lifecycle work |
 | **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered |
 | **[Install Targets](./wiki/Install-Targets.md)** | Where each agent's skill file lands |
-| **[MCP Packs](./wiki/MCP-Packs.md)** | Version-pinned API tool packs |
 | **[Troubleshooting](./wiki/Troubleshooting.md)** | Common errors and fixes |
 
 [Wiki home](./wiki/Home.md) | [Changelog](./CHANGELOG.md) | [PyPI](https://pypi.org/project/docmancer/)

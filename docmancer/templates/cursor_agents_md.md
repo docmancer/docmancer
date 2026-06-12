@@ -37,15 +37,6 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 - `docmancer doctor`
 - `docmancer fetch <url> --output <dir>`
 
-## Advanced: API Tools via MCP
-
-Only use the MCP surface if the user is explicitly working with installed API packs. If the user has run `docmancer install-pack <pkg>@<version>`, Cursor can launch `docmancer mcp serve` and expose two meta-tools:
-
-- `docmancer_search_tools(query, package?, limit?)`
-- `docmancer_call_tool(name, args)`
-
-Cursor is GUI-launched. Add credentials to `mcpServers.docmancer.env` in `~/.cursor/mcp.json`, or write `~/.docmancer/secrets/<package>.env`. Run `docmancer mcp doctor` to verify.
-
 ## Common Mistakes
 
 - Do not use `docmancer add` for new local files. Use `docmancer ingest <path>`.

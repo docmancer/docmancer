@@ -3,7 +3,7 @@
 
 Docmancer compresses documentation context so coding agents spend tokens on code, not on rereading raw docs. It ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution.
 
-Executable: `/Users/gaurangtorvekar/Documents/coding/personal/kytona_stuff/devrel/docmancer_stuff/docmancer/.venv/bin/docmancer --config /private/var/folders/fj/87wdckpn2j7fhjysk511vt3m0000gn/T/docmancer-live-cli.8UadQL/project/docmancer.yaml`
+Executable: `/Users/gaurangtorvekar/Documents/coding/personal/kytona_stuff/devrel/docmancer_stuff/docmancer/.venv/bin/docmancer --config /private/var/folders/fj/87wdckpn2j7fhjysk511vt3m0000gn/T/docmancer-live-cli.LtPIkY/project/docmancer.yaml`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 
@@ -29,6 +29,8 @@ docmancer query "how to authenticate" --limit 10
 docmancer query "how to authenticate" --expand
 docmancer query "how to authenticate" --expand page
 docmancer query "how to authenticate" --format json
+docmancer query "how to authenticate" --allow-degraded
+docmancer clear --dry-run
 docmancer list
 docmancer inspect
 docmancer remove <source>
@@ -36,7 +38,7 @@ docmancer doctor
 docmancer fetch <url> --output <dir>
 ```
 
-`query` prints estimated raw docs tokens, context-pack tokens, percent saved, and agentic runway. Prefer the compact default. Use `--expand` for adjacent sections; use `--expand page` only when the surrounding page is necessary.
+`query` prints estimated raw docs tokens, context-pack tokens, percent saved, and agentic runway. Prefer the compact default. Use `--expand` for adjacent sections; use `--expand page` only when the surrounding page is necessary. Use `--allow-degraded` in dense, sparse, or hybrid modes when vector retrieval is down or misconfigured and you still need lexical results.
 
 When documentation context is relevant, do not rely only on model memory or latest-only hosted docs. Query docmancer first, then cite or summarize the relevant local sections in the response.
 <!-- docmancer:end -->

@@ -27,7 +27,7 @@ def build_fetcher(
     delay: float = 0.5,
     workers: int = 8,
 ):
-    """Build the fetcher shared by the CLI and registry pipeline."""
+    """Build the fetcher used by CLI URL ingestion."""
     concrete = detect_fetcher_provider(url, provider)
 
     if concrete == "gitbook":

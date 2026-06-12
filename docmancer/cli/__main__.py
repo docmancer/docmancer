@@ -7,7 +7,6 @@ from docmancer.cli.commands import (
     doctor_cmd,
     fetch_cmd,
     ingest_cmd,
-    ingest_uspto_cmd,
     init_cmd,
     inspect_cmd,
     install_cmd,
@@ -18,11 +17,6 @@ from docmancer.cli.commands import (
     update_cmd,
 )
 from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
-from docmancer.cli.mcp_commands import (
-    install_pack_cmd,
-    mcp_group,
-    uninstall_pack_cmd,
-)
 from docmancer.cli.qdrant_commands import qdrant_group
 
 
@@ -77,10 +71,6 @@ cli.add_command(init_cmd, "init")
 cli.add_command(fetch_cmd, "fetch")
 cli.add_command(install_cmd, "install")
 cli.add_command(ingest_cmd, "ingest")
-cli.add_command(ingest_uspto_cmd, "ingest-uspto")
-cli.add_command(mcp_group, "mcp")
-cli.add_command(install_pack_cmd, "install-pack")
-cli.add_command(uninstall_pack_cmd, "uninstall")
 cli.add_command(qdrant_group, "qdrant")
 
 

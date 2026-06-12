@@ -62,8 +62,8 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 TMP_HOME="$TMP_ROOT/home"
 PROJECT_DIR="$TMP_ROOT/project"
 FETCH_DIR="$TMP_ROOT/fetched-docs"
-LOCAL_REGISTRY_DIR="$TMP_ROOT/local-registry"
 CONFIG_PATH="$PROJECT_DIR/docmancer.yaml"
+FALLBACK_CORPUS_MD_DIR="$TMP_ROOT/stories-md"
 
 cleanup() {
   if [[ -x "$VENV_PYTHON" ]]; then
@@ -139,95 +139,26 @@ capture_first_source() {
     | awk 'NF >= 2 && $0 !~ /^No sources indexed yet\.$/ {print $NF; exit}'
 }
 
-create_fake_mcp_registry() {
-  local registry_dir="$1"
-  "$VENV_PYTHON" - "$registry_dir" <<'PY'
-import json
-import sys
-from pathlib import Path
+create_fallback_markdown_corpus() {
+  mkdir -p "$FALLBACK_CORPUS_MD_DIR"
+  cat >"$FALLBACK_CORPUS_MD_DIR/alice.md" <<'EOF'
+# Alice's Adventures in Wonderland
 
-root = Path(sys.argv[1])
-pack = root / "open-meteo@v1"
-pack.mkdir(parents=True, exist_ok=True)
+Alice was beginning to get very tired of sitting by her sister on the bank.
 
-contract = {
-    "docmancer_contract_version": "1",
-    "package": "open-meteo",
-    "version": "v1",
-    "source": {
-        "kind": "openapi",
-        "url": "https://example.invalid/open-meteo-openapi.yml",
-        "sha256": "fixture",
-        "fetched_at": "2026-04-27T00:00:00Z",
-    },
-    "auth": {"schemes": []},
-    "operations": [
-        {
-            "id": "forecast",
-            "summary": "Current and 7-day weather forecast",
-            "description": "Returns weather variables for a given lat/lon. No API key required.",
-            "executor": "http",
-            "http": {
-                "method": "GET",
-                "path": "/v1/forecast",
-                "base_url": "https://api.open-meteo.com",
-                "encoding": "query_only",
-            },
-            "params": [
-                {"name": "latitude", "in": "query", "type": "number", "required": True},
-                {"name": "longitude", "in": "query", "type": "number", "required": True},
-                {"name": "current_weather", "in": "query", "type": "boolean", "required": False},
-            ],
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "latitude": {"type": "number"},
-                    "longitude": {"type": "number"},
-                    "current_weather": {"type": "boolean"},
-                },
-                "required": ["latitude", "longitude"],
-                "additionalProperties": False,
-            },
-            "safety": {"destructive": False, "requires_auth": False, "idempotent": True},
-            "examples": [{"args": {"latitude": 40.785091, "longitude": -73.968285, "current_weather": True}}],
-        },
-    ],
-    "schemas": {},
-    "curation": {
-        "operation_ids": ["forecast"],
-        "source": "fixture",
-        "generated_at": "2026-04-27T00:00:00Z",
-    },
-}
+## Down the Rabbit-Hole
 
-tools_curated = {
-    "tools": [
-        {
-            "operation_id": "forecast",
-            "description": "Current and 7-day weather forecast for a lat/lon. No API key required.",
-            "executor": "http",
-            "safety": {"destructive": False, "requires_auth": False, "idempotent": True},
-            "inputSchema": contract["operations"][0]["inputSchema"],
-        },
-    ]
-}
+"Curiouser and curiouser!" cried Alice.
+EOF
+  cat >"$FALLBACK_CORPUS_MD_DIR/sherlock.md" <<'EOF'
+# The Hound of the Baskervilles
 
-tools_full = {"tools": tools_curated["tools"]}
+Sherlock Holmes studied the manuscript with unusual care.
 
-auth_schema = {"schemes": []}
-provenance = {"source": "live_cli_integration fixture", "docmancer_version": "local", "sha256": "fixture"}
+## The Baskerville Curse
 
-for name, payload in {
-    "contract.json": contract,
-    "tools.curated.json": tools_curated,
-    "tools.full.json": tools_full,
-    "auth.schema.json": auth_schema,
-    "provenance.json": provenance,
-}.items():
-    (pack / name).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-print(f"Wrote fake MCP registry pack to {pack}")
-PY
+The hound was said to haunt the moor near Baskerville Hall.
+EOF
 }
 
 print_banner "docmancer live CLI integration"
@@ -236,11 +167,9 @@ echo "Using venv python: $VENV_PYTHON"
 echo "Temporary HOME: $HOME"
 echo "Temporary project: $PROJECT_DIR"
 echo "Docmancer home: $DOCMANCER_HOME"
-echo "Local registry fixture: $LOCAL_REGISTRY_DIR"
 echo "Log file: ${LOG_FILE:-disabled (DOCMANCER_LIVE_NO_LOG=1)}"
 
 print_banner "Run configuration"
-print_info "MCP walkthrough: emulates docs/api-mcp/open-meteo-walkthrough.md (Steps 0-3)"
 print_info "Local crawl URL: $DOCS_URL"
 print_info "Local crawl cap: $MAX_PAGES page(s), $FETCH_WORKERS worker(s)"
 print_info "Local crawl provider: $ADD_PROVIDER"
@@ -257,11 +186,6 @@ print_info "Skip all network work: $SKIP_NETWORK"
 print_info "Vector retrieval stack (Qdrant + FastEmbed): $RUN_VECTOR_STACK"
 print_info "Keep temporary files: $KEEP_TMP"
 print_info "Require editable reinstall: $REQUIRE_REFRESH"
-if [[ "$SKIP_NETWORK" == "1" ]]; then
-  print_info "MCP pack install uses a local registry fixture because DOCMANCER_SKIP_NETWORK=1."
-else
-  print_info "MCP pack install uses the zero-config resolver: local cache, hosted registry, then Open-Meteo OpenAPI fallback."
-fi
 
 cd "$ROOT_DIR"
 
@@ -286,16 +210,13 @@ fi
 run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); print('docmancer=', docmancer.__file__)"
 
 print_banner "CLI help surface"
-print_info "Checking top-level help plus local indexing, MCP, pack install, install, and maintenance commands."
+print_info "Checking top-level help plus local indexing, install, maintenance, and Qdrant commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest mcp install-pack uninstall qdrant; do
+for command in setup add update query list inspect remove doctor init install fetch ingest qdrant; do
   run "${CLI_CMD[@]}" "$command" --help
 done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
-done
-for command in serve doctor list enable disable remove; do
-  run "${CLI_CMD[@]}" mcp "$command" --help
 done
 
 print_banner "Initialize isolated config"
@@ -319,162 +240,44 @@ for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini gi
   run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
 done
 
-print_banner "Open-Meteo walkthrough Step 0: prerequisites"
-print_info "Agent install (above) already registered docmancer mcp serve into Claude Code/Cursor/Claude Desktop MCP configs. Verifying entries exist."
-run "$VENV_PYTHON" - <<'PY'
-import json, os, pathlib, sys
-
-home = pathlib.Path(os.environ["HOME"])
-checks = [
-    home / ".claude" / "mcp_servers.json",
-    home / ".cursor" / "mcp.json",
-    home / "Library/Application Support/Claude/claude_desktop_config.json",
-]
-found = 0
-for path in checks:
-    if not path.exists():
-        continue
-    data = json.loads(path.read_text())
-    servers = data.get("mcpServers", {})
-    if "docmancer" in servers:
-        entry = servers["docmancer"]
-        print(f"[ok] {path}: docmancer -> {entry.get('command')} {' '.join(entry.get('args', []))}")
-        found += 1
-    else:
-        print(f"[!!] {path} present but has no docmancer entry: {list(servers)}")
-if found == 0:
-    print("[!!] no agent MCP config registered docmancer; install step did not wire anything")
-    sys.exit(1)
-print(f"docmancer MCP server registered in {found} agent config(s).")
-PY
-
-print_banner "Open-Meteo walkthrough Step 1: install the Open-Meteo pack"
-if [[ "$SKIP_NETWORK" == "1" ]]; then
-  print_info "Building a fake Open-Meteo registry pack pinned at v1."
-  create_fake_mcp_registry "$LOCAL_REGISTRY_DIR"
-  export DOCMANCER_REGISTRY_DIR="$LOCAL_REGISTRY_DIR"
-else
-  print_info "Installing Open-Meteo through the zero-config resolver. No registry env vars are set for users."
-  unset DOCMANCER_REGISTRY_DIR
-  unset DOCMANCER_REGISTRY_API_URL
-fi
-run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" install-pack open-meteo@v1
-run "${CLI_CMD[@]}" mcp list
-
-print_banner "Open-Meteo walkthrough Step 2: doctor (no credentials required)"
-print_info "Open-Meteo is keyless. mcp doctor should pass with no FAIL and skip credential resolution entirely."
-run "${CLI_CMD[@]}" mcp doctor
-
-print_banner "Open-Meteo walkthrough Step 3: forecast call against a mocked transport"
-print_info "The dispatcher exposes 2 meta-tools regardless of pack count. Step 3: search → dispatch GET /v1/forecast against a mocked httpx transport. Verifies no Authorization header is sent (no auth required) and no Idempotency-Key (GET is idempotent)."
-run "$VENV_PYTHON" - <<'PY'
-import httpx
-from docmancer.mcp.dispatcher import Dispatcher
-import docmancer.mcp.dispatcher as disp_mod
-from docmancer.mcp.executors.http import HttpExecutor
-from docmancer.mcp.manifest import Manifest
-
-captured = []
-def handler(req):
-    captured.append({
-        "method": req.method,
-        "url": str(req.url),
-        "headers": dict(req.headers),
-        "content": req.content.decode() if req.content else "",
-    })
-    return httpx.Response(
-        200,
-        json={
-            "latitude": 40.785,
-            "longitude": -73.968,
-            "current_weather": {
-                "time": "2026-04-28T14:00",
-                "temperature": 15.4,
-                "windspeed": 7.3,
-                "weathercode": 3,
-                "is_day": 1,
-            },
-        },
-    )
-
-client = httpx.Client(transport=httpx.MockTransport(handler))
-disp_mod.get_executor = lambda kind: HttpExecutor(client=client) if kind == "http" else disp_mod.get_executor(kind)
-
-dispatcher = Dispatcher(Manifest.load())
-tools = dispatcher.list_tools()
-assert [t["name"] for t in tools] == ["docmancer_search_tools", "docmancer_call_tool"], tools
-print(f"Step 3a: tools/list returned {len(tools)} meta-tool(s) (Tool Search pattern, D10).")
-
-matches = dispatcher.search_tools(query="current temperature forecast latitude longitude", package="open-meteo", limit=20)["matches"]
-match = next((m for m in matches if m["name"] == "open_meteo__v1__forecast"), None)
-assert match, matches
-print(f"Step 3b: search selected match = {match['name']} (slug format D15 verified).")
-
-result = dispatcher.call_tool(
-    match["name"],
-    {"latitude": 40.785091, "longitude": -73.968285, "current_weather": True},
-)
-assert result.ok, result.body
-req = captured[-1]
-assert req["method"] == "GET", req
-assert "latitude=40.785091" in req["url"], req["url"]
-assert "longitude=-73.968285" in req["url"], req["url"]
-assert "current_weather=true" in req["url"].lower(), req["url"]
-assert "authorization" not in (k.lower() for k in req["headers"]), req["headers"]
-assert "idempotency-key" not in (k.lower() for k in req["headers"]), req["headers"]
-print(f"Step 3c: GET {req['url']} sent with no Authorization header (keyless), no Idempotency-Key (idempotent op).")
-temp = result.body.get("current_weather", {}).get("temperature")
-assert isinstance(temp, (int, float)), result.body
-print(f"Step 3d: response.current_weather.temperature = {temp}°C (Central Park, NYC, mocked transport).")
-
-# Schema validation in dispatcher (2.8.5): Tool Search hides per-tool schemas from MCP, dispatcher must validate.
-invalid = dispatcher.call_tool(
-    "open_meteo__v1__forecast",
-    {"latitude": "not-a-number", "longitude": -73.96},
-)
-assert not invalid.ok and invalid.error_code == "invalid_args", invalid.body
-print("Schema validation: invalid_args rejected (2.8.5).")
-PY
-
-print_banner "MCP enable / disable toggles + uninstall + mcp remove"
-print_info "Verifying mcp enable / disable still flip per-package state without reinstalling, then cleanly uninstall."
-run "${CLI_CMD[@]}" mcp disable open-meteo --version v1
-run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" mcp enable open-meteo --version v1
-run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" uninstall open-meteo@v1
-run "${CLI_CMD[@]}" mcp list
-
-print_info "Reinstalling open-meteo so we can exercise the new docmancer mcp remove subcommand."
-run "${CLI_CMD[@]}" install-pack open-meteo@v1
-run "${CLI_CMD[@]}" mcp list
-run "${CLI_CMD[@]}" mcp remove open-meteo@v1
-run "${CLI_CMD[@]}" mcp list
-
-print_banner "Doctor and inspect before docs-RAG add"
+print_banner "Doctor and inspect before docs add"
 print_info "The local index should still be empty before any live crawl."
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
 
 if [[ "$RUN_LOCAL_CORPUS" == "1" ]]; then
   print_banner "Local story corpus ingest"
-  if [[ "$BUILD_TEST_CORPUS" == "1" || ! -d "$TEST_CORPUS_MD_DIR" || -z "$(find "$TEST_CORPUS_MD_DIR" -maxdepth 1 -name '*.md' -print -quit 2>/dev/null)" ]]; then
+  LOCAL_MD_DIR="$TEST_CORPUS_MD_DIR"
+  if [[ ! -d "$LOCAL_MD_DIR" || -z "$(find "$LOCAL_MD_DIR" -maxdepth 1 -name '*.md' -print -quit 2>/dev/null)" ]]; then
+    if [[ "$BUILD_TEST_CORPUS" == "1" ]]; then
+      if [[ ! -f "$TEST_CORPUS_SCRIPT" ]]; then
+        print_warn "Missing corpus builder at $TEST_CORPUS_SCRIPT"
+        exit 1
+      fi
+      print_info "Building local story corpus from Project Gutenberg sources."
+      run python3 "$TEST_CORPUS_SCRIPT"
+    else
+      print_warn "Markdown story corpus missing at $TEST_CORPUS_MD_DIR."
+      print_info "Using a tiny temporary Markdown corpus. Set DOCMANCER_BUILD_TEST_CORPUS=1 for the full Gutenberg corpus."
+      create_fallback_markdown_corpus
+      LOCAL_MD_DIR="$FALLBACK_CORPUS_MD_DIR"
+    fi
+  elif [[ "$BUILD_TEST_CORPUS" == "1" ]]; then
     if [[ ! -f "$TEST_CORPUS_SCRIPT" ]]; then
       print_warn "Missing corpus builder at $TEST_CORPUS_SCRIPT"
       exit 1
     fi
-    print_info "Building local story corpus from Project Gutenberg sources."
+    print_info "Refreshing local story corpus from Project Gutenberg sources."
     run python3 "$TEST_CORPUS_SCRIPT"
   fi
 
-  if [[ ! -d "$TEST_CORPUS_MD_DIR" ]]; then
-    print_warn "Missing Markdown story corpus at $TEST_CORPUS_MD_DIR"
+  if [[ ! -d "$LOCAL_MD_DIR" ]]; then
+    print_warn "Missing Markdown story corpus at $LOCAL_MD_DIR"
     exit 1
   fi
-  print_info "Indexing Markdown story corpus from $TEST_CORPUS_MD_DIR via docmancer ingest --no-vectors"
+  print_info "Indexing Markdown story corpus from $LOCAL_MD_DIR via docmancer ingest --no-vectors"
   print_info "FTS5-only here so the default fast path does not download FastEmbed models. Set DOCMANCER_RUN_VECTOR_STACK=1 to exercise the full hybrid path."
-  run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" ingest "$LOCAL_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
@@ -487,15 +290,18 @@ if [[ "$RUN_LOCAL_PDF_CORPUS" == "1" ]]; then
       print_info "Building local PDF story corpus because no PDFs were found."
       run python3 "$TEST_CORPUS_SCRIPT"
     else
-      print_warn "Missing PDF story corpus at $TEST_CORPUS_PDF_DIR. Run: python3 $TEST_CORPUS_SCRIPT"
-      exit 1
+      print_warn "Missing PDF story corpus at $TEST_CORPUS_PDF_DIR."
+      print_info "Skipping PDF ingest. Set DOCMANCER_BUILD_TEST_CORPUS=1 to build it when pandoc and a PDF engine are installed."
+      RUN_LOCAL_PDF_CORPUS=0
     fi
   fi
-  print_info "Indexing PDF story corpus from $TEST_CORPUS_PDF_DIR via docmancer ingest --no-vectors"
-  run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_PDF_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" query "Sherlock Holmes hound baskervilles" --limit 3 --config "$CONFIG_PATH"
+  if [[ "$RUN_LOCAL_PDF_CORPUS" == "1" ]]; then
+    print_info "Indexing PDF story corpus from $TEST_CORPUS_PDF_DIR via docmancer ingest --no-vectors"
+    run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_PDF_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" query "Sherlock Holmes hound baskervilles" --limit 3 --config "$CONFIG_PATH"
+  fi
 fi
 
 print_banner "Qdrant lifecycle command surface"

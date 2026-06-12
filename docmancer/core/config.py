@@ -144,14 +144,6 @@ class DocmancerConfig(BaseModel):
         with open(path) as f:
             data = yaml.safe_load(f) or {}
 
-        if "registry" in data:
-            warnings.warn(
-                "registry config is obsolete and has been removed; the key is ignored.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            data.pop("registry", None)
-
         if "bench" in data:
             warnings.warn(
                 "bench config is obsolete and has been removed; the key is ignored.",
@@ -167,8 +159,6 @@ class DocmancerConfig(BaseModel):
                 stacklevel=2,
             )
             data.pop("eval", None)
-
-        data.pop("packs", None)
 
         # Pre-0.5.0 used `embedding:` (singular). The new schema is plural
         # `embeddings:`. We do not migrate the value: the old block usually
