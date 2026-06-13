@@ -196,6 +196,24 @@ def _run_dispatch_query(
     return result.chunks, result.contributions, result.failures
 
 
+def _can_default_query_fallback(exc: Exception) -> bool:
+    """Whether a default-mode query may silently fall back to lexical.
+
+    The default retrieval mode is hybrid, but users can explicitly build an
+    FTS5-only index with ``ingest --no-vectors``. A plain ``docmancer query``
+    should still work in that state. Explicit vector modes remain strict unless
+    the caller passes ``--allow-degraded``.
+    """
+    failures = getattr(exc, "failures", None)
+    if not isinstance(failures, dict) or set(failures) != {"vector"}:
+        return False
+    message = str(failures.get("vector", ""))
+    return (
+        "is not docmancer-owned" in message
+        or "has no indexed vectors" in message
+    )
+
+
 def _format_size(num_bytes: int) -> str:
     if num_bytes < 1024:
         return f"{num_bytes} B"
@@ -1108,8 +1126,12 @@ def query_cmd(
                 allow_degraded=allow_degraded,
             )
         except HybridRetrievalError as exc:
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(2)
+            if mode is None and _can_default_query_fallback(exc):
+                chunks = agent.query(text, limit=limit, budget=budget, expand=expand)
+                failures = exc.failures
+            else:
+                click.echo(f"Error: {exc}", err=True)
+                sys.exit(2)
 
     if not chunks:
         click.echo("No results found.")

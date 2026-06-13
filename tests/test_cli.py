@@ -219,6 +219,30 @@ def test_ingest_shows_total_and_calls_agent(tmp_path):
     )
 
 
+def test_default_query_falls_back_after_no_vectors_ingest(tmp_path, monkeypatch):
+    """A plain query must still work after an explicit FTS5-only ingest."""
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Deploy\n\nUse Railway for deployments.\n")
+    config = tmp_path / "docmancer.yaml"
+    config.write_text(f"index:\n  db_path: {tmp_path / 'docmancer.db'}\n")
+
+    runner = CliRunner()
+    ingest = runner.invoke(
+        cli,
+        ["ingest", str(docs), "--recreate", "--no-vectors", "--config", str(config)],
+    )
+    assert ingest.exit_code == 0, ingest.output
+
+    query = runner.invoke(
+        cli,
+        ["query", "Railway deployments", "--config", str(config)],
+    )
+    assert query.exit_code == 0, query.output
+    assert "Railway" in query.output
+
+
 def test_add_url_applies_fetch_worker_override():
     runner = CliRunner()
     fake_config = MagicMock()
