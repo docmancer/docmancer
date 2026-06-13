@@ -93,7 +93,7 @@ def test_new_vector_store_collection_only_defaults_provider(tmp_path):
 
     config = DocmancerConfig.from_yaml(config_file)
 
-    assert config.vector_store.provider == "qdrant"
+    assert config.vector_store.provider == "sqlite-vec"
     assert config.vector_store.collection == "foo"
 
 
@@ -122,9 +122,9 @@ vector_store:
 def test_legacy_embedding_block_is_dropped(tmp_path):
     """Pre-0.5.0 configs used `embedding:` (singular). The new schema is
     `embeddings:` (plural). The legacy block is silently dropped so the
-    new defaults (e.g. bge-base-en-v1.5) take effect; we do not migrate
-    the value because the old default of bge-small would otherwise
-    defeat the upgrade."""
+    new defaults (static model2vec embeddings) take effect; we do not
+    migrate the value because the old model would otherwise defeat the
+    upgrade to the vendored static default."""
     config_file = tmp_path / "docmancer.yaml"
     config_file.write_text(
         """
@@ -136,26 +136,28 @@ embedding:
 
     config = DocmancerConfig.from_yaml(config_file)
 
-    # New defaults take effect; the legacy small model is not preserved.
-    assert config.embeddings.provider == "fastembed"
-    assert config.embeddings.model == "BAAI/bge-base-en-v1.5"
+    # New defaults take effect; the legacy model is not preserved.
+    assert config.embeddings.provider == "model2vec"
+    assert config.embeddings.model == "minishlab/potion-base-8M"
 
 
 def test_embeddings_and_retrieval_defaults():
     config = DocmancerConfig()
-    assert config.embeddings.provider == "fastembed"
-    assert config.embeddings.model == "BAAI/bge-base-en-v1.5"
-    assert config.embeddings.dimensions == 768
+    assert config.embeddings.provider == "model2vec"
+    assert config.embeddings.model == "minishlab/potion-base-8M"
+    assert config.embeddings.dimensions == 256
     assert config.embeddings.batch_size == 64
     assert config.embeddings.sparse_model is None
-    assert config.retrieval.default_mode == "lexical"
+    assert config.retrieval.default_mode == "hybrid"
     assert config.retrieval.fusion.method == "rrf"
     assert config.retrieval.fusion.rrf_k == 60
     assert config.retrieval.fusion.weights == {}
 
 
-def test_bare_yaml_keeps_default_mode_lexical(tmp_path):
-    """A YAML file with no vector_store block must stay on FTS5 retrieval."""
+def test_bare_yaml_defaults_to_hybrid(tmp_path):
+    """Hybrid is now the class default even for a config with no vector_store
+    block. The dispatcher still falls back to lexical at runtime when no
+    vector store/provider is available, so FTS5-only setups keep working."""
     config_file = tmp_path / "docmancer.yaml"
     config_file.write_text(
         """
@@ -164,7 +166,7 @@ index:
 """
     )
     config = DocmancerConfig.from_yaml(config_file)
-    assert config.retrieval.default_mode == "lexical"
+    assert config.retrieval.default_mode == "hybrid"
 
 
 def test_explicit_qdrant_vector_store_flips_to_hybrid(tmp_path):

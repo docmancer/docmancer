@@ -419,7 +419,7 @@ class RetrievalDispatcher:
 
         tasks: dict[str, Any] = {}
         with ThreadPoolExecutor(max_workers=3) as ex:
-            if mode in {"hybrid"}:
+            if mode == "hybrid":
                 tasks["lexical"] = ex.submit(
                     lexical_search, self.store, query, limit=per_source_limit, budget=10_000
                 )
@@ -432,7 +432,10 @@ class RetrievalDispatcher:
                     limit=per_source_limit,
                     filters=filters,
                 )
-                try:
+                # Only schedule sparse when the backend advertises it. Dense-only
+                # stores (sqlite-vec) set supports_sparse=False, so hybrid runs
+                # as lexical + dense rather than failing on an unsupported call.
+                if getattr(self.vector_store, "supports_sparse", False):
                     tasks["sparse"] = ex.submit(
                         sparse_search,
                         vector_store=self.vector_store,
@@ -442,8 +445,6 @@ class RetrievalDispatcher:
                         limit=per_source_limit,
                         filters=filters,
                     )
-                except Exception:
-                    pass
             elif mode == "dense":
                 tasks["dense"] = ex.submit(
                     dense_search,

@@ -2,6 +2,16 @@
 
 **Resolution order:** `--config` flag, then `./docmancer.yaml` in the current directory, then `~/.docmancer/docmancer.yaml` (auto-created by `docmancer setup`). For details on what each command does, see [Commands](./Commands.md).
 
+## Migration: static-embeddings + sqlite-vec + hybrid defaults
+
+The defaults moved to a fully local, offline stack:
+
+- `embeddings.provider` defaults to `model2vec` (`minishlab/potion-base-8M`, 256-dim), vendored in the package. No large model download and no network at runtime.
+- `vector_store.provider` defaults to `sqlite-vec` (one local file, no daemon).
+- `retrieval.default_mode` defaults to `hybrid` (lexical + dense; degrades to lexical when no vector store is available).
+
+Existing `qdrant` / `fastembed` configs keep working once the heavy extra is installed: `pipx install "docmancer[embeddings-heavy]"`. Sparse (SPLADE) retrieval is only available on the Qdrant backend. The memory index (`docmancer memory`) uses its own collection and a co-located `sqlite-vec` file, so switching defaults does not require re-ingesting your docs index.
+
 ## Configuration Reference
 
 ### Index

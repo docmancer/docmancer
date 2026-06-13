@@ -31,8 +31,9 @@ def _import_qdrant():
         from qdrant_client.http import models as qm  # type: ignore
     except ImportError as exc:  # pragma: no cover - import guard
         raise ImportError(
-            "qdrant-client is required for the qdrant provider; "
-            "reinstall docmancer; this dependency ships in core."
+            "Qdrant is an optional heavy backend. Install it with: "
+            'pipx install "docmancer[embeddings-heavy]" '
+            "(or pip install \"docmancer[embeddings-heavy]\")."
         ) from exc
     return QdrantClient, qm
 
@@ -44,6 +45,9 @@ def _workspace_id(url: str, collection: str | None) -> str:
 
 class QdrantStore(VectorStore):
     """Vector store backed by a Qdrant server (local or remote)."""
+
+    # Qdrant supports named sparse vectors (SPLADE), so hybrid may add sparse.
+    supports_sparse = True
 
     def __init__(
         self,

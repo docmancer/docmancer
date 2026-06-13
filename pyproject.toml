@@ -23,8 +23,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "jsonschema>=4.0.0",
     "sqlite-vec>=0.1.0",
-    "qdrant-client>=1.10.0",
-    "fastembed>=0.4.0",
+    "model2vec>=0.3.0",
     "charset-normalizer>=3.3.0",
     "pdfplumber>=0.11.0",
     "pypdf>=4.0.0",
@@ -35,7 +34,13 @@ dependencies = [
 [project.optional-dependencies]
 browser = ["playwright>=1.40.0"]
 crawl4ai = ["crawl4ai>=0.4.0"]
-dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
+embeddings-heavy = ["fastembed>=0.4.0", "qdrant-client>=1.10.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "fastembed>=0.4.0",
+    "qdrant-client>=1.10.0",
+]
 embeddings-voyage = ["voyageai>=0.2.0"]
 embeddings-openai = ["openai>=1.0.0"]
 embeddings-cohere = ["cohere>=5.0.0"]
@@ -49,5 +54,15 @@ path = "docmancer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
 
+# The default static embedding model is vendored into the package tree at
+# build time (scripts/vendor_static_model.py) and packed into the wheel.
+# Hatchling skips a force-include whose source is absent, so this is a no-op
+# in a dev checkout that has not run the vendor script.
+[tool.hatch.build.targets.wheel.force-include]
+"docmancer/_models" = "docmancer/_models"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests that load real models or hit the network (run locally after vendoring).",
+]

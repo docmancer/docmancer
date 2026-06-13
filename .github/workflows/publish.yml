@@ -23,6 +23,9 @@ jobs:
       - name: Install package and build tools
         run: pip install -e ".[dev]" build twine "hatchling<1.27"
 
+      - name: Vendor static embedding model into package
+        run: python scripts/vendor_static_model.py
+
       - name: Verify tag matches package version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -61,7 +64,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install build tools
-        run: pip install build twine "hatchling<1.27"
+        run: pip install build twine "hatchling<1.27" "model2vec>=0.3.0"
+
+      - name: Vendor static embedding model into package
+        run: python scripts/vendor_static_model.py
 
       - name: Build
         run: python -m build --no-isolation

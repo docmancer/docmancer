@@ -6,9 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [0.5.3] - Unreleased
 
+### Added
+
+- **Local memory harness.** `docmancer memory` discovers, indexes, and recalls the memory and instruction files your coding agents already wrote on this machine (Claude Code agent memory, Codex memory, Cursor and repo-level `CLAUDE.md` / `AGENTS.md`). Subcommands: `scan`, `sync` (`--recreate`, `--dry-run`, `--include`, `--exclude`), `query`, `status`, `clear`.
+- **`setup` indexes memory by default.** `docmancer setup` warms the static embedding model once and indexes all local agent memory. Opt out with `--no-index-memory`; preview with `--dry-run`.
+- **Privacy controls.** Secrets are redacted on index; `--dry-run` previews without writing; `--include` / `--exclude` scope the harvest on both file path and project scope. Nothing is uploaded; the index is a local SQLite file removable with `docmancer memory clear`.
+- **`docmancer-memory` agent skill** installed alongside the docs skill for Claude Code and Codex.
+
+### Changed
+
+- **Static embeddings by default.** The default embeddings provider is now `model2vec` (`potion-base-8M`, 256-dim), vendored in the package at build time, so there is no large model download and no network needed at runtime. The previous FastEmbed `bge-base-en-v1.5` (~500 MB) path and managed Qdrant move to the optional `embeddings-heavy` extra (`pipx install "docmancer[embeddings-heavy]"`).
+- **`sqlite-vec` is the default vector store** and **hybrid is the default retrieval mode.** Hybrid runs lexical + dense on the default single-file engine (no daemon) and degrades to lexical when no vector store is available. Sparse (SPLADE) runs only on the optional Qdrant backend.
+
 ### Fixed
 
 - **`QdrantStore`:** pass `check_compatibility=False` when constructing `QdrantClient` (HTTP and gRPC) so the pinned managed server (`v1.14.1`) does not trigger noisy client-or-server version warnings against newer `qdrant-client` installs. Replaces warning filters with the supported client flag.
+- **Capability-aware hybrid:** vector stores advertise `supports_sparse`, and the dispatcher only schedules sparse search when the backend supports it, so hybrid no longer fails on dense-only `sqlite-vec`.
+- **`sqlite-vec` threading:** connections open with `check_same_thread=False` so the hybrid dispatcher can run dense search in a worker thread without a cross-thread `ProgrammingError`.
 
 ## [0.5.2] - 2026-05-16
 ### Added

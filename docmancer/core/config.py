@@ -57,7 +57,7 @@ class LoadersConfig(BaseModel):
 
 
 class VectorStoreConfig(BaseSettings):
-    provider: str = "qdrant"
+    provider: str = "sqlite-vec"
     url: str | None = None
     api_key_env: str | None = None
     collection: str | None = None
@@ -66,9 +66,9 @@ class VectorStoreConfig(BaseSettings):
 
 
 class EmbeddingsConfig(BaseSettings):
-    provider: str = "fastembed"
-    model: str = "BAAI/bge-base-en-v1.5"
-    dimensions: int = 768
+    provider: str = "model2vec"
+    model: str = "minishlab/potion-base-8M"
+    dimensions: int = 256
     sparse_model: str | None = None
     cache: str = Field(default_factory=lambda: str(Path.home() / ".docmancer" / "embeddings-cache"))
     batch_size: int = 64
@@ -115,7 +115,7 @@ class QueryRouter(BaseModel):
 
 
 class RetrievalConfig(BaseSettings):
-    default_mode: str = "lexical"
+    default_mode: str = "hybrid"
     fusion: FusionConfig = Field(default_factory=FusionConfig)
     hierarchical: HierarchicalConfig = Field(default_factory=HierarchicalConfig)
     routers: list[QueryRouter] = Field(default_factory=list)
@@ -219,20 +219,9 @@ class DocmancerConfig(BaseModel):
                     data.pop("vector_store", None)
 
         config = cls(**data)
-        # Auto-flip retrieval.default_mode to "hybrid" only when the YAML
-        # explicitly opts into a vector store. Bare configs (no vector_store
-        # block at all) keep the FTS5-only default, which preserves prior
-        # behaviour and avoids triggering managed-Qdrant lifecycle code in
-        # callers that did not ask for it.
-        retrieval_block = data.get("retrieval") if isinstance(data.get("retrieval"), dict) else {}
-        vs_block_raw = data.get("vector_store")
-        if (
-            isinstance(vs_block_raw, dict)
-            and vs_block_raw  # non-empty: user added at least one vector_store key
-            and vs_block_raw.get("provider", "qdrant") == "qdrant"
-            and "default_mode" not in (retrieval_block or {})
-        ):
-            config.retrieval.default_mode = "hybrid"
+        # Hybrid is now the class default (RetrievalConfig.default_mode), and
+        # the dispatcher falls back to lexical when no vector store/provider is
+        # available, so the old YAML auto-flip is redundant and was removed.
         db_path = Path(config.index.db_path)
         if not db_path.is_absolute():
             config.index.db_path = str((path.parent / db_path).resolve())

@@ -160,7 +160,7 @@ def _run_dispatch_query(
     except ImportError:
         return agent.query(query, limit=limit, budget=budget, expand=expand), {}, {}
 
-    vs_config = config.vector_store
+    vs_config = agent.resolve_vector_store_config()
     if vs_config.provider == "qdrant" and not vs_config.url:
         resolution = ensure_running()
         if resolution.fallback or not resolution.url:
@@ -729,7 +729,7 @@ def _drop_vector_collection(config, agent) -> None:
         return
 
     collection = agent._vector_collection_name()
-    vs_config = config.vector_store
+    vs_config = agent.resolve_vector_store_config()
     if vs_config.provider == "qdrant" and not vs_config.url:
         resolution = ensure_running()
         if not resolution.url:
@@ -887,37 +887,55 @@ def doctor_cmd(config_path: str | None):
 
     click.echo()
     click.echo(_style("  Vector retrieval", fg="white", bold=True))
+    vs_provider = (config.vector_store.provider or "sqlite-vec").lower()
+    emb_provider = (config.embeddings.provider or "model2vec").lower()
     qdrant_status = None
-    try:
-        from docmancer.runtime.qdrant_manager import QdrantManager  # noqa: F401
-        qdrant_status = QdrantManager().status()
-        if qdrant_status["alive"] and qdrant_status["owned"]:
+
+    # Default offline stack: report readiness without probing the heavy backend.
+    if vs_provider == "sqlite-vec" and emb_provider == "model2vec":
+        _emit_status_line(
+            "static embeddings (model2vec, vendored), sqlite-vec, hybrid: ready, offline",
+            indent=4,
+        )
+    elif vs_provider == "qdrant":
+        try:
+            from docmancer.runtime.qdrant_manager import QdrantManager  # noqa: F401
+
+            qdrant_status = QdrantManager().status()
+            if qdrant_status["alive"] and qdrant_status["owned"]:
+                _emit_status_line(
+                    f"qdrant: running (pid {qdrant_status['pid']}, port {qdrant_status['port']}, version {qdrant_status['version']})",
+                    indent=4,
+                )
+            elif qdrant_status["alive"]:
+                _emit_status_line("qdrant: running but not docmancer-owned", state="warn", indent=4)
+            else:
+                _emit_status_line(
+                    "qdrant: not running (start with: docmancer qdrant up)",
+                    state="warn",
+                    indent=4,
+                )
+        except ImportError:
             _emit_status_line(
-                f"qdrant: running (pid {qdrant_status['pid']}, port {qdrant_status['port']}, version {qdrant_status['version']})",
-                indent=4,
-            )
-        elif qdrant_status["alive"]:
-            _emit_status_line("qdrant: running but not docmancer-owned", state="warn", indent=4)
-        else:
-            _emit_status_line(
-                "qdrant: not running (start with: docmancer qdrant up)",
+                'qdrant: optional heavy backend not installed (pipx install "docmancer[embeddings-heavy]")',
                 state="warn",
                 indent=4,
             )
-    except ImportError:
-        _emit_status_line("qdrant: skipping (reinstall docmancer; qdrant-client ships in core)", state="warn", indent=4)
+    else:
+        _emit_status_line(f"vector store: {vs_provider}", indent=4)
 
-    try:
-        import fastembed  # type: ignore  # noqa: F401
-
-        _emit_status_line(
-            f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model}",
-            indent=4,
-        )
-    except ImportError:
-        _emit_status_line("embeddings: fastembed missing (reinstall docmancer; fastembed ships in core)", state="warn", indent=4)
-    if config.embeddings.provider == "fastembed":
-        if os.environ.get("HF_TOKEN"):
+    _emit_status_line(
+        f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model}",
+        indent=4,
+    )
+    if emb_provider == "fastembed":
+        if find_spec("fastembed") is None:
+            _emit_status_line(
+                'embeddings: fastembed not installed (pipx install "docmancer[embeddings-heavy]")',
+                state="warn",
+                indent=4,
+            )
+        elif os.environ.get("HF_TOKEN"):
             _emit_status_line("HF_TOKEN: set", indent=4)
         else:
             _emit_status_line(
@@ -1421,13 +1439,20 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     if normalized == "claude-code":
         if project:
             dest = Path(".claude") / "skills" / "docmancer" / "SKILL.md"
+            mem_dest = Path(".claude") / "skills" / "docmancer-memory" / "SKILL.md"
         else:
             dest = home / ".claude" / "skills" / "docmancer" / "SKILL.md"
+            mem_dest = home / ".claude" / "skills" / "docmancer-memory" / "SKILL.md"
         content = _build_skill_content("claude_code_skill.md", effective_config_path)
         _install_skill_file(content, dest)
+        mem_content = _build_skill_content("memory_skill.md", effective_config_path)
+        _install_skill_file(mem_content, mem_dest)
         _emit_install_summary(
             "Install skill for Claude Code.",
-            [("Installed docmancer skill at", dest)],
+            [
+                ("Installed docmancer skill at", dest),
+                ("Installed docmancer-memory skill at", mem_dest),
+            ],
             created_user_config,
             effective_config_path,
             "Claude Code can use docmancer immediately. No restart needed.",
@@ -1441,10 +1466,14 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
         content = _build_skill_content("skill.md", effective_config_path)
         _install_skill_file(content, dest)
         _install_skill_file(content, shared_dest)
+        mem_content = _build_skill_content("memory_skill.md", effective_config_path)
+        mem_dest = dest.parent.parent / "docmancer-memory" / "SKILL.md"
+        _install_skill_file(mem_content, mem_dest)
         _emit_install_summary(
             "Install skill for Codex.",
             [
                 ("Installed docmancer skill at", dest),
+                ("Installed docmancer-memory skill at", mem_dest),
                 ("Also installed shared compatibility skill at", shared_dest),
             ],
             created_user_config,
@@ -1620,6 +1649,46 @@ def _ensure_config_and_db(config_path: str | None) -> Path:
     return config_file
 
 
+def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
+    """Warm the static model once and index all local harness memory.
+
+    Non-fatal: a machine with no agent memory is a valid, successful setup.
+    """
+    if not index_memory:
+        return
+
+    # Warm the default static model once so the first real query is instant.
+    # model2vec only; never trigger the heavy FastEmbed path here.
+    if config.embeddings.provider == "model2vec":
+        try:
+            from docmancer.embeddings import get_embeddings_provider
+
+            get_embeddings_provider(config.embeddings).embed(["warmup"])
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"Note: could not pre-warm the embedding model ({exc}).")
+
+    try:
+        from docmancer.memory import MemoryAgent
+
+        agent = MemoryAgent()
+        if dry_run:
+            click.echo(f"Would index {len(agent.preview())} memory entries from your agents.")
+            return
+        n = agent.sync()
+    except Exception as exc:  # noqa: BLE001 - setup must stay non-fatal
+        click.echo(f"Note: could not index agent memory ({exc}).")
+        return
+
+    if n:
+        _emit_status_line(f"Indexed {n} memory entries from your coding agents.")
+        click.echo('  Try: docmancer memory query "..."')
+    else:
+        _emit_status_line(
+            "No agent memory found yet. Once your agents write memory, run: docmancer memory sync",
+            state="info",
+        )
+
+
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
@@ -1633,11 +1702,20 @@ def _ensure_config_and_db(config_path: str | None) -> Path:
 )
 @click.option("--all", "install_all", is_flag=True, default=False, help="Install every supported agent integration non-interactively.")
 @click.option("--agent", "agents", multiple=True, type=click.Choice(INSTALL_TARGETS, case_sensitive=False), help="Agent integration to install. Can be repeated.")
+@click.option("--index-memory/--no-index-memory", default=True, show_default=True, help="Index the memory your coding agents already wrote on this machine.")
+@click.option("--dry-run", is_flag=True, help="Preview the memory index (counts only); write nothing.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def setup_cmd(install_all: bool, agents: tuple[str, ...], config_path: str | None):
-    """Create the local index and install selected agent integrations.
+def setup_cmd(
+    install_all: bool,
+    agents: tuple[str, ...],
+    index_memory: bool,
+    dry_run: bool,
+    config_path: str | None,
+):
+    """Create the local index, index your agents' memory, and connect agents.
 
-    This bootstraps `docmancer.yaml`, initializes the local SQLite index, and
+    This bootstraps `docmancer.yaml`, initializes the local SQLite index,
+    indexes the memory your coding agents already wrote on this machine, and
     installs one or more agent skill/instruction files. Use `--agent` to pick
     explicit targets such as `codex`, `claude-code`, or `github-copilot`.
     """
@@ -1647,6 +1725,8 @@ def setup_cmd(install_all: bool, agents: tuple[str, ...], config_path: str | Non
     _emit_status_line(f"Config: {display_path(config_file)}")
     config = _get_config_class().from_yaml(config_file)
     _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")
+
+    _setup_index_memory(config, index_memory=index_memory, dry_run=dry_run)
 
     selected = [agent.lower() for agent in agents]
     if install_all:

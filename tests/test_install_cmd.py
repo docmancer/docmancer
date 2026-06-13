@@ -49,6 +49,10 @@ def test_install_claude_code_creates_rebooted_skill_file():
         assert "allowed-tools" in content
         assert "docmancer add" in content
         assert "docmancer ingest" in content
+        # The memory skill lands alongside the docs skill.
+        mem_skill = fake_home / ".claude" / "skills" / "docmancer-memory" / "SKILL.md"
+        assert mem_skill.exists()
+        assert "docmancer memory query" in mem_skill.read_text()
         assert "docmancer bench" not in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content

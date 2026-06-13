@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 
 def get_embeddings_provider(config: "EmbeddingsConfig") -> EmbeddingsProvider:
     """Factory for the configured embeddings provider."""
-    name = (config.provider or "fastembed").lower()
+    name = (config.provider or "model2vec").lower()
+    if name == "model2vec":
+        from .model2vec_provider import Model2VecProvider
+
+        return Model2VecProvider(config)
     if name == "fastembed":
         from .fastembed_provider import FastEmbedProvider
 

@@ -27,6 +27,11 @@ class VectorHit:
 class VectorStore(ABC):
     """Abstract base class for vector store backends."""
 
+    # Whether this backend can run sparse (SPLADE) search. Dense-only stores
+    # like sqlite-vec leave this False so hybrid degrades to lexical + dense
+    # rather than raising on an unsupported sparse call.
+    supports_sparse: bool = False
+
     @abstractmethod
     def ensure_collection(
         self,
@@ -98,8 +103,9 @@ def get_vector_store(
             from .qdrant_store import QdrantStore  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "qdrant-client is required for the qdrant provider; "
-                "reinstall docmancer; this dependency ships in core."
+                "Qdrant is an optional heavy backend. Install it with: "
+                'pipx install "docmancer[embeddings-heavy]" '
+                "(or pip install \"docmancer[embeddings-heavy]\")."
             ) from exc
         import os
 

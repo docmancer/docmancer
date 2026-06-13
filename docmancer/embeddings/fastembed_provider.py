@@ -56,8 +56,9 @@ class FastEmbedProvider(EmbeddingsProvider):
                 from fastembed import TextEmbedding  # type: ignore
             except ImportError as exc:
                 raise ImportError(
-                    "fastembed is required for the FastEmbed provider; "
-                    "reinstall docmancer; this dependency ships in core."
+                    "fastembed is an optional heavy dependency. Install it with: "
+                    'pipx install "docmancer[embeddings-heavy]" '
+                    "(the default provider is model2vec, which needs no extra)."
                 ) from exc
             cache_dir = _fastembed_cache_dir()
             if cache_dir and not Path(cache_dir).exists() and not os.environ.get("HF_TOKEN"):

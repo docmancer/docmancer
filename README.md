@@ -1,6 +1,6 @@
 <div align="center">
 
-**Local docs context for coding agents.**
+**Your agents' memory, unified, local, and yours.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
@@ -14,9 +14,9 @@
 
 ---
 
-Docmancer turns any pile of docs into a hybrid-search index your coding agent can query through a simple CLI. Point it at a folder of Markdown / PDF / DOCX / RTF / HTML, or at a docs URL (GitBook, Mintlify, generic web, GitHub), and ask questions in natural language. Results come back as compact context packs with source attribution, sized to fit a token budget.
+Your coding agents (Claude Code, Codex, Cursor) already write memory and working-context files all over this machine, each locked inside its own tool. Docmancer discovers all of it, indexes it into one local hybrid (lexical + dense) search index, and lets you recall any past decision instantly and offline. After `pipx install docmancer`, one `docmancer setup` unearths and indexes the context your agents already wrote, and `docmancer memory query` answers questions about it.
 
-A fresh install ships everything you need: SQLite FTS5, a docmancer-owned local Qdrant for dense and sparse vectors, FastEmbed for embeddings (no API key), and a hybrid retriever that fuses lexical, dense, and sparse signals with Reciprocal Rank Fusion.
+The same engine also does docs RAG as a secondary capability: point it at a folder of Markdown / PDF / DOCX / RTF / HTML or a docs URL (GitBook, Mintlify, generic web, GitHub) and query it the same way. A fresh install ships everything you need: SQLite FTS5 for lexical search, a static embedding model (`potion-base-8M`) vendored in the package so there is no large model download and no network at runtime, and `sqlite-vec` for dense vectors in a single local file with no daemon.
 
 ## Install
 
@@ -28,32 +28,38 @@ If `pipx` picks an unsupported interpreter, pin one: `pipx install docmancer --p
 
 ## First run
 
-Three commands take you from a fresh install to a grounded query:
+Two commands take you from a fresh install to recalling your agents' memory:
 
 ```bash
-docmancer setup                                     # config + database + agent skills
-docmancer ingest ./docs                             # index local files
-docmancer query "How do I authenticate?" --explain  # hybrid search across the index
+docmancer setup                                  # indexes the agent memory already on this machine
+docmancer memory query "why did we pick Railway" # recall a past decision, offline
 ```
 
-`setup` creates `~/.docmancer/` with the config and SQLite database, auto-detects installed coding agents, and installs their skill files. On the first `ingest`, docmancer downloads the pinned Qdrant binary (~60 MB) and the FastEmbed models (~500 MB) into `~/.docmancer/`. After that, ingest stays offline.
+`setup` creates `~/.docmancer/` with the config and SQLite database, indexes the memory your coding agents already wrote (Claude Code, Codex, Cursor) plus repo-level `CLAUDE.md` / `AGENTS.md` instructions, auto-detects installed agents, and installs their skill files. There is no large model download and no network at runtime: the static embedding model is vendored in the package.
 
-Prefer to index a docs site instead of local files?
+Want docs RAG too? The same engine indexes documentation:
 
 ```bash
-docmancer add https://docs.pytest.org
-docmancer query "How do I parametrize a fixture?" --mode hybrid
+docmancer ingest ./docs                             # index local files
+docmancer add https://docs.pytest.org               # or a docs URL
+docmancer query "How do I parametrize a fixture?"   # hybrid search across the docs index
 ```
 
 ## What you get
 
-**Hybrid search by default.** `query` fans out across SQLite FTS5 (lexical, BM25-reranked), Qdrant dense vectors (FastEmbed `bge-base-en-v1.5`), and SPLADE sparse vectors, then fuses results with Reciprocal Rank Fusion. The token budget keeps responses small so your agent has room for actual work:
+**Your agents' memory, unified.** `docmancer memory` discovers and indexes the memory and instruction files your coding agents already wrote (Claude Code agent memory, Codex memory, Cursor and repo-level `CLAUDE.md` / `AGENTS.md`), then answers questions about them through one local index. Nothing is uploaded.
+
+**Hybrid search by default.** `query` and `memory query` fan out across SQLite FTS5 (lexical, BM25-reranked) and dense vectors from a vendored static model (`potion-base-8M`) in `sqlite-vec`, then fuse results with Reciprocal Rank Fusion. Sparse (SPLADE) signals are available on the optional heavy Qdrant backend. The token budget keeps responses small so your agent has room for actual work:
 
 ```text
 Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.33x agentic runway)
 ```
 
-**No API keys required.** FastEmbed runs locally. The optional OpenAI / Voyage / Cohere providers exist if you want them; if the key is missing, ingest falls back to FTS5-only and warns rather than aborting.
+**No large model download, offline at runtime.** The static embedding model ships inside the wheel, so there are no API keys and no network needed to embed or query. Optional OpenAI / Voyage / Cohere providers exist if you want them; a heavier FastEmbed + Qdrant backend is available via `pipx install "docmancer[embeddings-heavy]"`.
+
+## Where your data lives and how to remove it
+
+The memory index is a single local SQLite file under `~/.docmancer/` (override with `DOCMANCER_MEMORY_DB`). Nothing is uploaded anywhere. Secrets are redacted on index, you can preview exactly what would be indexed with `docmancer memory sync --dry-run`, and scope the harvest with `--include` / `--exclude` globs. `docmancer memory clear` deletes the index. There is no telemetry and no phone-home.
 
 **Inspectable.** Every section is written to `~/.docmancer/extracted/` as Markdown plus JSON. `docmancer inspect` shows index stats. `docmancer query --explain` shows which signal (lexical / dense / sparse) placed each result.
 

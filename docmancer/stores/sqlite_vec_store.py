@@ -33,6 +33,10 @@ def _floats_to_blob(vector: list[float]) -> bytes:
 class SqliteVecStore(VectorStore):
     """Small-scale fallback vector store backed by sqlite-vec (vec0)."""
 
+    # Dense-only backend: no sparse (SPLADE) search. Hybrid degrades to
+    # lexical + dense when this store is active.
+    supports_sparse = False
+
     def __init__(self, config: "VectorStoreConfig", embeddings_dim: int = 768) -> None:
         self._config = config
         self._embeddings_dim = embeddings_dim
@@ -48,7 +52,12 @@ class SqliteVecStore(VectorStore):
     def _open_connection(db_path: str) -> sqlite3.Connection:
         import sqlite_vec  # type: ignore
 
-        conn = sqlite3.connect(db_path)
+        # check_same_thread=False: the hybrid dispatcher runs dense search in a
+        # ThreadPoolExecutor worker, so the connection is used from a thread
+        # other than the one that opened it. Only the dense task touches this
+        # connection during a query (lexical uses a separate FTS5 connection),
+        # so access stays effectively single-threaded per call.
+        conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)

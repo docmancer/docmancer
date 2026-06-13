@@ -35,6 +35,7 @@ GITHUB_BLOB_URL="${DOCMANCER_GITHUB_BLOB_URL:-https://github.com/pytest-dev/pyte
 RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_LOCAL_CORPUS="${DOCMANCER_RUN_LOCAL_CORPUS:-1}"
 RUN_LOCAL_PDF_CORPUS="${DOCMANCER_RUN_LOCAL_PDF_CORPUS:-1}"
+RUN_FULL_LOCAL_CORPUS="${DOCMANCER_RUN_FULL_LOCAL_CORPUS:-0}"
 BUILD_TEST_CORPUS="${DOCMANCER_BUILD_TEST_CORPUS:-0}"
 TEST_CORPUS_SCRIPT="$WORKSPACE_ROOT/scripts/build-test-corpus.py"
 TEST_CORPUS_MD_DIR="$WORKSPACE_ROOT/test-corpora/stories-md"
@@ -64,6 +65,7 @@ PROJECT_DIR="$TMP_ROOT/project"
 FETCH_DIR="$TMP_ROOT/fetched-docs"
 CONFIG_PATH="$PROJECT_DIR/docmancer.yaml"
 FALLBACK_CORPUS_MD_DIR="$TMP_ROOT/stories-md"
+SAMPLED_CORPUS_MD_DIR="$TMP_ROOT/test-corpora-sample"
 
 cleanup() {
   if [[ -x "$VENV_PYTHON" ]]; then
@@ -80,6 +82,10 @@ cleanup() {
 trap 'cleanup' EXIT
 
 mkdir -p "$TMP_HOME" "$PROJECT_DIR" "$FETCH_DIR"
+# Capture the real home before isolating, so the optional real-memory smoke
+# (DOCMANCER_LIVE_REAL_MEMORY=1) can read the actual ~/.claude and ~/.codex
+# memory read-only into a throwaway index.
+REAL_HOME="$HOME"
 export HOME="$TMP_HOME"
 export XDG_CONFIG_HOME="$TMP_HOME/.config"
 export XDG_DATA_HOME="$TMP_HOME/.local/share"
@@ -161,6 +167,31 @@ The hound was said to haunt the moor near Baskerville Hall.
 EOF
 }
 
+create_sampled_markdown_corpus() {
+  mkdir -p "$SAMPLED_CORPUS_MD_DIR"
+  local sampled=0
+  local path
+  local files=(
+    "11-alice-s-adventures-in-wonderland.md"
+    "1661-the-adventures-of-sherlock-holmes.md"
+    "2852-the-hound-of-the-baskervilles.md"
+    "35-the-time-machine.md"
+  )
+
+  for name in "${files[@]}"; do
+    path="$TEST_CORPUS_MD_DIR/$name"
+    if [[ -f "$path" ]]; then
+      cp "$path" "$SAMPLED_CORPUS_MD_DIR/"
+      sampled=$((sampled + 1))
+    fi
+  done
+
+  if [[ "$sampled" -eq 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
 print_banner "docmancer live CLI integration"
 echo "Repo root: $ROOT_DIR"
 echo "Using venv python: $VENV_PYTHON"
@@ -176,6 +207,7 @@ print_info "Local crawl provider: $ADD_PROVIDER"
 print_info "Local crawl strategy: ${ADD_STRATEGY:-<default>}"
 print_info "Fetch markdown step: $RUN_FETCH_STEP"
 print_info "Local story corpus ingest: $RUN_LOCAL_CORPUS"
+print_info "Full local story corpus ingest: $RUN_FULL_LOCAL_CORPUS"
 print_info "Local PDF corpus ingest: $RUN_LOCAL_PDF_CORPUS"
 print_info "Build test corpus if missing: $BUILD_TEST_CORPUS"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
@@ -212,11 +244,14 @@ run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); 
 print_banner "CLI help surface"
 print_info "Checking top-level help plus local indexing, install, maintenance, and Qdrant commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest qdrant; do
+for command in setup add update query list inspect remove doctor init install fetch ingest memory qdrant; do
   run "${CLI_CMD[@]}" "$command" --help
 done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
+done
+for command in scan sync query status clear; do
+  run "${CLI_CMD[@]}" memory "$command" --help
 done
 
 print_banner "Initialize isolated config"
@@ -226,19 +261,75 @@ run cat "$CONFIG_PATH"
 
 print_banner "Setup in isolated HOME (non-interactive)"
 print_info "Installing the default local config and agent files into the temporary HOME only."
-run "${CLI_CMD[@]}" setup --all --config "$CONFIG_PATH"
+(
+  cd "$PROJECT_DIR"
+  run "${CLI_CMD[@]}" setup --all --config "$CONFIG_PATH"
+)
 
 print_banner "Install targets in isolated HOME"
 print_info "Exercising every supported install target without touching the real HOME."
-run "${CLI_CMD[@]}" install claude-code --config "$CONFIG_PATH"
 (
   cd "$PROJECT_DIR"
+  run "$VENV_PYTHON" -m docmancer install claude-code --config "$CONFIG_PATH"
   run "$VENV_PYTHON" -m docmancer install claude-code --project --config "$CONFIG_PATH"
   run "$VENV_PYTHON" -m docmancer install cline --project --config "$CONFIG_PATH"
+  for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini github-copilot opencode; do
+    run "$VENV_PYTHON" -m docmancer install "$agent" --config "$CONFIG_PATH"
+  done
 )
-for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini github-copilot opencode; do
-  run "${CLI_CMD[@]}" install "$agent" --config "$CONFIG_PATH"
-done
+
+print_banner "Memory harness (isolated, offline)"
+print_info "Planting synthetic agent memory in the temporary HOME and exercising scan/sync/query/status/clear."
+MEMORY_HOME="$TMP_HOME"
+MEMORY_DB="$TMP_ROOT/memory.db"
+PLANT_PROJ="$MEMORY_HOME/.claude/projects/-Users-x-demo-app"
+mkdir -p "$PLANT_PROJ/memory"
+cat >"$PLANT_PROJ/memory/decisions.md" <<'EOF'
+# Deploy decisions
+
+We deploy on Railway because the team already runs Postgres there.
+An old token sk-ABCDEF1234567890ABCDEF should never end up in the index.
+EOF
+printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"}' >"$PLANT_PROJ/session.jsonl"
+(
+  export DOCMANCER_HARNESS_HOME="$MEMORY_HOME"
+  export DOCMANCER_MEMORY_DB="$MEMORY_DB"
+  export HF_HUB_OFFLINE=1
+  run "${CLI_CMD[@]}" memory scan
+  print_info "Dry-run sync must write nothing."
+  run "${CLI_CMD[@]}" memory sync --dry-run
+  if [[ -f "$MEMORY_DB" ]]; then
+    print_warn "memory db exists after --dry-run (unexpected)"
+    exit 1
+  fi
+  run "${CLI_CMD[@]}" memory sync
+  run "${CLI_CMD[@]}" memory status
+  print_info "Recall the planted decision (hybrid by default)."
+  run "${CLI_CMD[@]}" memory query "why did we pick Railway"
+  print_info "The redacted secret must not appear in recall output."
+  if "${CLI_CMD[@]}" memory query "old token" 2>/dev/null | grep -q "sk-ABCDEF1234567890ABCDEF"; then
+    print_warn "redacted secret leaked into memory recall"
+    exit 1
+  fi
+  print_ok "Secret was redacted on index."
+  run "${CLI_CMD[@]}" memory clear --yes
+  run "${CLI_CMD[@]}" memory status
+)
+
+if [[ "${DOCMANCER_LIVE_REAL_MEMORY:-0}" == "1" ]]; then
+  print_banner "Memory harness (REAL local agent memory, read-only)"
+  print_info "Reading your real ~/.claude and ~/.codex memory read-only into a throwaway index, then deleting it."
+  REAL_MEMORY_DB="$TMP_ROOT/real-memory.db"
+  (
+    export DOCMANCER_HARNESS_HOME="$REAL_HOME"
+    export DOCMANCER_MEMORY_DB="$REAL_MEMORY_DB"
+    export HF_HUB_OFFLINE=1
+    run "${CLI_CMD[@]}" memory scan
+    run "${CLI_CMD[@]}" memory sync
+    run "${CLI_CMD[@]}" memory status
+    run "${CLI_CMD[@]}" memory clear --yes
+  )
+fi
 
 print_banner "Doctor and inspect before docs add"
 print_info "The local index should still be empty before any live crawl."
@@ -246,16 +337,22 @@ run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
 
 if [[ "$RUN_LOCAL_CORPUS" == "1" ]]; then
-  print_banner "Local story corpus ingest"
-  LOCAL_MD_DIR="$TEST_CORPUS_MD_DIR"
+  print_banner "Sampled test-corpora Markdown ingest"
+  LOCAL_MD_DIR="$SAMPLED_CORPUS_MD_DIR"
   if [[ ! -d "$LOCAL_MD_DIR" || -z "$(find "$LOCAL_MD_DIR" -maxdepth 1 -name '*.md' -print -quit 2>/dev/null)" ]]; then
-    if [[ "$BUILD_TEST_CORPUS" == "1" ]]; then
+    if [[ -d "$TEST_CORPUS_MD_DIR" ]] && create_sampled_markdown_corpus; then
+      print_info "Using sampled Markdown files from $TEST_CORPUS_MD_DIR."
+    elif [[ "$BUILD_TEST_CORPUS" == "1" ]]; then
       if [[ ! -f "$TEST_CORPUS_SCRIPT" ]]; then
         print_warn "Missing corpus builder at $TEST_CORPUS_SCRIPT"
         exit 1
       fi
       print_info "Building local story corpus from Project Gutenberg sources."
       run python3 "$TEST_CORPUS_SCRIPT"
+      create_sampled_markdown_corpus || {
+        print_warn "Could not build sampled Markdown corpus from $TEST_CORPUS_MD_DIR"
+        exit 1
+      }
     else
       print_warn "Markdown story corpus missing at $TEST_CORPUS_MD_DIR."
       print_info "Using a tiny temporary Markdown corpus. Set DOCMANCER_BUILD_TEST_CORPUS=1 for the full Gutenberg corpus."
@@ -281,6 +378,16 @@ if [[ "$RUN_LOCAL_CORPUS" == "1" ]]; then
   run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" query "Sherlock Holmes Baskerville hound" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" query "time traveller machine" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+
+  if [[ "$RUN_FULL_LOCAL_CORPUS" == "1" && "$LOCAL_MD_DIR" != "$TEST_CORPUS_MD_DIR" && -d "$TEST_CORPUS_MD_DIR" ]]; then
+    print_banner "Full test-corpora Markdown ingest"
+    print_info "Indexing the full Markdown story corpus from $TEST_CORPUS_MD_DIR via docmancer ingest --no-vectors."
+    run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  fi
 fi
 
 if [[ "$RUN_LOCAL_PDF_CORPUS" == "1" ]]; then

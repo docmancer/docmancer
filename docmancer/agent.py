@@ -127,22 +127,44 @@ class DocmancerAgent:
         slug = Path(self.config.index.db_path).stem or "docmancer"
         return f"docmancer_{slug}"
 
+    def resolve_vector_store_config(self):
+        """Return the vector store config with a concrete storage location.
+
+        For the default sqlite-vec backend, co-locate the vector DB next to the
+        SQLite index (``<index_stem>-vec.db``) when no explicit
+        ``options.db_path`` is set. Without this, every project-local index
+        (all named ``.docmancer/docmancer.db`` by ``docmancer init``) would
+        share the single global ``~/.docmancer/sqlite-vec.db`` and the derived
+        ``docmancer_docmancer`` collection, so unrelated repos would collide in
+        one vector store.
+        """
+        vs = self.config.vector_store
+        if (vs.provider or "").lower() != "sqlite-vec":
+            return vs
+        if (vs.options or {}).get("db_path"):
+            return vs
+        index_db = Path(self.config.index.db_path)
+        vec_db = index_db.with_name(f"{index_db.stem}-vec.db")
+        return vs.model_copy(update={"options": {**(vs.options or {}), "db_path": str(vec_db)}})
+
     def _sync_vectors_if_enabled(self) -> None:
         """Embed any new chunks and upsert into the configured vector store.
 
-        Vector retrieval is on by default. Bare ``docmancer ingest`` will
-        download the pinned Qdrant binary on first run, start it in the
-        background with telemetry disabled, embed every section with the
-        configured provider (default FastEmbed: local, no API key), and
-        upsert into Qdrant.
+        Vector retrieval is on by default. The default backend is local and
+        offline: bare ``docmancer ingest`` embeds every section with the
+        configured provider (default model2vec: a static model vendored in the
+        package, no API key and no model download) and upserts into sqlite-vec,
+        a single local file co-located with the index (no daemon). The optional
+        heavy backend (``embeddings-heavy`` extra) routes to managed Qdrant +
+        FastEmbed instead.
 
         Opt-outs (each used by tests and FTS5-only installs):
 
         - ``DOCMANCER_AUTO_VECTORS=0`` skips the vector path entirely.
-        - ``DOCMANCER_QDRANT_URL`` short-circuits the managed lifecycle.
+        - ``DOCMANCER_QDRANT_URL`` short-circuits the managed Qdrant lifecycle.
         - Missing cloud-embedding API key for the configured provider:
           logs a warning and falls back to FTS5-only ingest (no vectors).
-        - ``[vector]`` extras stripped from the venv: silent no-op.
+        - ``embeddings-heavy`` extra absent when qdrant is configured: silent no-op.
         """
         import os as _os
 
@@ -172,14 +194,14 @@ class DocmancerAgent:
         if required_key and not _os.environ.get(required_key):
             logger.warning(
                 "embeddings.provider=%r requires %s; falling back to FTS5-only ingest "
-                "(set the env var, or switch to embeddings.provider=fastembed for local "
-                "embeddings with no API key).",
+                "(set the env var, or switch to embeddings.provider=model2vec for local "
+                "static embeddings with no API key and no model download).",
                 emb_provider,
                 required_key,
             )
             return
 
-        vs_config = self.config.vector_store
+        vs_config = self.resolve_vector_store_config()
         if vs_config.provider == "qdrant" and not vs_config.url:
             resolution = ensure_running()
             if resolution.fallback or not resolution.url:
