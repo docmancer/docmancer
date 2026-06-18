@@ -24,12 +24,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install static model vendor dependency
-        run: pip install "model2vec>=0.3.0"
-
-      - name: Vendor static embedding model into package
-        run: python scripts/vendor_static_model.py
-
       - name: Install dependencies
         run: pip install -e ".[dev]"
 

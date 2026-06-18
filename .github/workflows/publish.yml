@@ -20,12 +20,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install static model vendor dependency
-        run: pip install "model2vec>=0.3.0"
-
-      - name: Vendor static embedding model into package
-        run: python scripts/vendor_static_model.py
-
       - name: Install package and build tools
         run: pip install -e ".[dev]" build twine "hatchling<1.27"
 
@@ -67,10 +61,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install build tools
-        run: pip install build twine "hatchling<1.27" "model2vec>=0.3.0"
-
-      - name: Vendor static embedding model into package
-        run: python scripts/vendor_static_model.py
+        run: pip install build twine "hatchling<1.27"
 
       - name: Build
         run: python -m build --no-isolation

@@ -16,6 +16,3 @@ downloaded-docs/
 /repush-release-tag.sh
 docs/
 scripts/*.log
-
-# Build-time model asset: packed into the wheel, never committed.
-docmancer/_models/

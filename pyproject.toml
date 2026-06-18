@@ -60,15 +60,9 @@ path = "docmancer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
 
-# The default static embedding model is vendored into the package tree by
-# scripts/vendor_static_model.py and must be present before building a release.
-# Include it in both sdist and wheel so build-from-sdist produces the same
-# offline default model as a direct wheel build.
-[tool.hatch.build.targets.sdist.force-include]
-"docmancer/_models" = "docmancer/_models"
-
-[tool.hatch.build.targets.wheel.force-include]
-"docmancer/_models" = "docmancer/_models"
+# The default static embedding model is committed under docmancer/_models so
+# release builds never depend on Hugging Face availability or rate limits.
+# scripts/vendor_static_model.py is only for manual model refreshes.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
