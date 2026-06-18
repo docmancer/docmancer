@@ -40,6 +40,36 @@ def read_text(path: Path) -> str | None:
         return None
 
 
+# Markdown/text extensions indexed across harnesses.
+TEXT_SUFFIXES = {".md", ".markdown", ".mdc", ".txt"}
+
+# Directories never worth walking into for memory/instruction files.
+SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".DS_Store"}
+
+
+def iter_text_files(
+    root: Path,
+    suffixes: "set[str] | None" = None,
+    *,
+    skip_dirs: "set[str] | None" = None,
+):
+    """Yield text files under ``root`` recursively, skipping noise directories.
+
+    Sorted for deterministic output. ``suffixes`` defaults to
+    :data:`TEXT_SUFFIXES`; matching is case-insensitive.
+    """
+    suffixes = TEXT_SUFFIXES if suffixes is None else suffixes
+    skip_dirs = SKIP_DIRS if skip_dirs is None else skip_dirs
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in suffixes:
+            continue
+        if any(part in skip_dirs for part in path.relative_to(root).parts):
+            continue
+        yield path
+
+
 @dataclass
 class HarnessSource:
     """A discovered location (a directory or file) a harness can harvest."""
@@ -93,16 +123,20 @@ class Harness(ABC):
         """Read a source into memory entries (skipping unreadable files)."""
 
 
-def discover_harnesses(home: Path | None = None) -> list[Harness]:
+def discover_harnesses(home: Path | None = None, config=None) -> list[Harness]:
     from .registry import all_harnesses
 
-    return all_harnesses(home)
+    return all_harnesses(home, config=config)
 
 
-def harvest_all(home: Path | None = None) -> list[MemoryEntry]:
-    """Discover and harvest every registered harness into one flat list."""
+def harvest_all(home: Path | None = None, config=None) -> list[MemoryEntry]:
+    """Discover and harvest every registered harness into one flat list.
+
+    ``config`` is an optional :class:`docmancer.core.config.DiscoveryConfig`
+    used to disable harnesses or add custom source paths.
+    """
     entries: list[MemoryEntry] = []
-    for harness in discover_harnesses(home):
+    for harness in discover_harnesses(home, config=config):
         try:
             sources = harness.discover()
         except Exception as exc:  # noqa: BLE001 - one bad harness must not abort the rest
@@ -122,6 +156,9 @@ __all__ = [
     "Harness",
     "default_home",
     "read_text",
+    "iter_text_files",
+    "TEXT_SUFFIXES",
+    "SKIP_DIRS",
     "discover_harnesses",
     "harvest_all",
 ]

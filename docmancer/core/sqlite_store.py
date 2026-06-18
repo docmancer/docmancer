@@ -766,6 +766,32 @@ class SQLiteStore:
     def list_sources(self) -> list[str]:
         return [entry["source"] for entry in self.list_sources_with_dates()]
 
+    def list_source_provenance(self) -> list[dict]:
+        """Return per-source document-level metadata plus content char count.
+
+        Used by ``docmancer memory sources`` to report exactly what was indexed
+        and from where. Each row exposes the harness, scope, title, kind,
+        absolute source path, and character count.
+        """
+        out: list[dict] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source, content, metadata_json FROM sources ORDER BY source"
+            )
+            for row in rows:
+                try:
+                    meta = json.loads(row["metadata_json"] or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    meta = {}
+                out.append(
+                    {
+                        "source": str(row["source"]),
+                        "chars": len(row["content"] or ""),
+                        "metadata": meta,
+                    }
+                )
+        return out
+
     def list_embedding_upserts(self, collection: str) -> dict[int, dict]:
         """Return ``{chunk_id: {content_hash, embedding_hash, status}}`` for a collection."""
         with self._connect() as conn:

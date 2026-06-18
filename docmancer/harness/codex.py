@@ -1,13 +1,16 @@
 """Codex harness: memory under ``~/.codex/memories`` plus global AGENTS.md.
 
-The Codex memory surface verified on a real machine is the markdown under
-``~/.codex/memories/*.md`` (agent-written) and the global ``~/.codex/AGENTS.md``
-(user-authored instructions). The structured ``memories_*.sqlite`` store is not
+The Codex memory surface verified on a real machine is recursive markdown under
+``~/.codex/memories`` (agent-written memory, rollout summaries, extensions, and
+skills) plus the global ``~/.codex/AGENTS.md`` and ``~/.codex/AGENTS.override.md``
+user-authored instructions. The structured ``memories_*.sqlite`` store is not
 parsed in v1; markdown is the portable surface. Degrades silently when absent.
 """
 from __future__ import annotations
 
-from .base import Harness, HarnessSource, MemoryEntry, read_text
+from .base import Harness, HarnessSource, MemoryEntry, iter_text_files, read_text
+
+_MEMORY_SUFFIXES = {".md", ".markdown"}
 
 
 class CodexHarness(Harness):
@@ -28,28 +31,37 @@ class CodexHarness(Harness):
                     extra={"kind": "agent-memory"},
                 )
             )
-        agents = base / "AGENTS.md"
-        if agents.is_file():
-            sources.append(
-                HarnessSource(
-                    harness=self.name,
-                    root=agents,
-                    scope="global:codex",
-                    extra={"kind": "instructions"},
+        for name in ("AGENTS.md", "AGENTS.override.md"):
+            agents = base / name
+            if agents.is_file():
+                sources.append(
+                    HarnessSource(
+                        harness=self.name,
+                        root=agents,
+                        scope="global:codex",
+                        extra={"kind": "instructions"},
+                    )
                 )
-            )
         return sources
 
     def harvest(self, source: HarnessSource) -> list[MemoryEntry]:
         kind = source.extra.get("kind", "agent-memory")
         entries: list[MemoryEntry] = []
         if source.root.is_dir():
-            for md in sorted(source.root.glob("*.md")):
+            for md in iter_text_files(source.root, _MEMORY_SUFFIXES):
                 text = read_text(md)
                 if text is None:
                     continue
+                rel = md.relative_to(source.root)
                 entries.append(
-                    MemoryEntry(self.name, source.scope, md.stem, text, str(md), {"kind": kind})
+                    MemoryEntry(
+                        self.name,
+                        source.scope,
+                        str(rel.with_suffix("")),
+                        text,
+                        str(md),
+                        {"kind": kind},
+                    )
                 )
         elif source.root.is_file():
             text = read_text(source.root)

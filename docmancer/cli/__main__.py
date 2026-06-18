@@ -17,6 +17,7 @@ from docmancer.cli.commands import (
     update_cmd,
 )
 from docmancer.cli.help import DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
+from docmancer.cli.mcp_commands import mcp_group
 from docmancer.cli.memory_commands import memory_group
 from docmancer.cli.qdrant_commands import qdrant_group
 
@@ -73,6 +74,7 @@ cli.add_command(fetch_cmd, "fetch")
 cli.add_command(install_cmd, "install")
 cli.add_command(ingest_cmd, "ingest")
 cli.add_command(memory_group, "memory")
+cli.add_command(mcp_group, "mcp")
 cli.add_command(qdrant_group, "qdrant")
 
 

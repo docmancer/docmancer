@@ -29,17 +29,22 @@ dependencies = [
     "pypdf>=4.0.0",
     "python-docx>=1.1.0",
     "striprtf>=0.0.26",
+    "mistralai>=1.0.0",
 ]
 
 [project.optional-dependencies]
 browser = ["playwright>=1.40.0"]
 crawl4ai = ["crawl4ai>=0.4.0"]
 embeddings-heavy = ["fastembed>=0.4.0", "qdrant-client>=1.10.0"]
+mcp = ["mcp>=1.0.0", "starlette>=0.40.0,<0.42.0", "sse-starlette>=1.6.1,<3.1.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "fastembed>=0.4.0",
     "qdrant-client>=1.10.0",
+    "mcp>=1.0.0",
+    "starlette>=0.40.0,<0.42.0",
+    "sse-starlette>=1.6.1,<3.1.0",
 ]
 embeddings-voyage = ["voyageai>=0.2.0"]
 embeddings-openai = ["openai>=1.0.0"]
@@ -47,6 +52,7 @@ embeddings-cohere = ["cohere>=5.0.0"]
 
 [project.scripts]
 "docmancer" = "docmancer.cli.__main__:cli"
+"docmancer-mcp" = "docmancer.mcp.server:main"
 
 [tool.hatch.version]
 path = "docmancer/_version.py"
@@ -54,10 +60,13 @@ path = "docmancer/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
 
-# The default static embedding model is vendored into the package tree at
-# build time (scripts/vendor_static_model.py) and packed into the wheel.
-# Hatchling skips a force-include whose source is absent, so this is a no-op
-# in a dev checkout that has not run the vendor script.
+# The default static embedding model is vendored into the package tree by
+# scripts/vendor_static_model.py and must be present before building a release.
+# Include it in both sdist and wheel so build-from-sdist produces the same
+# offline default model as a direct wheel build.
+[tool.hatch.build.targets.sdist.force-include]
+"docmancer/_models" = "docmancer/_models"
+
 [tool.hatch.build.targets.wheel.force-include]
 "docmancer/_models" = "docmancer/_models"
 

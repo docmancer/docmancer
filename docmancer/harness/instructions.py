@@ -1,44 +1,59 @@
-"""Repo-level instruction harvest (surface widening).
+"""Repo-level instruction and rule harvest (surface widening).
 
 Even users without agent auto-memory almost always have ``CLAUDE.md`` /
-``AGENTS.md`` / ``.cursor/rules`` in their repositories. We recover each repo's
-real path from the Claude Code session files and harvest those instruction
-files so the indexed count is rarely zero. Entries are tagged
-``kind="instructions"``.
+``AGENTS.md`` / ``GEMINI.md`` and rule directories in their repositories. We
+recover each repo's real path from every agent that records it (Claude Code,
+Cursor, Gemini, Codex sessions) and harvest those instruction files and rule
+directories, so the indexed count is rarely zero. Entries are tagged
+``kind="instructions"`` or ``kind="rules"``.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from .base import Harness, HarnessSource, MemoryEntry, read_text
-from .paths import project_path_for_slug_dir
+from .base import Harness, HarnessSource, MemoryEntry, iter_text_files, read_text
+from .paths import discover_project_roots
 
-_REPO_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md")
+# Single instruction files, relative to a repo root.
+_REPO_INSTRUCTION_FILES = (
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "GEMINI.md",
+    "QWEN.md",
+    "CRUSH.md",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    "CONVENTIONS.md",
+    ".rules",
+)
+
+# Rule directories, relative to a repo root. Scanned recursively.
+_REPO_RULE_DIRS = (
+    ".claude/rules",
+    ".cursor/rules",
+    ".continue/rules",
+    ".clinerules",
+    ".windsurf/rules",
+    ".windsurf/workflows",
+    ".devin/rules",
+)
+
+_RULE_SUFFIXES = {".md", ".markdown", ".mdc", ".txt", ".yaml", ".yml"}
 
 
 class InstructionsHarness(Harness):
     name = "instructions"
 
     def discover(self) -> list[HarnessSource]:
-        base = self.home / ".claude" / "projects"
-        if not base.is_dir():
-            return []
-        seen: set[str] = set()
         sources: list[HarnessSource] = []
-        for proj in sorted(base.iterdir()):
-            if not proj.is_dir():
-                continue
-            repo = project_path_for_slug_dir(proj)
-            if not repo or repo in seen:
-                continue
-            seen.add(repo)
-            repo_path = Path(repo)
-            if not repo_path.is_dir():
-                continue
+        for repo in discover_project_roots(self.home):
             sources.append(
                 HarnessSource(
                     harness=self.name,
-                    root=repo_path,
+                    root=Path(repo),
                     scope=f"project:{repo}",
                     extra={"kind": "instructions"},
                 )
@@ -56,22 +71,25 @@ class InstructionsHarness(Harness):
                     entries.append(
                         MemoryEntry(self.name, source.scope, rel, text, str(f), {"kind": "instructions"})
                     )
-        rules_dir = repo / ".cursor" / "rules"
-        if rules_dir.is_dir():
-            for rule in sorted(rules_dir.glob("*")):
-                if not rule.is_file():
-                    continue
+        # Legacy single-file .clinerules is handled above only when it is a file;
+        # the dir form is handled by the rule-dir loop below.
+        for rel in _REPO_RULE_DIRS:
+            rules_dir = repo / rel
+            if not rules_dir.is_dir():
+                continue
+            for rule in iter_text_files(rules_dir, _RULE_SUFFIXES):
                 text = read_text(rule)
                 if text is None:
                     continue
+                rule_rel = rule.relative_to(repo)
                 entries.append(
                     MemoryEntry(
                         self.name,
                         source.scope,
-                        f".cursor/rules/{rule.name}",
+                        str(rule_rel),
                         text,
                         str(rule),
-                        {"kind": "instructions"},
+                        {"kind": "rules"},
                     )
                 )
         return entries

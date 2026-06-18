@@ -45,6 +45,33 @@ def test_sync_then_query(tmp_path, monkeypatch):
     assert "Railway" in q.output
 
 
+def test_sources_preview_lists_provenance(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    r = CliRunner().invoke(cli, ["memory", "sources", "--preview"])
+    assert r.exit_code == 0, r.output
+    assert "claude-code" in r.output
+    assert "would index" in r.output
+    assert "By agent:" in r.output
+
+
+def test_sources_json_and_filter(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    r = CliRunner().invoke(cli, ["memory", "sources", "--preview", "--json", "--agent", "claude-code"])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data and all(row["agent"] == "claude-code" for row in data)
+    assert "chars" in data[0] and "path" in data[0]
+
+
+def test_sources_stored_index_after_sync(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    CliRunner().invoke(cli, ["memory", "sync"])
+    r = CliRunner().invoke(cli, ["memory", "sources"])
+    assert r.exit_code == 0, r.output
+    assert "indexed across" in r.output
+    assert "claude-code" in r.output
+
+
 def test_clear_removes_and_status_reports_empty(tmp_path, monkeypatch):
     db = _env(monkeypatch, tmp_path)
     CliRunner().invoke(cli, ["memory", "sync"])

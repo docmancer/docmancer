@@ -81,6 +81,30 @@ def _get_copilot_user_instructions_path() -> Path:
     return Path.home() / ".copilot" / "copilot-instructions.md"
 
 
+_EMBEDDING_PROVIDER_DEFAULTS = {
+    "model2vec": ("minishlab/potion-base-8M", 256),
+    "fastembed": ("BAAI/bge-base-en-v1.5", 768),
+    "mistral": ("mistral-embed-2312", 1024),
+    "openai": ("text-embedding-3-small", 1536),
+    "voyage": ("voyage-3", 1024),
+    "cohere": ("embed-english-v3.0", 1024),
+}
+
+
+def _apply_embedding_provider_shortcut(config, provider: str) -> None:
+    """Set provider/model/dimensions defaults on a config's embeddings block.
+
+    Never writes API keys; credentials only ever come from the provider's env
+    var (for example MISTRAL_API_KEY).
+    """
+    model, dims = _EMBEDDING_PROVIDER_DEFAULTS.get(provider, (None, None))
+    config.embeddings.provider = provider
+    if model:
+        config.embeddings.model = model
+    if dims:
+        config.embeddings.dimensions = dims
+
+
 def _build_user_bootstrap_config():
     DocmancerConfig = _get_config_class()
     config = DocmancerConfig()
@@ -428,24 +452,26 @@ _AGENTS_MD_START = "<!-- docmancer:start -->"
 _AGENTS_MD_END = "<!-- docmancer:end -->"
 
 
-def _install_or_append_agents_md(dest: Path, content_body: str) -> None:
-    marker_block = f"{_AGENTS_MD_START}\n{content_body.strip()}\n{_AGENTS_MD_END}\n"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+def _install_or_append_agents_md(dest: Path, content_body: str) -> Path | None:
+    """Idempotently write docmancer's managed block into an always-loaded file.
 
-    if dest.exists():
-        existing = dest.read_text(encoding="utf-8")
-        start_idx = existing.find(_AGENTS_MD_START)
-        end_idx = existing.find(_AGENTS_MD_END)
-        if start_idx != -1 and end_idx != -1:
-            # Replace existing block
-            new_content = existing[:start_idx] + marker_block + existing[end_idx + len(_AGENTS_MD_END):]
-            dest.write_text(new_content.strip() + "\n", encoding="utf-8")
-        else:
-            # Append to file
-            separator = "\n\n" if existing.strip() else ""
-            dest.write_text(existing.rstrip() + separator + marker_block, encoding="utf-8")
-    else:
-        dest.write_text(marker_block, encoding="utf-8")
+    Delegates to the shared :mod:`docmancer.cli.managed_block` helper so install
+    edits to user-owned files (``~/.cursor/AGENTS.md``, ``~/.codex/AGENTS.md``,
+    ``CLAUDE.md``) get the same backup safety as ``memory apply``. A timestamped
+    backup is taken the first time we touch a non-empty user file; idempotent
+    re-installs that only replace our own block do not litter backups. Returns
+    the backup path when one was written.
+    """
+    from docmancer.cli.managed_block import upsert_block
+
+    _action, backup_path = upsert_block(
+        dest,
+        content_body,
+        begin=_AGENTS_MD_START,
+        end=_AGENTS_MD_END,
+        backup_policy="foreign-content",
+    )
+    return backup_path
 
 
 def _install_vscode_copilot_settings(dest: Path) -> None:
@@ -476,7 +502,14 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
     ),
 )
 @click.option("--dir", "directory", default=None, help="Target directory for the config file.")
-def init_cmd(directory: str | None):
+@click.option(
+    "--embedding-provider",
+    "embedding_provider",
+    type=click.Choice(["model2vec", "fastembed", "mistral", "openai", "voyage", "cohere"], case_sensitive=False),
+    default=None,
+    help="Set the embeddings provider in the generated config (default model2vec).",
+)
+def init_cmd(directory: str | None, embedding_provider: str | None):
     """Initialize a docmancer project with a config file."""
     import yaml as _yaml
 
@@ -490,6 +523,8 @@ def init_cmd(directory: str | None):
     config = DocmancerConfig()
     config.index.db_path = ".docmancer/docmancer.db"
     config.index.extracted_dir = ".docmancer/extracted"
+    if embedding_provider:
+        _apply_embedding_provider_shortcut(config, embedding_provider.lower())
     data = config.model_dump()
     with open(config_path, "w") as f:
         _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -943,9 +978,15 @@ def doctor_cmd(config_path: str | None):
         _emit_status_line(f"vector store: {vs_provider}", indent=4)
 
     _emit_status_line(
-        f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model}",
+        f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model} dimensions={config.embeddings.dimensions}",
         indent=4,
     )
+    if emb_provider == "mistral" and not os.environ.get("MISTRAL_API_KEY"):
+        _emit_status_line(
+            "MISTRAL_API_KEY: not set (required for the mistral embeddings provider)",
+            state="warn",
+            indent=4,
+        )
     if emb_provider == "fastembed":
         if find_spec("fastembed") is None:
             _emit_status_line(
@@ -1469,11 +1510,20 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
         _install_skill_file(content, dest)
         mem_content = _build_skill_content("memory_skill.md", effective_config_path)
         _install_skill_file(mem_content, mem_dest)
+        # Inject a memory-recall instruction into the always-loaded CLAUDE.md so
+        # the on-demand pull path fires even when skill discovery is flaky. The
+        # scope mirrors where the skills were written (project vs global).
+        claude_md = Path("CLAUDE.md") if project else home / ".claude" / "CLAUDE.md"
+        instruction_body = _get_template_content("claude_code_instruction.md").replace(
+            "{{DOCS_KIT_CMD}}", _resolve_skill_command(effective_config_path)
+        )
+        _install_or_append_agents_md(claude_md, instruction_body)
         _emit_install_summary(
             "Install skill for Claude Code.",
             [
                 ("Installed docmancer skill at", dest),
                 ("Installed docmancer-memory skill at", mem_dest),
+                ("Injected recall instruction into", claude_md),
             ],
             created_user_config,
             effective_config_path,
@@ -1491,12 +1541,20 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
         mem_content = _build_skill_content("memory_skill.md", effective_config_path)
         mem_dest = dest.parent.parent / "docmancer-memory" / "SKILL.md"
         _install_skill_file(mem_content, mem_dest)
+        # Inject a memory-recall instruction into the always-loaded AGENTS.md so
+        # the on-demand pull path fires even when skill discovery is flaky.
+        codex_agents_md = home / ".codex" / "AGENTS.md"
+        instruction_body = _get_template_content("codex_agents_md.md").replace(
+            "{{DOCS_KIT_CMD}}", _resolve_skill_command(effective_config_path)
+        )
+        _install_or_append_agents_md(codex_agents_md, instruction_body)
         _emit_install_summary(
             "Install skill for Codex.",
             [
                 ("Installed docmancer skill at", dest),
                 ("Installed docmancer-memory skill at", mem_dest),
                 ("Also installed shared compatibility skill at", shared_dest),
+                ("Injected recall instruction into", codex_agents_md),
             ],
             created_user_config,
             effective_config_path,

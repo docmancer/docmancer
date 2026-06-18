@@ -53,6 +53,12 @@ def test_install_claude_code_creates_rebooted_skill_file():
         mem_skill = fake_home / ".claude" / "skills" / "docmancer-memory" / "SKILL.md"
         assert mem_skill.exists()
         assert "docmancer memory query" in mem_skill.read_text()
+        # Recall instruction injected into the always-loaded CLAUDE.md.
+        claude_md = fake_home / ".claude" / "CLAUDE.md"
+        assert claude_md.exists()
+        injected = claude_md.read_text()
+        assert "<!-- docmancer:start -->" in injected
+        assert "docmancer memory query" in injected
         assert "docmancer bench" not in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content
@@ -62,6 +68,27 @@ def test_install_claude_code_creates_rebooted_skill_file():
         assert "docmancer pull" not in content
         assert "docmancer search" not in content
         assert "from the " + "reg" + "istry" not in content.lower()
+
+
+def test_install_claude_code_backs_up_existing_user_file():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        claude_md = fake_home / ".claude" / "CLAUDE.md"
+        claude_md.parent.mkdir(parents=True, exist_ok=True)
+        claude_md.write_text("# My own global instructions\n\nKeep these.\n")
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "claude-code"])
+        assert result.exit_code == 0, result.output
+        text = claude_md.read_text()
+        # User content preserved, our block appended.
+        assert "Keep these." in text
+        assert "<!-- docmancer:start -->" in text
+        # A timestamped backup of the pre-existing file was taken.
+        backups = list((fake_home / ".claude").glob("CLAUDE.md.docmancer-bak-*"))
+        assert backups, "expected a backup of the pre-existing CLAUDE.md"
+        assert "Keep these." in backups[0].read_text()
 
 
 def test_install_codex_creates_native_and_shared_skills():
@@ -74,6 +101,12 @@ def test_install_codex_creates_native_and_shared_skills():
         assert result.exit_code == 0, result.output
         assert (fake_home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()
         assert (fake_home / ".agents" / "skills" / "docmancer" / "SKILL.md").exists()
+        # Recall instruction injected into the always-loaded ~/.codex/AGENTS.md.
+        codex_agents = fake_home / ".codex" / "AGENTS.md"
+        assert codex_agents.exists()
+        injected = codex_agents.read_text()
+        assert "<!-- docmancer:start -->" in injected
+        assert "docmancer memory query" in injected
 
 
 def test_install_cursor_creates_agents_md_fallback():

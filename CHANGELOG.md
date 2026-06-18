@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.3] - Unreleased
+## [0.6.0] - Unreleased
 
 ### Added
 
@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **`setup` indexes memory by default.** `docmancer setup` warms the static embedding model once and indexes all local agent memory. Opt out with `--no-index-memory`; preview with `--dry-run`.
 - **Privacy controls.** Secrets are redacted on index; `--dry-run` previews without writing; `--include` / `--exclude` scope the harvest on both file path and project scope. Nothing is uploaded; the index is a local SQLite file removable with `docmancer memory clear`.
 - **`docmancer-memory` agent skill** installed alongside the docs skill for Claude Code and Codex.
+- **Exhaustive memory discovery.** Discovery now spans 9 external agents (opencode, crush, goose, qwen, continue, cline, windsurf, gemini, github-copilot) plus Roo Code and Zed, alongside upgraded Claude Code (`~/.claude/CLAUDE.md`, `~/.claude/rules`, recursive project memory), Codex (recursive `~/.codex/memories`, `AGENTS.override.md`), Cursor (`~/.cursor/rules` and `skills`), and repo-instruction harnesses (9 instruction files, 7 rule dirs, project roots recovered from Claude, Cursor, Gemini, and Codex sessions). Covers global and project memory, instructions, and rules; config-extensible via `discovery.disabled` / `discovery.extra_sources` and privacy-filtered.
+- **`docmancer memory sources`** lists every indexed source with provenance (agent, type, scope, title, path, char count), with `--agent` / `--scope` / `--type` / `--json` / `--preview` filters.
+- **Built-in Mistral-backed memory** under `docmancer memory`: `extract` (structured facts) and `consolidate` (review-only master-memory draft), using `MISTRAL_API_KEY` via the official `mistralai` client. The default chat model is `mistral-small-2506` (override with `--model` or `DOCMANCER_MISTRAL_MODEL`). Both fail gracefully when no key is set or the API call fails (clear message, non-zero exit, no partial write), print a cloud-use notice, run privacy redaction first, and never change the local-only commands or write agent files.
+- **`docmancer memory apply`** materializes a reviewed consolidated draft into an agent's native file (Codex, Claude Code, Cursor) inside a managed block, with a timestamped backup and confirmation. Local, keyless, and never automatic.
+- **Bidirectional recall instruction injection.** `docmancer install codex` and `docmancer install claude-code` now also inject a docmancer recall instruction into the agent's always-loaded file (`~/.codex/AGENTS.md` and `CLAUDE.md`, managed block), mirroring the existing Cursor fallback, so the on-demand pull path fires in both directions.
+- **Optional `mistral-embed-2312` embeddings provider** (`init --embedding-provider mistral`; default stays `model2vec`).
+- **Packaged `docmancer-mcp` stdio MCP server** with local memory and docs search tools (`docmancer_memory_search`, `docmancer_docs_search`, `docmancer_memory_status`, `docmancer_sources_list`) plus optional Mistral tools when `MISTRAL_API_KEY` is set. `docmancer mcp serve` / `doctor` / `install {codex,claude-code,claude-desktop}`. Requires the `mcp` extra.
 
 ### Changed
 

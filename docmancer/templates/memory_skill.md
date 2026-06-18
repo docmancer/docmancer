@@ -8,7 +8,7 @@ allowed-tools:
 
 # docmancer memory
 
-Docmancer indexes the memory and instruction files your coding agents already wrote on this machine and answers questions about them through one local hybrid (lexical + dense) index. It reads Claude Code agent memory, Codex memory, and Cursor / repo-level `CLAUDE.md` / `AGENTS.md` instructions. Nothing is uploaded; the index is a single local SQLite file.
+Docmancer indexes the memory and instruction files your coding agents already wrote on this machine and answers questions about them through one local hybrid (lexical + dense) index. It reads agent memory, instructions, and rules across many agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more), including repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`. Nothing is uploaded by the local commands; the index is a single local SQLite file.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -33,10 +33,26 @@ docmancer memory scan
 docmancer memory sync
 docmancer memory sync --dry-run
 docmancer memory query "why did we pick Railway"
+docmancer memory sources
 docmancer memory status
 docmancer memory clear
 ```
 
+## Provenance
+
+Run `docmancer memory sources` to see exactly what was indexed and from where (agent, type, scope, title, path, char count). Add `--agent`, `--scope`, `--type`, `--json`, or `--preview` (live re-harvest) to filter.
+
+## Mistral-backed (optional, requires MISTRAL_API_KEY)
+
+These send privacy-redacted local memory to Mistral and fail cleanly with a clear message when no key is set. They never edit agent files.
+
+```bash
+docmancer memory extract --yes
+docmancer memory consolidate --query "..." --output draft.md --yes
+```
+
+`docmancer memory apply --from draft.md --agent codex` materializes a reviewed draft into an agent's always-loaded file (managed block, backup taken, never automatic). It is local and keyless.
+
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. Nothing leaves the machine.
+Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; the Mistral commands send redacted text only after a cloud-use confirmation.

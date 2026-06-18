@@ -36,6 +36,10 @@ def get_embeddings_provider(config: "EmbeddingsConfig") -> EmbeddingsProvider:
         from .cohere_provider import CohereProvider
 
         return CohereProvider(config)
+    if name == "mistral":
+        from .mistral_provider import MistralProvider
+
+        return MistralProvider(config)
     raise ValueError(f"Unknown embeddings provider: {config.provider!r}")
 
 

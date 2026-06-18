@@ -1,12 +1,13 @@
-"""Cursor harness: global ``~/.cursor/AGENTS.md`` instructions.
+"""Cursor harness: global instructions, rules, and skills under ``~/.cursor``.
 
-The project-rules layout under ``~/.cursor/projects`` is still unverified, so
-v1 harvests only the reliably-present global ``AGENTS.md``. Degrades silently
-when absent.
+Harvests the global ``~/.cursor/AGENTS.md`` instructions plus rules under
+``~/.cursor/rules`` and skills under ``~/.cursor/skills`` (``.md``/``.mdc``/
+``.txt``). Cursor's global User Rules live in the app database, not a file, so
+they are not indexable here. Degrades silently when any path is absent.
 """
 from __future__ import annotations
 
-from .base import Harness, HarnessSource, MemoryEntry, read_text
+from .base import Harness, HarnessSource, MemoryEntry, iter_text_files, read_text
 
 
 class CursorHarness(Harness):
@@ -27,22 +28,47 @@ class CursorHarness(Harness):
                     extra={"kind": "instructions"},
                 )
             )
+        for sub, kind in (("rules", "rules"), ("skills", "instructions")):
+            d = base / sub
+            if d.is_dir():
+                sources.append(
+                    HarnessSource(
+                        harness=self.name,
+                        root=d,
+                        scope="global:cursor",
+                        extra={"kind": kind},
+                    )
+                )
         return sources
 
     def harvest(self, source: HarnessSource) -> list[MemoryEntry]:
-        text = read_text(source.root)
-        if text is None:
-            return []
-        return [
-            MemoryEntry(
-                self.name,
-                source.scope,
-                source.root.stem,
-                text,
-                str(source.root),
-                {"kind": source.extra.get("kind", "instructions")},
+        kind = source.extra.get("kind", "instructions")
+        if source.root.is_file():
+            text = read_text(source.root)
+            if text is None:
+                return []
+            return [
+                MemoryEntry(
+                    self.name, source.scope, source.root.stem, text, str(source.root), {"kind": kind}
+                )
+            ]
+        entries: list[MemoryEntry] = []
+        for f in iter_text_files(source.root):
+            text = read_text(f)
+            if text is None:
+                continue
+            rel = f.relative_to(source.root)
+            entries.append(
+                MemoryEntry(
+                    self.name,
+                    source.scope,
+                    str(rel.with_suffix("")),
+                    text,
+                    str(f),
+                    {"kind": kind},
+                )
             )
-        ]
+        return entries
 
 
 __all__ = ["CursorHarness"]

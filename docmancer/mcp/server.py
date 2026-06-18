@@ -1,0 +1,69 @@
+"""FastMCP stdio server exposing docmancer's local memory and docs.
+
+The ``mcp`` SDK is imported lazily inside :func:`build_server`/:func:`main` so
+the package import stays light and ``docmancer-mcp`` fails with a clear hint
+when the optional extra is missing.
+"""
+from __future__ import annotations
+
+from . import tools
+
+_MISSING_MCP = (
+    "the MCP server requires the 'mcp' extra; install with "
+    "`pip install docmancer[mcp]` (or `pipx inject docmancer mcp`)."
+)
+
+
+def build_server():
+    """Construct and return a FastMCP server with docmancer tools registered."""
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:  # pragma: no cover - exercised via doctor/serve hint
+        raise ImportError(_MISSING_MCP) from exc
+
+    server = FastMCP("docmancer")
+
+    @server.tool(description="Search the local docmancer memory index (agent memory, instructions, rules). Local only.")
+    def docmancer_memory_search(query: str, limit: int = 8) -> list[dict]:
+        return tools.memory_search(query, limit=limit)
+
+    @server.tool(description="Search the local docmancer docs index. Local only.")
+    def docmancer_docs_search(query: str, limit: int = 8) -> list[dict]:
+        return tools.docs_search(query, limit=limit)
+
+    @server.tool(description="Report docmancer memory index status (path, source/section counts). Local only.")
+    def docmancer_memory_status() -> dict:
+        return tools.memory_status()
+
+    @server.tool(description="List indexed memory sources with provenance (agent, type, scope, title, path). Local only.")
+    def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
+        return tools.sources_list(agent=agent, scope=scope, kind=kind)
+
+    from docmancer.ai.mistral_client import mistral_api_key
+
+    if mistral_api_key():
+        @server.tool(description="CLOUD: extract durable memory facts via Mistral. Sends privacy-redacted local memory to Mistral.")
+        def docmancer_memory_extract(limit: int = 30) -> dict:
+            return tools.memory_extract(limit=limit)
+
+        @server.tool(description="CLOUD: produce a review-only consolidated memory draft via Mistral. Sends privacy-redacted local memory to Mistral.")
+        def docmancer_memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
+            return tools.memory_consolidate_draft(query=query, limit=limit)
+
+    return server
+
+
+def main() -> None:
+    """Console-script entrypoint: run the stdio MCP server."""
+    try:
+        server = build_server()
+    except ImportError as exc:
+        import sys
+
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -70,7 +70,9 @@ def test_cli_help():
     assert "Compress documentation context" in result.output
     assert "add" in result.output
     assert "setup" in result.output
-    assert "m" + "c" + "p" not in result.output
+    # The memory/docs MCP server group is a real command now (not the old
+    # API-pack compiler, which stays gone).
+    assert "mcp" in result.output
     assert "install" + "-pack" not in result.output
     assert "un" + "install" not in result.output
     assert "pipeline" not in result.output

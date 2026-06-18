@@ -71,7 +71,30 @@ class MemoryAgent:
                 collection=_MEMORY_COLLECTION,
                 options={"db_path": vec_db},
             ),
+            discovery=self._load_user_discovery(),
         )
+
+    def _load_user_discovery(self):
+        """Read only the ``discovery`` block from the user's docmancer.yaml.
+
+        The memory index keeps its own isolated config, but discovery tuning
+        (disabled harnesses, custom paths) should still take effect from the
+        user's config file. Looked up under ``<home>/.docmancer/docmancer.yaml``
+        so it stays test-isolated. Anything missing falls back to defaults.
+        """
+        from docmancer.core.config import DiscoveryConfig
+
+        try:
+            import yaml as _yaml
+
+            cfg_path = self.home / ".docmancer" / "docmancer.yaml"
+            if not cfg_path.is_file():
+                return DiscoveryConfig()
+            data = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            block = data.get("discovery")
+            return DiscoveryConfig(**block) if isinstance(block, dict) else DiscoveryConfig()
+        except Exception:  # noqa: BLE001 - never let config parsing break discovery
+            return DiscoveryConfig()
 
     # ------------------------------------------------------------------
     # Harvest / index
@@ -79,7 +102,7 @@ class MemoryAgent:
 
     def preview(self) -> list["MemoryEntry"]:
         """Return the entries that WOULD be indexed (post-filter), no writes."""
-        return [e for e in harvest_all(self.home) if self.privacy.allows(e)]
+        return [e for e in harvest_all(self.home, config=self.config) if self.privacy.allows(e)]
 
     def sync(self, *, recreate: bool = False) -> int:
         """Harvest, filter, redact, and index. Returns the entry count."""
@@ -182,6 +205,46 @@ class MemoryAgent:
             "sources": stats.get("sources_count", 0),
             "sections": stats.get("sections_count", 0),
         }
+
+    def sources(self, *, live_preview: bool = False) -> list[dict]:
+        """Return provenance rows: agent, type, scope, title, path, chars.
+
+        ``live_preview=True`` re-harvests (post-privacy, no writes) to show what
+        WOULD index; otherwise it reads the stored index (what was actually
+        consolidated). Rows are sorted by agent, then scope, then path.
+        """
+        rows: list[dict] = []
+        if live_preview or not Path(self.db_path).exists():
+            for e in self.preview():
+                rows.append(
+                    {
+                        "agent": e.harness,
+                        "type": e.extra.get("kind", "agent-memory"),
+                        "scope": e.scope,
+                        "title": e.title,
+                        "path": e.path,
+                        "chars": len(e.content or ""),
+                    }
+                )
+        else:
+            try:
+                provenance = self._agent.store.list_source_provenance()
+            except Exception:  # noqa: BLE001
+                provenance = []
+            for item in provenance:
+                meta = item.get("metadata", {})
+                rows.append(
+                    {
+                        "agent": meta.get("harness", item["source"].split(":", 1)[0]),
+                        "type": meta.get("kind", "agent-memory"),
+                        "scope": meta.get("scope", ""),
+                        "title": meta.get("title", ""),
+                        "path": meta.get("source_path", item["source"].split(":", 1)[-1]),
+                        "chars": item["chars"],
+                    }
+                )
+        rows.sort(key=lambda r: (r["agent"], r["scope"], r["path"]))
+        return rows
 
     def memory_paths(self) -> list[Path]:
         db = Path(self.db_path)

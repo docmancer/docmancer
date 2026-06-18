@@ -125,6 +125,27 @@ class RetrievalConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_RETRIEVAL_", extra="ignore")
 
 
+class DiscoveryExtraSource(BaseModel):
+    """A user-declared custom memory source for harness discovery."""
+
+    harness: str = "custom"
+    path: str
+    kind: str = "instructions"  # agent-memory | instructions | rules
+    scope: str | None = None
+
+
+class DiscoveryConfig(BaseSettings):
+    """Tune memory-harness discovery without a new release.
+
+    ``disabled`` turns off specific harnesses by name; ``extra_sources`` adds
+    custom files or directories to harvest.
+    """
+
+    disabled: list[str] = Field(default_factory=list)
+    extra_sources: list[DiscoveryExtraSource] = Field(default_factory=list)
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_DISCOVERY_", extra="ignore")
+
+
 _LEGACY_VECTOR_STORE_FIELDS = {"db_path", "local_path"}
 _NEW_VECTOR_STORE_FIELDS = {"provider", "url", "collection", "api_key_env", "options"}
 
@@ -137,6 +158,7 @@ class DocmancerConfig(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

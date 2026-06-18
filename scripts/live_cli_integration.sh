@@ -244,14 +244,17 @@ run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); 
 print_banner "CLI help surface"
 print_info "Checking top-level help plus local indexing, install, maintenance, and Qdrant commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest memory qdrant; do
+for command in setup add update query list inspect remove doctor init install fetch ingest memory qdrant mcp; do
   run "${CLI_CMD[@]}" "$command" --help
 done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
 done
-for command in scan sync query status clear; do
+for command in scan sync query sources extract consolidate apply status clear; do
   run "${CLI_CMD[@]}" memory "$command" --help
+done
+for command in serve doctor install; do
+  run "${CLI_CMD[@]}" mcp "$command" --help
 done
 
 print_banner "Initialize isolated config"
@@ -279,7 +282,7 @@ print_info "Exercising every supported install target without touching the real 
 )
 
 print_banner "Memory harness (isolated, offline)"
-print_info "Planting synthetic agent memory in the temporary HOME and exercising scan/sync/query/status/clear."
+print_info "Planting synthetic agent memory in the temporary HOME and exercising scan/sync/sources/query/status/apply/clear."
 MEMORY_HOME="$TMP_HOME"
 MEMORY_DB="$TMP_ROOT/memory.db"
 PLANT_PROJ="$MEMORY_HOME/.claude/projects/-Users-x-demo-app"
@@ -296,6 +299,8 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
   export DOCMANCER_MEMORY_DB="$MEMORY_DB"
   export HF_HUB_OFFLINE=1
   run "${CLI_CMD[@]}" memory scan
+  run "${CLI_CMD[@]}" memory sources --preview
+  run "${CLI_CMD[@]}" memory sources --preview --type memory --json
   print_info "Dry-run sync must write nothing."
   run "${CLI_CMD[@]}" memory sync --dry-run
   if [[ -f "$MEMORY_DB" ]]; then
@@ -303,6 +308,8 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
     exit 1
   fi
   run "${CLI_CMD[@]}" memory sync
+  run "${CLI_CMD[@]}" memory sources
+  run "${CLI_CMD[@]}" memory sources --agent claude-code --scope project --type memory
   run "${CLI_CMD[@]}" memory status
   print_info "Recall the planted decision (hybrid by default)."
   run "${CLI_CMD[@]}" memory query "why did we pick Railway"
@@ -312,9 +319,72 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
     exit 1
   fi
   print_ok "Secret was redacted on index."
+  print_info "Mistral-backed commands must fail cleanly without MISTRAL_API_KEY and write no partial draft."
+  SAVED_MISTRAL_API_KEY="${MISTRAL_API_KEY-}"
+  unset MISTRAL_API_KEY
+  EXTRACT_NO_KEY_OUT="$TMP_ROOT/memory-extract-no-key.out"
+  CONSOLIDATE_NO_KEY_OUT="$TMP_ROOT/memory-consolidate-no-key.out"
+  if "${CLI_CMD[@]}" memory extract --yes >"$EXTRACT_NO_KEY_OUT" 2>&1; then
+    cat "$EXTRACT_NO_KEY_OUT"
+    print_warn "memory extract unexpectedly succeeded without MISTRAL_API_KEY"
+    exit 1
+  fi
+  if ! grep -q "MISTRAL_API_KEY" "$EXTRACT_NO_KEY_OUT"; then
+    cat "$EXTRACT_NO_KEY_OUT"
+    print_warn "memory extract no-key output did not mention MISTRAL_API_KEY"
+    exit 1
+  fi
+  NO_KEY_DRAFT="$TMP_ROOT/no-key-draft.md"
+  if "${CLI_CMD[@]}" memory consolidate --output "$NO_KEY_DRAFT" --yes >"$CONSOLIDATE_NO_KEY_OUT" 2>&1; then
+    cat "$CONSOLIDATE_NO_KEY_OUT"
+    print_warn "memory consolidate unexpectedly succeeded without MISTRAL_API_KEY"
+    exit 1
+  fi
+  if [[ -f "$NO_KEY_DRAFT" ]]; then
+    print_warn "memory consolidate wrote a partial draft without MISTRAL_API_KEY"
+    exit 1
+  fi
+  if ! grep -q "MISTRAL_API_KEY" "$CONSOLIDATE_NO_KEY_OUT"; then
+    cat "$CONSOLIDATE_NO_KEY_OUT"
+    print_warn "memory consolidate no-key output did not mention MISTRAL_API_KEY"
+    exit 1
+  fi
+  if [[ -n "$SAVED_MISTRAL_API_KEY" ]]; then
+    export MISTRAL_API_KEY="$SAVED_MISTRAL_API_KEY"
+    MISTRAL_DRAFT="$TMP_ROOT/mistral-memory-draft.md"
+    print_info "MISTRAL_API_KEY is set, so running a small real consolidate call against redacted synthetic memory."
+    run "${CLI_CMD[@]}" memory consolidate --query "Railway deployment decision" --limit 5 --output "$MISTRAL_DRAFT" --yes
+    run test -s "$MISTRAL_DRAFT"
+  else
+    unset MISTRAL_API_KEY
+    print_info "MISTRAL_API_KEY is not set, so real Mistral extract/consolidate calls are skipped after no-key checks."
+  fi
+  APPLY_DRAFT="$TMP_ROOT/reviewed-memory-draft.md"
+  APPLY_TARGET="$TMP_ROOT/applied/AGENTS.md"
+  mkdir -p "$(dirname "$APPLY_TARGET")"
+  cat >"$APPLY_DRAFT" <<'EOF'
+# Reviewed Memory
+
+Railway is the deployment choice for this synthetic project.
+EOF
+  run "${CLI_CMD[@]}" memory apply --from "$APPLY_DRAFT" --output "$APPLY_TARGET" --dry-run
+  run "${CLI_CMD[@]}" memory apply --from "$APPLY_DRAFT" --output "$APPLY_TARGET" --yes
+  run grep -q "docmancer:memory:begin" "$APPLY_TARGET"
+  run "${CLI_CMD[@]}" memory apply --remove --output "$APPLY_TARGET" --yes
+  if grep -q "docmancer:memory:begin" "$APPLY_TARGET"; then
+    print_warn "memory apply --remove left the managed block behind"
+    exit 1
+  fi
   run "${CLI_CMD[@]}" memory clear --yes
   run "${CLI_CMD[@]}" memory status
 )
+
+print_banner "MCP command surface"
+print_info "Printing install snippets without touching real client config. Doctor may report a missing optional mcp SDK in lean environments."
+run "${CLI_CMD[@]}" mcp install codex --print
+run "${CLI_CMD[@]}" mcp install claude-code --print
+run "${CLI_CMD[@]}" mcp install claude-desktop --print
+run "${CLI_CMD[@]}" mcp doctor || true
 
 if [[ "${DOCMANCER_LIVE_REAL_MEMORY:-0}" == "1" ]]; then
   print_banner "Memory harness (REAL local agent memory, read-only)"

@@ -18,8 +18,25 @@ Reference for the local docs-RAG CLI. For configuration, see [Configuration](./C
 | `docmancer remove [source]` | Remove an indexed source or docset root. Use `--all` to clear the index. |
 | `docmancer clear` | Wipe docmancer-owned state and related model caches. Use `--dry-run` first. |
 | `docmancer doctor` | Check config, loader availability, index health, Qdrant/vector state, and installed skills. |
-| `docmancer install <agent>` | Install a markdown skill or instruction file for one agent. |
+| `docmancer install <agent>` | Install a markdown skill or instruction file for one agent. For `claude-code` and `codex` this also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block). |
+| `docmancer memory {scan,sync,query,sources,status,clear}` | Discover, index, and recall the memory, instructions, and rules your coding agents wrote on this machine. Local and offline. |
+| `docmancer memory {extract,consolidate}` | Mistral-backed: extract durable facts or write a review-only consolidated draft. Requires `MISTRAL_API_KEY`; fails cleanly without it. |
+| `docmancer memory apply --from <draft> --agent <a>` | Materialize a reviewed draft into an agent's always-loaded file inside a managed block (backup taken). Local, keyless, never automatic. |
+| `docmancer mcp {serve,doctor,install}` | Run or install the packaged `docmancer-mcp` stdio server (local memory and docs search; optional Mistral tools). Requires the `mcp` extra. |
 | `docmancer qdrant {up,down,status,upgrade,logs}` | Manage the local Qdrant process used for dense, sparse, and hybrid retrieval. |
+
+## Memory commands
+
+| Command | Description |
+|---------|-------------|
+| `docmancer memory sync` | Harvest, redact, and index agent memory. `--recreate`, `--dry-run`, `--include`, `--exclude`. |
+| `docmancer memory query "<text>"` | Recall from the local memory index (hybrid by default). |
+| `docmancer memory sources` | List every indexed source with provenance (agent, type, scope, title, path, char count). `--agent`, `--scope`, `--type`, `--json`, `--preview`. |
+| `docmancer memory extract` | Extract durable memory facts via Mistral structured output. `--query`, `--limit`, `--yes`. Requires `MISTRAL_API_KEY`. |
+| `docmancer memory consolidate` | Write a review-only consolidated master-memory draft via Mistral. `--query`, `--output`, `--yes`. Requires `MISTRAL_API_KEY`. |
+| `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor` or `--output`). `--from`, `--dry-run`, `--print`, `--remove`, `--yes`. |
+
+Discovery is config-extensible: set `discovery.disabled` to turn off harnesses and `discovery.extra_sources` to add custom paths in `docmancer.yaml`.
 
 ## Query options
 
