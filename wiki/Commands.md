@@ -34,7 +34,7 @@ Reference for the local docs-RAG CLI. For configuration, see [Configuration](./C
 | `docmancer memory sources` | List every indexed source with provenance (agent, type, scope, title, path, char count). `--agent`, `--scope`, `--type`, `--json`, `--preview`. |
 | `docmancer memory extract` | Extract durable memory facts via Mistral structured output. `--query`, `--limit`, `--yes`. Requires `MISTRAL_API_KEY`. |
 | `docmancer memory consolidate` | Write a review-only consolidated master-memory draft via Mistral. `--query`, `--output`, `--yes`. Requires `MISTRAL_API_KEY`. |
-| `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor` or `--output`). `--from`, `--dry-run`, `--print`, `--remove`, `--yes`. |
+| `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor` or `--output`). Defaults to `master-memory-draft.md`; use `--from` for another reviewed draft. `--dry-run`, `--print`, `--remove`, `--yes`. |
 
 Discovery is config-extensible: set `discovery.disabled` to turn off harnesses and `discovery.extra_sources` to add custom paths in `docmancer.yaml`.
 

@@ -72,8 +72,8 @@ docmancer memory consolidate \
 Once you have reviewed the draft, materialize it into an agent's always-loaded file so the context loads every session with no tool call and, crucially, so memory written in one agent shows up in the others:
 
 ```bash
-docmancer memory apply --from master-memory-draft.md --agent codex   # writes ~/.codex/AGENTS.md
-docmancer memory apply --from master-memory-draft.md --agent codex --dry-run   # preview the diff first
+docmancer memory apply --agent codex   # uses master-memory-draft.md by default
+docmancer memory apply --agent codex --dry-run   # preview the diff first
 ```
 
 `apply` is local and keyless. It writes only inside a clearly delimited managed block, takes a timestamped backup first, and never touches your own surrounding content. `--remove` strips the block for a clean uninstall. This is the only command that writes consolidated memory into agent-owned files, and it is never automatic. (`docmancer install codex` / `claude-code` also inject a short recall instruction into the same files, in their own managed block.)
@@ -98,7 +98,7 @@ Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.
 
 ## Where your data lives and how to remove it
 
-The memory index is a single local SQLite file under `~/.docmancer/` (override with `DOCMANCER_MEMORY_DB`). Nothing is uploaded anywhere. Secrets are redacted on index, you can preview exactly what would be indexed with `docmancer memory sync --dry-run`, and scope the harvest with `--include` / `--exclude` globs. `docmancer memory clear` deletes the index. There is no telemetry and no phone-home.
+The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, status, sources, apply, and clear run locally. Mistral-backed commands are optional, key-gated, and send selected memory text only after privacy redaction and a cloud-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
 
 **Inspectable.** Every section is written to `~/.docmancer/extracted/` as Markdown plus JSON. `docmancer inspect` shows index stats. `docmancer query --explain` shows which signal (lexical / dense / sparse) placed each result.
 

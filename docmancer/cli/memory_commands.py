@@ -2,7 +2,8 @@
 
 Scan, sync, query, inspect, and clear the local memory index built from the
 memory and instruction files your coding agents already wrote on this machine.
-Nothing is uploaded; the index is a local SQLite file.
+Sync and recall do not upload anything; the index is stored in local
+SQLite-backed files.
 """
 from __future__ import annotations
 
@@ -42,8 +43,8 @@ def memory_group():
     more): agent-written memory, user-authored instruction files (CLAUDE.md /
     AGENTS.md / GEMINI.md), and project rule directories. `scan` and `sync`
     report the split by kind; `sources` shows exact provenance per file. Preview
-    before writing with `sync --dry-run`; secrets are redacted on index and
-    nothing is uploaded.
+    before writing with `sync --dry-run`; secrets are redacted on index, and
+    local sync/query commands do not upload anything.
     """
 
 
@@ -265,9 +266,15 @@ def extract(limit, query, output_format, model, assume_yes, include, exclude):
     click.echo(_json.dumps(result.model_dump(), indent=2))
 
 
+# Default draft path shared by `consolidate` (where it writes) and `apply`
+# (what it reads when `--from` is omitted), so the two commands chain with no
+# arguments: `consolidate` then `apply --agent codex`.
+_DEFAULT_DRAFT = "master-memory-draft.md"
+
+
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Consolidate memory into a review-only draft with Mistral.")
 @click.option("--query", "query", default=None, help="Focus the consolidation on memory relevant to this query.")
-@click.option("--output", "output", default="master-memory-draft.md", show_default=True, help="Where to write the draft.")
+@click.option("--output", "output", default=_DEFAULT_DRAFT, show_default=True, help="Where to write the draft.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
 @click.option("--model", default=None, help="Override the Mistral chat model.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
@@ -340,7 +347,7 @@ def _apply_target_path(agent: str | None, output: str | None):
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Materialize a reviewed draft into an agent's file.")
-@click.option("--from", "from_path", default=None, help="The reviewed draft markdown to apply.")
+@click.option("--from", "from_path", default=None, help=f"The reviewed draft markdown to apply (defaults to {_DEFAULT_DRAFT}).")
 @click.option("--agent", type=click.Choice(sorted(_APPLY_TARGETS), case_sensitive=False), default=None, help="Target agent whose always-loaded file to write.")
 @click.option("--output", "output", default=None, help="Write to an arbitrary file instead of an agent target.")
 @click.option("--dry-run", is_flag=True, help="Show the diff; write nothing.")
@@ -354,7 +361,8 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
     timestamped backup. This is the only command that writes consolidated memory
     into agent-owned files, and it is never automatic. (`docmancer install` may
     also inject a short recall instruction into the same files.) Review the draft
-    first; `--from` is required.
+    first; with no `--from`, it applies the default `master-memory-draft.md`
+    written by `docmancer memory consolidate`.
     """
     from docmancer.cli.managed_block import diff_block, remove_block, upsert_block
 
@@ -379,10 +387,24 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
             click.echo(f"No docmancer managed block found in {target}.")
         return
 
-    if not from_path:
-        click.echo("Provide --from <draft.md> (review the draft before applying).", err=True)
-        sys.exit(2)
-    src = Path(from_path)
+    used_default = from_path is None
+    src = Path(from_path or _DEFAULT_DRAFT)
+    if not src.is_file() and used_default:
+        # No reviewed draft at the default location: ask the user where it is
+        # instead of just failing, so the flow keeps moving.
+        click.echo(
+            f"No draft found at {src}. Run `docmancer memory consolidate` first, "
+            "or provide a reviewed draft path.",
+            err=True,
+        )
+        try:
+            answer = click.prompt("Path to draft (blank to cancel)", default="", show_default=False)
+        except click.Abort:
+            answer = ""
+        answer = (answer or "").strip()
+        if not answer:
+            sys.exit(2)
+        src = Path(answer).expanduser()
     if not src.is_file():
         click.echo(f"Draft not found: {src}", err=True)
         sys.exit(2)
@@ -421,7 +443,7 @@ def status():
     click.echo(f"Exists: {db.exists()}")
     click.echo(f"Sources: {info['sources']}")
     click.echo(f"Sections: {info['sections']}")
-    click.echo("Nothing is uploaded; this is a local SQLite file. Remove it with: docmancer memory clear")
+    click.echo("Sync and recall stay local. Remove the local index with: docmancer memory clear")
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Delete the memory index.")

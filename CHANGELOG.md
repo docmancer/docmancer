@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - Unreleased
+### Changed
+
+- **`docmancer memory apply`:** defaults to `master-memory-draft.md` when `--from` is omitted, so the common `memory consolidate` then `memory apply --agent <agent>` flow works without repeating the draft path. If the default draft is missing, the CLI prompts for a reviewed draft path instead of failing immediately.
+- **Privacy wording:** clarifies that sync and recall stay local, while optional Mistral-backed commands send selected privacy-redacted memory text after a cloud-use confirmation. README, command help, the installed memory skill, and command reference now describe the SQLite-backed memory index files accurately.
+
 ## [0.6.0] - 2026-06-18
 ### Added
 

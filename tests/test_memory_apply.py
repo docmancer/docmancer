@@ -1,6 +1,8 @@
 """`docmancer memory apply`: managed-block writes, backup, idempotency, remove."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
@@ -78,11 +80,33 @@ def test_apply_requires_target(tmp_path):
     assert "Specify a target" in r.output
 
 
-def test_apply_requires_from(tmp_path):
-    target = tmp_path / "AGENTS.md"
-    r = CliRunner().invoke(cli, ["memory", "apply", "--output", str(target), "--yes"])
-    assert r.exit_code == 2
-    assert "--from" in r.output
+def test_apply_without_from_uses_default_draft(tmp_path):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        # No default draft and a blank prompt answer -> cancel, no write.
+        target = Path("AGENTS.md")
+        r = runner.invoke(cli, ["memory", "apply", "--output", str(target), "--yes"], input="\n")
+        assert r.exit_code == 2
+        assert "consolidate" in r.output
+        assert not target.exists()
+
+        # Default draft present -> picked up with no --from, no prompt.
+        Path("master-memory-draft.md").write_text("# draft\n\nhello\n", encoding="utf-8")
+        r2 = runner.invoke(cli, ["memory", "apply", "--output", str(target), "--yes"])
+        assert r2.exit_code == 0, r2.output
+        assert BEGIN in target.read_text()
+
+
+def test_apply_prompts_for_draft_when_default_missing(tmp_path):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("reviewed.md").write_text("# draft\n\nfrom prompt\n", encoding="utf-8")
+        target = Path("AGENTS.md")
+        # No default draft; user supplies a path at the prompt.
+        r = runner.invoke(cli, ["memory", "apply", "--output", str(target), "--yes"], input="reviewed.md\n")
+        assert r.exit_code == 0, r.output
+        assert BEGIN in target.read_text()
+        assert "from prompt" in target.read_text()
 
 
 def test_apply_agent_target_resolves_under_home(tmp_path, monkeypatch):

@@ -2,11 +2,11 @@
 
 ``MemoryAgent`` harvests harness memory and instruction files (Claude Code,
 Codex, Cursor) through :mod:`docmancer.harness`, applies the privacy filter,
-indexes everything into a dedicated local SQLite + sqlite-vec store, and
+indexes everything into dedicated local SQLite + sqlite-vec files, and
 answers queries through the real hybrid (lexical + dense) dispatcher.
 
-Nothing is uploaded: the index is a single local SQLite file. The memory index
-uses its own collection, separate from any docs index.
+Sync and recall do not upload anything. The memory index uses its own
+collection, separate from any docs index.
 """
 from __future__ import annotations
 

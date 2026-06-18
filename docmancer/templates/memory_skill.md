@@ -8,7 +8,7 @@ allowed-tools:
 
 # docmancer memory
 
-Docmancer indexes the memory and instruction files your coding agents already wrote on this machine and answers questions about them through one local hybrid (lexical + dense) index. It reads agent memory, instructions, and rules across many agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more), including repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`. Nothing is uploaded by the local commands; the index is a single local SQLite file.
+Docmancer indexes the memory and instruction files your coding agents already wrote on this machine and answers questions about them through one local hybrid (lexical + dense) index. It reads agent memory, instructions, and rules across many agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more), including repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`. Local commands do not upload anything; the index is stored in SQLite-backed files under the docmancer home folder.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -51,7 +51,7 @@ docmancer memory extract --yes
 docmancer memory consolidate --query "..." --output draft.md --yes
 ```
 
-`docmancer memory apply --from draft.md --agent codex` materializes a reviewed draft into an agent's always-loaded file (managed block, backup taken, never automatic). It is local and keyless.
+`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless.
 
 ## Privacy
 
