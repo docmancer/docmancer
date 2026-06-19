@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.6.3] - Unreleased
 ### Fixed
 
-- **Mistral memory context limits.** `docmancer memory extract` and `docmancer memory consolidate` now apply a local input-token budget before calling Mistral, truncating or omitting oversized memory entries with a clear warning instead of uploading an overlarge prompt that the API rejects.
+- **Mistral memory context limits.** `docmancer memory extract` and `docmancer memory consolidate` now split selected memory into budgeted Mistral requests and merge the results, preserving all selected text instead of trimming oversized prompts or failing after upload.
 
 ## [0.6.2] - 2026-06-19
 ### Added

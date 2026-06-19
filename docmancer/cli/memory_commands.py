@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -209,7 +208,6 @@ _CLOUD_NOTICE = (
 )
 _DEFAULT_CLOUD_INPUT_BUDGET = 90_000
 _APPROX_CHARS_PER_TOKEN = 4
-_MIN_TRUNCATED_ENTRY_TOKENS = 250
 
 
 def _require_mistral_key(command: str) -> None:
@@ -264,63 +262,173 @@ def _estimate_tokens(text: str) -> int:
     return max(1, (len(text) + _APPROX_CHARS_PER_TOKEN - 1) // _APPROX_CHARS_PER_TOKEN)
 
 
-def _entry_overhead_tokens(entry) -> int:
-    header = f"### Entry\nscope: {entry.scope}\ntitle: {entry.title}\nsource: {entry.path}\n\n"
+def _payload_entry_overhead_tokens(entry: dict) -> int:
+    header = (
+        "### Entry\n"
+        f"scope: {entry.get('scope', '')}\n"
+        f"title: {entry.get('title', '')}\n"
+        f"source: {entry.get('source_path', '')}\n\n"
+    )
     return _estimate_tokens(header)
 
 
-def _fit_entries_to_budget(entries, *, budget: int | None):
-    """Fit memory entries into an approximate input-token budget.
+def _payload_entry_tokens(entry: dict) -> int:
+    return _payload_entry_overhead_tokens(entry) + _estimate_tokens(entry.get("text", ""))
 
-    Mistral enforces context limits server-side. This local guard prevents a
-    large memory tree from being uploaded only to get rejected after the fact.
-    """
+
+def _entries_to_payload(entries) -> list[dict]:
+    return [{"scope": e.scope, "title": e.title, "source_path": e.path, "text": e.content} for e in entries]
+
+
+def _split_payload_entry(entry: dict, *, budget: int | None) -> list[dict]:
     if budget is None or budget <= 0:
-        total = sum(_entry_overhead_tokens(e) + _estimate_tokens(e.content) for e in entries)
-        return entries, {"original_tokens": total, "sent_tokens": total, "omitted": 0, "truncated": 0}
+        return [entry]
 
-    selected = []
-    remaining = budget
-    original_tokens = 0
-    sent_tokens = 0
-    omitted = 0
-    truncated = 0
+    overhead = _payload_entry_overhead_tokens(entry)
+    content = entry.get("text", "")
+    content_budget = max(1, budget - overhead)
+    content_tokens = _estimate_tokens(content)
+    if overhead + content_tokens <= budget:
+        return [entry]
 
-    for index, entry in enumerate(entries):
-        overhead = _entry_overhead_tokens(entry)
-        content_tokens = _estimate_tokens(entry.content)
-        entry_tokens = overhead + content_tokens
-        original_tokens += entry_tokens
+    max_chars = max(1, content_budget * _APPROX_CHARS_PER_TOKEN)
+    parts = [content[i : i + max_chars] for i in range(0, len(content), max_chars)] or [""]
+    total = len(parts)
+    split = []
+    for i, part in enumerate(parts, start=1):
+        item = dict(entry)
+        item["title"] = f"{entry.get('title', '')} (part {i}/{total})"
+        item["text"] = part
+        split.append(item)
+    return split
 
-        if entry_tokens <= remaining:
-            selected.append(entry)
-            remaining -= entry_tokens
-            sent_tokens += entry_tokens
-            continue
 
-        marker = "\n\n[Truncated by docmancer to fit the Mistral context budget.]"
-        marker_tokens = _estimate_tokens(marker)
-        available = remaining - overhead - marker_tokens
-        if available >= _MIN_TRUNCATED_ENTRY_TOKENS:
-            max_chars = max(0, available * _APPROX_CHARS_PER_TOKEN)
-            trimmed = entry.content[:max_chars].rstrip() + marker
-            selected.append(replace(entry, content=trimmed))
-            sent_tokens += overhead + _estimate_tokens(trimmed)
-            truncated += 1
-        else:
-            omitted += 1
+def _chunk_payload_entries(payload: list[dict], *, budget: int | None) -> tuple[list[list[dict]], dict]:
+    """Split payload entries into approximate per-request batches without trimming.
 
-        rest = entries[index + 1 :]
-        omitted += len(rest)
-        original_tokens += sum(_entry_overhead_tokens(e) + _estimate_tokens(e.content) for e in rest)
-        break
+    If a single entry exceeds the per-request budget, its text is divided into
+    ordered parts that keep the same source path. Every selected character is
+    still sent to Mistral.
+    """
+    original_tokens = sum(_payload_entry_tokens(e) for e in payload)
+    expanded: list[dict] = []
+    split_entries = 0
+    for entry in payload:
+        parts = _split_payload_entry(entry, budget=budget)
+        if len(parts) > 1:
+            split_entries += 1
+        expanded.extend(parts)
 
-    return selected, {
+    if budget is None or budget <= 0:
+        total_tokens = sum(_payload_entry_tokens(e) for e in expanded)
+        return [expanded], {
+            "original_tokens": original_tokens,
+            "request_tokens": [total_tokens],
+            "split_entries": split_entries,
+            "expanded_entries": len(expanded),
+        }
+
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+    request_tokens: list[int] = []
+
+    for entry in expanded:
+        tokens = _payload_entry_tokens(entry)
+        if current and current_tokens + tokens > budget:
+            batches.append(current)
+            request_tokens.append(current_tokens)
+            current = []
+            current_tokens = 0
+        current.append(entry)
+        current_tokens += tokens
+
+    if current:
+        batches.append(current)
+        request_tokens.append(current_tokens)
+
+    return batches, {
         "original_tokens": original_tokens,
-        "sent_tokens": sent_tokens,
-        "omitted": omitted,
-        "truncated": truncated,
+        "request_tokens": request_tokens,
+        "split_entries": split_entries,
+        "expanded_entries": len(expanded),
     }
+
+
+def _chunk_status(command: str, chunks: list[list[dict]], stats: dict) -> None:
+    if len(chunks) <= 1 and not stats["split_entries"]:
+        return
+    click.echo(
+        f"docmancer memory {command}: sending {stats['expanded_entries']} payload part(s) "
+        f"in {len(chunks)} Mistral request(s), then merging results as needed.",
+        err=True,
+    )
+    if stats["split_entries"]:
+        click.echo(
+            f"Split {stats['split_entries']} oversized source entr(y/ies) into ordered parts; no selected text was trimmed.",
+            err=True,
+        )
+
+
+def _consolidate_payload_in_rounds(
+    payload: list[dict],
+    *,
+    instruction: str | None,
+    client,
+    model: str | None,
+    budget: int | None,
+):
+    """Map-reduce memory consolidation while preserving every selected entry."""
+    from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
+
+    current_payload = payload
+    current_instruction = instruction
+    round_no = 1
+
+    while True:
+        chunks, stats = _chunk_payload_entries(current_payload, budget=budget)
+        _chunk_status("consolidate", chunks, stats)
+
+        if len(chunks) == 1:
+            return consolidate_memory(chunks[0], instruction=current_instruction, client=client, model=model)
+
+        drafts = []
+        for i, chunk in enumerate(chunks, start=1):
+            token_count = stats["request_tokens"][i - 1]
+            click.echo(
+                f"Consolidating memory batch {i}/{len(chunks)} "
+                f"(round {round_no}, ~{token_count} tokens).",
+                err=True,
+            )
+            batch_instruction = (
+                f"{current_instruction or 'Consolidate these into a coherent master memory draft.'}\n\n"
+                f"This is batch {i} of {len(chunks)} in consolidation round {round_no}. "
+                "Preserve durable facts, conflicts, warnings, and source paths. "
+                "Do not assume other batches contain the same information."
+            )
+            draft = consolidate_memory(chunk, instruction=batch_instruction, client=client, model=model)
+            source_files = [e.get("source_path", "") for e in chunk if e.get("source_path")]
+            drafts.append(
+                {
+                    "scope": "docmancer-consolidation",
+                    "title": f"Round {round_no} batch {i} consolidated draft",
+                    "source_path": f"docmancer://memory-consolidate/round-{round_no}/batch-{i}",
+                    "text": draft_to_markdown(draft, source_files=source_files),
+                }
+            )
+
+        current_payload = drafts
+        current_instruction = (
+            "Merge these batch-level consolidated drafts into one final review-only master memory draft. "
+            "Preserve all durable facts, conflicts, warnings, and original source paths. "
+            "Deduplicate repeated facts, but do not drop unique details."
+        )
+        round_no += 1
+        if round_no > 6:
+            raise RuntimeError(
+                "memory consolidation still exceeded the per-request budget after 5 merge rounds; "
+                "increase --budget or narrow the selection with --query, --include, or --limit."
+            )
 
 
 def _moderate_or_exit(command: str, entries, *, model, threshold):
@@ -351,7 +459,7 @@ def _moderate_or_exit(command: str, entries, *, model, threshold):
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with Mistral.")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
-@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate max input tokens to send to Mistral; use 0 to disable local trimming.")
+@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per Mistral request; use 0 to send in one request.")
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
 @click.option("--model", default=None, help="Override the Mistral chat model.")
@@ -375,28 +483,37 @@ def extract(limit, budget, query, output_format, model, moderate, moderation_thr
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
         entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold)
-    entries, fit = _fit_entries_to_budget(entries, budget=budget)
-    if not entries:
-        click.echo("Selected memory does not fit the requested Mistral budget. Increase --budget or narrow with --query/--include.", err=True)
-        sys.exit(1)
-    if fit["omitted"] or fit["truncated"]:
-        click.echo(
-            f"Trimmed Mistral input to ~{fit['sent_tokens']} tokens "
-            f"(from ~{fit['original_tokens']}); omitted {fit['omitted']} entr(y/ies), "
-            f"truncated {fit['truncated']}. Use --query, --include, --limit, or --budget to tune.",
-            err=True,
-        )
 
     from docmancer.ai.memory_features import extract_memory_facts
+    from docmancer.ai.memory_schemas import ExtractedMemoryFacts
     from docmancer.ai.mistral_client import MistralClient
 
-    combined = "\n\n".join(
-        f"### {e.title} ({e.scope})\nsource: {e.path}\n\n{e.content}" for e in entries
-    )
+    payload = _entries_to_payload(entries)
+    chunks, stats = _chunk_payload_entries(payload, budget=budget)
+    _chunk_status("extract", chunks, stats)
+
+    def _combined(chunk: list[dict]) -> str:
+        return "\n\n".join(
+            f"### {e.get('title', '')} ({e.get('scope', '')})\n"
+            f"source: {e.get('source_path', '')}\n\n{e.get('text', '')}"
+            for e in chunk
+        )
 
     def _call():
         client = MistralClient(model=model)
-        return extract_memory_facts(combined, {"entries": len(entries)}, client=client, model=model)
+        all_facts = []
+        for i, chunk in enumerate(chunks, start=1):
+            metadata = {"entries": len(chunk)}
+            if len(chunks) > 1:
+                metadata["batch"] = f"{i}/{len(chunks)}"
+                click.echo(
+                    f"Extracting memory batch {i}/{len(chunks)} "
+                    f"(~{stats['request_tokens'][i - 1]} tokens).",
+                    err=True,
+                )
+            result = extract_memory_facts(_combined(chunk), metadata, client=client, model=model)
+            all_facts.extend(result.facts)
+        return ExtractedMemoryFacts(facts=all_facts)
 
     result = _run_mistral_or_exit("extract", _call)
     click.echo(_json.dumps(result.model_dump(), indent=2))
@@ -413,7 +530,7 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
-@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate max input tokens to send to Mistral; use 0 to disable local trimming.")
+@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per Mistral request; use 0 to send in one request.")
 @click.option("--model", default=None, help="Override the Mistral chat model.")
 @click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
 @click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
@@ -438,30 +555,22 @@ def consolidate(query, output, output_format, limit, budget, model, moderate, mo
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
         entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold)
-    entries, fit = _fit_entries_to_budget(entries, budget=budget)
-    if not entries:
-        click.echo("Selected memory does not fit the requested Mistral budget. Increase --budget or narrow with --query/--include.", err=True)
-        sys.exit(1)
-    if fit["omitted"] or fit["truncated"]:
-        click.echo(
-            f"Trimmed Mistral input to ~{fit['sent_tokens']} tokens "
-            f"(from ~{fit['original_tokens']}); omitted {fit['omitted']} entr(y/ies), "
-            f"truncated {fit['truncated']}. Use --query, --include, --limit, or --budget to tune.",
-            err=True,
-        )
 
-    from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
+    from docmancer.ai.memory_features import draft_to_markdown
     from docmancer.ai.mistral_client import MistralClient
 
-    payload = [
-        {"scope": e.scope, "title": e.title, "source_path": e.path, "text": e.content}
-        for e in entries
-    ]
+    payload = _entries_to_payload(entries)
     source_files = [e.path for e in entries]
 
     def _call():
         client = MistralClient(model=model)
-        return consolidate_memory(payload, instruction=query, client=client, model=model)
+        return _consolidate_payload_in_rounds(
+            payload,
+            instruction=query,
+            client=client,
+            model=model,
+            budget=budget,
+        )
 
     # The draft is only written after a successful call, so any failure leaves
     # no partial output behind.

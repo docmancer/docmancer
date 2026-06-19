@@ -64,6 +64,9 @@ def _install_fake_mistral(monkeypatch, *, capture: dict):
             capture["model"] = model
             capture["messages"] = messages
             capture["temperature"] = temperature
+            capture.setdefault("calls", []).append(
+                {"model": model, "messages": messages, "response_format": response_format, "temperature": temperature}
+            )
             blob = " ".join(m["content"] for m in messages)
             # Build a minimal valid instance of whatever schema was requested.
             from docmancer.ai.memory_schemas import (
@@ -237,7 +240,7 @@ def test_consolidate_writes_review_draft(tmp_path, monkeypatch):
     assert capture["temperature"] == 0.0
 
 
-def test_consolidate_trims_to_budget_before_mistral(tmp_path, monkeypatch):
+def test_consolidate_chunks_oversized_memory_without_trimming(tmp_path, monkeypatch):
     _large_env(monkeypatch, tmp_path)
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     capture: dict = {}
@@ -245,10 +248,19 @@ def test_consolidate_trims_to_budget_before_mistral(tmp_path, monkeypatch):
     out = tmp_path / "draft.md"
     r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--budget", "1000", "--yes"])
     assert r.exit_code == 0, r.output
-    assert "Trimmed Mistral input" in r.output
-    sent = " ".join(m["content"] for m in capture["messages"])
-    assert len(sent) < 6000
-    assert "Truncated by docmancer" in sent
+    assert "Mistral request(s)" in r.output
+    assert "no selected text was trimmed" in r.output
+    assert len(capture["calls"]) > 1
+    sent = "\n".join(
+        message["content"]
+        for call in capture["calls"]
+        for message in call["messages"]
+    )
+    assert "Truncated by docmancer" not in sent
+    assert "important memory detail" in sent
+    assert "large-0.md" in sent
+    assert "large-1.md" in sent
+    assert "large-2.md" in sent
 
 
 def test_extract_prints_facts_json(tmp_path, monkeypatch):
