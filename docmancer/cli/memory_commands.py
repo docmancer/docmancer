@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -206,6 +207,9 @@ _CLOUD_NOTICE = (
     "Note: this sends your selected local memory text to Mistral (cloud). "
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
+_DEFAULT_CLOUD_INPUT_BUDGET = 90_000
+_APPROX_CHARS_PER_TOKEN = 4
+_MIN_TRUNCATED_ENTRY_TOKENS = 250
 
 
 def _require_mistral_key(command: str) -> None:
@@ -256,6 +260,69 @@ def _redacted_entries(agent, *, query: str | None, limit: int | None):
     return entries
 
 
+def _estimate_tokens(text: str) -> int:
+    return max(1, (len(text) + _APPROX_CHARS_PER_TOKEN - 1) // _APPROX_CHARS_PER_TOKEN)
+
+
+def _entry_overhead_tokens(entry) -> int:
+    header = f"### Entry\nscope: {entry.scope}\ntitle: {entry.title}\nsource: {entry.path}\n\n"
+    return _estimate_tokens(header)
+
+
+def _fit_entries_to_budget(entries, *, budget: int | None):
+    """Fit memory entries into an approximate input-token budget.
+
+    Mistral enforces context limits server-side. This local guard prevents a
+    large memory tree from being uploaded only to get rejected after the fact.
+    """
+    if budget is None or budget <= 0:
+        total = sum(_entry_overhead_tokens(e) + _estimate_tokens(e.content) for e in entries)
+        return entries, {"original_tokens": total, "sent_tokens": total, "omitted": 0, "truncated": 0}
+
+    selected = []
+    remaining = budget
+    original_tokens = 0
+    sent_tokens = 0
+    omitted = 0
+    truncated = 0
+
+    for index, entry in enumerate(entries):
+        overhead = _entry_overhead_tokens(entry)
+        content_tokens = _estimate_tokens(entry.content)
+        entry_tokens = overhead + content_tokens
+        original_tokens += entry_tokens
+
+        if entry_tokens <= remaining:
+            selected.append(entry)
+            remaining -= entry_tokens
+            sent_tokens += entry_tokens
+            continue
+
+        marker = "\n\n[Truncated by docmancer to fit the Mistral context budget.]"
+        marker_tokens = _estimate_tokens(marker)
+        available = remaining - overhead - marker_tokens
+        if available >= _MIN_TRUNCATED_ENTRY_TOKENS:
+            max_chars = max(0, available * _APPROX_CHARS_PER_TOKEN)
+            trimmed = entry.content[:max_chars].rstrip() + marker
+            selected.append(replace(entry, content=trimmed))
+            sent_tokens += overhead + _estimate_tokens(trimmed)
+            truncated += 1
+        else:
+            omitted += 1
+
+        rest = entries[index + 1 :]
+        omitted += len(rest)
+        original_tokens += sum(_entry_overhead_tokens(e) + _estimate_tokens(e.content) for e in rest)
+        break
+
+    return selected, {
+        "original_tokens": original_tokens,
+        "sent_tokens": sent_tokens,
+        "omitted": omitted,
+        "truncated": truncated,
+    }
+
+
 def _moderate_or_exit(command: str, entries, *, model, threshold):
     """Drop entries flagged by Mistral moderation. Returns the kept entries.
 
@@ -284,6 +351,7 @@ def _moderate_or_exit(command: str, entries, *, model, threshold):
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with Mistral.")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
+@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate max input tokens to send to Mistral; use 0 to disable local trimming.")
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
 @click.option("--model", default=None, help="Override the Mistral chat model.")
@@ -292,7 +360,7 @@ def _moderate_or_exit(command: str, entries, *, model, threshold):
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def extract(limit, query, output_format, model, moderate, moderation_threshold, assume_yes, include, exclude):
+def extract(limit, budget, query, output_format, model, moderate, moderation_threshold, assume_yes, include, exclude):
     """Extract durable memory facts (Mistral structured output). Requires MISTRAL_API_KEY."""
     import json as _json
 
@@ -307,6 +375,17 @@ def extract(limit, query, output_format, model, moderate, moderation_threshold, 
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
         entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold)
+    entries, fit = _fit_entries_to_budget(entries, budget=budget)
+    if not entries:
+        click.echo("Selected memory does not fit the requested Mistral budget. Increase --budget or narrow with --query/--include.", err=True)
+        sys.exit(1)
+    if fit["omitted"] or fit["truncated"]:
+        click.echo(
+            f"Trimmed Mistral input to ~{fit['sent_tokens']} tokens "
+            f"(from ~{fit['original_tokens']}); omitted {fit['omitted']} entr(y/ies), "
+            f"truncated {fit['truncated']}. Use --query, --include, --limit, or --budget to tune.",
+            err=True,
+        )
 
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.mistral_client import MistralClient
@@ -334,13 +413,14 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
+@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate max input tokens to send to Mistral; use 0 to disable local trimming.")
 @click.option("--model", default=None, help="Override the Mistral chat model.")
 @click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
 @click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def consolidate(query, output, output_format, limit, model, moderate, moderation_threshold, assume_yes, include, exclude):
+def consolidate(query, output, output_format, limit, budget, model, moderate, moderation_threshold, assume_yes, include, exclude):
     """Produce a review-only consolidated memory draft. Requires MISTRAL_API_KEY.
 
     Writes a markdown draft (or an OKF bundle with --format okf) for you to
@@ -358,6 +438,17 @@ def consolidate(query, output, output_format, limit, model, moderate, moderation
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
         entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold)
+    entries, fit = _fit_entries_to_budget(entries, budget=budget)
+    if not entries:
+        click.echo("Selected memory does not fit the requested Mistral budget. Increase --budget or narrow with --query/--include.", err=True)
+        sys.exit(1)
+    if fit["omitted"] or fit["truncated"]:
+        click.echo(
+            f"Trimmed Mistral input to ~{fit['sent_tokens']} tokens "
+            f"(from ~{fit['original_tokens']}); omitted {fit['omitted']} entr(y/ies), "
+            f"truncated {fit['truncated']}. Use --query, --include, --limit, or --budget to tune.",
+            err=True,
+        )
 
     from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
     from docmancer.ai.mistral_client import MistralClient

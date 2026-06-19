@@ -21,9 +21,25 @@ def _plant(home, *, secret=False):
     (proj / "s.jsonl").write_text(json.dumps({"cwd": "/Users/x/app"}) + "\n")
 
 
+def _plant_large(home):
+    proj = home / ".claude" / "projects" / "-Users-x-app"
+    mem = proj / "memory"
+    mem.mkdir(parents=True)
+    for i in range(3):
+        (mem / f"large-{i}.md").write_text(f"# Large {i}\n\n" + ("important memory detail\n" * 2000))
+    (proj / "s.jsonl").write_text(json.dumps({"cwd": "/Users/x/app"}) + "\n")
+
+
 def _env(monkeypatch, tmp_path, *, secret=False):
     home = tmp_path / "home"
     _plant(home, secret=secret)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+
+def _large_env(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    _plant_large(home)
     monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
     monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
 
@@ -219,6 +235,20 @@ def test_consolidate_writes_review_draft(tmp_path, monkeypatch):
     assert "## Sources" in text
     assert "Sources consolidated:" in r.output
     assert capture["temperature"] == 0.0
+
+
+def test_consolidate_trims_to_budget_before_mistral(tmp_path, monkeypatch):
+    _large_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    capture: dict = {}
+    _install_fake_mistral(monkeypatch, capture=capture)
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--budget", "1000", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "Trimmed Mistral input" in r.output
+    sent = " ".join(m["content"] for m in capture["messages"])
+    assert len(sent) < 6000
+    assert "Truncated by docmancer" in sent
 
 
 def test_extract_prints_facts_json(tmp_path, monkeypatch):
