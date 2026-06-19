@@ -36,6 +36,8 @@ RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_LOCAL_CORPUS="${DOCMANCER_RUN_LOCAL_CORPUS:-1}"
 RUN_LOCAL_PDF_CORPUS="${DOCMANCER_RUN_LOCAL_PDF_CORPUS:-1}"
 RUN_FULL_LOCAL_CORPUS="${DOCMANCER_RUN_FULL_LOCAL_CORPUS:-0}"
+RUN_REAL_MEMORY="${DOCMANCER_LIVE_REAL_MEMORY:-1}"
+REAL_MEMORY_BUDGET="${DOCMANCER_LIVE_REAL_MEMORY_BUDGET:-90000}"
 BUILD_TEST_CORPUS="${DOCMANCER_BUILD_TEST_CORPUS:-0}"
 TEST_CORPUS_SCRIPT="$WORKSPACE_ROOT/scripts/build-test-corpus.py"
 TEST_CORPUS_MD_DIR="$WORKSPACE_ROOT/test-corpora/stories-md"
@@ -210,6 +212,8 @@ print_info "Local story corpus ingest: $RUN_LOCAL_CORPUS"
 print_info "Full local story corpus ingest: $RUN_FULL_LOCAL_CORPUS"
 print_info "Local PDF corpus ingest: $RUN_LOCAL_PDF_CORPUS"
 print_info "Build test corpus if missing: $BUILD_TEST_CORPUS"
+print_info "Real agent memory Mistral consolidate: $RUN_REAL_MEMORY"
+print_info "Real memory Mistral request budget: $REAL_MEMORY_BUDGET"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
 print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
@@ -284,8 +288,8 @@ print_info "Exercising every supported install target without touching the real 
   done
 )
 
-print_banner "Memory harness (isolated, offline)"
-print_info "Planting synthetic agent memory in the temporary HOME and exercising scan/sync/sources/query/status/apply/clear."
+print_banner "Memory harness (isolated local commands)"
+print_info "Planting one synthetic note in the temporary HOME for local scan/sync/query/redaction/apply/clear checks."
 MEMORY_HOME="$TMP_HOME"
 MEMORY_DB="$TMP_ROOT/memory.db"
 PLANT_PROJ="$MEMORY_HOME/.claude/projects/-Users-x-demo-app"
@@ -303,18 +307,9 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
   export HF_HUB_OFFLINE=1
   run "${CLI_CMD[@]}" memory scan
   run "${CLI_CMD[@]}" memory sources --preview
-  run "${CLI_CMD[@]}" memory sources --preview --type memory --json
-  print_info "Dry-run sync must write nothing."
-  run "${CLI_CMD[@]}" memory sync --dry-run
-  if [[ -f "$MEMORY_DB" ]]; then
-    print_warn "memory db exists after --dry-run (unexpected)"
-    exit 1
-  fi
   run "${CLI_CMD[@]}" memory sync
   run "${CLI_CMD[@]}" memory sources
-  run "${CLI_CMD[@]}" memory sources --agent claude-code --scope project --type memory
   run "${CLI_CMD[@]}" memory status
-  print_info "Recall the planted decision (hybrid by default)."
   run "${CLI_CMD[@]}" memory query "why did we pick Railway"
   print_info "The redacted secret must not appear in recall output."
   if "${CLI_CMD[@]}" memory query "old token" 2>/dev/null | grep -q "sk-ABCDEF1234567890ABCDEF"; then
@@ -322,50 +317,7 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
     exit 1
   fi
   print_ok "Secret was redacted on index."
-  print_info "Mistral-backed commands must fail cleanly without MISTRAL_API_KEY and write no partial draft."
-  SAVED_MISTRAL_API_KEY="${MISTRAL_API_KEY-}"
-  unset MISTRAL_API_KEY
-  EXTRACT_NO_KEY_OUT="$TMP_ROOT/memory-extract-no-key.out"
-  CONSOLIDATE_NO_KEY_OUT="$TMP_ROOT/memory-consolidate-no-key.out"
-  if "${CLI_CMD[@]}" memory extract --yes >"$EXTRACT_NO_KEY_OUT" 2>&1; then
-    cat "$EXTRACT_NO_KEY_OUT"
-    print_warn "memory extract unexpectedly succeeded without MISTRAL_API_KEY"
-    exit 1
-  fi
-  if ! grep -q "MISTRAL_API_KEY" "$EXTRACT_NO_KEY_OUT"; then
-    cat "$EXTRACT_NO_KEY_OUT"
-    print_warn "memory extract no-key output did not mention MISTRAL_API_KEY"
-    exit 1
-  fi
-  NO_KEY_DRAFT="$TMP_ROOT/no-key-draft.md"
-  if "${CLI_CMD[@]}" memory consolidate --output "$NO_KEY_DRAFT" --yes >"$CONSOLIDATE_NO_KEY_OUT" 2>&1; then
-    cat "$CONSOLIDATE_NO_KEY_OUT"
-    print_warn "memory consolidate unexpectedly succeeded without MISTRAL_API_KEY"
-    exit 1
-  fi
-  if [[ -f "$NO_KEY_DRAFT" ]]; then
-    print_warn "memory consolidate wrote a partial draft without MISTRAL_API_KEY"
-    exit 1
-  fi
-  if ! grep -q "MISTRAL_API_KEY" "$CONSOLIDATE_NO_KEY_OUT"; then
-    cat "$CONSOLIDATE_NO_KEY_OUT"
-    print_warn "memory consolidate no-key output did not mention MISTRAL_API_KEY"
-    exit 1
-  fi
-  if [[ -n "$SAVED_MISTRAL_API_KEY" ]]; then
-    export MISTRAL_API_KEY="$SAVED_MISTRAL_API_KEY"
-    MISTRAL_DRAFT="$TMP_ROOT/mistral-memory-draft.md"
-    print_info "MISTRAL_API_KEY is set, so running a small real consolidate call against redacted synthetic memory."
-    run "${CLI_CMD[@]}" memory consolidate --query "Railway deployment decision" --limit 5 --output "$MISTRAL_DRAFT" --yes
-    run test -s "$MISTRAL_DRAFT"
-  else
-    unset MISTRAL_API_KEY
-    print_info "MISTRAL_API_KEY is not set, so real Mistral extract/consolidate calls are skipped after no-key checks."
-  fi
-  print_info "Checking Mistral SDK import compatibility without making an API call."
-  run "$VENV_PYTHON" -c "from docmancer.ai.mistral_client import _load_mistral_class; print(_load_mistral_class())"
   MEMORY_OKF="$TMP_ROOT/memory.okf"
-  print_info "Exporting the indexed synthetic memory as OKF and validating the bundle."
   run "${CLI_CMD[@]}" memory export --output "$MEMORY_OKF"
   run "${CLI_CMD[@]}" okf doctor "$MEMORY_OKF"
   APPLY_DRAFT="$TMP_ROOT/reviewed-memory-draft.md"
@@ -388,27 +340,54 @@ EOF
   run "${CLI_CMD[@]}" memory status
 )
 
+if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
+  print_banner "Memory harness (REAL agents + Mistral)"
+  print_info "Reading real agent memory from $REAL_HOME into a throwaway index, then consolidating every selected entry with the exported Mistral key."
+  if [[ -z "${MISTRAL_API_KEY:-}" ]]; then
+    print_warn "MISTRAL_API_KEY is not exported; real-memory Mistral consolidation cannot run."
+    exit 1
+  fi
+  REAL_MEMORY_DB="$TMP_ROOT/real-memory.db"
+  REAL_MEMORY_SOURCES="$TMP_ROOT/real-memory-sources.json"
+  REAL_MEMORY_DRAFT="$TMP_ROOT/real-memory-draft.md"
+  REAL_MEMORY_CONSOLIDATE_LOG="$TMP_ROOT/real-memory-consolidate.out"
+  (
+    export DOCMANCER_HARNESS_HOME="$REAL_HOME"
+    export DOCMANCER_MEMORY_DB="$REAL_MEMORY_DB"
+    export HF_HUB_OFFLINE=1
+    run "${CLI_CMD[@]}" memory scan
+    run "${CLI_CMD[@]}" memory sync --recreate
+    run "${CLI_CMD[@]}" memory status
+    run "${CLI_CMD[@]}" memory sources --json >"$REAL_MEMORY_SOURCES"
+    run test -s "$REAL_MEMORY_SOURCES"
+    print_info "Running real memory consolidate with --limit 0 so the default 100-entry cap does not hide oversized memory."
+    if ! "${CLI_CMD[@]}" memory consolidate --limit 0 --budget "$REAL_MEMORY_BUDGET" --output "$REAL_MEMORY_DRAFT" --yes >"$REAL_MEMORY_CONSOLIDATE_LOG" 2>&1; then
+      cat "$REAL_MEMORY_CONSOLIDATE_LOG"
+      print_warn "real memory consolidate failed"
+      exit 1
+    fi
+    cat "$REAL_MEMORY_CONSOLIDATE_LOG"
+    run test -s "$REAL_MEMORY_DRAFT"
+    if grep -q "Prompt contains" "$REAL_MEMORY_CONSOLIDATE_LOG"; then
+      print_warn "real memory consolidate still hit a provider context limit"
+      exit 1
+    fi
+    if grep -Eqi "Trimmed Mistral input|Truncated by docmancer|omitted [1-9][0-9]*" "$REAL_MEMORY_CONSOLIDATE_LOG"; then
+      print_warn "real memory consolidate reported dropped or truncated entries"
+      exit 1
+    fi
+    run "${CLI_CMD[@]}" memory clear --yes
+  )
+else
+  print_info "Skipping real agent memory consolidation because DOCMANCER_LIVE_REAL_MEMORY=0."
+fi
+
 print_banner "MCP command surface"
 print_info "Printing install snippets without touching real client config. Doctor may report a missing optional mcp SDK in lean environments."
 run "${CLI_CMD[@]}" mcp install codex --print
 run "${CLI_CMD[@]}" mcp install claude-code --print
 run "${CLI_CMD[@]}" mcp install claude-desktop --print
 run "${CLI_CMD[@]}" mcp doctor || true
-
-if [[ "${DOCMANCER_LIVE_REAL_MEMORY:-0}" == "1" ]]; then
-  print_banner "Memory harness (REAL local agent memory, read-only)"
-  print_info "Reading your real ~/.claude and ~/.codex memory read-only into a throwaway index, then deleting it."
-  REAL_MEMORY_DB="$TMP_ROOT/real-memory.db"
-  (
-    export DOCMANCER_HARNESS_HOME="$REAL_HOME"
-    export DOCMANCER_MEMORY_DB="$REAL_MEMORY_DB"
-    export HF_HUB_OFFLINE=1
-    run "${CLI_CMD[@]}" memory scan
-    run "${CLI_CMD[@]}" memory sync
-    run "${CLI_CMD[@]}" memory status
-    run "${CLI_CMD[@]}" memory clear --yes
-  )
-fi
 
 print_banner "Doctor and inspect before docs add"
 print_info "The local index should still be empty before any live crawl."

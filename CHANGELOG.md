@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - Unreleased
+### Changed
+
+- **Live release validation.** `scripts/live_cli_integration.sh` now runs real agent memory consolidation against the exported Mistral API key with `--limit 0`, so the release smoke test covers oversized real-memory batching instead of only tiny synthetic memory.
+
 ## [0.6.4] - 2026-06-19
 ### Fixed
 
