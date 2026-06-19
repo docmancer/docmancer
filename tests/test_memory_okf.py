@@ -108,6 +108,9 @@ def _install_fake_consolidate(monkeypatch):
             self.choices = [FakeChoice(parsed)]
 
     class FakeChat:
+        def complete(self, **kwargs):
+            return types.SimpleNamespace()
+
         def parse(self, *, model, messages, response_format, temperature=0.0):
             from docmancer.ai.memory_schemas import (
                 ConsolidatedMemoryDraft,

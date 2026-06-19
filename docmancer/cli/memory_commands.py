@@ -370,6 +370,21 @@ def _chunk_status(command: str, chunks: list[list[dict]], stats: dict) -> None:
         )
 
 
+def _mistral_request_status(action: str, client, *, token_count: int | None = None) -> None:
+    model = getattr(client, "model", None) or "configured model"
+    timeout_ms = getattr(client, "timeout_ms", None)
+    timeout = "SDK default timeout" if timeout_ms is None else f"{timeout_ms / 1000:g}s timeout"
+    tokens = "" if token_count is None else f", ~{token_count} input tokens"
+    click.echo(f"Calling Mistral for {action} ({model}, {timeout}{tokens}).", err=True)
+
+
+def _mistral_preflight(client) -> None:
+    """Send a tiny Mistral request before large memory payloads."""
+    _mistral_request_status("API preflight", client)
+    client.preflight()
+    click.echo("Mistral API preflight succeeded.", err=True)
+
+
 def _consolidate_payload_in_rounds(
     payload: list[dict],
     *,
@@ -390,6 +405,8 @@ def _consolidate_payload_in_rounds(
         _chunk_status("consolidate", chunks, stats)
 
         if len(chunks) == 1:
+            token_count = stats["request_tokens"][0] if stats.get("request_tokens") else None
+            _mistral_request_status("memory consolidation", client, token_count=token_count)
             return consolidate_memory(chunks[0], instruction=current_instruction, client=client, model=model)
 
         drafts = []
@@ -406,7 +423,9 @@ def _consolidate_payload_in_rounds(
                 "Preserve durable facts, conflicts, warnings, and source paths. "
                 "Do not assume other batches contain the same information."
             )
+            _mistral_request_status(f"memory consolidation batch {i}/{len(chunks)}", client, token_count=token_count)
             draft = consolidate_memory(chunk, instruction=batch_instruction, client=client, model=model)
+            click.echo(f"Mistral completed memory batch {i}/{len(chunks)}.", err=True)
             source_files = [e.get("source_path", "") for e in chunk if e.get("source_path")]
             drafts.append(
                 {
@@ -431,7 +450,7 @@ def _consolidate_payload_in_rounds(
             )
 
 
-def _moderate_or_exit(command: str, entries, *, model, threshold):
+def _moderate_or_exit(command: str, entries, *, model, threshold, timeout):
     """Drop entries flagged by Mistral moderation. Returns the kept entries.
 
     Runs after the cloud-use confirmation (moderation is itself a cloud call).
@@ -441,7 +460,8 @@ def _moderate_or_exit(command: str, entries, *, model, threshold):
     from docmancer.ai.moderation import partition_by_moderation
 
     def _call():
-        client = MistralClient(model=model)
+        client = MistralClient(model=model, timeout_seconds=timeout)
+        _mistral_request_status(f"memory {command} moderation", client)
         scores = client.moderate([e.content for e in entries])
         return partition_by_moderation(entries, scores, threshold=threshold)
 
@@ -463,12 +483,13 @@ def _moderate_or_exit(command: str, entries, *, model, threshold):
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
 @click.option("--model", default=None, help="Override the Mistral chat model.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per Mistral request (default 180, or DOCMANCER_MISTRAL_TIMEOUT_SECONDS; use 0 for SDK default).")
 @click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
 @click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def extract(limit, budget, query, output_format, model, moderate, moderation_threshold, assume_yes, include, exclude):
+def extract(limit, budget, query, output_format, model, timeout, moderate, moderation_threshold, assume_yes, include, exclude):
     """Extract durable memory facts (Mistral structured output). Requires MISTRAL_API_KEY."""
     import json as _json
 
@@ -482,7 +503,7 @@ def extract(limit, budget, query, output_format, model, moderate, moderation_thr
     if not assume_yes:
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
-        entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold)
+        entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold, timeout=timeout)
 
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.memory_schemas import ExtractedMemoryFacts
@@ -500,7 +521,8 @@ def extract(limit, budget, query, output_format, model, moderate, moderation_thr
         )
 
     def _call():
-        client = MistralClient(model=model)
+        client = MistralClient(model=model, timeout_seconds=timeout)
+        _mistral_preflight(client)
         all_facts = []
         for i, chunk in enumerate(chunks, start=1):
             metadata = {"entries": len(chunk)}
@@ -511,7 +533,10 @@ def extract(limit, budget, query, output_format, model, moderate, moderation_thr
                     f"(~{stats['request_tokens'][i - 1]} tokens).",
                     err=True,
                 )
+            token_count = stats["request_tokens"][i - 1] if stats.get("request_tokens") else None
+            _mistral_request_status(f"memory extraction batch {i}/{len(chunks)}", client, token_count=token_count)
             result = extract_memory_facts(_combined(chunk), metadata, client=client, model=model)
+            click.echo(f"Mistral completed extraction batch {i}/{len(chunks)}.", err=True)
             all_facts.extend(result.facts)
         return ExtractedMemoryFacts(facts=all_facts)
 
@@ -532,12 +557,13 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
 @click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per Mistral request; use 0 to send in one request.")
 @click.option("--model", default=None, help="Override the Mistral chat model.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per Mistral request (default 180, or DOCMANCER_MISTRAL_TIMEOUT_SECONDS; use 0 for SDK default).")
 @click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
 @click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def consolidate(query, output, output_format, limit, budget, model, moderate, moderation_threshold, assume_yes, include, exclude):
+def consolidate(query, output, output_format, limit, budget, model, timeout, moderate, moderation_threshold, assume_yes, include, exclude):
     """Produce a review-only consolidated memory draft. Requires MISTRAL_API_KEY.
 
     Writes a markdown draft (or an OKF bundle with --format okf) for you to
@@ -554,7 +580,7 @@ def consolidate(query, output, output_format, limit, budget, model, moderate, mo
     if not assume_yes:
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
     if moderate:
-        entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold)
+        entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold, timeout=timeout)
 
     from docmancer.ai.memory_features import draft_to_markdown
     from docmancer.ai.mistral_client import MistralClient
@@ -563,7 +589,8 @@ def consolidate(query, output, output_format, limit, budget, model, moderate, mo
     source_files = [e.path for e in entries]
 
     def _call():
-        client = MistralClient(model=model)
+        client = MistralClient(model=model, timeout_seconds=timeout)
+        _mistral_preflight(client)
         return _consolidate_payload_in_rounds(
             payload,
             instruction=query,

@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+from docmancer.ai.mistral_client import load_mistral_class, mistral_timeout_ms, retry_without_timeout
+
 from .base import EmbeddingsProvider
 
 if TYPE_CHECKING:
@@ -21,19 +23,26 @@ class MistralProvider(EmbeddingsProvider):
 
     def __init__(self, config: "EmbeddingsConfig") -> None:
         try:
-            from mistralai import Mistral
-        except ImportError as exc:
-            try:
-                from mistralai.client import Mistral
-            except ImportError as second_exc:
-                raise ImportError(
-                    "the mistralai SDK is required for the Mistral provider; "
-                    "reinstall docmancer or `pip install mistralai`."
-                ) from second_exc or exc
+            Mistral = load_mistral_class()
+        except Exception as exc:
+            raise ImportError(
+                "the mistralai SDK is required for the Mistral provider; "
+                "reinstall docmancer or `pip install mistralai`."
+            ) from exc
         api_key = os.environ.get("MISTRAL_API_KEY")
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY environment variable is not set")
-        self._client: Any = Mistral(api_key=api_key)
+        self.timeout_ms = mistral_timeout_ms()
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if self.timeout_ms is not None:
+            client_kwargs["timeout_ms"] = self.timeout_ms
+        try:
+            self._client: Any = Mistral(**client_kwargs)
+        except TypeError as exc:
+            if "timeout_ms" not in str(exc):
+                raise
+            client_kwargs.pop("timeout_ms", None)
+            self._client = Mistral(**client_kwargs)
         self.model_name = config.model or "mistral-embed-2312"
         self.dimensions = int(config.dimensions or 1024)
         # Conservative cap; mistral-embed rejects oversized requests.
@@ -45,7 +54,13 @@ class MistralProvider(EmbeddingsProvider):
         out: list[list[float]] = []
         for start in range(0, len(texts), max(1, self.max_batch_size)):
             batch = texts[start : start + self.max_batch_size]
-            resp = self._client.embeddings.create(model=self.model_name, inputs=batch)
+            kwargs: dict[str, Any] = {"model": self.model_name, "inputs": batch}
+            if self.timeout_ms is not None:
+                kwargs["timeout_ms"] = self.timeout_ms
+            try:
+                resp = self._client.embeddings.create(**kwargs)
+            except TypeError as exc:
+                resp = retry_without_timeout(self._client.embeddings.create, kwargs, exc)
             items = sorted(resp.data, key=lambda item: item.index)
             out.extend([list(map(float, item.embedding)) for item in items])
         return out

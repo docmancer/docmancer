@@ -57,11 +57,11 @@ These send privacy-redacted local memory to Mistral and fail cleanly with a clea
 
 ```bash
 docmancer memory extract --yes
-docmancer memory consolidate --query "..." --output draft.md --yes
+docmancer memory consolidate --query "..." --output draft.md --timeout 180 --yes
 docmancer memory consolidate --format okf --output draft.okf --yes
 ```
 
-Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call.
+Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call. `extract` and `consolidate` send a tiny Mistral preflight chat request before large memory payloads, so API and network failures surface before batching. Use `--timeout` or `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` to bound each Mistral request; the default is 180 seconds, and `0` leaves the SDK default in charge.
 
 `docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - Unreleased
+### Fixed
+
+- **Mistral memory preflight.** `docmancer memory extract` and `docmancer memory consolidate` now send a tiny Mistral chat request before any large memory payload, so API key, SDK, network, and account failures surface before batch consolidation begins.
+- **Mistral request visibility and bounds.** Mistral-backed memory commands now log each API request before sending it, including the resolved model, timeout, and estimated input tokens. `--timeout` and `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` bound each request with a finite 180 second default, while `0` leaves the SDK default in charge.
+- **Current Mistral SDK compatibility.** Mistral-backed memory, moderation, OCR, Mistral embeddings, and Codestral embeddings now share one client loader that supports current generated SDK layouts and older top-level exports. Embedding providers also pass the same timeout through to Mistral API calls.
+
 ## [0.6.3] - 2026-06-19
 ### Fixed
 

@@ -60,6 +60,10 @@ def _install_fake_mistral(monkeypatch, *, capture: dict):
             self.choices = [FakeChoice(parsed)]
 
     class FakeChat:
+        def complete(self, **kwargs):
+            capture.setdefault("preflight_calls", []).append(kwargs)
+            return types.SimpleNamespace()
+
         def parse(self, *, model, messages, response_format, temperature=0.0):
             capture["model"] = model
             capture["messages"] = messages
@@ -114,6 +118,10 @@ def _install_fake_mistral_client_namespace(monkeypatch, *, capture: dict):
             self.choices = [FakeChoice(parsed)]
 
     class FakeChat:
+        def complete(self, **kwargs):
+            capture.setdefault("preflight_calls", []).append(kwargs)
+            return types.SimpleNamespace()
+
         def parse(self, *, model, messages, response_format, temperature=0.0):
             capture["model"] = model
             capture["messages"] = messages
@@ -134,10 +142,58 @@ def _install_fake_mistral_client_namespace(monkeypatch, *, capture: dict):
     monkeypatch.setitem(sys.modules, "mistralai.client", client)
 
 
+def _install_fake_mistral_client_sdk_namespace(monkeypatch, *, capture: dict):
+    """Stub the generated SDK layout where the class lives under mistralai.client.sdk."""
+
+    class FakeMessage:
+        def __init__(self, parsed):
+            self.parsed = parsed
+
+    class FakeChoice:
+        def __init__(self, parsed):
+            self.message = FakeMessage(parsed)
+
+    class FakeResponse:
+        def __init__(self, parsed):
+            self.choices = [FakeChoice(parsed)]
+
+    class FakeChat:
+        def complete(self, **kwargs):
+            capture.setdefault("preflight_calls", []).append(kwargs)
+            return types.SimpleNamespace()
+
+        def parse(self, *, model, messages, response_format, temperature=0.0, timeout_ms=None):
+            capture["model"] = model
+            capture["timeout_ms"] = timeout_ms
+            from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+            return FakeResponse(
+                ConsolidatedMemoryDraft(title="Master Memory", summary="Ok.", sections=[], source_paths=[])
+            )
+
+    class FakeMistral:
+        def __init__(self, *args, **kwargs):
+            capture["init_kwargs"] = kwargs
+            self.chat = FakeChat()
+
+    root = types.ModuleType("mistralai")
+    root.__path__ = []
+    client = types.ModuleType("mistralai.client")
+    client.__path__ = []
+    sdk = types.ModuleType("mistralai.client.sdk")
+    sdk.Mistral = FakeMistral
+    monkeypatch.setitem(sys.modules, "mistralai", root)
+    monkeypatch.setitem(sys.modules, "mistralai.client", client)
+    monkeypatch.setitem(sys.modules, "mistralai.client.sdk", sdk)
+
+
 def _install_failing_mistral(monkeypatch, *, message="401 Unauthorized"):
     """Stub mistralai whose chat.parse raises a runtime/provider error."""
 
     class FakeChat:
+        def complete(self, **kwargs):
+            raise RuntimeError(message)
+
         def parse(self, **kwargs):
             raise RuntimeError(message)
 
@@ -204,6 +260,24 @@ def test_client_supports_mistralai_client_namespace(monkeypatch):
     )
     assert result.title == "Master Memory"
     assert capture["model"] == "mistral-small-2506"
+    assert capture.get("preflight_calls", []) == []
+
+
+def test_client_supports_mistralai_client_sdk_namespace_and_timeout(monkeypatch):
+    capture: dict = {}
+    _install_fake_mistral_client_sdk_namespace(monkeypatch, capture=capture)
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    monkeypatch.setenv("DOCMANCER_MISTRAL_TIMEOUT_SECONDS", "12.5")
+    from docmancer.ai.mistral_client import MistralClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+    result = MistralClient().parse(
+        [{"role": "user", "content": "hello"}],
+        ConsolidatedMemoryDraft,
+    )
+    assert result.title == "Master Memory"
+    assert capture["init_kwargs"]["timeout_ms"] == 12500
+    assert capture["timeout_ms"] == 12500
 
 
 def test_consolidate_requires_key(tmp_path, monkeypatch):
@@ -237,7 +311,22 @@ def test_consolidate_writes_review_draft(tmp_path, monkeypatch):
     assert "# Master Memory" in text
     assert "## Sources" in text
     assert "Sources consolidated:" in r.output
+    assert "Mistral API preflight succeeded." in r.output
+    assert capture["preflight_calls"]
+    assert capture["preflight_calls"][0]["max_tokens"] == 1
+    assert "Calling Mistral for memory consolidation" in r.output
+    assert "180s timeout" in r.output
     assert capture["temperature"] == 0.0
+
+
+def test_consolidate_timeout_option_is_reported(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    _install_fake_mistral(monkeypatch, capture={})
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--timeout", "7", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "7s timeout" in r.output
 
 
 def test_consolidate_chunks_oversized_memory_without_trimming(tmp_path, monkeypatch):
