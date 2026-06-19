@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.2] - Unreleased
+## [0.6.2] - 2026-06-19
 ### Added
 
 - **Google Open Knowledge Format (OKF) support.** `docmancer memory export --format okf` writes the indexed cross-agent memory as a conformant OKF bundle (a directory of markdown files with YAML frontmatter, a root `index.md` carrying `okf_version`, per-directory listings, and a `log.md`). Local and keyless; secrets are redacted first. `docmancer okf doctor <bundle>` validates conformance (parseable frontmatter and a non-empty `type` on every concept file; broken cross-links reported as warnings).
