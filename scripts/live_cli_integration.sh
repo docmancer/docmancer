@@ -244,14 +244,17 @@ run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); 
 print_banner "CLI help surface"
 print_info "Checking top-level help plus local indexing, install, maintenance, and Qdrant commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest memory qdrant mcp; do
+for command in setup add update query list inspect remove doctor init install fetch ingest memory okf qdrant mcp; do
   run "${CLI_CMD[@]}" "$command" --help
 done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
 done
-for command in scan sync query sources extract consolidate apply status clear; do
+for command in scan sync query sources extract consolidate apply export status clear; do
   run "${CLI_CMD[@]}" memory "$command" --help
+done
+for command in doctor; do
+  run "${CLI_CMD[@]}" okf "$command" --help
 done
 for command in serve doctor install; do
   run "${CLI_CMD[@]}" mcp "$command" --help
@@ -359,6 +362,12 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
     unset MISTRAL_API_KEY
     print_info "MISTRAL_API_KEY is not set, so real Mistral extract/consolidate calls are skipped after no-key checks."
   fi
+  print_info "Checking Mistral SDK import compatibility without making an API call."
+  run "$VENV_PYTHON" -c "from docmancer.ai.mistral_client import _load_mistral_class; print(_load_mistral_class())"
+  MEMORY_OKF="$TMP_ROOT/memory.okf"
+  print_info "Exporting the indexed synthetic memory as OKF and validating the bundle."
+  run "${CLI_CMD[@]}" memory export --output "$MEMORY_OKF"
+  run "${CLI_CMD[@]}" okf doctor "$MEMORY_OKF"
   APPLY_DRAFT="$TMP_ROOT/reviewed-memory-draft.md"
   APPLY_TARGET="$TMP_ROOT/applied/AGENTS.md"
   mkdir -p "$(dirname "$APPLY_TARGET")"

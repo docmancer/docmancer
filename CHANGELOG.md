@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - Unreleased
+### Added
+
+- **Google Open Knowledge Format (OKF) support.** `docmancer memory export --format okf` writes the indexed cross-agent memory as a conformant OKF bundle (a directory of markdown files with YAML frontmatter, a root `index.md` carrying `okf_version`, per-directory listings, and a `log.md`). Local and keyless; secrets are redacted first. `docmancer okf doctor <bundle>` validates conformance (parseable frontmatter and a non-empty `type` on every concept file; broken cross-links reported as warnings).
+- **OKF as an output and input format.** `docmancer fetch <url> --format okf` emits fetched docs as OKF concept files; `docmancer memory consolidate --format okf` writes a review-only OKF bundle draft. Ingesting an OKF bundle directory skips reserved `index.md` / `log.md` files and lifts `type` / `tags` / `timestamp` frontmatter into the index.
+- **Mistral OCR ingest.** `docmancer ingest <pdf|image> --ocr mistral` extracts markdown from PDFs and images via Mistral OCR before indexing. Requires `MISTRAL_API_KEY`; the default ingest path stays local and keyless.
+- **Mistral moderation guard.** `--moderate` on `memory extract` / `memory consolidate` runs Mistral moderation first and drops entries flagged as privacy-sensitive (pii, financial, health, law) before the main cloud call. Off by default.
+- **Codestral embeddings provider.** `embeddings.provider: codestral` (or `init --embedding-provider codestral`) uses `codestral-embed` at 1536 dimensions for code-heavy corpora. Requires `MISTRAL_API_KEY`; default provider stays `model2vec` (local, offline). `docmancer doctor` now flags a missing `MISTRAL_API_KEY` for both the mistral and codestral providers.
+
+### Fixed
+
+- **Mistral SDK 2.x compatibility.** Mistral-backed memory commands and the Mistral embeddings provider now support the current `mistralai` SDK layout, where the client class is exported from `mistralai.client`, while preserving compatibility with older top-level `mistralai.Mistral` installs.
+
 ## [0.6.1] - 2026-06-18
 ### Changed
 

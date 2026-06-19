@@ -18,6 +18,22 @@ from typing import Any
 # DOCMANCER_MISTRAL_MODEL to change the default without editing code.
 DEFAULT_CHAT_MODEL = "mistral-small-2506"
 
+# Moderation model id used by the optional privacy guard.
+DEFAULT_MODERATION_MODEL = "mistral-moderation-latest"
+
+# OCR model id used by the optional document ingest path.
+DEFAULT_OCR_MODEL = "mistral-ocr-latest"
+
+# File suffixes the OCR path understands, mapped to the data-URI mime type and
+# the OCR document container ("document_url" for PDFs, "image_url" for images).
+_OCR_MIME = {
+    ".pdf": ("application/pdf", "document_url"),
+    ".png": ("image/png", "image_url"),
+    ".jpg": ("image/jpeg", "image_url"),
+    ".jpeg": ("image/jpeg", "image_url"),
+    ".webp": ("image/webp", "image_url"),
+}
+
 
 class MistralConfigError(RuntimeError):
     """Raised for a missing key or SDK (clear message, no traceback in the CLI)."""
@@ -27,17 +43,29 @@ def mistral_api_key() -> str | None:
     return os.environ.get("MISTRAL_API_KEY")
 
 
-class MistralClient:
-    """Thin wrapper over ``mistralai.Mistral`` with lazy import."""
+def _load_mistral_class():
+    """Return the Mistral SDK client class across supported SDK layouts."""
+    try:
+        from mistralai import Mistral
 
-    def __init__(self, *, api_key: str | None = None, model: str | None = None) -> None:
+        return Mistral
+    except ImportError as first_exc:
         try:
-            from mistralai import Mistral  # v1.x import; NOT mistralai.client
-        except ImportError as exc:  # pragma: no cover - exercised via CLI graceful path
+            from mistralai.client import Mistral
+
+            return Mistral
+        except ImportError as second_exc:
             raise MistralConfigError(
                 "the mistralai SDK is required for Mistral-backed commands; "
                 "reinstall docmancer or run `pip install mistralai`."
-            ) from exc
+            ) from second_exc or first_exc
+
+
+class MistralClient:
+    """Thin wrapper over the Mistral SDK with lazy import."""
+
+    def __init__(self, *, api_key: str | None = None, model: str | None = None) -> None:
+        Mistral = _load_mistral_class()
         key = api_key or mistral_api_key()
         if not key:
             raise MistralConfigError("MISTRAL_API_KEY is not set")
@@ -58,5 +86,49 @@ class MistralClient:
         )
         return response.choices[0].message.parsed
 
+    def moderate(self, inputs: list[str], *, model: str | None = None) -> list[dict]:
+        """Score each input with Mistral's moderation model.
 
-__all__ = ["MistralClient", "MistralConfigError", "mistral_api_key", "DEFAULT_CHAT_MODEL"]
+        Returns one category-score dict per input. An empty input list makes no
+        API call.
+        """
+        if not inputs:
+            return []
+        response = self._client.classifiers.moderate(
+            model=model or DEFAULT_MODERATION_MODEL, inputs=list(inputs)
+        )
+        return [dict(getattr(result, "category_scores", {}) or {}) for result in response.results]
+
+    def ocr_file(self, path, *, model: str | None = None) -> str:
+        """Run Mistral OCR on a local PDF or image and return its markdown.
+
+        The file is sent inline as a base64 data URI (one API call, no separate
+        upload). Page markdown is concatenated in order.
+        """
+        import base64
+        from pathlib import Path
+
+        path = Path(path)
+        suffix = path.suffix.lower()
+        if suffix not in _OCR_MIME:
+            raise MistralConfigError(
+                f"OCR does not support {suffix or 'this file type'}; use PDF or an image."
+            )
+        mime, container = _OCR_MIME[suffix]
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        data_uri = f"data:{mime};base64,{b64}"
+        url_key = "document_url" if container == "document_url" else "image_url"
+        document = {"type": container, url_key: data_uri}
+        response = self._client.ocr.process(model=model or DEFAULT_OCR_MODEL, document=document)
+        pages = getattr(response, "pages", []) or []
+        return "\n\n".join(getattr(page, "markdown", "") or "" for page in pages)
+
+
+__all__ = [
+    "MistralClient",
+    "MistralConfigError",
+    "mistral_api_key",
+    "DEFAULT_CHAT_MODEL",
+    "DEFAULT_MODERATION_MODEL",
+    "DEFAULT_OCR_MODEL",
+]

@@ -40,6 +40,10 @@ def get_embeddings_provider(config: "EmbeddingsConfig") -> EmbeddingsProvider:
         from .mistral_provider import MistralProvider
 
         return MistralProvider(config)
+    if name == "codestral":
+        from .codestral_provider import CodestralProvider
+
+        return CodestralProvider(config)
     raise ValueError(f"Unknown embeddings provider: {config.provider!r}")
 
 

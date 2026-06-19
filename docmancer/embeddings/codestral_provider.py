@@ -1,9 +1,9 @@
-"""Mistral embeddings provider (optional, default off).
+"""Codestral embeddings provider (optional, default off).
 
-Uses Mistral's embeddings API (``mistral-embed-2312``, 1024 dims by default) through
-the official ``mistralai`` client. The SDK import is lazy so a missing or
-broken SDK never breaks ``docmancer`` startup; the default stack stays
-``model2vec`` + ``sqlite-vec`` and keyless.
+Uses Mistral's ``codestral-embed`` model through the official ``mistralai``
+client. Codestral Embed is tuned for code, so it is the natural choice for
+code-heavy corpora. Like the Mistral provider, the SDK import is lazy and the
+default stack stays ``model2vec`` + ``sqlite-vec`` and keyless.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from docmancer.core.config import EmbeddingsConfig
 
 
-class MistralProvider(EmbeddingsProvider):
-    name = "mistral"
+class CodestralProvider(EmbeddingsProvider):
+    name = "codestral"
 
     def __init__(self, config: "EmbeddingsConfig") -> None:
         try:
@@ -27,16 +27,15 @@ class MistralProvider(EmbeddingsProvider):
                 from mistralai.client import Mistral
             except ImportError as second_exc:
                 raise ImportError(
-                    "the mistralai SDK is required for the Mistral provider; "
+                    "the mistralai SDK is required for the Codestral provider; "
                     "reinstall docmancer or `pip install mistralai`."
                 ) from second_exc or exc
         api_key = os.environ.get("MISTRAL_API_KEY")
         if not api_key:
             raise RuntimeError("MISTRAL_API_KEY environment variable is not set")
         self._client: Any = Mistral(api_key=api_key)
-        self.model_name = config.model or "mistral-embed-2312"
-        self.dimensions = int(config.dimensions or 1024)
-        # Conservative cap; mistral-embed rejects oversized requests.
+        self.model_name = config.model or "codestral-embed-2505"
+        self.dimensions = int(config.dimensions or 1536)
         self.max_batch_size = min(int(getattr(config, "batch_size", 64) or 64), 128)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -60,4 +59,4 @@ class MistralProvider(EmbeddingsProvider):
             return False
 
 
-__all__ = ["MistralProvider"]
+__all__ = ["CodestralProvider"]

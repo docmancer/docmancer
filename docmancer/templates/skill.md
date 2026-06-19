@@ -41,7 +41,10 @@ Use `ingest` for local files and directories.
 | `--format <format>` | Restrict to formats such as `md`, `txt`, `pdf`, `docx`, `rtf`, or `html` |
 | `--recursive / --no-recursive` | Recurse through directories |
 | `--skip-known` | Skip files whose content hash is already indexed |
+| `--ocr mistral` | Extract markdown from PDFs and images with Mistral OCR before indexing (requires `MISTRAL_API_KEY`) |
 | `--recreate` | Drop and rebuild the index; when vector sync is enabled, drops the vector collection first so embedder or dimension changes rebuild cleanly |
+
+An OKF bundle (a directory of markdown files with YAML frontmatter, produced by `docmancer memory export --format okf` or another OKF tool) can be ingested directly: reserved `index.md` / `log.md` files are skipped and `type` / `tags` / `timestamp` frontmatter is lifted into the index.
 
 ## Add URL Documentation
 
@@ -88,7 +91,7 @@ Primary command. Returns a compact markdown context pack with source attribution
 | `docmancer remove --all` | Clear the entire index |
 | `docmancer clear` | Wipe docmancer home, model caches used by docmancer, and managed Qdrant data (destructive; use `--dry-run`, `--keep-config`, or `--keep-models` as needed) |
 | `docmancer doctor` | Check config, loader availability, index health, and installed skills |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown without indexing |
+| `docmancer fetch <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
 
 ## Common Mistakes
 

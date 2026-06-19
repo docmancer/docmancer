@@ -40,6 +40,10 @@ INSTALL_TARGETS = [
     "opencode",
 ]
 
+# Set to True by setup_cmd before invoking install_cmd in a loop so that
+# each individual install does not re-emit the banner or a per-agent next-step.
+_INSTALL_QUIET: bool = False
+
 
 def _get_agent_class():
     from docmancer.agent import DocmancerAgent
@@ -85,6 +89,7 @@ _EMBEDDING_PROVIDER_DEFAULTS = {
     "model2vec": ("minishlab/potion-base-8M", 256),
     "fastembed": ("BAAI/bge-base-en-v1.5", 768),
     "mistral": ("mistral-embed-2312", 1024),
+    "codestral": ("codestral-embed-2505", 1536),
     "openai": ("text-embedding-3-small", 1536),
     "voyage": ("voyage-3", 1024),
     "cohere": ("embed-english-v3.0", 1024),
@@ -382,7 +387,12 @@ def _emit_install_summary(
     next_step: str,
     extra_lines: list[str] | None = None,
 ) -> None:
-    _emit_brand_header("docmancer install", heading)
+    if _INSTALL_QUIET:
+        # Called from setup_cmd: print a compact section header instead of the full banner.
+        click.echo()
+        click.echo(_style(f"  {heading}", fg="white", bold=True))
+    else:
+        _emit_brand_header("docmancer install", heading)
     for label, path in installed_paths:
         _emit_status_line(f"{label}: {display_path(path)}")
     if created_user_config:
@@ -391,7 +401,8 @@ def _emit_install_summary(
         _emit_status_line(f"Skill uses config {display_path(effective_config_path)}")
     for line in extra_lines or []:
         _emit_status_line(line, state="info")
-    _emit_next_step(next_step)
+    if not _INSTALL_QUIET:
+        _emit_next_step(next_step)
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +516,7 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
 @click.option(
     "--embedding-provider",
     "embedding_provider",
-    type=click.Choice(["model2vec", "fastembed", "mistral", "openai", "voyage", "cohere"], case_sensitive=False),
+    type=click.Choice(["model2vec", "fastembed", "mistral", "codestral", "openai", "voyage", "cohere"], case_sensitive=False),
     default=None,
     help="Set the embeddings provider in the generated config (default model2vec).",
 )
@@ -723,6 +734,7 @@ def update_cmd(
 @click.option("--recursive/--no-recursive", default=True, show_default=True, help="Recurse through directories.")
 @click.option("--skip-known", is_flag=True, help="Skip files whose content hash is already indexed.")
 @click.option("--no-vectors", is_flag=True, help="Index FTS5 only; skip embedding/vector upsert.")
+@click.option("--ocr", "ocr", type=click.Choice(["mistral"], case_sensitive=False), default=None, help="Run OCR on PDFs/images to extract markdown. Requires MISTRAL_API_KEY.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def ingest_cmd(
     path: str,
@@ -733,11 +745,19 @@ def ingest_cmd(
     recursive: bool,
     skip_known: bool,
     no_vectors: bool,
+    ocr: str | None,
     config_path: str | None,
 ):
     """Index local files or directories."""
     if path.startswith(("http://", "https://")):
         raise click.ClickException("Use `docmancer add` for URLs.")
+
+    if ocr == "mistral":
+        from docmancer.ai.mistral_client import mistral_api_key
+
+        if not mistral_api_key():
+            click.echo("docmancer ingest --ocr mistral needs MISTRAL_API_KEY. Set it and retry.", err=True)
+            sys.exit(2)
 
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
@@ -757,6 +777,7 @@ def ingest_cmd(
             recursive=recursive,
             skip_known=skip_known,
             with_vectors=not no_vectors,
+            ocr=ocr,
         )
         _emit_index_summary(total, agent)
         if getattr(agent, "last_ingest_skips", None):
@@ -816,7 +837,15 @@ def _drop_vector_collection(config, agent) -> None:
     show_default=True,
     help="Output directory for downloaded .md files.",
 )
-def fetch_cmd(url: str, output_dir: str):
+@click.option(
+    "output_format",
+    "--format",
+    type=click.Choice(["md", "okf"], case_sensitive=False),
+    default="md",
+    show_default=True,
+    help="Output format: plain markdown, or an OKF bundle (frontmatter + index.md).",
+)
+def fetch_cmd(url: str, output_dir: str, output_format: str):
     """Download docs from a GitBook URL to local .md files."""
     from urllib.parse import urlparse
     from docmancer.connectors.fetchers.gitbook import GitBookFetcher
@@ -830,6 +859,22 @@ def fetch_cmd(url: str, output_dir: str):
         sys.exit(1)
 
     out_path = Path(output_dir)
+
+    if output_format.lower() == "okf":
+        from docmancer.okf.adapters import concepts_from_documents
+        from docmancer.okf.bundle import write_bundle
+
+        result = write_bundle(
+            out_path,
+            concepts_from_documents(documents),
+            title=f"Docs fetched from {url}",
+        )
+        click.echo(
+            f"Wrote OKF bundle to {display_path(result.root)} "
+            f"({result.concept_count} page(s)). Validate: docmancer okf doctor {output_dir}"
+        )
+        return
+
     out_path.mkdir(parents=True, exist_ok=True)
 
     for doc in documents:
@@ -981,9 +1026,9 @@ def doctor_cmd(config_path: str | None):
         f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model} dimensions={config.embeddings.dimensions}",
         indent=4,
     )
-    if emb_provider == "mistral" and not os.environ.get("MISTRAL_API_KEY"):
+    if emb_provider in ("mistral", "codestral") and not os.environ.get("MISTRAL_API_KEY"):
         _emit_status_line(
-            "MISTRAL_API_KEY: not set (required for the mistral embeddings provider)",
+            f"MISTRAL_API_KEY: not set (required for the {emb_provider} embeddings provider)",
             state="warn",
             indent=4,
         )
@@ -1822,8 +1867,14 @@ def setup_cmd(
         _emit_next_step("Run `docmancer add <url-or-path>` to index documentation locally.")
         return
 
-    for target in dict.fromkeys(selected):
+    global _INSTALL_QUIET
+    _INSTALL_QUIET = True
+    try:
         ctx = click.get_current_context()
-        ctx.invoke(install_cmd, agent=target, project=(target == "github-copilot"), config_path=str(config_file))
+        for target in dict.fromkeys(selected):
+            ctx.invoke(install_cmd, agent=target, project=(target == "github-copilot"), config_path=str(config_file))
+    finally:
+        _INSTALL_QUIET = False
 
+    click.echo()
     _emit_next_step("Run `docmancer add <url-or-path>`, then `docmancer query \"your question\"`.")

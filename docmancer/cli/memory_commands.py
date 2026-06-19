@@ -163,16 +163,43 @@ def sources(agent_filter, scope_filter, type_filter, as_json, live_preview, incl
         click.echo("No indexed sources match. Run: docmancer memory sync")
         return
 
-    by_agent = Counter(r["agent"] for r in rows)
-    by_type = Counter(r["type"] for r in rows)
+    home = str(Path.home())
+
+    def _short(path: str) -> str:
+        return path.replace(home, "~") if path.startswith(home) else path
+
+    by_agent: Counter = Counter(r["agent"] for r in rows)
+    by_type: Counter = Counter(r["type"] for r in rows)
     label = "would index" if live_preview else "indexed"
-    click.echo(f"{len(rows)} files {label} across {len(by_agent)} agent(s):")
+
+    # Summary header
+    agent_summary = "  ".join(f"{a} ({c})" for a, c in sorted(by_agent.items()))
+    click.echo(f"{len(rows)} files {label}  |  {agent_summary}")
+    type_summary = "  ".join(f"{k}: {c}" for k, c in sorted(by_type.items()))
+    click.echo(f"{'':>{len(str(len(rows))) + 1}}             {type_summary}")
+    click.echo()
+
+    # Group rows by agent, preserving the original sort order within each group
+    seen_agents: list[str] = []
+    grouped: dict[str, list[dict]] = {}
     for r in rows:
-        click.echo(f"  {r['agent']:<14} {r['type']:<13} {r['scope']}")
-        click.echo(f"      {r['title']}  ({r['chars']} chars)")
-        click.echo(f"      {r['path']}")
-    click.echo("By agent: " + ", ".join(f"{a}={c}" for a, c in sorted(by_agent.items())))
-    click.echo("By type:  " + ", ".join(f"{k}={c}" for k, c in sorted(by_type.items())))
+        a = r["agent"]
+        if a not in grouped:
+            grouped[a] = []
+            seen_agents.append(a)
+        grouped[a].append(r)
+
+    for agent_name in seen_agents:
+        group = grouped[agent_name]
+        count = len(group)
+        click.echo(f"  {agent_name.upper()}  ({count})")
+        for r in group:
+            kind = r["type"]
+            short_path = _short(r["path"])
+            chars = f"{r['chars']:,}"
+            # Fit type label in 13 chars, path fills the middle, chars right-padded
+            click.echo(f"    {kind:<13}  {short_path:<60}  {chars} chars")
+        click.echo()
 
 
 _CLOUD_NOTICE = (
@@ -229,15 +256,43 @@ def _redacted_entries(agent, *, query: str | None, limit: int | None):
     return entries
 
 
+def _moderate_or_exit(command: str, entries, *, model, threshold):
+    """Drop entries flagged by Mistral moderation. Returns the kept entries.
+
+    Runs after the cloud-use confirmation (moderation is itself a cloud call).
+    Exits cleanly if every entry is dropped.
+    """
+    from docmancer.ai.mistral_client import MistralClient
+    from docmancer.ai.moderation import partition_by_moderation
+
+    def _call():
+        client = MistralClient(model=model)
+        scores = client.moderate([e.content for e in entries])
+        return partition_by_moderation(entries, scores, threshold=threshold)
+
+    kept, dropped = _run_mistral_or_exit(command, _call)
+    if dropped:
+        click.echo(
+            f"Moderation dropped {len(dropped)} entr(y/ies) flagged as privacy-sensitive.",
+            err=True,
+        )
+    if not kept:
+        click.echo("All entries were filtered by moderation; nothing to send.", err=True)
+        sys.exit(1)
+    return kept
+
+
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with Mistral.")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
 @click.option("--model", default=None, help="Override the Mistral chat model.")
+@click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
+@click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def extract(limit, query, output_format, model, assume_yes, include, exclude):
+def extract(limit, query, output_format, model, moderate, moderation_threshold, assume_yes, include, exclude):
     """Extract durable memory facts (Mistral structured output). Requires MISTRAL_API_KEY."""
     import json as _json
 
@@ -250,6 +305,8 @@ def extract(limit, query, output_format, model, assume_yes, include, exclude):
     click.echo(_CLOUD_NOTICE, err=True)
     if not assume_yes:
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
+    if moderate:
+        entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold)
 
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.mistral_client import MistralClient
@@ -274,17 +331,21 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Consolidate memory into a review-only draft with Mistral.")
 @click.option("--query", "query", default=None, help="Focus the consolidation on memory relevant to this query.")
-@click.option("--output", "output", default=_DEFAULT_DRAFT, show_default=True, help="Where to write the draft.")
+@click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
+@click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
 @click.option("--model", default=None, help="Override the Mistral chat model.")
+@click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
+@click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def consolidate(query, output, limit, model, assume_yes, include, exclude):
+def consolidate(query, output, output_format, limit, model, moderate, moderation_threshold, assume_yes, include, exclude):
     """Produce a review-only consolidated memory draft. Requires MISTRAL_API_KEY.
 
-    Writes a markdown draft for you to review; it never edits agent files. Use
-    `docmancer memory apply --from <draft>` to materialize it after review.
+    Writes a markdown draft (or an OKF bundle with --format okf) for you to
+    review; it never edits agent files. Use `docmancer memory apply --from
+    <draft>` to materialize a markdown draft after review.
     """
     _require_mistral_key("consolidate")
     agent = _agent(include, exclude)
@@ -295,6 +356,8 @@ def consolidate(query, output, limit, model, assume_yes, include, exclude):
     click.echo(_CLOUD_NOTICE, err=True)
     if not assume_yes:
         click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
+    if moderate:
+        entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold)
 
     from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
     from docmancer.ai.mistral_client import MistralClient
@@ -313,8 +376,23 @@ def consolidate(query, output, limit, model, assume_yes, include, exclude):
     # no partial output behind.
     draft = _run_mistral_or_exit("consolidate", _call)
 
+    if output_format.lower() == "okf":
+        from docmancer.okf.adapters import concepts_from_draft
+        from docmancer.okf.bundle import write_bundle
+
+        bundle_dir = Path(output) if output else Path("master-memory-draft.okf")
+        result = write_bundle(
+            bundle_dir,
+            concepts_from_draft(draft),
+            title=draft.title or "Consolidated memory (review only)",
+        )
+        click.echo(f"Wrote review-only OKF bundle to {result.root} ({len(entries)} sources).")
+        click.echo(f"Validate it with: docmancer okf doctor {result.root}")
+        click.echo("Review it before sharing. memory apply expects a markdown draft, not a bundle.")
+        return
+
     markdown = draft_to_markdown(draft, source_files=source_files)
-    out_path = Path(output)
+    out_path = Path(output) if output else Path(_DEFAULT_DRAFT)
     if out_path.parent and not out_path.parent.exists():
         out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(markdown, encoding="utf-8")
@@ -431,6 +509,42 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
     if backup:
         click.echo(f"Backup written to {backup}")
     click.echo("Undo: docmancer memory apply --remove" + (f" --agent {agent}" if agent else f" --output {target}") + f", or restore the backup.")
+
+
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export memory as a portable OKF bundle.")
+@click.option("output_format", "--format", type=click.Choice(["okf"], case_sensitive=False), default="okf", show_default=True, help="Export format.")
+@click.option("--output", "output", default="memory.okf", show_default=True, help="Bundle directory to write.")
+@click.option("--query", "query", default=None, help="Only export memory relevant to this query.")
+@click.option("--limit", default=None, type=int, help="Max entries to export.")
+@click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
+@click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
+def export(output_format, output, query, limit, include, exclude):
+    """Export your cross-agent memory as a Google OKF bundle (local, keyless).
+
+    Writes a directory of markdown files with YAML frontmatter that any
+    OKF-aware tool can read. Secrets are redacted first; nothing is uploaded.
+    """
+    from datetime import datetime, timezone
+
+    from docmancer.okf.adapters import concepts_from_memory_entries
+    from docmancer.okf.bundle import write_bundle
+
+    agent = _agent(include, exclude)
+    entries = _redacted_entries(agent, query=query, limit=limit)
+    if not entries:
+        click.echo("No memory to export. Run: docmancer memory sync")
+        sys.exit(1)
+
+    concepts = concepts_from_memory_entries(entries)
+    today = datetime.now(timezone.utc).date().isoformat()
+    result = write_bundle(
+        Path(output),
+        concepts,
+        title="docmancer cross-agent memory",
+        log_entries=[f"{today}: exported {len(concepts)} concept(s) from docmancer memory"],
+    )
+    click.echo(f"Wrote OKF bundle to {result.root} ({result.concept_count} concept(s)).")
+    click.echo(f"Validate it with: docmancer okf doctor {result.root}")
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show memory index status.")

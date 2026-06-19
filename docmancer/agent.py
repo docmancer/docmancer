@@ -249,18 +249,28 @@ class DocmancerAgent:
         recursive: bool = True,
         skip_known: bool = False,
         with_vectors: bool = True,
+        ocr: str | None = None,
     ) -> int:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Path not found: {path}")
+        # When OCR is requested, image suffixes (not in the default parser map)
+        # also become ingestable.
+        ocr_suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".webp"} if ocr else set()
         if path.is_file():
             files = [path]
         else:
-            supported = set(_PARSERS.keys())
+            supported = set(_PARSERS.keys()) | ocr_suffixes
             selected_formats = {fmt if fmt.startswith(".") else f".{fmt}" for fmt in formats}
             allowed = supported & {fmt.lower() for fmt in selected_formats} if selected_formats else supported
             iterator = path.rglob("*") if recursive else path.glob("*")
             files = sorted(f for f in iterator if f.is_file() and f.suffix.lower() in allowed)
+            # OKF bundles carry reserved index.md/log.md files that are listings
+            # and change history, not concept content, so skip them on ingest.
+            from docmancer.okf import RESERVED_FILENAMES, is_okf_bundle
+
+            if is_okf_bundle(path):
+                files = [f for f in files if f.name not in RESERVED_FILENAMES]
             if include:
                 files = [f for f in files if self._matches_any(f.relative_to(path), include)]
             if exclude:
@@ -271,7 +281,12 @@ class DocmancerAgent:
         skipped: list[dict[str, str]] = []
         for file_path in files:
             try:
-                loader = self._get_loader(file_path.suffix.lower())
+                if ocr == "mistral" and file_path.suffix.lower() in ocr_suffixes:
+                    from docmancer.connectors.parsers.mistral_ocr import MistralOCRLoader
+
+                    loader = MistralOCRLoader()
+                else:
+                    loader = self._get_loader(file_path.suffix.lower())
                 document = loader.load(file_path)
                 suffix = file_path.suffix.lower().lstrip(".")
                 format_name = "markdown" if suffix in {"md", "markdown"} else suffix

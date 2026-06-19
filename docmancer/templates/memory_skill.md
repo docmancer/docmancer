@@ -42,6 +42,15 @@ docmancer memory clear
 
 Run `docmancer memory sources` to see exactly what was indexed and from where (agent, type, scope, title, path, char count). Add `--agent`, `--scope`, `--type`, `--json`, or `--preview` (live re-harvest) to filter.
 
+## Export to OKF (local, keyless)
+
+Export the indexed cross-agent memory as a Google Open Knowledge Format (OKF) bundle: a directory of markdown files with YAML frontmatter that any OKF-aware tool can read. This never calls the cloud and needs no API key.
+
+```bash
+docmancer memory export --format okf --output memory.okf
+docmancer okf doctor memory.okf
+```
+
 ## Mistral-backed (optional, requires MISTRAL_API_KEY)
 
 These send privacy-redacted local memory to Mistral and fail cleanly with a clear message when no key is set. They never edit agent files.
@@ -49,9 +58,12 @@ These send privacy-redacted local memory to Mistral and fail cleanly with a clea
 ```bash
 docmancer memory extract --yes
 docmancer memory consolidate --query "..." --output draft.md --yes
+docmancer memory consolidate --format okf --output draft.okf --yes
 ```
 
-`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless.
+Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call.
+
+`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 
 ## Privacy
 

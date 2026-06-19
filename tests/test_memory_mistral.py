@@ -79,6 +79,42 @@ def _install_fake_mistral(monkeypatch, *, capture: dict):
     monkeypatch.setitem(sys.modules, "mistralai", types.SimpleNamespace(Mistral=FakeMistral))
 
 
+def _install_fake_mistral_client_namespace(monkeypatch, *, capture: dict):
+    """Stub the mistralai 2.x layout where the class lives under mistralai.client."""
+
+    class FakeMessage:
+        def __init__(self, parsed):
+            self.parsed = parsed
+
+    class FakeChoice:
+        def __init__(self, parsed):
+            self.message = FakeMessage(parsed)
+
+    class FakeResponse:
+        def __init__(self, parsed):
+            self.choices = [FakeChoice(parsed)]
+
+    class FakeChat:
+        def parse(self, *, model, messages, response_format, temperature=0.0):
+            capture["model"] = model
+            capture["messages"] = messages
+            from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+            return FakeResponse(
+                ConsolidatedMemoryDraft(title="Master Memory", summary="Ok.", sections=[], source_paths=[])
+            )
+
+    class FakeMistral:
+        def __init__(self, *args, **kwargs):
+            self.chat = FakeChat()
+
+    root = types.ModuleType("mistralai")
+    client = types.ModuleType("mistralai.client")
+    client.Mistral = FakeMistral
+    monkeypatch.setitem(sys.modules, "mistralai", root)
+    monkeypatch.setitem(sys.modules, "mistralai.client", client)
+
+
 def _install_failing_mistral(monkeypatch, *, message="401 Unauthorized"):
     """Stub mistralai whose chat.parse raises a runtime/provider error."""
 
@@ -134,6 +170,21 @@ def test_default_chat_model_is_concrete_and_env_overridable(monkeypatch):
     # Env var overrides the default without code changes.
     monkeypatch.setenv("DOCMANCER_MISTRAL_MODEL", "mistral-large-2512")
     assert MistralClient().model == "mistral-large-2512"
+
+
+def test_client_supports_mistralai_client_namespace(monkeypatch):
+    capture: dict = {}
+    _install_fake_mistral_client_namespace(monkeypatch, capture=capture)
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    from docmancer.ai.mistral_client import MistralClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+    result = MistralClient().parse(
+        [{"role": "user", "content": "hello"}],
+        ConsolidatedMemoryDraft,
+    )
+    assert result.title == "Master Memory"
+    assert capture["model"] == "mistral-small-2506"
 
 
 def test_consolidate_requires_key(tmp_path, monkeypatch):

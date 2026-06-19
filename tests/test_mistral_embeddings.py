@@ -34,6 +34,36 @@ def _install_fake_mistral(monkeypatch) -> dict:
     return state
 
 
+def _install_fake_mistral_client_namespace(monkeypatch) -> dict:
+    """Stub the mistralai 2.x layout where the class lives under mistralai.client."""
+    state = {"calls": []}
+
+    class FakeItem:
+        def __init__(self, index, embedding):
+            self.index = index
+            self.embedding = embedding
+
+    class FakeResp:
+        def __init__(self, items):
+            self.data = items
+
+    class FakeEmbeddings:
+        def create(self, *, model, inputs):
+            state["calls"].append({"model": model, "inputs": list(inputs)})
+            return FakeResp([FakeItem(i, [float(len(t)), 1.0]) for i, t in enumerate(inputs)])
+
+    class FakeMistral:
+        def __init__(self, *args, **kwargs):
+            self.embeddings = FakeEmbeddings()
+
+    root = types.ModuleType("mistralai")
+    client = types.ModuleType("mistralai.client")
+    client.Mistral = FakeMistral
+    monkeypatch.setitem(sys.modules, "mistralai", root)
+    monkeypatch.setitem(sys.modules, "mistralai.client", client)
+    return state
+
+
 def test_factory_returns_mistral_provider(monkeypatch):
     _install_fake_mistral(monkeypatch)
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
@@ -48,6 +78,17 @@ def test_factory_returns_mistral_provider(monkeypatch):
     assert isinstance(provider, MistralProvider)
     assert provider.dimensions == 1024
     assert provider.model_name == "mistral-embed-2312"
+
+
+def test_provider_supports_mistralai_client_namespace(monkeypatch):
+    state = _install_fake_mistral_client_namespace(monkeypatch)
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    from docmancer.core.config import EmbeddingsConfig
+    from docmancer.embeddings.mistral_provider import MistralProvider
+
+    provider = MistralProvider(EmbeddingsConfig(provider="mistral", model="mistral-embed-2312"))
+    assert provider.embed(["abc"])[0][0] == 3.0
+    assert state["calls"][0]["model"] == "mistral-embed-2312"
 
 
 def test_init_embedding_provider_shortcut_writes_mistral(tmp_path):

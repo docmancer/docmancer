@@ -51,7 +51,7 @@ def test_sources_preview_lists_provenance(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert "claude-code" in r.output
     assert "would index" in r.output
-    assert "By agent:" in r.output
+    assert "CLAUDE-CODE" in r.output  # grouped section header
 
 
 def test_sources_json_and_filter(tmp_path, monkeypatch):
@@ -68,7 +68,7 @@ def test_sources_stored_index_after_sync(tmp_path, monkeypatch):
     CliRunner().invoke(cli, ["memory", "sync"])
     r = CliRunner().invoke(cli, ["memory", "sources"])
     assert r.exit_code == 0, r.output
-    assert "indexed across" in r.output
+    assert "files indexed" in r.output
     assert "claude-code" in r.output
 
 

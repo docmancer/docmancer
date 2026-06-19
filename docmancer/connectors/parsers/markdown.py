@@ -16,12 +16,22 @@ class MarkdownLoader:
     def load(self, path: Path) -> Document:
         content = path.read_text(encoding="utf-8")
         title = path.stem
+        metadata: dict = {"format": "markdown"}
         match = _FRONT_MATTER_RE.match(content)
         if match:
             try:
                 front_matter = yaml.safe_load(match.group(1)) or {}
             except yaml.YAMLError:
                 front_matter = {}
-            if isinstance(front_matter, dict) and front_matter.get("title"):
-                title = str(front_matter["title"])
-        return Document(source=str(path), content=content, metadata={"format": "markdown", "title": title})
+            if isinstance(front_matter, dict):
+                if front_matter.get("title"):
+                    title = str(front_matter["title"])
+                # Lift OKF frontmatter into queryable metadata. ``type`` is
+                # stored as ``okf_type`` to avoid colliding with internal keys.
+                if front_matter.get("type"):
+                    metadata["okf_type"] = front_matter["type"]
+                for key in ("tags", "resource", "timestamp"):
+                    if front_matter.get(key) is not None:
+                        metadata[key] = front_matter[key]
+        metadata["title"] = title
+        return Document(source=str(path), content=content, metadata=metadata)
