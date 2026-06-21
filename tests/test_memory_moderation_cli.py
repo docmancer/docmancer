@@ -84,7 +84,9 @@ def test_consolidate_moderate_drops_sensitive_entry(tmp_path, monkeypatch):
     )
     assert r.exit_code == 0, r.output
     assert "Moderation dropped 1" in r.output
-    assert "Mistral API preflight succeeded." in r.output
+    assert "API Preflight" in r.output
+    assert "provider  Mistral" in r.output
+    assert "status   ok" in r.output
     # The flagged SSN content never reached the consolidation prompt.
     assert "123-45-6789" not in capture.get("prompt", "")
     # The safe content did.

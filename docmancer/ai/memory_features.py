@@ -21,8 +21,16 @@ _CONSOLIDATE_SYSTEM = (
     "You consolidate a developer's scattered agent memory into one coherent, "
     "deduplicated master-memory draft for human review. Never invent facts. "
     "Preserve conflicts as warnings rather than silently picking a side. Group "
-    "related facts into sections. Do not use em dashes. The output is a draft "
-    "the user will review before applying; it must not read as final."
+    "related facts into compact sections. Prefer compressed structured facts "
+    "over prose-heavy rewritten memory. Do not use em dashes. The output is a "
+    "draft the user will review before applying; it must not read as final."
+)
+
+_FAST_CONSOLIDATE_SUFFIX = (
+    "Use aggressive compression. Keep only durable, reusable project facts, "
+    "decisions, constraints, commands, and user preferences. Drop repeated "
+    "evidence, transient status, verbose narrative, and low-value detail. "
+    "Write dense paragraphs, not long prose."
 )
 
 
@@ -42,6 +50,7 @@ def extract_memory_facts(
     *,
     client: MistralClient | None = None,
     model: str | None = None,
+    on_progress=None,
 ) -> ExtractedMemoryFacts:
     """Extract durable memory facts from one block of text via structured output."""
     client = client or MistralClient(model=model)
@@ -49,7 +58,7 @@ def extract_memory_facts(
         {"role": "system", "content": _EXTRACT_SYSTEM},
         {"role": "user", "content": _facts_user_prompt(text, metadata)},
     ]
-    return client.parse(messages, ExtractedMemoryFacts, model=model)
+    return client.parse(messages, ExtractedMemoryFacts, model=model, on_progress=on_progress)
 
 
 def consolidate_memory(
@@ -58,6 +67,9 @@ def consolidate_memory(
     *,
     client: MistralClient | None = None,
     model: str | None = None,
+    draft_quality: str = "standard",
+    max_tokens: int | None = None,
+    on_progress=None,
 ) -> ConsolidatedMemoryDraft:
     """Turn retrieved local memory entries into a review-only consolidated draft.
 
@@ -75,6 +87,8 @@ def consolidate_memory(
             f"{e.get('text', '')}"
         )
     ask = instruction or "Consolidate these into a coherent master memory draft."
+    if draft_quality == "fast":
+        ask = f"{ask}\n\n{_FAST_CONSOLIDATE_SUFFIX}"
     user = (
         f"{ask}\n\nInclude the source path of every entry you draw from in "
         f"source_paths.\n\n" + "\n\n".join(blocks)
@@ -83,7 +97,13 @@ def consolidate_memory(
         {"role": "system", "content": _CONSOLIDATE_SYSTEM},
         {"role": "user", "content": user},
     ]
-    return client.parse(messages, ConsolidatedMemoryDraft, model=model)
+    return client.parse(
+        messages,
+        ConsolidatedMemoryDraft,
+        model=model,
+        max_tokens=max_tokens,
+        on_progress=on_progress,
+    )
 
 
 def draft_to_markdown(draft: ConsolidatedMemoryDraft, *, source_files: list[str] | None = None) -> str:

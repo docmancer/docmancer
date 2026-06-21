@@ -5,8 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.5] - Unreleased
+### Added
+
+- **OpenRouter fallback for memory consolidation.** `docmancer memory consolidate --provider openrouter --model <model-id>` can now use any OpenRouter chat model id for the review-only draft path, with `OPENROUTER_API_KEY` as the only required provider-specific setting. Mistral remains the default provider.
+
+### Fixed
+
+- **Mistral memory consolidation no longer appears to hang.** `docmancer memory extract` and `docmancer memory consolidate` now stream each structured-output response instead of waiting for the whole buffered reply. A large consolidation can take minutes to generate, during which the old buffered call sent no bytes and tripped the per-request read timeout (surfacing as a silent hang or a "read operation timed out" failure). Streaming keeps the connection active so the finite timeout only fires on a genuinely stalled stream, and a live "receiving response" heartbeat reports incoming bytes and elapsed time per batch.
+
 ### Changed
 
+- **Memory consolidation is more bounded by default.** `docmancer memory consolidate` now targets smaller request batches by default, adds `--max-output-tokens`, and adds `--draft-quality fast` for a more compressed draft with smaller batches and output caps.
 - **Live release validation.** `scripts/live_cli_integration.sh` now runs real agent memory consolidation against the exported Mistral API key with `--limit 0`, so the release smoke test covers oversized real-memory batching instead of only tiny synthetic memory.
 
 ## [0.6.4] - 2026-06-19

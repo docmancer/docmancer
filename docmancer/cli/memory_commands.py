@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from collections import Counter
 from pathlib import Path
+from time import monotonic
 
 import click
 
@@ -206,7 +207,15 @@ _CLOUD_NOTICE = (
     "Note: this sends your selected local memory text to Mistral (cloud). "
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
+_CONSOLIDATE_CLOUD_NOTICE = (
+    "Note: this sends your selected local memory text to {provider} (cloud). "
+    "Secrets are redacted first; nothing is stored remotely by docmancer."
+)
 _DEFAULT_CLOUD_INPUT_BUDGET = 90_000
+_DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
+_FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
+_DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
+_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 2048
 _APPROX_CHARS_PER_TOKEN = 4
 
 
@@ -216,6 +225,20 @@ def _require_mistral_key(command: str) -> None:
 
     if not mistral_api_key():
         click.echo(f"docmancer memory {command} needs MISTRAL_API_KEY. Set it and retry.", err=True)
+        sys.exit(2)
+
+
+def _require_consolidate_key(provider: str) -> None:
+    if provider == "mistral":
+        _require_mistral_key("consolidate")
+        return
+    from docmancer.ai.openrouter_client import openrouter_api_key
+
+    if not openrouter_api_key():
+        click.echo(
+            "docmancer memory consolidate --provider openrouter needs OPENROUTER_API_KEY. Set it and retry.",
+            err=True,
+        )
         sys.exit(2)
 
 
@@ -234,6 +257,21 @@ def _run_mistral_or_exit(command: str, fn):
         sys.exit(2)
     except Exception as exc:  # noqa: BLE001 - provider/runtime errors must not traceback
         click.echo(f"docmancer memory {command} failed calling Mistral: {exc}", err=True)
+        sys.exit(1)
+
+
+def _run_consolidate_or_exit(provider: str, fn):
+    from docmancer.ai.mistral_client import MistralConfigError
+    from docmancer.ai.openrouter_client import OpenRouterConfigError
+
+    provider_label = "Mistral" if provider == "mistral" else "OpenRouter"
+    try:
+        return fn()
+    except (MistralConfigError, OpenRouterConfigError) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
+    except Exception as exc:  # noqa: BLE001 - provider/runtime errors must not traceback
+        click.echo(f"docmancer memory consolidate failed calling {provider_label}: {exc}", err=True)
         sys.exit(1)
 
 
@@ -355,12 +393,12 @@ def _chunk_payload_entries(payload: list[dict], *, budget: int | None) -> tuple[
     }
 
 
-def _chunk_status(command: str, chunks: list[list[dict]], stats: dict) -> None:
+def _chunk_status(command: str, chunks: list[list[dict]], stats: dict, *, provider_label: str = "Mistral") -> None:
     if len(chunks) <= 1 and not stats["split_entries"]:
         return
     click.echo(
         f"docmancer memory {command}: sending {stats['expanded_entries']} payload part(s) "
-        f"in {len(chunks)} Mistral request(s), then merging results as needed.",
+        f"in {len(chunks)} {provider_label} request(s), then merging results as needed.",
         err=True,
     )
     if stats["split_entries"]:
@@ -368,6 +406,59 @@ def _chunk_status(command: str, chunks: list[list[dict]], stats: dict) -> None:
             f"Split {stats['split_entries']} oversized source entr(y/ies) into ordered parts; no selected text was trimmed.",
             err=True,
         )
+
+
+def _fmt_count(value: int | None, suffix: str) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:,} {suffix}"
+
+
+def _fmt_timeout(timeout_ms: int | None) -> str:
+    return "provider default" if timeout_ms is None else f"{timeout_ms / 1000:g}s"
+
+
+def _fmt_seconds(seconds: float) -> str:
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
+
+
+def _emit_block(title: str, rows: list[tuple[str, object | None]], *, err: bool = True) -> None:
+    click.echo("", err=err)
+    click.echo(title, err=err)
+    width = max((len(label) for label, _ in rows), default=0)
+    for label, value in rows:
+        click.echo(f"  {label:<{width}}  {value}", err=err)
+
+
+def _format_action_title(action: str) -> str:
+    title = action.title()
+    return title.replace("Api", "API")
+
+
+def _emit_consolidation_plan(
+    *,
+    provider_label: str,
+    chunks: list[list[dict]],
+    stats: dict,
+    budget: int | None,
+    max_output_tokens: int | None,
+    draft_quality: str,
+) -> None:
+    merge_step = "yes" if len(chunks) > 1 else "no"
+    rows: list[tuple[str, object | None]] = [
+        ("payload parts", stats["expanded_entries"]),
+        ("provider requests", f"{len(chunks)} {provider_label} request(s)"),
+        ("estimated input", _fmt_count(stats.get("original_tokens"), "tokens")),
+        ("batch budget", "single request" if budget is None or budget <= 0 else _fmt_count(budget, "tokens")),
+        ("output cap", "provider default" if max_output_tokens is None else _fmt_count(max_output_tokens, "tokens")),
+        ("draft quality", draft_quality),
+        ("merge step", merge_step),
+    ]
+    if stats["split_entries"]:
+        rows.append(("split entries", f"{stats['split_entries']} oversized source entr(y/ies), no text trimmed"))
+    _emit_block("Consolidation Plan", rows)
 
 
 def _mistral_request_status(action: str, client, *, token_count: int | None = None) -> None:
@@ -378,11 +469,75 @@ def _mistral_request_status(action: str, client, *, token_count: int | None = No
     click.echo(f"Calling Mistral for {action} ({model}, {timeout}{tokens}).", err=True)
 
 
+def _provider_request_status(action: str, client, *, token_count: int | None = None) -> None:
+    provider = getattr(client, "provider_name", None) or "Mistral"
+    model = getattr(client, "model", None) or "configured model"
+    timeout_ms = getattr(client, "timeout_ms", None)
+    rows: list[tuple[str, object | None]] = [
+        ("provider", provider),
+        ("model", model),
+        ("timeout", _fmt_timeout(timeout_ms)),
+    ]
+    if token_count is not None:
+        rows.append(("input", f"~{token_count:,} tokens"))
+    _emit_block(_format_action_title(action), rows)
+
+
+def _streaming_progress(label: str):
+    """Return ``(on_progress, finish)`` for a live "receiving response" heartbeat.
+
+    Mistral can take over a minute to generate a large structured draft. Without
+    feedback that silent gap reads as a hang, so we surface incoming bytes as the
+    stream arrives. On a TTY this updates one line in place; when piped it prints
+    a fresh throttled line. ``finish`` closes the in-place line with a newline.
+    """
+    import time as _time
+
+    state = {"last": 0.0, "started": _time.monotonic(), "printed": False}
+    tty = bool(getattr(sys.stderr, "isatty", lambda: False)())
+
+    def on_progress(chars: int) -> None:
+        now = _time.monotonic()
+        if state["printed"] and now - state["last"] < 0.5:
+            return
+        state["last"] = now
+        elapsed = now - state["started"]
+        message = f"  {label}: receiving response... {chars:,} chars, {elapsed:.0f}s"
+        if tty:
+            click.echo("\r" + message + "    ", nl=False, err=True)
+        else:
+            click.echo(message, err=True)
+        state["printed"] = True
+
+    def finish() -> None:
+        if state["printed"] and tty:
+            click.echo("", err=True)
+
+    return on_progress, finish
+
+
+def _consolidate_streaming(consolidate_memory, label, **kwargs):
+    """Call ``consolidate_memory`` with a live progress heartbeat under ``label``."""
+    on_progress, finish = _streaming_progress(label)
+    try:
+        return consolidate_memory(on_progress=on_progress, **kwargs)
+    finally:
+        finish()
+
+
 def _mistral_preflight(client) -> None:
     """Send a tiny Mistral request before large memory payloads."""
     _mistral_request_status("API preflight", client)
     client.preflight()
     click.echo("Mistral API preflight succeeded.", err=True)
+
+
+def _provider_preflight(client) -> None:
+    """Send a tiny provider request before large memory payloads."""
+    provider = getattr(client, "provider_name", None) or "Mistral"
+    _provider_request_status("API preflight", client)
+    client.preflight()
+    click.echo(f"  status   ok", err=True)
 
 
 def _consolidate_payload_in_rounds(
@@ -392,6 +547,8 @@ def _consolidate_payload_in_rounds(
     client,
     model: str | None,
     budget: int | None,
+    draft_quality: str,
+    max_output_tokens: int | None,
 ):
     """Map-reduce memory consolidation while preserving every selected entry."""
     from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
@@ -402,37 +559,68 @@ def _consolidate_payload_in_rounds(
 
     while True:
         chunks, stats = _chunk_payload_entries(current_payload, budget=budget)
-        _chunk_status("consolidate", chunks, stats)
+        provider_label = getattr(client, "provider_name", None) or "Mistral"
+        _emit_consolidation_plan(
+            provider_label=provider_label,
+            chunks=chunks,
+            stats=stats,
+            budget=budget,
+            max_output_tokens=max_output_tokens,
+            draft_quality=draft_quality,
+        )
 
         if len(chunks) == 1:
             token_count = stats["request_tokens"][0] if stats.get("request_tokens") else None
-            _mistral_request_status("memory consolidation", client, token_count=token_count)
-            return consolidate_memory(chunks[0], instruction=current_instruction, client=client, model=model)
+            _provider_request_status("memory consolidation", client, token_count=token_count)
+            started = monotonic()
+            draft = _consolidate_streaming(
+                consolidate_memory,
+                "memory consolidation",
+                entries=chunks[0],
+                instruction=current_instruction,
+                client=client,
+                model=model,
+                draft_quality=draft_quality,
+                max_tokens=max_output_tokens,
+            )
+            markdown = draft_to_markdown(draft)
+            click.echo(f"  status   completed", err=True)
+            click.echo(f"  output   {len(markdown):,} chars", err=True)
+            click.echo(f"  duration {_fmt_seconds(monotonic() - started)}", err=True)
+            return draft
 
         drafts = []
         for i, chunk in enumerate(chunks, start=1):
             token_count = stats["request_tokens"][i - 1]
-            click.echo(
-                f"Consolidating memory batch {i}/{len(chunks)} "
-                f"(round {round_no}, ~{token_count} tokens).",
-                err=True,
-            )
             batch_instruction = (
                 f"{current_instruction or 'Consolidate these into a coherent master memory draft.'}\n\n"
                 f"This is batch {i} of {len(chunks)} in consolidation round {round_no}. "
                 "Preserve durable facts, conflicts, warnings, and source paths. "
                 "Do not assume other batches contain the same information."
             )
-            _mistral_request_status(f"memory consolidation batch {i}/{len(chunks)}", client, token_count=token_count)
-            draft = consolidate_memory(chunk, instruction=batch_instruction, client=client, model=model)
-            click.echo(f"Mistral completed memory batch {i}/{len(chunks)}.", err=True)
+            _provider_request_status(f"memory consolidation batch {i}/{len(chunks)}", client, token_count=token_count)
+            started = monotonic()
+            draft = _consolidate_streaming(
+                consolidate_memory,
+                f"memory consolidation batch {i}/{len(chunks)}",
+                entries=chunk,
+                instruction=batch_instruction,
+                client=client,
+                model=model,
+                draft_quality=draft_quality,
+                max_tokens=max_output_tokens,
+            )
             source_files = [e.get("source_path", "") for e in chunk if e.get("source_path")]
+            markdown = draft_to_markdown(draft, source_files=source_files)
+            click.echo(f"  status   completed", err=True)
+            click.echo(f"  output   {len(markdown):,} chars", err=True)
+            click.echo(f"  duration {_fmt_seconds(monotonic() - started)}", err=True)
             drafts.append(
                 {
                     "scope": "docmancer-consolidation",
                     "title": f"Round {round_no} batch {i} consolidated draft",
                     "source_path": f"docmancer://memory-consolidate/round-{round_no}/batch-{i}",
-                    "text": draft_to_markdown(draft, source_files=source_files),
+                    "text": markdown,
                 }
             )
 
@@ -440,7 +628,7 @@ def _consolidate_payload_in_rounds(
         current_instruction = (
             "Merge these batch-level consolidated drafts into one final review-only master memory draft. "
             "Preserve all durable facts, conflicts, warnings, and original source paths. "
-            "Deduplicate repeated facts, but do not drop unique details."
+            "Deduplicate repeated facts, but do not drop unique details. Keep the final result compact."
         )
         round_no += 1
         if round_no > 6:
@@ -535,7 +723,13 @@ def extract(limit, budget, query, output_format, model, timeout, moderate, moder
                 )
             token_count = stats["request_tokens"][i - 1] if stats.get("request_tokens") else None
             _mistral_request_status(f"memory extraction batch {i}/{len(chunks)}", client, token_count=token_count)
-            result = extract_memory_facts(_combined(chunk), metadata, client=client, model=model)
+            on_progress, finish = _streaming_progress(f"memory extraction batch {i}/{len(chunks)}")
+            try:
+                result = extract_memory_facts(
+                    _combined(chunk), metadata, client=client, model=model, on_progress=on_progress
+                )
+            finally:
+                finish()
             click.echo(f"Mistral completed extraction batch {i}/{len(chunks)}.", err=True)
             all_facts.extend(result.facts)
         return ExtractedMemoryFacts(facts=all_facts)
@@ -550,58 +744,107 @@ def extract(limit, budget, query, output_format, model, timeout, moderate, moder
 _DEFAULT_DRAFT = "master-memory-draft.md"
 
 
-@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Consolidate memory into a review-only draft with Mistral.")
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Consolidate memory into a review-only draft.")
 @click.option("--query", "query", default=None, help="Focus the consolidation on memory relevant to this query.")
 @click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
-@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per Mistral request; use 0 to send in one request.")
-@click.option("--model", default=None, help="Override the Mistral chat model.")
-@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per Mistral request (default 180, or DOCMANCER_MISTRAL_TIMEOUT_SECONDS; use 0 for SDK default).")
+@click.option("--budget", default=None, type=int, help="Approximate input-token budget per cloud request. Defaults to 50000, or 35000 with --draft-quality fast; use 0 to send in one request.")
+@click.option("--provider", type=click.Choice(["mistral", "openrouter"], case_sensitive=False), default="mistral", show_default=True, help="Cloud provider for consolidation.")
+@click.option("--model", default=None, help="Override the chat model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
+@click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
+@click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults to 4096, or 2048 with --draft-quality fast; use 0 for provider default.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per cloud request (default 180, or provider timeout env var; use 0 for provider default).")
 @click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
 @click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def consolidate(query, output, output_format, limit, budget, model, timeout, moderate, moderation_threshold, assume_yes, include, exclude):
-    """Produce a review-only consolidated memory draft. Requires MISTRAL_API_KEY.
+def consolidate(
+    query,
+    output,
+    output_format,
+    limit,
+    budget,
+    provider,
+    model,
+    draft_quality,
+    max_output_tokens,
+    timeout,
+    moderate,
+    moderation_threshold,
+    assume_yes,
+    include,
+    exclude,
+):
+    """Produce a review-only consolidated memory draft.
 
     Writes a markdown draft (or an OKF bundle with --format okf) for you to
     review; it never edits agent files. Use `docmancer memory apply --from
     <draft>` to materialize a markdown draft after review.
     """
-    _require_mistral_key("consolidate")
+    provider = provider.lower()
+    draft_quality = draft_quality.lower()
+    _require_consolidate_key(provider)
     agent = _agent(include, exclude)
     entries = _redacted_entries(agent, query=query, limit=limit)
     if not entries:
         click.echo("No memory entries to consolidate. Run: docmancer memory sync")
         sys.exit(1)
-    click.echo(_CLOUD_NOTICE, err=True)
+    provider_label = "Mistral" if provider == "mistral" else "OpenRouter"
+    click.echo(_CONSOLIDATE_CLOUD_NOTICE.format(provider=provider_label), err=True)
     if not assume_yes:
-        click.confirm("Send the selected memory to Mistral?", abort=True, err=True)
+        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
     if moderate:
-        entries = _moderate_or_exit("consolidate", entries, model=model, threshold=moderation_threshold, timeout=timeout)
+        moderation_model = model if provider == "mistral" else None
+        entries = _moderate_or_exit(
+            "consolidate",
+            entries,
+            model=moderation_model,
+            threshold=moderation_threshold,
+            timeout=timeout,
+        )
 
     from docmancer.ai.memory_features import draft_to_markdown
-    from docmancer.ai.mistral_client import MistralClient
 
     payload = _entries_to_payload(entries)
     source_files = [e.path for e in entries]
+    resolved_budget = budget
+    if resolved_budget is None:
+        resolved_budget = _FAST_CONSOLIDATE_INPUT_BUDGET if draft_quality == "fast" else _DEFAULT_CONSOLIDATE_INPUT_BUDGET
+    resolved_max_output_tokens = max_output_tokens
+    if resolved_max_output_tokens is None:
+        resolved_max_output_tokens = (
+            _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS
+            if draft_quality == "fast"
+            else _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS
+        )
+    if resolved_max_output_tokens <= 0:
+        resolved_max_output_tokens = None
 
     def _call():
-        client = MistralClient(model=model, timeout_seconds=timeout)
-        _mistral_preflight(client)
+        if provider == "openrouter":
+            from docmancer.ai.openrouter_client import OpenRouterClient
+
+            client = OpenRouterClient(model=model, timeout_seconds=timeout)
+        else:
+            from docmancer.ai.mistral_client import MistralClient
+
+            client = MistralClient(model=model, timeout_seconds=timeout)
+        _provider_preflight(client)
         return _consolidate_payload_in_rounds(
             payload,
             instruction=query,
             client=client,
             model=model,
-            budget=budget,
+            budget=resolved_budget,
+            draft_quality=draft_quality,
+            max_output_tokens=resolved_max_output_tokens,
         )
 
     # The draft is only written after a successful call, so any failure leaves
     # no partial output behind.
-    draft = _run_mistral_or_exit("consolidate", _call)
+    draft = _run_consolidate_or_exit(provider, _call)
 
     if output_format.lower() == "okf":
         from docmancer.okf.adapters import concepts_from_draft
@@ -613,8 +856,16 @@ def consolidate(query, output, output_format, limit, budget, model, timeout, mod
             concepts_from_draft(draft),
             title=draft.title or "Consolidated memory (review only)",
         )
-        click.echo(f"Wrote review-only OKF bundle to {result.root} ({len(entries)} sources).")
-        click.echo(f"Validate it with: docmancer okf doctor {result.root}")
+        _emit_block(
+            "Output",
+            [
+                ("path", result.root),
+                ("format", "okf"),
+                ("sources", len(entries)),
+                ("next", f"docmancer okf doctor {result.root}"),
+            ],
+            err=False,
+        )
         click.echo("Review it before sharing. memory apply expects a markdown draft, not a bundle.")
         return
 
@@ -623,11 +874,17 @@ def consolidate(query, output, output_format, limit, budget, model, timeout, mod
     if out_path.parent and not out_path.parent.exists():
         out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(markdown, encoding="utf-8")
-    click.echo(f"Wrote review-only draft to {out_path} ({len(entries)} sources).")
-    click.echo("Sources consolidated:")
-    for s in source_files:
-        click.echo(f"  {s}")
-    click.echo("Review it, then optionally: docmancer memory apply --from " + str(out_path) + " --agent codex")
+    _emit_block(
+        "Output",
+        [
+            ("path", out_path),
+            ("format", "markdown"),
+            ("sources", len(entries)),
+            ("size", f"{len(markdown):,} chars"),
+            ("next", f"docmancer memory apply --from {out_path} --agent codex"),
+        ],
+        err=False,
+    )
 
 
 _MEMORY_BLOCK_BEGIN = "<!-- docmancer:memory:begin (managed; edits inside are overwritten on next apply) -->"

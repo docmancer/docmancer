@@ -60,13 +60,14 @@ docmancer query "How do I parametrize a fixture?"   # hybrid search across the d
 
 ## Consolidate and carry memory across agents (Mistral AI)
 
-Syncing gives you one searchable index. **Consolidation turns that pile into a single coherent memory.** `docmancer memory consolidate` sends your retrieved local memory (privacy-redacted first) to **Mistral AI** and gets back a review-only master-memory draft: deduplicated, grouped into sections, with conflicts surfaced as warnings instead of silently resolved.
+Syncing gives you one searchable index. **Consolidation turns that pile into a single coherent memory.** `docmancer memory consolidate` sends your retrieved local memory (privacy-redacted first) to **Mistral AI by default** and gets back a review-only master-memory draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
 
 ```bash
 export MISTRAL_API_KEY=...    # the only extra step; the local commands never need a key
 docmancer memory consolidate \
   --query "deployment and infra decisions" \
   --output master-memory-draft.md \
+  --draft-quality fast \
   --timeout 180
 ```
 
@@ -79,13 +80,26 @@ docmancer memory apply --agent codex --dry-run   # preview the diff first
 
 `apply` is local and keyless. It writes only inside a clearly delimited managed block, takes a timestamped backup first, and never touches your own surrounding content. `--remove` strips the block for a clean uninstall. This is the only command that writes consolidated memory into agent-owned files, and it is never automatic. (`docmancer install codex` / `claude-code` also inject a short recall instruction into the same files, in their own managed block.)
 
-Mistral is used directly through the official `mistralai` client: Mistral structured outputs extract durable memory facts, and a Mistral chat model (`mistral-small-2506` by default) produces the review-only consolidated draft. Pick any model your account provisions with `--model`, or set `DOCMANCER_MISTRAL_MODEL` to change the default once. Use `--timeout` or `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` to bound each Mistral request, with a finite 180 second default and `0` for the SDK default. Optionally, `mistral-embed-2312` can build the local vector index (`docmancer init --embedding-provider mistral`). Every Mistral-backed command fails gracefully with a clear message when `MISTRAL_API_KEY` is not set or the API call fails, prints a cloud-use notice before the first call, sends a tiny Mistral preflight chat request before large memory payloads, logs each Mistral request before sending it, and runs secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
+Mistral is used directly through the official `mistralai` client: Mistral structured outputs extract durable memory facts, and a Mistral chat model (`mistral-small-2506` by default) produces the review-only consolidated draft. Pick any Mistral model your account provisions with `--model`, or set `DOCMANCER_MISTRAL_MODEL` to change the default once. Consolidation uses smaller bounded batches by default, `--max-output-tokens` caps generated output per request, and `--draft-quality fast` uses more aggressive compression.
+
+OpenRouter is available as an explicit fallback for consolidation when you want another hosted model:
+
+```bash
+export OPENROUTER_API_KEY=...
+docmancer memory consolidate \
+  --provider openrouter \
+  --model openai/gpt-4.1-nano \
+  --output master-memory-draft.md \
+  --yes
+```
+
+With OpenRouter, `--model` accepts any OpenRouter chat model id your account can use, and `DOCMANCER_OPENROUTER_MODEL` changes the default. Use `--timeout`, `DOCMANCER_MISTRAL_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each provider request, with a finite 180 second default and `0` for the provider default. Optionally, `mistral-embed-2312` can build the local vector index (`docmancer init --embedding-provider mistral`). Every cloud-backed command fails gracefully with a clear message when the provider key is not set or the API call fails, prints a cloud-use notice before the first call, sends a tiny preflight chat request before large memory payloads, logs each request before sending it, and runs secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
 
 ## What you get
 
 **Your agents' memory, unified.** `docmancer memory sync` discovers and indexes the memory, instructions, and rules your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more, plus repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), then answers questions about them through one local index. `docmancer memory sources` shows exact provenance per file. The local path uploads nothing.
 
-**Consolidate with Mistral AI.** `docmancer memory consolidate` turns the scattered index into one review-only master-memory draft via Mistral, and `docmancer memory apply` bakes the reviewed result into an agent's always-loaded file so context carries across agents. Key-gated, privacy-redacted, and review-only.
+**Consolidate with Mistral AI.** `docmancer memory consolidate` turns the scattered index into one review-only master-memory draft via direct Mistral by default, and `docmancer memory apply` bakes the reviewed result into an agent's always-loaded file so context carries across agents. OpenRouter is available as an explicit fallback with `--provider openrouter --model <model-id>`. Key-gated, privacy-redacted, and review-only.
 
 **Callable over MCP.** The packaged `docmancer-mcp` stdio server exposes local memory and docs search to MCP clients. `docmancer mcp install codex` (or `claude-code`, `claude-desktop`) wires it up; optional Mistral tools appear when `MISTRAL_API_KEY` is set. Requires the `mcp` extra.
 

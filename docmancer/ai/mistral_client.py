@@ -11,6 +11,13 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from pydantic import ValidationError
+
+# Errors that mean the streamed response did not accumulate into valid JSON for
+# the requested schema. These trigger one buffered retry rather than failing the
+# whole command; a genuine network/timeout error is not in here and propagates.
+_STREAM_FALLBACK_ERRORS = (ValidationError, ValueError)
+
 # A concrete model id (not a `-latest` alias) so the default resolves to a model
 # that is actually provisioned on the account. `mistral-small-2506` is a current
 # instruct model with the most generous rate limits, which suits consolidating a
@@ -98,8 +105,38 @@ def retry_without_timeout(method, kwargs: dict, exc: TypeError):
     return method(**retry_kwargs)
 
 
+def stream_delta_text(event) -> str:
+    """Pull the text fragment out of one streamed chat completion event.
+
+    Mistral streams ``CompletionEvent`` objects whose ``data.choices[0].delta
+    .content`` is the new fragment. Content is usually a string, but the API may
+    also send a list of typed chunks; both shapes are flattened to plain text.
+    Anything unexpected yields an empty string so accumulation simply skips it.
+    """
+    data = getattr(event, "data", None)
+    choices = getattr(data, "choices", None) or []
+    if not choices:
+        return ""
+    delta = getattr(choices[0], "delta", None)
+    content = getattr(delta, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out = []
+        for chunk in content:
+            text = chunk.get("text") if isinstance(chunk, dict) else getattr(chunk, "text", None)
+            if isinstance(text, str):
+                out.append(text)
+        return "".join(out)
+    return ""
+
+
 class MistralClient:
     """Thin wrapper over the Mistral SDK with lazy import."""
+
+    provider_name = "Mistral"
 
     def __init__(
         self,
@@ -133,20 +170,100 @@ class MistralClient:
         except TypeError as exc:
             return retry_without_timeout(method, kwargs, exc)
 
-    def parse(self, messages: list[dict], response_format, *, model: str | None = None, temperature: float = 0.0):
+    def parse(
+        self,
+        messages: list[dict],
+        response_format,
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        on_progress=None,
+    ):
         """Run a structured-output chat completion and return the validated object.
 
-        ``response_format`` is a Pydantic model class. Returns the instance from
-        ``response.choices[0].message.parsed``.
+        ``response_format`` is a Pydantic model class. When the SDK exposes a
+        streaming parse, the response is consumed incrementally: this keeps the
+        connection alive during long generations (so the per-read timeout never
+        fires on a slow but steady stream) and lets callers show live progress
+        via ``on_progress(chars_received)``. The accumulated JSON is validated
+        against ``response_format``. Without a streaming API, or if the stream
+        yields no valid JSON, it falls back to a single buffered ``parse`` call.
         """
-        response = self._call_with_timeout(
-            self._client.chat.parse,
-            model=model or self.model,
-            messages=messages,
-            response_format=response_format,
-            temperature=temperature,
-        )
+        chat = self._client.chat
+        if hasattr(chat, "parse_stream"):
+            try:
+                return self._parse_streaming(
+                    chat,
+                    messages,
+                    response_format,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    on_progress=on_progress,
+                )
+            except _STREAM_FALLBACK_ERRORS:
+                # Stream produced no usable JSON; fall back to one buffered call.
+                pass
+        kwargs: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": messages,
+            "response_format": response_format,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        try:
+            response = self._call_with_timeout(chat.parse, **kwargs)
+        except TypeError as exc:
+            if "max_tokens" not in str(exc):
+                raise
+            kwargs.pop("max_tokens", None)
+            response = self._call_with_timeout(chat.parse, **kwargs)
         return response.choices[0].message.parsed
+
+    def _parse_streaming(self, chat, messages, response_format, *, model, temperature, max_tokens, on_progress):
+        """Stream a structured-output completion and validate the accumulated JSON."""
+        kwargs: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": messages,
+            "response_format": response_format,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if self.timeout_ms is not None:
+            kwargs["timeout_ms"] = self.timeout_ms
+        try:
+            stream = chat.parse_stream(**kwargs)
+        except TypeError as exc:
+            if "max_tokens" in str(exc):
+                kwargs.pop("max_tokens", None)
+                try:
+                    stream = chat.parse_stream(**kwargs)
+                except TypeError as retry_exc:
+                    stream = retry_without_timeout(chat.parse_stream, kwargs, retry_exc)
+            else:
+                stream = retry_without_timeout(chat.parse_stream, kwargs, exc)
+        parts: list[str] = []
+        received = 0
+        try:
+            for event in stream:
+                fragment = stream_delta_text(event)
+                if not fragment:
+                    continue
+                parts.append(fragment)
+                received += len(fragment)
+                if on_progress is not None:
+                    on_progress(received)
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        return response_format.model_validate_json("".join(parts))
 
     def preflight(self, *, model: str | None = None) -> None:
         """Send a tiny chat request to prove the Mistral API path works."""
@@ -219,4 +336,5 @@ __all__ = [
     "load_mistral_class",
     "mistral_timeout_ms",
     "retry_without_timeout",
+    "stream_delta_text",
 ]

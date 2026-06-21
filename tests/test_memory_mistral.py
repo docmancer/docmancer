@@ -187,6 +187,74 @@ def _install_fake_mistral_client_sdk_namespace(monkeypatch, *, capture: dict):
     monkeypatch.setitem(sys.modules, "mistralai.client.sdk", sdk)
 
 
+def _stream_event(text):
+    """Build a minimal CompletionEvent-shaped object with one content delta."""
+    delta = types.SimpleNamespace(content=text)
+    choice = types.SimpleNamespace(delta=delta)
+    data = types.SimpleNamespace(choices=[choice])
+    return types.SimpleNamespace(data=data)
+
+
+def _install_streaming_mistral(monkeypatch, *, capture: dict, fragments=None, valid=True):
+    """Stub a 2.x SDK that exposes chat.parse_stream yielding incremental deltas."""
+
+    class FakeStream:
+        def __init__(self, events):
+            self._events = events
+            capture["closed"] = False
+
+        def __iter__(self):
+            return iter(self._events)
+
+        def close(self):
+            capture["closed"] = True
+
+    class FakeChat:
+        def complete(self, **kwargs):
+            capture.setdefault("preflight_calls", []).append(kwargs)
+            return types.SimpleNamespace()
+
+        def parse(self, **kwargs):  # buffered fallback path
+            capture["fallback_used"] = True
+            from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+            parsed = ConsolidatedMemoryDraft(title="Buffered", summary="fallback", sections=[])
+            message = types.SimpleNamespace(parsed=parsed)
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+        def parse_stream(self, *, model, messages, response_format, temperature=0.0, timeout_ms=None):
+            capture["stream_model"] = model
+            capture["stream_timeout_ms"] = timeout_ms
+            if fragments is not None:
+                parts = fragments
+            elif valid:
+                payload = (
+                    '{"title": "Streamed Master Memory", "summary": "From a stream.", '
+                    '"sections": [{"heading": "Deploy", "body": "Railway."}], '
+                    '"source_paths": [], "warnings": []}'
+                )
+                # Split into many small fragments to mimic token-by-token streaming.
+                parts = [payload[i : i + 7] for i in range(0, len(payload), 7)]
+            else:
+                parts = ["{not valid json"]
+            return FakeStream([_stream_event(p) for p in parts])
+
+    class FakeMistral:
+        def __init__(self, *args, **kwargs):
+            capture["init_kwargs"] = kwargs
+            self.chat = FakeChat()
+
+    root = types.ModuleType("mistralai")
+    root.__path__ = []
+    client = types.ModuleType("mistralai.client")
+    client.__path__ = []
+    sdk = types.ModuleType("mistralai.client.sdk")
+    sdk.Mistral = FakeMistral
+    monkeypatch.setitem(sys.modules, "mistralai", root)
+    monkeypatch.setitem(sys.modules, "mistralai.client", client)
+    monkeypatch.setitem(sys.modules, "mistralai.client.sdk", sdk)
+
+
 def _install_failing_mistral(monkeypatch, *, message="401 Unauthorized"):
     """Stub mistralai whose chat.parse raises a runtime/provider error."""
 
@@ -202,6 +270,54 @@ def _install_failing_mistral(monkeypatch, *, message="401 Unauthorized"):
             self.chat = FakeChat()
 
     monkeypatch.setitem(sys.modules, "mistralai", types.SimpleNamespace(Mistral=FakeMistral))
+
+
+def _install_fake_openrouter(monkeypatch, *, capture: dict, fail_structured: bool = False):
+    """Stub httpx for OpenRouter's OpenAI-compatible chat endpoint."""
+
+    class FakeResponse:
+        def __init__(self, request_json, *, status_code=200):
+            self._request_json = request_json
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import httpx
+
+                request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+                response = httpx.Response(self.status_code, request=request)
+                raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+        def json(self):
+            model = self._request_json["model"]
+            capture.setdefault("models", []).append(model)
+            capture.setdefault("requests", []).append(self._request_json)
+            content = (
+                '{"title": "OpenRouter Memory", "summary": "Consolidated.", '
+                '"sections": [{"heading": "Deploy", "body": "Railway."}], '
+                '"source_paths": ["/Users/x/app/CLAUDE.md"], "warnings": []}'
+            )
+            return {"choices": [{"message": {"content": content}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            capture["timeout"] = kwargs.get("timeout")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers, json):
+            capture["url"] = url
+            capture["headers"] = headers
+            capture.setdefault("posted", []).append(json)
+            if fail_structured and "response_format" in json:
+                return FakeResponse(json, status_code=400)
+            return FakeResponse(json)
+
+    monkeypatch.setattr("docmancer.ai.openrouter_client.httpx.Client", FakeClient)
 
 
 def test_consolidate_handles_provider_failure_cleanly(tmp_path, monkeypatch):
@@ -310,13 +426,99 @@ def test_consolidate_writes_review_draft(tmp_path, monkeypatch):
     text = out.read_text()
     assert "# Master Memory" in text
     assert "## Sources" in text
-    assert "Sources consolidated:" in r.output
-    assert "Mistral API preflight succeeded." in r.output
+    assert "API Preflight" in r.output
+    assert "Consolidation Plan" in r.output
+    assert "Output" in r.output
+    assert "sources  1" in r.output
     assert capture["preflight_calls"]
     assert capture["preflight_calls"][0]["max_tokens"] == 1
-    assert "Calling Mistral for memory consolidation" in r.output
-    assert "180s timeout" in r.output
+    assert "Memory Consolidation" in r.output
+    assert "provider  Mistral" in r.output
+    assert "timeout   180s" in r.output
     assert capture["temperature"] == 0.0
+
+
+def test_consolidate_openrouter_uses_arbitrary_model(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    capture: dict = {}
+    _install_fake_openrouter(monkeypatch, capture=capture)
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "consolidate",
+            "--provider",
+            "openrouter",
+            "--model",
+            "anthropic/claude-3.5-haiku",
+            "--output",
+            str(out),
+            "--yes",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert out.exists()
+    assert "# OpenRouter Memory" in out.read_text()
+    assert "API Preflight" in r.output
+    assert "provider  OpenRouter" in r.output
+    assert "Memory Consolidation" in r.output
+    assert "Mistral API preflight" not in r.output
+    assert all(model == "anthropic/claude-3.5-haiku" for model in capture["models"])
+    assert capture["headers"]["Authorization"] == "Bearer openrouter-key"
+    assert capture["posted"][-1]["max_tokens"] == 4096
+
+
+def test_consolidate_openrouter_requires_key(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(
+        cli,
+        ["memory", "consolidate", "--provider", "openrouter", "--output", str(out), "--yes"],
+    )
+    assert r.exit_code == 2
+    assert "OPENROUTER_API_KEY" in r.output
+    assert not out.exists()
+
+
+def test_consolidate_openrouter_falls_back_when_json_schema_rejected(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    capture: dict = {}
+    _install_fake_openrouter(monkeypatch, capture=capture, fail_structured=True)
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(
+        cli,
+        ["memory", "consolidate", "--provider", "openrouter", "--output", str(out), "--yes"],
+    )
+    assert r.exit_code == 0, r.output
+    assert "response_format" in capture["posted"][1]  # preflight is first.
+    assert "response_format" not in capture["posted"][2]
+    fallback_messages = capture["posted"][2]["messages"]
+    assert "Return only valid JSON" in fallback_messages[0]["content"]
+
+
+def test_consolidate_fast_quality_uses_smaller_budget_and_output_cap(tmp_path, monkeypatch):
+    _large_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    capture: dict = {}
+    _install_fake_mistral(monkeypatch, capture=capture)
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(
+        cli,
+        ["memory", "consolidate", "--output", str(out), "--draft-quality", "fast", "--yes"],
+    )
+    assert r.exit_code == 0, r.output
+    sent = "\n".join(
+        message["content"]
+        for call in capture["calls"]
+        for message in call["messages"]
+    )
+    assert "Use aggressive compression" in sent
+    assert "Mistral request(s)" in r.output
 
 
 def test_consolidate_timeout_option_is_reported(tmp_path, monkeypatch):
@@ -326,7 +528,7 @@ def test_consolidate_timeout_option_is_reported(tmp_path, monkeypatch):
     out = tmp_path / "draft.md"
     r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--timeout", "7", "--yes"])
     assert r.exit_code == 0, r.output
-    assert "7s timeout" in r.output
+    assert "timeout   7s" in r.output
 
 
 def test_consolidate_chunks_oversized_memory_without_trimming(tmp_path, monkeypatch):
@@ -338,7 +540,7 @@ def test_consolidate_chunks_oversized_memory_without_trimming(tmp_path, monkeypa
     r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--budget", "1000", "--yes"])
     assert r.exit_code == 0, r.output
     assert "Mistral request(s)" in r.output
-    assert "no selected text was trimmed" in r.output
+    assert "no text trimmed" in r.output
     assert len(capture["calls"]) > 1
     sent = "\n".join(
         message["content"]
@@ -362,6 +564,61 @@ def test_extract_prints_facts_json(tmp_path, monkeypatch):
     body = r.output[r.output.index("{") : r.output.rindex("}") + 1]
     data = json.loads(body)
     assert data["facts"][0]["fact"] == "Railway"
+
+
+def test_parse_streams_and_reports_progress(monkeypatch):
+    # When the SDK offers parse_stream, parse() should consume it incrementally,
+    # validate the accumulated JSON, fire on_progress, and close the stream.
+    capture: dict = {}
+    _install_streaming_mistral(monkeypatch, capture=capture)
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    monkeypatch.setenv("DOCMANCER_MISTRAL_TIMEOUT_SECONDS", "30")
+    from docmancer.ai.mistral_client import MistralClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+    seen = []
+    result = MistralClient().parse(
+        [{"role": "user", "content": "hello"}],
+        ConsolidatedMemoryDraft,
+        on_progress=lambda chars: seen.append(chars),
+    )
+    assert result.title == "Streamed Master Memory"
+    assert result.sections[0].heading == "Deploy"
+    assert capture.get("fallback_used") is not True  # streamed, did not buffer
+    assert capture["stream_timeout_ms"] == 30000  # finite timeout is forwarded
+    assert seen and seen == sorted(seen) and seen[-1] > 0  # monotonic char counts
+    assert capture["closed"] is True  # stream resource was released
+
+
+def test_parse_falls_back_to_buffered_on_invalid_stream(monkeypatch):
+    # A stream that never accumulates valid JSON must not fail the call: parse()
+    # falls back to one buffered parse() rather than raising.
+    capture: dict = {}
+    _install_streaming_mistral(monkeypatch, capture=capture, valid=False)
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    from docmancer.ai.mistral_client import MistralClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft
+
+    result = MistralClient().parse(
+        [{"role": "user", "content": "hello"}],
+        ConsolidatedMemoryDraft,
+    )
+    assert result.title == "Buffered"
+    assert capture["fallback_used"] is True
+
+
+def test_stream_delta_text_handles_chunk_list():
+    # Mistral may send content as a list of typed chunks; flatten to plain text.
+    from docmancer.ai.mistral_client import stream_delta_text
+
+    event = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=[{"text": "a"}, {"text": "b"}]))]
+        )
+    )
+    assert stream_delta_text(event) == "ab"
+    empty = types.SimpleNamespace(data=types.SimpleNamespace(choices=[]))
+    assert stream_delta_text(empty) == ""
 
 
 def test_redaction_before_mistral(tmp_path, monkeypatch):

@@ -51,20 +51,21 @@ docmancer memory export --format okf --output memory.okf
 docmancer okf doctor memory.okf
 ```
 
-## Mistral-backed (optional, requires MISTRAL_API_KEY)
+## Cloud-backed (optional)
 
-These send privacy-redacted local memory to Mistral and fail cleanly with a clear message when no key is set. They never edit agent files.
+These send privacy-redacted local memory to Mistral by default and fail cleanly with a clear message when the provider key is not set. They never edit agent files.
 
 ```bash
 docmancer memory extract --yes
-docmancer memory consolidate --query "..." --output draft.md --timeout 180 --yes
+docmancer memory consolidate --query "..." --output draft.md --draft-quality fast --timeout 180 --yes
 docmancer memory consolidate --format okf --output draft.okf --yes
+docmancer memory consolidate --provider openrouter --model openai/gpt-4.1-nano --yes
 ```
 
-Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call. `extract` and `consolidate` send a tiny Mistral preflight chat request before large memory payloads, so API and network failures surface before batching. Use `--timeout` or `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` to bound each Mistral request; the default is 180 seconds, and `0` leaves the SDK default in charge.
+Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call. `extract` requires `MISTRAL_API_KEY`. `consolidate` defaults to direct Mistral (`MISTRAL_API_KEY`) and accepts `--provider openrouter` with any OpenRouter model id available to your `OPENROUTER_API_KEY`. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls send a tiny preflight chat request before large memory payloads, so API and network failures surface before batching. Use `--timeout`, `DOCMANCER_MISTRAL_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
 
 `docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; the Mistral commands send redacted text only after a cloud-use confirmation.
+Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; cloud-backed commands send redacted text only after a cloud-use confirmation.
