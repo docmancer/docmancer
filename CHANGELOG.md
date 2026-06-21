@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.5] - Unreleased
+## [0.6.5] - 2026-06-21
 ### Added
 
 - **OpenRouter fallback for memory consolidation.** `docmancer memory consolidate --provider openrouter --model <model-id>` can now use any OpenRouter chat model id for the review-only draft path, with `OPENROUTER_API_KEY` as the only required provider-specific setting. Mistral remains the default provider.
