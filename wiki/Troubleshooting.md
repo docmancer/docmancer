@@ -84,6 +84,19 @@ docmancer add <url> --browser
 
 This requires the `browser` optional dependency: `pip install docmancer[browser]`.
 
+## `docmancer memory sync` indexes 0 entries
+
+Nothing was discovered on this machine yet. Confirm you have used a supported agent (Claude Code, Codex, Cursor, Gemini, and others) so there is memory, a `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, or a rules directory to harvest. Run `docmancer memory sources --preview` to see what would index, and check that your `docmancer.yaml` `discovery.disabled` list is not excluding the agent. Repo-level instruction files are recovered from each agent's recorded project paths, so a repo you have never opened in an agent will not appear.
+
+## `docmancer memory consolidate` fails on the agent provider
+
+`--provider agent` (the default) drives an installed coding-agent CLI headlessly, so it needs that CLI to be both installed and signed in.
+
+- **`no supported agent CLI found on PATH`**: none of `claude`, `codex`, `gemini`, `opencode`, `cline`, `copilot`, or `cursor-agent` are installed. Install one, or set `OPENROUTER_API_KEY` and use `--provider openrouter`.
+- **`... failed: ... Not logged in` / auth errors**: the selected agent CLI is not authenticated. Run it once interactively to sign in (for example `claude`), then retry.
+- Run `docmancer doctor` and read the **Agent consolidation providers** section to see which agents are available before relying on one.
+- When `OPENROUTER_API_KEY` is set, agent-provider failures during setup, preflight, or generation automatically retry through OpenRouter.
+
 ## Agent does not know about docmancer commands
 
 Re-run `docmancer setup` or `docmancer install <target>` to update the skill file. Older skill installations may not include newer commands. See [Install Targets](./Install-Targets.md) for where skills land.

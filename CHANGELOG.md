@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - Unreleased
+### Changed
+
+- **Memory-first product surface.** CLI help, README, wiki pages, and installed docs skill templates now describe docmancer as a local memory recall tool first, with docs retrieval running on the same engine.
+- **Doctor memory visibility.** `docmancer doctor` now reports whether the local memory index exists and how many memory sources are indexed.
+- **Agent provider isolation docs.** README and wiki guidance now spell out how agent-backed drafting runs in a temporary workspace, read-only or plan mode, without recursive `docmancer memory` calls.
+
+### Fixed
+
+- **Strict structured-output schemas.** Provider schemas now set `additionalProperties: false` recursively on nested objects and mark object properties as required, matching Codex/OpenAI strict structured-output validation.
+- **Claude Code MCP preflight.** Agent-backed memory drafting now passes an explicit empty `mcpServers` record to Claude Code, avoiding invalid MCP configuration failures when strict MCP config validation is enabled.
+- **Provider failure diagnostics.** Long agent CLI failures are truncated to the useful head and tail, and OpenRouter HTTP errors now include the provider response body instead of only a generic status code.
+
 ## [0.6.6] - 2026-07-06
 ### Added
 

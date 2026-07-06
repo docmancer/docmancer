@@ -55,7 +55,7 @@ A fresh install runs hybrid retrieval by default: ingest auto-starts a managed Q
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `vector_store.provider` | `qdrant` | `qdrant` (managed local or remote) or `sqlite-vec` (small-scale fallback that needs no separate process) |
+| `vector_store.provider` | `sqlite-vec` | `sqlite-vec` (default; one local file, no separate process) or `qdrant` (managed local or remote, optional heavy backend) |
 | `vector_store.url` | unset | Explicit Qdrant URL. When set, the managed lifecycle is skipped and docmancer uses the existing server |
 | `vector_store.api_key_env` | unset | Name of the env var holding the Qdrant API key (e.g. `QDRANT_API_KEY`) |
 | `vector_store.collection` | derived from project name | Collection name. Must be a docmancer-owned collection; `ensure_collection` refuses to claim pre-existing collections |
@@ -69,9 +69,9 @@ A fresh install runs hybrid retrieval by default: ingest auto-starts a managed Q
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `embeddings.provider` | `fastembed` | Local FastEmbed by default; cloud stubs: `voyage`, `openai`, `cohere` (each behind its own extra) |
-| `embeddings.model` | `BAAI/bge-base-en-v1.5` | Dense model id |
-| `embeddings.dimensions` | `768` | Dense vector dimensions; must match the model |
+| `embeddings.provider` | `model2vec` | Vendored static `model2vec` by default (offline, no keys); `fastembed` on the heavy backend; cloud providers `voyage`, `openai`, `cohere` (each behind its own extra) |
+| `embeddings.model` | `minishlab/potion-base-8M` | Dense model id |
+| `embeddings.dimensions` | `256` | Dense vector dimensions; must match the model |
 | `embeddings.sparse_model` | unset (defaults to `prithivida/Splade_PP_en_v1` when sparse is needed) | SPLADE-family sparse model id |
 | `embeddings.batch_size` | `64` | Provider batch size for `embed(texts)` |
 | `embeddings.cache` | `~/.docmancer/embeddings-cache/` | Disk cache for embedded chunks; keyed by content + provider + model |

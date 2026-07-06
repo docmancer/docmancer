@@ -157,6 +157,24 @@ def _best_text(stdout: str, outfile: Path | None = None) -> str:
     return raw
 
 
+def _failure_detail(stderr: str, stdout: str, *, max_chars: int = 4000) -> str:
+    """Return a compact subprocess failure message with the useful tail kept."""
+    detail = (stderr or stdout or "").strip()
+    if not detail:
+        return "non-zero exit"
+    if len(detail) <= max_chars:
+        return detail
+    head = detail.splitlines()[0].strip() if detail.splitlines() else detail[:120].strip()
+    tail_budget = max_chars - len(head) - 80
+    if tail_budget < max_chars // 2:
+        tail_budget = max_chars
+        head = ""
+    tail = detail[-tail_budget:].strip()
+    if head:
+        return f"{head}\n... output truncated to last {tail_budget:,} chars ...\n{tail}"
+    return f"... output truncated to last {tail_budget:,} chars ...\n{tail}"
+
+
 class AgentCliClient:
     """Provider-compatible client that shells out to an installed coding agent."""
 
@@ -257,8 +275,8 @@ class AgentCliClient:
                 check=False,
             )
             if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "").strip()
-                raise AgentCliError(f"{self.provider_name} failed: {detail or 'non-zero exit'}")
+                detail = _failure_detail(result.stderr, result.stdout)
+                raise AgentCliError(f"{self.provider_name} failed: {detail}")
             text = _best_text(result.stdout, output_file if self.agent == "codex" else None)
             if on_progress:
                 on_progress(len(text))
@@ -288,7 +306,7 @@ class AgentCliClient:
                 "plan",
                 "--strict-mcp-config",
                 "--mcp-config",
-                "{}",
+                '{"mcpServers":{}}',
             ]
             if system:
                 cmd.extend(["--system-prompt", system])

@@ -11,10 +11,23 @@ def schema_name(response_format) -> str:
     return getattr(response_format, "__name__", "DocmancerResponse")
 
 
+def _strict_schema(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        normalized = {key: _strict_schema(value) for key, value in schema.items()}
+        if normalized.get("type") == "object":
+            normalized["additionalProperties"] = False
+            properties = normalized.get("properties")
+            if isinstance(properties, dict):
+                normalized["required"] = list(properties)
+        return normalized
+    if isinstance(schema, list):
+        return [_strict_schema(item) for item in schema]
+    return schema
+
+
 def json_schema(response_format) -> dict[str, Any]:
     schema = response_format.model_json_schema()
-    schema.setdefault("additionalProperties", False)
-    return schema
+    return _strict_schema(schema)
 
 
 def json_instruction(response_format) -> str:

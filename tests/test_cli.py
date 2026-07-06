@@ -67,7 +67,7 @@ PUBLIC_COMMAND_HELP_CASES = [
 def test_cli_help():
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0
-    assert "Compress documentation context" in result.output
+    assert "recall the memory your coding agents already wrote" in result.output
     assert "add" in result.output
     assert "setup" in result.output
     # The memory/docs MCP server group is a real command now (not the old

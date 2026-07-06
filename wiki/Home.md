@@ -1,15 +1,17 @@
 # docmancer Wiki
 
-This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, three commands, and a high-level overview.
+This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, the memory loop, and a high-level overview.
+
+Docmancer unifies the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into one local, offline index you can recall, consolidate, and carry across agents. Docs retrieval runs on the same engine as a secondary capability.
 
 ## Pick a page
 
 | Page | What's there |
 |------|--------------|
-| **[Commands](./Commands.md)** | Local docs commands, Qdrant lifecycle, and options |
+| **[Commands](./Commands.md)** | The `memory` group, docs commands, Qdrant lifecycle, and options |
 | **[Configuration](./Configuration.md)** | `docmancer.yaml` reference, environment variables, API keys, and hybrid examples |
-| **[Architecture](./Architecture.md)** | Indexing, hybrid retrieval, Qdrant lifecycle, and agent skill installs |
-| **[Supported Sources](./Supported-Sources.md)** | File formats and URL providers |
+| **[Architecture](./Architecture.md)** | The memory harness, indexing, hybrid retrieval, Qdrant lifecycle, and agent skill installs |
+| **[Supported Sources](./Supported-Sources.md)** | Memory sources plus doc file formats and URL providers |
 | **[Install Targets](./Install-Targets.md)** | Where `docmancer install <agent>` writes skill files |
 | **[Troubleshooting](./Troubleshooting.md)** | Common errors and fixes |
 

@@ -913,7 +913,7 @@ def inspect_cmd(config_path: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Check config, connectivity, and installed skills.",
+    short_help="Check config, memory and docs indexes, providers, and skills.",
     epilog=format_examples(
         "docmancer doctor",
         "docmancer doctor --config ./docmancer.yaml",
@@ -921,11 +921,11 @@ def inspect_cmd(config_path: str | None):
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def doctor_cmd(config_path: str | None):
-    """Check environment, connectivity, and installed skill status."""
+    """Check environment, the memory and docs indexes, providers, and installed skill status."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     home = Path.home()
-    _emit_brand_header("docmancer doctor", "Check binary, config, archive, and installed skills.")
+    _emit_brand_header("docmancer doctor", "Check binary, config, memory and docs indexes, and installed skills.")
 
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
@@ -962,6 +962,27 @@ def doctor_cmd(config_path: str | None):
     else:
         if not Path(config.index.db_path).exists():
             _emit_status_line("No docs indexed yet (run: docmancer ingest <path> or docmancer add <url>)", state="warn")
+
+    click.echo()
+    click.echo(_style("  Memory index", fg="white", bold=True))
+    try:
+        from docmancer.memory import MemoryAgent
+
+        minfo = MemoryAgent().status()
+        mdb = Path(minfo["db_path"])
+        if mdb.exists():
+            _emit_status_line(
+                f"{minfo['sources']} entries indexed at {display_path(str(mdb))}",
+                indent=4,
+            )
+        else:
+            _emit_status_line(
+                "no memory indexed yet (run: docmancer memory sync)",
+                state="warn",
+                indent=4,
+            )
+    except Exception as exc:  # noqa: BLE001 - doctor must never crash on one check
+        _emit_status_line(f"unavailable ({exc})", state="warn", indent=4)
 
     click.echo()
     click.echo(_style("  Local loaders", fg="white", bold=True))
@@ -1508,7 +1529,8 @@ def list_cmd(show_all: bool, config_path: str | None):
 def install_cmd(agent: str, project: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
-    Teaches the agent to call docmancer CLI commands directly.
+    Teaches the agent to recall your unified memory and search indexed docs
+    through docmancer CLI commands directly.
 
     AGENT must be one of: claude-code, claude-desktop, cline, cursor, codex,
     codex-app, codex-desktop, gemini, github-copilot, opencode
@@ -1815,7 +1837,7 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Set up docmancer for local agent docs retrieval.",
+    short_help="Index your agents' memory and install their skills.",
     epilog=format_examples(
         "docmancer setup",
         "docmancer setup --all",
@@ -1844,7 +1866,7 @@ def setup_cmd(
     """
     config_path = _effective_config(config_path)
     config_file = _ensure_config_and_db(config_path)
-    _emit_brand_header("docmancer setup", "Create the SQLite index and connect coding agents.")
+    _emit_brand_header("docmancer setup", "Index your agents' memory, then connect your coding agents.")
     _emit_status_line(f"Config: {display_path(config_file)}")
     config = _get_config_class().from_yaml(config_file)
     _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")

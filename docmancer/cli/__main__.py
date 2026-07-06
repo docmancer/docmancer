@@ -35,12 +35,11 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
-        "docmancer ingest ./docs",
-        "docmancer add https://docs.example.com",
-        "docmancer update",
-        'docmancer query "How do I authenticate?"',
+        'docmancer memory query "why did we pick Railway"',
+        "docmancer memory consolidate --provider claude --yes",
         "docmancer install claude-code",
-        "docmancer install github-copilot --project",
+        "docmancer ingest ./docs",
+        'docmancer query "How do I authenticate?"',
     ),
 )
 @click.option(
@@ -56,7 +55,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.option("--config", "config_path", default=None, hidden=True, help="Path to docmancer.yaml.")
 @click.pass_context
 def cli(ctx, config_path: str | None):
-    """Compress documentation context so agents spend tokens on code."""
+    """Index and recall the memory your coding agents already wrote, locally. Docs retrieval runs on the same engine."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
 

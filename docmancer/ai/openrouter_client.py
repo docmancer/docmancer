@@ -27,6 +27,14 @@ class OpenRouterConfigError(RuntimeError):
     """Raised for missing OpenRouter configuration."""
 
 
+class OpenRouterRequestError(RuntimeError):
+    """Raised when OpenRouter rejects or cannot satisfy a request."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def openrouter_api_key() -> str | None:
     return os.environ.get("OPENROUTER_API_KEY")
 
@@ -82,10 +90,23 @@ class OpenRouterClient:
             "X-Title": "docmancer",
         }
 
+    def _status_error(self, response: httpx.Response) -> OpenRouterRequestError:
+        text = response.text.strip()
+        if len(text) > 1200:
+            text = text[:1200].rstrip() + "..."
+        detail = text or response.reason_phrase
+        return OpenRouterRequestError(
+            f"OpenRouter HTTP {response.status_code}: {detail}",
+            status_code=response.status_code,
+        )
+
     def _post_chat(self, body: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.post(self.base_url, headers=self._headers(), json=body)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise self._status_error(response) from exc
         return response.json()
 
     def _completion_text(self, data: dict[str, Any]) -> str:
@@ -131,8 +152,8 @@ class OpenRouterClient:
             body["max_tokens"] = max_tokens
         try:
             data = self._post_chat(body)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in (400, 422):
+        except OpenRouterRequestError as exc:
+            if exc.status_code not in (400, 422):
                 raise
             fallback_messages = [{"role": "system", "content": json_instruction(response_format)}, *messages]
             fallback_body = dict(body)
@@ -156,6 +177,7 @@ __all__ = [
     "DEFAULT_OPENROUTER_MODEL",
     "OpenRouterClient",
     "OpenRouterConfigError",
+    "OpenRouterRequestError",
     "openrouter_api_key",
     "openrouter_timeout",
 ]

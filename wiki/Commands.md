@@ -1,12 +1,12 @@
 # Commands
 
-Reference for the local docs-RAG CLI. For configuration, see [Configuration](./Configuration.md). For internals, see [Architecture](./Architecture.md).
+Reference for the docmancer CLI: the local memory harness first, docs RAG on the same engine. For configuration, see [Configuration](./Configuration.md). For internals, see [Architecture](./Architecture.md).
 
 ## Core commands
 
 | Command | Description |
 |---------|-------------|
-| `docmancer setup` | Create config and SQLite database, auto-detect installed agents, and install skill files. Use `--all` for non-interactive installation. |
+| `docmancer setup` | Create config and the SQLite database, index the memory your coding agents already wrote on this machine, auto-detect installed agents, and install skill files. Use `--all` for non-interactive installation and `--no-index-memory` to skip the memory index. |
 | `docmancer init` | Create a project-local `docmancer.yaml`. |
 | `docmancer ingest <path>` | Index local files or directories. Supports Markdown, text, HTML, PDF, DOCX, and RTF. Embeds and upserts vectors by default; add `--no-vectors` for FTS5-only. |
 | `docmancer add <url>` | Fetch URL documentation, normalize into sections, and index it. Supports GitBook, Mintlify, generic web, and GitHub. |

@@ -1,8 +1,20 @@
 # Supported Sources
 
-Docmancer indexes documentation from local files and documentation URLs.
+Docmancer indexes two kinds of content: the memory your coding agents already wrote on this machine (the primary path), and documentation you point it at from local files and URLs (the secondary path on the same engine).
 
-## URL sources
+## Memory sources
+
+`docmancer memory sync` (and `docmancer setup`) discovers three kinds of content from every coding agent on this machine, with no URLs or files to specify. See [Install Targets](./Install-Targets.md) for the per-agent discovery paths.
+
+| Kind | Examples |
+|------|----------|
+| Agent-written memory | Claude Code project memory, Codex `~/.codex/memories`, and other agents' memory stores |
+| User-authored instructions | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and similar always-loaded instruction files, global and per-repo |
+| Rule directories | `.cursor/rules`, `.claude/rules`, `.windsurf/rules`, and other rule folders |
+
+Secrets are redacted before indexing. Scope the harvest with `--include` / `--exclude` globs and preview it with `--dry-run` or `docmancer memory sources --preview`.
+
+## URL sources (docs)
 
 | Source | Strategy | Command |
 |--------|----------|---------|

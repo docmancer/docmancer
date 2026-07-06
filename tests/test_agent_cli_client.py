@@ -48,7 +48,7 @@ def test_claude_native_schema_command_and_validation(monkeypatch):
     assert result.facts[0].fact == "Use Railway."
     assert "--json-schema" in calls["cmd"]
     assert "--strict-mcp-config" in calls["cmd"]
-    assert calls["cmd"][calls["cmd"].index("--mcp-config") + 1] == "{}"
+    assert calls["cmd"][calls["cmd"].index("--mcp-config") + 1] == '{"mcpServers":{}}'
     assert calls["env"]["DOCMANCER_NO_RECURSE"] == "1"
 
 
@@ -154,3 +154,20 @@ def test_subprocess_failure_is_clean_error(monkeypatch):
     client = AgentCliClient(agent="gemini")
     with pytest.raises(AgentCliError, match="not logged in"):
         client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+
+
+def test_subprocess_failure_truncates_long_agent_transcript(monkeypatch):
+    long_transcript = "OpenAI Codex v0.142.5\n" + ("x" * 6000) + "\nactual failure"
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout=long_transcript, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="codex")
+    with pytest.raises(AgentCliError) as exc:
+        client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+    message = str(exc.value)
+    assert "OpenAI Codex v0.142.5" in message
+    assert "output truncated" in message
+    assert "actual failure" in message
+    assert len(message) < 4300

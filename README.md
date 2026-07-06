@@ -84,6 +84,16 @@ docmancer memory apply --agent codex --dry-run   # preview the diff first
 
 The default provider is `agent`, which auto-selects the first supported agent CLI on your `PATH`. Pass `--provider claude`, `--provider codex`, `--provider gemini`, `--provider opencode`, `--provider cline`, `--provider github-copilot`, or `--provider cursor` to force one. This is not offline: the selected agent may call Anthropic, OpenAI, Google, or another configured provider through that agent's own account.
 
+The chosen agent CLI has to be installed and signed in (drafting runs it headlessly, so it uses the login and model already configured for that tool). Run `docmancer doctor` to see which agent consolidation providers are available on this machine before you rely on one:
+
+```text
+Agent consolidation providers
+  [OK] claude: ~/.local/bin/claude
+  [OK] codex: ~/.nvm/versions/node/v22.17.1/bin/codex
+  [OK] gemini: /usr/local/bin/gemini
+  [--] opencode: not available (opencode not on PATH)
+```
+
 OpenRouter is still available as the only direct cloud API fallback. When `OPENROUTER_API_KEY` is set, `memory extract` and `memory consolidate` automatically retry through OpenRouter if an agent CLI provider fails during setup, preflight, or generation. `--model` accepts any OpenRouter chat model id your account can use, including Anthropic models, OpenAI models, Google models, and others. Set `DOCMANCER_OPENROUTER_MODEL` to change the OpenRouter default from `openai/gpt-4.1-nano`.
 
 ```bash
@@ -95,7 +105,9 @@ docmancer memory consolidate \
   --yes
 ```
 
-Use `--timeout`, `DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each provider request, with a finite 180 second default and `0` for the provider default. Every provider-backed command fails gracefully with a clear message when both the selected agent and OpenRouter fallback are unavailable, prints a provider-use notice before the first call, runs a preflight before large memory payloads, logs each request before sending it, and runs secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
+When docmancer drives an agent CLI, it runs it in an isolated subprocess: a fresh temporary working directory so none of your own project files or instructions load, the agent's read-only or plan (non-editing) mode, and a recursion guard that stops the subprocess from calling back into `docmancer memory`. For Claude Code it also loads no MCP servers and keeps no session. So a consolidation run cannot edit your repo, pick up unrelated project context, or loop back into docmancer.
+
+Use `--timeout`, `DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each provider request, with a finite 180 second default and `0` for the provider default. Every provider-backed command fails gracefully with a concise message (no tracebacks, long CLI or OpenRouter errors trimmed to the useful part) when both the selected agent and OpenRouter fallback are unavailable, prints a provider-use notice before the first call, runs a preflight before large memory payloads, logs each request before sending it, and runs secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
 
 ## What you get
 
@@ -127,9 +139,9 @@ The wiki is the authoritative reference for everything else. Pick a page based o
 
 | Page | When to read it |
 |------|-----------------|
-| **[Commands](./wiki/Commands.md)** | Core docs commands and Qdrant lifecycle commands |
+| **[Commands](./wiki/Commands.md)** | The `memory` group, docs commands, and Qdrant lifecycle |
 | **[Configuration](./wiki/Configuration.md)** | All YAML keys, env vars, and the API-key reference |
-| **[Architecture](./wiki/Architecture.md)** | How ingest, retrieval, and Qdrant lifecycle work |
+| **[Architecture](./wiki/Architecture.md)** | How the memory harness, ingest, and hybrid retrieval work |
 | **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered |
 | **[Install Targets](./wiki/Install-Targets.md)** | Where each agent's skill file lands |
 | **[Troubleshooting](./wiki/Troubleshooting.md)** | Common errors and fixes |
