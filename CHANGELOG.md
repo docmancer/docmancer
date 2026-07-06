@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - Unreleased
+### Fixed
+
+- **OpenRouter preflight token floor.** The OpenRouter preflight no longer sends `max_tokens: 1`, which upstreams that map it to `max_output_tokens` (Azure/OpenAI) reject with an HTTP 400 below their minimum of 16. This restored the OpenRouter fallback for `docmancer memory consolidate` and related commands.
+- **Actionable agent CLI auth errors.** When an agent CLI reports failure inside its JSON result envelope (for example Claude Code returning `is_error: true` with "Not logged in"), docmancer now surfaces the human-readable message plus a sign-in hint instead of the raw JSON blob, and treats an `is_error` envelope as a failure even when the CLI exits zero.
+
 ## [0.6.7] - 2026-07-06
 ### Changed
 

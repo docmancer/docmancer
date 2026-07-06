@@ -156,6 +156,42 @@ def test_subprocess_failure_is_clean_error(monkeypatch):
         client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
 
 
+def test_claude_not_logged_in_envelope_is_actionable(monkeypatch):
+    envelope = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "result": "Not logged in · Please run /login",
+    }
+
+    def fake_run(cmd, **kwargs):
+        # Claude Code reports auth failures inside its JSON envelope.
+        return subprocess.CompletedProcess(cmd, 1, stdout=json.dumps(envelope), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="claude")
+    with pytest.raises(AgentCliError) as exc:
+        client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+    message = str(exc.value)
+    assert "Not logged in" in message
+    assert "/login" in message
+    # The whole raw JSON envelope must not leak into the error.
+    assert '"is_error"' not in message
+
+
+def test_claude_error_envelope_with_zero_exit_still_raises(monkeypatch):
+    envelope = {"is_error": True, "result": "Not logged in · Please run /login"}
+
+    def fake_run(cmd, **kwargs):
+        # Exit code 0 but is_error true must not be treated as a valid response.
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(envelope), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="claude")
+    with pytest.raises(AgentCliError, match="Not logged in"):
+        client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+
+
 def test_subprocess_failure_truncates_long_agent_transcript(monkeypatch):
     long_transcript = "OpenAI Codex v0.142.5\n" + ("x" * 6000) + "\nactual failure"
 

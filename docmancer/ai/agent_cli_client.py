@@ -157,6 +157,45 @@ def _best_text(stdout: str, outfile: Path | None = None) -> str:
     return raw
 
 
+_LOGIN_HINT = (
+    "The agent CLI is not authenticated. Sign in to it (for Claude Code, run "
+    "`claude` then `/login`), or pass a different --provider (for example codex) "
+    "or rely on the OpenRouter fallback."
+)
+
+
+def _agent_envelope_error(stdout: str) -> str | None:
+    """Return a clean message when an agent CLI reports its own error via JSON.
+
+    Some agents (Claude Code with ``--output-format json``) emit a result
+    envelope with ``is_error: true`` and a human-readable ``result`` string
+    instead of writing to stderr, and they do not always exit non-zero. Surface
+    that message rather than the raw JSON blob, and add a login hint when the
+    failure is an authentication problem.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or not data.get("is_error"):
+        return None
+    message = ""
+    for key in ("result", "error", "message"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            message = value.strip()
+            break
+    if not message:
+        message = "agent CLI reported an error"
+    lowered = message.lower()
+    if "not logged in" in lowered or "/login" in lowered or "log in" in lowered:
+        message = f"{message}\n{_LOGIN_HINT}"
+    return message
+
+
 def _failure_detail(stderr: str, stdout: str, *, max_chars: int = 4000) -> str:
     """Return a compact subprocess failure message with the useful tail kept."""
     detail = (stderr or stdout or "").strip()
@@ -274,8 +313,9 @@ class AgentCliClient:
                 timeout=self.timeout_seconds,
                 check=False,
             )
-            if result.returncode != 0:
-                detail = _failure_detail(result.stderr, result.stdout)
+            envelope_error = _agent_envelope_error(result.stdout)
+            if result.returncode != 0 or envelope_error:
+                detail = envelope_error or _failure_detail(result.stderr, result.stdout)
                 raise AgentCliError(f"{self.provider_name} failed: {detail}")
             text = _best_text(result.stdout, output_file if self.agent == "codex" else None)
             if on_progress:

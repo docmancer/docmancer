@@ -21,6 +21,9 @@ from .structured_json import (
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4.1-nano"
 DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _TIMEOUT_ENV = "DOCMANCER_OPENROUTER_TIMEOUT_SECONDS"
+# Some upstreams (Azure/OpenAI) map max_tokens to max_output_tokens, which
+# rejects values below 16. Keep the preflight cheap but above that floor.
+_PREFLIGHT_MAX_TOKENS = 16
 
 
 class OpenRouterConfigError(RuntimeError):
@@ -168,7 +171,7 @@ class OpenRouterClient:
             "model": model or self.model,
             "messages": [{"role": "user", "content": "Reply with ok."}],
             "temperature": 0.0,
-            "max_tokens": 1,
+            "max_tokens": _PREFLIGHT_MAX_TOKENS,
         }
         self._post_chat(body)
 

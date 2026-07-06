@@ -23,6 +23,46 @@ class _FakeHttpClient:
         )
 
 
+class _CapturingHttpClient:
+    """Records the request body and returns a benign 200 completion."""
+
+    last_body: dict | None = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *, headers, json):
+        _CapturingHttpClient.last_body = json
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+            request=httpx.Request("POST", url),
+        )
+
+
+def test_preflight_requests_provider_minimum_output_tokens(monkeypatch):
+    """Preflight must not send max_tokens below the provider minimum (>= 16).
+
+    Some OpenRouter upstreams (Azure/OpenAI) map max_tokens to max_output_tokens,
+    which rejects values below 16 with an HTTP 400, killing the fallback before
+    any real work runs.
+    """
+    monkeypatch.setattr(httpx, "Client", _CapturingHttpClient)
+    client = OpenRouterClient(api_key="test-key", model="openai/gpt-4.1-nano")
+
+    client.preflight()
+
+    body = _CapturingHttpClient.last_body
+    assert body is not None
+    assert body.get("max_tokens", 0) >= 16
+
+
 def test_openrouter_http_errors_include_response_body(monkeypatch):
     monkeypatch.setattr(httpx, "Client", _FakeHttpClient)
     client = OpenRouterClient(api_key="test-key", model="openai/gpt-4.1-nano")
