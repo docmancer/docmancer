@@ -60,7 +60,7 @@ docmancer query "How do I parametrize a fixture?"   # hybrid search across the d
 
 ## Consolidate and carry memory across agents
 
-Syncing gives you one searchable index. **Consolidation turns that pile into a single coherent memory.** `docmancer memory consolidate` sends your retrieved local memory (privacy-redacted first) through an installed coding-agent CLI by default, using `claude`, `codex`, `gemini`, `opencode`, `cline`, `copilot`, or `cursor-agent` when one is available. It gets back a review-only master-memory draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
+Syncing gives you one searchable index. **Consolidation turns that pile into a single coherent memory.** `docmancer memory consolidate` sends your retrieved local memory (privacy-redacted first) through an installed coding-agent CLI by default, using `claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, or `cursor` when one is available. It gets back a review-only master-memory draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
 
 ```bash
 docmancer memory consolidate \
@@ -68,6 +68,9 @@ docmancer memory consolidate \
   --output master-memory-draft.md \
   --draft-quality fast \
   --timeout 180
+
+docmancer memory consolidate --provider claude --yes
+docmancer memory consolidate --provider codex --yes
 ```
 
 Once you have reviewed the draft, materialize it into an agent's always-loaded file so the context loads every session with no tool call and, crucially, so memory written in one agent shows up in the others:
@@ -81,13 +84,13 @@ docmancer memory apply --agent codex --dry-run   # preview the diff first
 
 The default provider is `agent`, which auto-selects the first supported agent CLI on your `PATH`. Pass `--provider claude`, `--provider codex`, `--provider gemini`, `--provider opencode`, `--provider cline`, `--provider github-copilot`, or `--provider cursor` to force one. This is not offline: the selected agent may call Anthropic, OpenAI, Google, or another configured provider through that agent's own account.
 
-OpenRouter is still available as the only direct cloud API fallback. When `OPENROUTER_API_KEY` is set, `memory extract` and `memory consolidate` automatically retry through OpenRouter if an agent CLI provider fails during setup, preflight, or generation. `--model` accepts any OpenRouter chat model id your account can use, including Mistral models, Anthropic models, OpenAI models, Google models, and others. Set `DOCMANCER_OPENROUTER_MODEL` to change the OpenRouter default from `openai/gpt-4.1-nano`.
+OpenRouter is still available as the only direct cloud API fallback. When `OPENROUTER_API_KEY` is set, `memory extract` and `memory consolidate` automatically retry through OpenRouter if an agent CLI provider fails during setup, preflight, or generation. `--model` accepts any OpenRouter chat model id your account can use, including Anthropic models, OpenAI models, Google models, and others. Set `DOCMANCER_OPENROUTER_MODEL` to change the OpenRouter default from `openai/gpt-4.1-nano`.
 
 ```bash
 export OPENROUTER_API_KEY=...
 docmancer memory consolidate \
   --provider openrouter \
-  --model mistralai/mistral-large-2512 \
+  --model openai/gpt-4.1-nano \
   --output master-memory-draft.md \
   --yes
 ```

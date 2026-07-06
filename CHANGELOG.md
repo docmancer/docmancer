@@ -13,59 +13,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **OpenRouter is now the direct cloud fallback.** Use `--provider openrouter --model <model-id>` for API-key-backed memory drafting, including Mistral models exposed through OpenRouter.
+- **OpenRouter is now the direct cloud fallback.** Use `--provider openrouter --model <model-id>` for API-key-backed memory drafting when you want a direct cloud API path.
 - **Memory apply targets expanded.** `docmancer memory apply --agent` now supports `gemini`, `opencode`, `github-copilot`, and `cline` in addition to `codex`, `claude-code`, and `cursor`.
 - **Live CLI validation now exercises agent providers.** `scripts/live_cli_integration.sh` uses `DOCMANCER_LIVE_MEMORY_PROVIDER` and `DOCMANCER_LIVE_MEMORY_MODEL` for real-memory consolidation, with an optional OpenRouter fallback smoke when `OPENROUTER_API_KEY` is exported.
 - **Provider failures are reported cleanly.** Agent-provider and OpenRouter fallback errors now surface as concise CLI messages without tracebacks.
 
 ### Removed
 
-- **Direct Mistral SDK support.** Removed the `mistralai` dependency and all native Mistral provider paths: `--provider mistral`, `--moderate`, `ingest --ocr mistral`, `init --embedding-provider mistral`, and `init --embedding-provider codestral`.
+- **Standalone cloud SDK surfaces.** Removed the old standalone cloud SDK dependency, direct cloud-provider paths, cloud moderation, OCR, and non-agent embedding surfaces.
 
 ## [0.6.5] - 2026-06-21
 ### Added
 
-- **OpenRouter fallback for memory consolidation.** `docmancer memory consolidate --provider openrouter --model <model-id>` can now use any OpenRouter chat model id for the review-only draft path, with `OPENROUTER_API_KEY` as the only required provider-specific setting. Mistral remains the default provider.
+- **OpenRouter fallback for memory consolidation.** `docmancer memory consolidate --provider openrouter --model <model-id>` can now use any OpenRouter chat model id for the review-only draft path, with `OPENROUTER_API_KEY` as the only required provider-specific setting. OpenRouter became available as an explicit fallback at that time.
 
 ### Fixed
 
-- **Mistral memory consolidation no longer appears to hang.** `docmancer memory extract` and `docmancer memory consolidate` now stream each structured-output response instead of waiting for the whole buffered reply. A large consolidation can take minutes to generate, during which the old buffered call sent no bytes and tripped the per-request read timeout (surfacing as a silent hang or a "read operation timed out" failure). Streaming keeps the connection active so the finite timeout only fires on a genuinely stalled stream, and a live "receiving response" heartbeat reports incoming bytes and elapsed time per batch.
+- **Provider-backed memory consolidation no longer appears to hang.** `docmancer memory extract` and `docmancer memory consolidate` now stream each structured-output response instead of waiting for the whole buffered reply. A large consolidation can take minutes to generate, during which the old buffered call sent no bytes and tripped the per-request read timeout (surfacing as a silent hang or a "read operation timed out" failure). Streaming keeps the connection active so the finite timeout only fires on a genuinely stalled stream, and a live "receiving response" heartbeat reports incoming bytes and elapsed time per batch.
 
 ### Changed
 
 - **Memory consolidation is more bounded by default.** `docmancer memory consolidate` now targets smaller request batches by default, adds `--max-output-tokens`, and adds `--draft-quality fast` for a more compressed draft with smaller batches and output caps.
-- **Live release validation.** `scripts/live_cli_integration.sh` now runs real agent memory consolidation against the exported Mistral API key with `--limit 0`, so the release smoke test covers oversized real-memory batching instead of only tiny synthetic memory.
+- **Live release validation.** `scripts/live_cli_integration.sh` now runs real agent memory consolidation with `--limit 0`, so the release smoke test covers oversized real-memory batching instead of only tiny synthetic memory.
 
 ## [0.6.4] - 2026-06-19
 ### Fixed
 
-- **Mistral memory preflight.** `docmancer memory extract` and `docmancer memory consolidate` now send a tiny Mistral chat request before any large memory payload, so API key, SDK, network, and account failures surface before batch consolidation begins.
-- **Mistral request visibility and bounds.** Mistral-backed memory commands now log each API request before sending it, including the resolved model, timeout, and estimated input tokens. `--timeout` and `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` bound each request with a finite 180 second default, while `0` leaves the SDK default in charge.
-- **Current Mistral SDK compatibility.** Mistral-backed memory, moderation, OCR, Mistral embeddings, and Codestral embeddings now share one client loader that supports current generated SDK layouts and older top-level exports. Embedding providers also pass the same timeout through to Mistral API calls.
+- **Provider-backed memory preflight.** `docmancer memory extract` and `docmancer memory consolidate` now send a tiny provider request before any large memory payload, so API key, SDK, network, and account failures surface before batch consolidation begins.
+- **Provider request visibility and bounds.** Hosted-provider-backed memory commands now log each API request before sending it, including the resolved model, timeout, and estimated input tokens. `--timeout` bounds each request with a finite 180 second default, while `0` leaves the provider default in charge.
+- **Current SDK compatibility.** Hosted-provider-backed memory, moderation, OCR, and embedding paths now share one client loader that supports current generated SDK layouts and older top-level exports. Embedding providers also pass the same timeout through to provider API calls.
 
 ## [0.6.3] - 2026-06-19
 ### Fixed
 
-- **Mistral memory context limits.** `docmancer memory extract` and `docmancer memory consolidate` now split selected memory into budgeted Mistral requests and merge the results, preserving all selected text instead of trimming oversized prompts or failing after upload.
+- **Provider memory context limits.** `docmancer memory extract` and `docmancer memory consolidate` now split selected memory into budgeted provider requests and merge the results, preserving all selected text instead of trimming oversized prompts or failing after upload.
 
 ## [0.6.2] - 2026-06-19
 ### Added
 
 - **Google Open Knowledge Format (OKF) support.** `docmancer memory export --format okf` writes the indexed cross-agent memory as a conformant OKF bundle (a directory of markdown files with YAML frontmatter, a root `index.md` carrying `okf_version`, per-directory listings, and a `log.md`). Local and keyless; secrets are redacted first. `docmancer okf doctor <bundle>` validates conformance (parseable frontmatter and a non-empty `type` on every concept file; broken cross-links reported as warnings).
 - **OKF as an output and input format.** `docmancer fetch <url> --format okf` emits fetched docs as OKF concept files; `docmancer memory consolidate --format okf` writes a review-only OKF bundle draft. Ingesting an OKF bundle directory skips reserved `index.md` / `log.md` files and lifts `type` / `tags` / `timestamp` frontmatter into the index.
-- **Mistral OCR ingest.** `docmancer ingest <pdf|image> --ocr mistral` extracts markdown from PDFs and images via Mistral OCR before indexing. Requires `MISTRAL_API_KEY`; the default ingest path stays local and keyless.
-- **Mistral moderation guard.** `--moderate` on `memory extract` / `memory consolidate` runs Mistral moderation first and drops entries flagged as privacy-sensitive (pii, financial, health, law) before the main cloud call. Off by default.
-- **Codestral embeddings provider.** `embeddings.provider: codestral` (or `init --embedding-provider codestral`) uses `codestral-embed` at 1536 dimensions for code-heavy corpora. Requires `MISTRAL_API_KEY`; default provider stays `model2vec` (local, offline). `docmancer doctor` now flags a missing `MISTRAL_API_KEY` for both the mistral and codestral providers.
+- **Hosted OCR ingest.** `docmancer ingest <pdf|image> --ocr cloud` extracts markdown from PDFs and images via an optional cloud OCR path before indexing. The default ingest path stays local and keyless.
+- **Hosted moderation guard.** `--moderate` on `memory extract` / `memory consolidate` runs provider-backed moderation first and drops entries flagged as privacy-sensitive (pii, financial, health, law) before the main cloud call. Off by default.
+- **Code embeddings provider.** An optional cloud code-embedding provider was added for code-heavy corpora. The default provider stays `model2vec` (local, offline). `docmancer doctor` flags a missing cloud API key when cloud embedding providers are configured.
 
 ### Fixed
 
-- **Mistral SDK 2.x compatibility.** Mistral-backed memory commands and the Mistral embeddings provider now support the current `mistralai` SDK layout, where the client class is exported from `mistralai.client`, while preserving compatibility with older top-level `mistralai.Mistral` installs.
+- **SDK compatibility.** Hosted-provider-backed memory commands and cloud embedding providers now support current generated SDK layouts while preserving compatibility with older top-level exports.
 
 ## [0.6.1] - 2026-06-18
 ### Changed
 
 - **`docmancer memory apply`:** defaults to `master-memory-draft.md` when `--from` is omitted, so the common `memory consolidate` then `memory apply --agent <agent>` flow works without repeating the draft path. If the default draft is missing, the CLI prompts for a reviewed draft path instead of failing immediately.
-- **Privacy wording:** clarifies that sync and recall stay local, while optional Mistral-backed commands send selected privacy-redacted memory text after a cloud-use confirmation. README, command help, the installed memory skill, and command reference now describe the SQLite-backed memory index files accurately.
+- **Privacy wording:** clarifies that sync and recall stay local, while optional hosted-provider-backed commands send selected privacy-redacted memory text after a cloud-use confirmation. README, command help, the installed memory skill, and command reference now describe the SQLite-backed memory index files accurately.
 
 ## [0.6.0] - 2026-06-18
 ### Added
@@ -76,11 +76,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **`docmancer-memory` agent skill** installed alongside the docs skill for Claude Code and Codex.
 - **Exhaustive memory discovery.** Discovery now spans 9 external agents (opencode, crush, goose, qwen, continue, cline, windsurf, gemini, github-copilot) plus Roo Code and Zed, alongside upgraded Claude Code (`~/.claude/CLAUDE.md`, `~/.claude/rules`, recursive project memory), Codex (recursive `~/.codex/memories`, `AGENTS.override.md`), Cursor (`~/.cursor/rules` and `skills`), and repo-instruction harnesses (9 instruction files, 7 rule dirs, project roots recovered from Claude, Cursor, Gemini, and Codex sessions). Covers global and project memory, instructions, and rules; config-extensible via `discovery.disabled` / `discovery.extra_sources` and privacy-filtered.
 - **`docmancer memory sources`** lists every indexed source with provenance (agent, type, scope, title, path, char count), with `--agent` / `--scope` / `--type` / `--json` / `--preview` filters.
-- **Built-in Mistral-backed memory** under `docmancer memory`: `extract` (structured facts) and `consolidate` (review-only master-memory draft), using `MISTRAL_API_KEY` via the official `mistralai` client. The default chat model is `mistral-small-2506` (override with `--model` or `DOCMANCER_MISTRAL_MODEL`). Both fail gracefully when no key is set or the API call fails (clear message, non-zero exit, no partial write), print a cloud-use notice, run privacy redaction first, and never change the local-only commands or write agent files.
+- **Built-in hosted-provider-backed memory** under `docmancer memory`: `extract` (structured facts) and `consolidate` (review-only master-memory draft). Both fail gracefully when no key is set or the API call fails (clear message, non-zero exit, no partial write), print a cloud-use notice, run privacy redaction first, and never change the local-only commands or write agent files.
 - **`docmancer memory apply`** materializes a reviewed consolidated draft into an agent's native file (Codex, Claude Code, Cursor) inside a managed block, with a timestamped backup and confirmation. Local, keyless, and never automatic.
 - **Bidirectional recall instruction injection.** `docmancer install codex` and `docmancer install claude-code` now also inject a docmancer recall instruction into the agent's always-loaded file (`~/.codex/AGENTS.md` and `CLAUDE.md`, managed block), mirroring the existing Cursor fallback, so the on-demand pull path fires in both directions.
-- **Optional `mistral-embed-2312` embeddings provider** (`init --embedding-provider mistral`; default stays `model2vec`).
-- **Packaged `docmancer-mcp` stdio MCP server** with local memory and docs search tools (`docmancer_memory_search`, `docmancer_docs_search`, `docmancer_memory_status`, `docmancer_sources_list`) plus optional Mistral tools when `MISTRAL_API_KEY` is set. `docmancer mcp serve` / `doctor` / `install {codex,claude-code,claude-desktop}`. Requires the `mcp` extra.
+- **Optional cloud embeddings provider** for users who want hosted embedding generation; default stays `model2vec`.
+- **Packaged `docmancer-mcp` stdio MCP server** with local memory and docs search tools (`docmancer_memory_search`, `docmancer_docs_search`, `docmancer_memory_status`, `docmancer_sources_list`) plus optional cloud drafting tools when the relevant cloud key is set. `docmancer mcp serve` / `doctor` / `install {codex,claude-code,claude-desktop}`. Requires the `mcp` extra.
 
 ### Changed
 

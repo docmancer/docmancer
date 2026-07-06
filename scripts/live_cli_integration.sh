@@ -390,7 +390,7 @@ if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
         print_info "Skipping OpenRouter fallback smoke because OPENROUTER_API_KEY is not exported."
       else
         print_info "Running explicit OpenRouter fallback smoke."
-        if ! "${CLI_CMD[@]}" memory consolidate --limit 1 --provider openrouter --model "${DOCMANCER_LIVE_OPENROUTER_MODEL:-mistralai/mistral-large-2512}" --output "$REAL_MEMORY_OPENROUTER_DRAFT" --yes >"$REAL_MEMORY_OPENROUTER_LOG" 2>&1; then
+        if ! "${CLI_CMD[@]}" memory consolidate --limit 1 --provider openrouter --model "${DOCMANCER_LIVE_OPENROUTER_MODEL:-openai/gpt-4.1-nano}" --output "$REAL_MEMORY_OPENROUTER_DRAFT" --yes >"$REAL_MEMORY_OPENROUTER_LOG" 2>&1; then
           cat "$REAL_MEMORY_OPENROUTER_LOG"
           print_warn "OpenRouter fallback memory consolidate failed"
           exit 1

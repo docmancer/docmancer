@@ -112,9 +112,9 @@ def test_consolidate_defaults_to_agent_provider(tmp_path, monkeypatch):
     assert "Railway" in out.read_text()
 
 
-def test_mistral_provider_is_not_available(tmp_path, monkeypatch):
+def test_unknown_provider_is_not_available(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
-    r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "mistral", "--yes"])
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "not-a-provider", "--yes"])
     assert r.exit_code == 2
     assert "Invalid value" in r.output
 
