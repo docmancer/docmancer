@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.9] - Unreleased
+## [0.6.9] - 2026-07-06
 ### Fixed
 
 - **Headless Claude auth hint.** The agent CLI auth-failure hint now points at `claude setup-token` (the fix for the headless `claude -p` path docmancer runs) and notes that an interactive `claude` login alone does not authenticate headless use. The login-detection matcher was also tightened so unrelated errors containing substrings like "catalog" no longer get an authentication hint appended.
