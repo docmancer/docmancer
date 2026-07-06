@@ -1,9 +1,7 @@
-"""OpenRouter fallback client for memory consolidation.
+"""OpenRouter client for cloud memory extraction and consolidation.
 
-The default consolidation path stays direct Mistral. This client is only used
-when the CLI is called with ``--provider openrouter``. It talks to OpenRouter's
-OpenAI-compatible chat completions endpoint through ``httpx`` so docmancer does
-not need another provider SDK.
+It talks to OpenRouter's OpenAI-compatible chat completions endpoint through
+``httpx`` so docmancer does not need another provider SDK.
 """
 from __future__ import annotations
 

@@ -32,8 +32,8 @@ _MCP_CLIENTS = ["codex", "claude-code", "claude-desktop"]
 def mcp_group():
     """Packaged stdio MCP server exposing local memory and docs search.
 
-    Search tools are local-only. Optional Mistral tools appear when
-    MISTRAL_API_KEY is set and always run privacy filtering before any cloud
+    Search tools are local-only. Optional OpenRouter tools appear when
+    OPENROUTER_API_KEY is set and always run privacy filtering before any cloud
     call. Install edits client config; it is explicit, never automatic.
     """
 
@@ -64,9 +64,9 @@ def doctor():
     else:
         click.echo(f"docmancer-mcp: not on PATH; will launch via {sys.executable} -m docmancer.mcp.server")
 
-    from docmancer.ai.mistral_client import mistral_api_key
+    from docmancer.ai.openrouter_client import openrouter_api_key
 
-    click.echo("Mistral tools: " + ("enabled (MISTRAL_API_KEY set)" if mistral_api_key() else "disabled (set MISTRAL_API_KEY to enable)"))
+    click.echo("OpenRouter tools: " + ("enabled (OPENROUTER_API_KEY set)" if openrouter_api_key() else "disabled (set OPENROUTER_API_KEY to enable)"))
     if not ok:
         sys.exit(1)
 

@@ -1,4 +1,4 @@
-"""Mistral-backed memory features: structured extraction and consolidation.
+"""Cloud-backed memory features: structured extraction and consolidation.
 
 Both functions are pure transforms over already-redacted text. Privacy
 filtering happens at the call site (the CLI) before any text reaches here, but
@@ -7,8 +7,9 @@ consolidation returns a review-only draft.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from .memory_schemas import ConsolidatedMemoryDraft, ExtractedMemoryFacts
-from .mistral_client import MistralClient
 
 _EXTRACT_SYSTEM = (
     "You extract durable, reusable memory facts from a developer's agent memory "
@@ -48,12 +49,15 @@ def extract_memory_facts(
     text: str,
     metadata: dict | None = None,
     *,
-    client: MistralClient | None = None,
+    client: Any | None = None,
     model: str | None = None,
     on_progress=None,
 ) -> ExtractedMemoryFacts:
     """Extract durable memory facts from one block of text via structured output."""
-    client = client or MistralClient(model=model)
+    if client is None:
+        from .openrouter_client import OpenRouterClient
+
+        client = OpenRouterClient(model=model)
     messages = [
         {"role": "system", "content": _EXTRACT_SYSTEM},
         {"role": "user", "content": _facts_user_prompt(text, metadata)},
@@ -65,7 +69,7 @@ def consolidate_memory(
     entries: list[dict],
     instruction: str | None = None,
     *,
-    client: MistralClient | None = None,
+    client: Any | None = None,
     model: str | None = None,
     draft_quality: str = "standard",
     max_tokens: int | None = None,
@@ -76,7 +80,10 @@ def consolidate_memory(
     ``entries`` is a list of ``{"scope", "title", "source_path", "text"}`` dicts.
     The returned draft is for review only; nothing is written.
     """
-    client = client or MistralClient(model=model)
+    if client is None:
+        from .openrouter_client import OpenRouterClient
+
+        client = OpenRouterClient(model=model)
     blocks = []
     for i, e in enumerate(entries, start=1):
         blocks.append(

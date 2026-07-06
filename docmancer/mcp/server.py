@@ -39,14 +39,14 @@ def build_server():
     def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
         return tools.sources_list(agent=agent, scope=scope, kind=kind)
 
-    from docmancer.ai.mistral_client import mistral_api_key
+    from docmancer.ai.openrouter_client import openrouter_api_key
 
-    if mistral_api_key():
-        @server.tool(description="CLOUD: extract durable memory facts via Mistral. Sends privacy-redacted local memory to Mistral.")
+    if openrouter_api_key():
+        @server.tool(description="CLOUD: extract durable memory facts via OpenRouter. Sends privacy-redacted local memory to OpenRouter.")
         def docmancer_memory_extract(limit: int = 30) -> dict:
             return tools.memory_extract(limit=limit)
 
-        @server.tool(description="CLOUD: produce a review-only consolidated memory draft via Mistral. Sends privacy-redacted local memory to Mistral.")
+        @server.tool(description="CLOUD: produce a review-only consolidated memory draft via OpenRouter. Sends privacy-redacted local memory to OpenRouter.")
         def docmancer_memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
             return tools.memory_consolidate_draft(query=query, limit=limit)
 

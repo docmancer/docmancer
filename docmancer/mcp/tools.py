@@ -2,7 +2,7 @@
 
 Each function returns plain Python data so it can be unit-tested without the
 ``mcp`` SDK. ``server.py`` wraps these with FastMCP. Search tools touch only
-local indexes; Mistral tools run privacy filtering and require MISTRAL_API_KEY.
+local indexes; cloud tools run privacy filtering and require OPENROUTER_API_KEY.
 
 Outputs are capped by a character budget so a tool call never floods the agent.
 """
@@ -97,7 +97,7 @@ def sources_list(agent: str | None = None, scope: str | None = None, kind: str |
     return rows
 
 
-# --- Optional Mistral-backed tools (cloud; require MISTRAL_API_KEY) ----------
+# --- Optional cloud-backed tools (require OPENROUTER_API_KEY) ----------------
 
 
 def _redacted_entries(limit: int):
@@ -108,29 +108,30 @@ def _redacted_entries(limit: int):
 
 
 def memory_extract(limit: int = 30) -> dict:
-    """Cloud: extract durable memory facts via Mistral. Sends redacted text to Mistral."""
+    """Cloud: extract durable memory facts via OpenRouter."""
     from docmancer.ai.memory_features import extract_memory_facts
-    from docmancer.ai.mistral_client import mistral_api_key
+    from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
 
-    if not mistral_api_key():
-        return {"error": "MISTRAL_API_KEY is not set"}
+    if not openrouter_api_key():
+        return {"error": "OPENROUTER_API_KEY is not set"}
     entries = _redacted_entries(limit)
     if not entries:
         return {"facts": []}
     combined = "\n\n".join(f"### {e.title}\n{e.content}" for e in entries)
     try:
-        return extract_memory_facts(combined, {"entries": len(entries)}).model_dump()
+        client = OpenRouterClient()
+        return extract_memory_facts(combined, {"entries": len(entries)}, client=client).model_dump()
     except Exception as exc:  # noqa: BLE001 - return an error payload, never raise to the client
-        return {"error": f"Mistral extract failed: {exc}"}
+        return {"error": f"OpenRouter extract failed: {exc}"}
 
 
 def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
-    """Cloud: produce a review-only consolidated memory draft via Mistral."""
+    """Cloud: produce a review-only consolidated memory draft via OpenRouter."""
     from docmancer.ai.memory_features import consolidate_memory
-    from docmancer.ai.mistral_client import mistral_api_key
+    from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
 
-    if not mistral_api_key():
-        return {"error": "MISTRAL_API_KEY is not set"}
+    if not openrouter_api_key():
+        return {"error": "OPENROUTER_API_KEY is not set"}
     entries = _redacted_entries(limit)
     if not entries:
         return {"error": "no memory entries"}
@@ -139,9 +140,10 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
         for e in entries
     ]
     try:
-        return consolidate_memory(payload, instruction=query).model_dump()
+        client = OpenRouterClient()
+        return consolidate_memory(payload, instruction=query, client=client).model_dump()
     except Exception as exc:  # noqa: BLE001 - return an error payload, never raise to the client
-        return {"error": f"Mistral consolidate failed: {exc}"}
+        return {"error": f"OpenRouter consolidate failed: {exc}"}
 
 
 __all__ = [

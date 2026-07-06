@@ -80,7 +80,7 @@ def test_consolidate_moderate_drops_sensitive_entry(tmp_path, monkeypatch):
     CliRunner().invoke(cli, ["memory", "sync"])
     out = tmp_path / "draft.md"
     r = CliRunner().invoke(
-        cli, ["memory", "consolidate", "--moderate", "--output", str(out), "--yes"]
+        cli, ["memory", "consolidate", "--provider", "mistral", "--moderate", "--output", str(out), "--yes"]
     )
     assert r.exit_code == 0, r.output
     assert "Moderation dropped 1" in r.output
@@ -104,7 +104,7 @@ def test_consolidate_without_moderate_sends_everything(tmp_path, monkeypatch):
 
     CliRunner().invoke(cli, ["memory", "sync"])
     out = tmp_path / "draft.md"
-    r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--yes"])
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "mistral", "--output", str(out), "--yes"])
     assert r.exit_code == 0, r.output
     assert "Moderation dropped" not in r.output
     assert "123-45-6789" in capture.get("prompt", "")

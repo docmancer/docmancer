@@ -1,4 +1,4 @@
-"""Pydantic schemas for Mistral structured-output memory features.
+"""Pydantic schemas for cloud structured-output memory features.
 
 These are passed as ``response_format`` to ``client.chat.parse(...)`` so the
 model returns a validated instance, never free-form JSON we have to parse.

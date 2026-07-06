@@ -180,6 +180,8 @@ The default retrieval stack (FastEmbed local embeddings + managed local Qdrant) 
 | OpenAI-compatible base URL | `OPENAI_BASE_URL` | Pointing the OpenAI provider at Azure / vLLM / Together (optional) |
 | Voyage AI embeddings | `VOYAGE_API_KEY` | `embeddings.provider: voyage` |
 | Cohere embeddings | `COHERE_API_KEY` | `embeddings.provider: cohere` |
+| OpenRouter memory drafting | `OPENROUTER_API_KEY` | `docmancer memory extract`, `docmancer memory consolidate`, or MCP cloud tools |
+| Native Mistral features | `MISTRAL_API_KEY` | `--provider mistral`, `--ocr mistral`, Mistral embeddings, or `--moderate` |
 | Remote Qdrant | env var named by `vector_store.api_key_env` (e.g. `QDRANT_API_KEY`) | `vector_store.url` points at a managed/cloud Qdrant |
 
 ### Where to put them

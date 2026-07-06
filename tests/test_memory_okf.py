@@ -139,7 +139,7 @@ def test_consolidate_format_okf_writes_bundle(tmp_path, monkeypatch):
     _install_fake_consolidate(monkeypatch)
     out = tmp_path / "draft.okf"
     r = CliRunner().invoke(
-        cli, ["memory", "consolidate", "--format", "okf", "--output", str(out), "--yes"]
+        cli, ["memory", "consolidate", "--provider", "mistral", "--format", "okf", "--output", str(out), "--yes"]
     )
     assert r.exit_code == 0, r.output
     assert (out / "index.md").exists()

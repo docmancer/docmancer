@@ -22,7 +22,7 @@ def _plant(home):
 
 
 def test_build_server_registers_local_tools(monkeypatch):
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     from docmancer.mcp.server import build_server
 
     server = build_server()
@@ -32,12 +32,12 @@ def test_build_server_registers_local_tools(monkeypatch):
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
     assert {"docmancer_memory_search", "docmancer_docs_search", "docmancer_memory_status", "docmancer_sources_list"} <= names
-    # Mistral tools absent without a key.
+    # Cloud tools absent without a key.
     assert "docmancer_memory_extract" not in names
 
 
-def test_build_server_adds_mistral_tools_with_key(monkeypatch):
-    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp.server import build_server
     import asyncio
 
