@@ -12,15 +12,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .structured_json import (
-    DEFAULT_PROVIDER_TIMEOUT_SECONDS,
-    json_instruction,
-    json_schema,
-    strip_json_fences,
-    validate_json_text,
-)
+from .structured_json import json_instruction, json_schema, strip_json_fences, validate_json_text
 
 DEFAULT_AGENT_ORDER = ("claude", "codex", "gemini", "opencode", "cline", "github-copilot", "cursor")
+DEFAULT_AGENT_CLI_TIMEOUT_SECONDS = 900
 _TIMEOUT_ENV = "DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS"
 _AGENT_HOME_ENV = "DOCMANCER_AGENT_CLI_HOME"
 
@@ -69,7 +64,7 @@ def agent_cli_timeout(timeout_seconds: float | None = None) -> float | None:
             except ValueError as exc:
                 raise AgentCliError(f"{_TIMEOUT_ENV} must be a number of seconds, or 0 to disable it.") from exc
         else:
-            timeout_seconds = DEFAULT_PROVIDER_TIMEOUT_SECONDS
+            timeout_seconds = DEFAULT_AGENT_CLI_TIMEOUT_SECONDS
     if timeout_seconds <= 0:
         return None
     return timeout_seconds
@@ -158,9 +153,12 @@ def _best_text(stdout: str, outfile: Path | None = None) -> str:
 
 
 _LOGIN_HINT = (
-    "The agent CLI is not authenticated. Sign in to it (for Claude Code, run "
-    "`claude` then `/login`), or pass a different --provider (for example codex) "
-    "or rely on the OpenRouter fallback."
+    "The agent CLI is not authenticated for headless use. An interactive "
+    "`claude` login alone does not cover the headless `claude -p` path docmancer "
+    "runs. For Claude Code, run `claude setup-token` to create a long-lived token "
+    "(requires a Claude subscription), then export it as CLAUDE_CODE_OAUTH_TOKEN. "
+    "Otherwise pass a different --provider (for example codex) or rely on the "
+    "OpenRouter fallback."
 )
 
 
@@ -191,7 +189,7 @@ def _agent_envelope_error(stdout: str) -> str | None:
     if not message:
         message = "agent CLI reported an error"
     lowered = message.lower()
-    if "not logged in" in lowered or "/login" in lowered or "log in" in lowered:
+    if "not logged in" in lowered or "/login" in lowered or "please log in" in lowered:
         message = f"{message}\n{_LOGIN_HINT}"
     return message
 
@@ -405,6 +403,7 @@ __all__ = [
     "AgentCliClient",
     "AgentCliError",
     "DEFAULT_AGENT_ORDER",
+    "DEFAULT_AGENT_CLI_TIMEOUT_SECONDS",
     "agent_provider_binaries",
     "supported_agent_providers",
 ]

@@ -225,8 +225,12 @@ _PROVIDER_CHOICES = [
 _DEFAULT_CLOUD_INPUT_BUDGET = 90_000
 _DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
 _FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
+_OPENROUTER_CONSOLIDATE_INPUT_BUDGET = 25_000
+_OPENROUTER_FAST_CONSOLIDATE_INPUT_BUDGET = 18_000
 _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
 _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 2048
+_OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS = 8192
+_OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
 _APPROX_CHARS_PER_TOKEN = 4
 
 
@@ -513,6 +517,30 @@ def _fmt_seconds(seconds: float) -> str:
     if seconds < 10:
         return f"{seconds:.1f}s"
     return f"{seconds:.0f}s"
+
+
+def _is_openrouter_client(client) -> bool:
+    return (getattr(client, "provider_name", "") or "").lower() == "openrouter"
+
+
+def _default_consolidate_budget(*, draft_quality: str, client) -> int:
+    if _is_openrouter_client(client):
+        return (
+            _OPENROUTER_FAST_CONSOLIDATE_INPUT_BUDGET
+            if draft_quality == "fast"
+            else _OPENROUTER_CONSOLIDATE_INPUT_BUDGET
+        )
+    return _FAST_CONSOLIDATE_INPUT_BUDGET if draft_quality == "fast" else _DEFAULT_CONSOLIDATE_INPUT_BUDGET
+
+
+def _default_consolidate_max_output_tokens(*, draft_quality: str, client) -> int:
+    if _is_openrouter_client(client):
+        return (
+            _OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS
+            if draft_quality == "fast"
+            else _OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS
+        )
+    return _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS if draft_quality == "fast" else _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS
 
 
 def _emit_block(title: str, rows: list[tuple[str, object | None]], *, err: bool = True) -> None:
@@ -805,12 +833,12 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
-@click.option("--budget", default=None, type=int, help="Approximate input-token budget per provider request. Defaults to 50000, or 35000 with --draft-quality fast; use 0 to send in one request.")
+@click.option("--budget", default=None, type=int, help="Approximate input-token budget per provider request. Defaults are provider-specific; use 0 to send in one request.")
 @click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="agent", show_default=True, help="Provider for consolidation.")
 @click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
 @click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
-@click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults to 4096, or 2048 with --draft-quality fast; use 0 for provider default.")
-@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (default 180, or provider timeout env var; use 0 for provider default).")
+@click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults are provider-specific; use 0 for provider default.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (provider-specific default, or provider timeout env var; use 0 for provider default).")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
@@ -859,20 +887,17 @@ def consolidate(
 
     payload = _entries_to_payload(entries)
     source_files = [e.path for e in entries]
-    resolved_budget = budget
-    if resolved_budget is None:
-        resolved_budget = _FAST_CONSOLIDATE_INPUT_BUDGET if draft_quality == "fast" else _DEFAULT_CONSOLIDATE_INPUT_BUDGET
-    resolved_max_output_tokens = max_output_tokens
-    if resolved_max_output_tokens is None:
-        resolved_max_output_tokens = (
-            _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS
-            if draft_quality == "fast"
-            else _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS
-        )
-    if resolved_max_output_tokens <= 0:
-        resolved_max_output_tokens = None
-
     def _call(active_client, active_model):
+        resolved_budget = budget
+        if resolved_budget is None:
+            resolved_budget = _default_consolidate_budget(draft_quality=draft_quality, client=active_client)
+        resolved_max_output_tokens = max_output_tokens
+        if resolved_max_output_tokens is None:
+            resolved_max_output_tokens = _default_consolidate_max_output_tokens(
+                draft_quality=draft_quality, client=active_client
+            )
+        if resolved_max_output_tokens <= 0:
+            resolved_max_output_tokens = None
         _provider_preflight(active_client, model=active_model)
         return _consolidate_payload_in_rounds(
             payload,

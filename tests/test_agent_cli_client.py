@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from docmancer.ai.agent_cli_client import AgentCliClient, AgentCliError
+from docmancer.ai.agent_cli_client import DEFAULT_AGENT_CLI_TIMEOUT_SECONDS, AgentCliClient, AgentCliError
 from docmancer.ai.memory_schemas import ExtractedMemoryFacts
 
 
@@ -12,6 +12,13 @@ def test_agent_auto_selects_first_installed(monkeypatch):
     client = AgentCliClient(agent="agent")
     assert client.agent == "codex"
     assert client.provider_name == "Codex"
+
+
+def test_agent_cli_default_timeout_is_long_enough_for_consolidation(monkeypatch):
+    monkeypatch.delenv("DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS", raising=False)
+    client = AgentCliClient(agent="codex")
+    assert client.timeout_seconds == DEFAULT_AGENT_CLI_TIMEOUT_SECONDS
+    assert client.timeout_ms == DEFAULT_AGENT_CLI_TIMEOUT_SECONDS * 1000
 
 
 def test_agent_auto_fails_when_no_cli(monkeypatch):
@@ -175,6 +182,8 @@ def test_claude_not_logged_in_envelope_is_actionable(monkeypatch):
     message = str(exc.value)
     assert "Not logged in" in message
     assert "/login" in message
+    # The hint must point at the headless-auth fix, not just interactive /login.
+    assert "setup-token" in message
     # The whole raw JSON envelope must not leak into the error.
     assert '"is_error"' not in message
 
@@ -190,6 +199,23 @@ def test_claude_error_envelope_with_zero_exit_still_raises(monkeypatch):
     client = AgentCliClient(agent="claude")
     with pytest.raises(AgentCliError, match="Not logged in"):
         client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+
+
+def test_non_auth_error_envelope_omits_login_hint(monkeypatch):
+    # "catalog" contains the substring "log in"; a non-auth failure must not
+    # get the authentication hint appended.
+    envelope = {"is_error": True, "result": "catalog installation failed"}
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout=json.dumps(envelope), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="claude")
+    with pytest.raises(AgentCliError) as exc:
+        client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+    message = str(exc.value)
+    assert "catalog installation failed" in message
+    assert "setup-token" not in message
 
 
 def test_subprocess_failure_truncates_long_agent_transcript(monkeypatch):

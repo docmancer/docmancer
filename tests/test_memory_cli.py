@@ -146,7 +146,10 @@ def test_agent_provider_falls_back_to_openrouter_on_runtime_failure(tmp_path, mo
     def openrouter_preflight(self, *, model=None):
         return None
 
+    seen = {}
+
     def openrouter_parse(self, messages, response_format, **kwargs):
+        seen["max_tokens"] = kwargs.get("max_tokens")
         return ConsolidatedMemoryDraft(
             title="Fallback Memory",
             summary="summary",
@@ -164,6 +167,9 @@ def test_agent_provider_falls_back_to_openrouter_on_runtime_failure(tmp_path, mo
     assert r.exit_code == 0, r.output
     assert "Agent provider failed" in r.output
     assert "Retrying with OpenRouter fallback" in r.output
+    assert "batch budget       25,000 tokens" in r.output
+    assert "output cap         8,192 tokens" in r.output
+    assert seen["max_tokens"] == 8192
     assert "Railway via fallback" in out.read_text()
     assert "Traceback" not in r.output
 

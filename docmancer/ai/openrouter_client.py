@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from .structured_json import (
     DEFAULT_PROVIDER_TIMEOUT_SECONDS,
@@ -128,6 +129,15 @@ class OpenRouterClient:
             return "".join(parts)
         raise RuntimeError("OpenRouter returned no text content")
 
+    def _fallback_body(self, body: dict[str, Any], messages: list[dict], response_format) -> dict[str, Any]:
+        fallback_messages = [{"role": "system", "content": json_instruction(response_format)}, *messages]
+        fallback_body = dict(body)
+        fallback_body.pop("response_format", None)
+        fallback_body["messages"] = fallback_messages
+        if isinstance(fallback_body.get("max_tokens"), int):
+            fallback_body["max_tokens"] = max(8192, int(fallback_body["max_tokens"]))
+        return fallback_body
+
     def parse(
         self,
         messages: list[dict],
@@ -158,13 +168,14 @@ class OpenRouterClient:
         except OpenRouterRequestError as exc:
             if exc.status_code not in (400, 422):
                 raise
-            fallback_messages = [{"role": "system", "content": json_instruction(response_format)}, *messages]
-            fallback_body = dict(body)
-            fallback_body.pop("response_format", None)
-            fallback_body["messages"] = fallback_messages
-            data = self._post_chat(fallback_body)
+            data = self._post_chat(self._fallback_body(body, messages, response_format))
         text = strip_json_fences(self._completion_text(data))
-        return response_format.model_validate_json(text)
+        try:
+            return response_format.model_validate_json(text)
+        except ValidationError:
+            data = self._post_chat(self._fallback_body(body, messages, response_format))
+            text = strip_json_fences(self._completion_text(data))
+            return response_format.model_validate_json(text)
 
     def preflight(self, *, model: str | None = None) -> None:
         body: dict[str, Any] = {
