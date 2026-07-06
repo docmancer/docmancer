@@ -63,9 +63,9 @@ def test_export_redacts_secrets(tmp_path, monkeypatch):
 
 
 def test_export_is_keyless(tmp_path, monkeypatch):
-    # Export never calls Mistral, so it must work with no API key set.
+    # Export never calls a provider, so it must work with no API key set.
     _env(monkeypatch, tmp_path)
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     CliRunner().invoke(cli, ["memory", "sync"])
     out = tmp_path / "memory.okf"
     r = CliRunner().invoke(cli, ["memory", "export", "--output", str(out)])
@@ -92,54 +92,30 @@ def test_okf_doctor_flags_bad_bundle(tmp_path):
 
 
 def _install_fake_consolidate(monkeypatch):
-    import sys
-    import types
+    from docmancer.ai.agent_cli_client import AgentCliClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
 
-    class FakeMessage:
-        def __init__(self, parsed):
-            self.parsed = parsed
+    def fake_preflight(self, *, model=None):
+        return None
 
-    class FakeChoice:
-        def __init__(self, parsed):
-            self.message = FakeMessage(parsed)
+    def fake_parse(self, messages, response_format, **kwargs):
+        return ConsolidatedMemoryDraft(
+            title="Master Memory",
+            summary="All of it.",
+            sections=[ConsolidatedMemorySection(heading="Deploy", body="Railway, pnpm.")],
+            source_paths=["/Users/x/app/CLAUDE.md"],
+        )
 
-    class FakeResp:
-        def __init__(self, parsed):
-            self.choices = [FakeChoice(parsed)]
-
-    class FakeChat:
-        def complete(self, **kwargs):
-            return types.SimpleNamespace()
-
-        def parse(self, *, model, messages, response_format, temperature=0.0):
-            from docmancer.ai.memory_schemas import (
-                ConsolidatedMemoryDraft,
-                ConsolidatedMemorySection,
-            )
-
-            return FakeResp(
-                ConsolidatedMemoryDraft(
-                    title="Master Memory",
-                    summary="All of it.",
-                    sections=[ConsolidatedMemorySection(heading="Deploy", body="Railway, pnpm.")],
-                    source_paths=["/Users/x/app/CLAUDE.md"],
-                )
-            )
-
-    class FakeMistral:
-        def __init__(self, *args, **kwargs):
-            self.chat = FakeChat()
-
-    monkeypatch.setitem(sys.modules, "mistralai", types.SimpleNamespace(Mistral=FakeMistral))
+    monkeypatch.setattr(AgentCliClient, "preflight", fake_preflight)
+    monkeypatch.setattr(AgentCliClient, "parse", fake_parse)
 
 
 def test_consolidate_format_okf_writes_bundle(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
-    monkeypatch.setenv("MISTRAL_API_KEY", "k")
     _install_fake_consolidate(monkeypatch)
     out = tmp_path / "draft.okf"
     r = CliRunner().invoke(
-        cli, ["memory", "consolidate", "--provider", "mistral", "--format", "okf", "--output", str(out), "--yes"]
+        cli, ["memory", "consolidate", "--provider", "claude", "--format", "okf", "--output", str(out), "--yes"]
     )
     assert r.exit_code == 0, r.output
     assert (out / "index.md").exists()

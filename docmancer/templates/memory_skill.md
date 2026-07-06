@@ -51,22 +51,22 @@ docmancer memory export --format okf --output memory.okf
 docmancer okf doctor memory.okf
 ```
 
-## Cloud-backed (optional)
+## Provider-backed drafting (optional)
 
-These send privacy-redacted local memory to OpenRouter by default and fail cleanly with a clear message when the provider key is not set. They never edit agent files.
+These send privacy-redacted local memory through an installed coding-agent CLI by default. If an agent provider fails and `OPENROUTER_API_KEY` is set, docmancer retries through OpenRouter. If both paths fail, it exits cleanly with a clear message. They never edit agent files.
 
 ```bash
 docmancer memory extract --yes
 docmancer memory consolidate --query "..." --output draft.md --draft-quality fast --timeout 180 --yes
 docmancer memory consolidate --format okf --output draft.okf --yes
-docmancer memory consolidate --model openai/gpt-4.1-nano --yes
-docmancer memory consolidate --provider mistral --model mistral-small-2506 --yes
+docmancer memory consolidate --provider claude --yes
+docmancer memory consolidate --provider openrouter --model mistralai/mistral-large-2512 --yes
 ```
 
-Add `--moderate` to `extract` or `consolidate` to run Mistral moderation first and drop entries flagged as privacy-sensitive (pii, financial, health, law) before the main call. `extract` and `consolidate` default to OpenRouter (`OPENROUTER_API_KEY`) and accept any OpenRouter model id available to your account. Use `--provider mistral` for native Mistral with `MISTRAL_API_KEY`. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls send a tiny preflight chat request before large memory payloads, so API and network failures surface before batching. Use `--timeout`, `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS`, or `DOCMANCER_MISTRAL_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
+`extract` and `consolidate` default to `--provider agent`, which auto-selects a supported agent CLI. Use `--provider claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, or `cursor` to force one. Use `--provider openrouter` with `OPENROUTER_API_KEY` when you want a direct API key path; Mistral models are available through OpenRouter model ids. OpenRouter also acts as the automatic fallback for agent-provider setup, preflight, and generation failures when its key is present. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout`, `DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
 
-`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
+`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Supported apply targets include `codex`, `claude-code`, `cursor`, `gemini`, `opencode`, `github-copilot`, and `cline`. Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; cloud-backed commands send redacted text only after a cloud-use confirmation.
+Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; provider-backed drafting commands send redacted text only after a provider-use confirmation.

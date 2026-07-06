@@ -88,8 +88,6 @@ def _get_copilot_user_instructions_path() -> Path:
 _EMBEDDING_PROVIDER_DEFAULTS = {
     "model2vec": ("minishlab/potion-base-8M", 256),
     "fastembed": ("BAAI/bge-base-en-v1.5", 768),
-    "mistral": ("mistral-embed-2312", 1024),
-    "codestral": ("codestral-embed-2505", 1536),
     "openai": ("text-embedding-3-small", 1536),
     "voyage": ("voyage-3", 1024),
     "cohere": ("embed-english-v3.0", 1024),
@@ -100,7 +98,7 @@ def _apply_embedding_provider_shortcut(config, provider: str) -> None:
     """Set provider/model/dimensions defaults on a config's embeddings block.
 
     Never writes API keys; credentials only ever come from the provider's env
-    var (for example MISTRAL_API_KEY).
+    var.
     """
     model, dims = _EMBEDDING_PROVIDER_DEFAULTS.get(provider, (None, None))
     config.embeddings.provider = provider
@@ -516,7 +514,7 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
 @click.option(
     "--embedding-provider",
     "embedding_provider",
-    type=click.Choice(["model2vec", "fastembed", "mistral", "codestral", "openai", "voyage", "cohere"], case_sensitive=False),
+    type=click.Choice(["model2vec", "fastembed", "openai", "voyage", "cohere"], case_sensitive=False),
     default=None,
     help="Set the embeddings provider in the generated config (default model2vec).",
 )
@@ -734,7 +732,6 @@ def update_cmd(
 @click.option("--recursive/--no-recursive", default=True, show_default=True, help="Recurse through directories.")
 @click.option("--skip-known", is_flag=True, help="Skip files whose content hash is already indexed.")
 @click.option("--no-vectors", is_flag=True, help="Index FTS5 only; skip embedding/vector upsert.")
-@click.option("--ocr", "ocr", type=click.Choice(["mistral"], case_sensitive=False), default=None, help="Run OCR on PDFs/images to extract markdown. Requires MISTRAL_API_KEY.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def ingest_cmd(
     path: str,
@@ -745,19 +742,11 @@ def ingest_cmd(
     recursive: bool,
     skip_known: bool,
     no_vectors: bool,
-    ocr: str | None,
     config_path: str | None,
 ):
     """Index local files or directories."""
     if path.startswith(("http://", "https://")):
         raise click.ClickException("Use `docmancer add` for URLs.")
-
-    if ocr == "mistral":
-        from docmancer.ai.mistral_client import mistral_api_key
-
-        if not mistral_api_key():
-            click.echo("docmancer ingest --ocr mistral needs MISTRAL_API_KEY. Set it and retry.", err=True)
-            sys.exit(2)
 
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
@@ -777,7 +766,6 @@ def ingest_cmd(
             recursive=recursive,
             skip_known=skip_known,
             with_vectors=not no_vectors,
-            ocr=ocr,
         )
         _emit_index_summary(total, agent)
         if getattr(agent, "last_ingest_skips", None):
@@ -1026,12 +1014,6 @@ def doctor_cmd(config_path: str | None):
         f"embeddings: provider={config.embeddings.provider} model={config.embeddings.model} dimensions={config.embeddings.dimensions}",
         indent=4,
     )
-    if emb_provider in ("mistral", "codestral") and not os.environ.get("MISTRAL_API_KEY"):
-        _emit_status_line(
-            f"MISTRAL_API_KEY: not set (required for the {emb_provider} embeddings provider)",
-            state="warn",
-            indent=4,
-        )
     if emb_provider == "fastembed":
         if find_spec("fastembed") is None:
             _emit_status_line(
@@ -1108,6 +1090,22 @@ def doctor_cmd(config_path: str | None):
                     pass
     except Exception:
         pass
+
+    click.echo()
+    click.echo(_style("  Agent consolidation providers", fg="white", bold=True))
+    try:
+        from docmancer.ai.agent_cli_client import DEFAULT_AGENT_ORDER, agent_provider_binaries
+
+        binaries = agent_provider_binaries()
+        for provider in DEFAULT_AGENT_ORDER:
+            binary = binaries[provider]
+            path = shutil.which(binary)
+            if path:
+                _emit_status_line(f"{provider}: {display_path(path)}", indent=4)
+            else:
+                _emit_status_line(f"{provider}: not available ({binary} not on PATH)", state="warn", indent=4)
+    except Exception as exc:  # noqa: BLE001 - doctor should not fail on optional provider inspection
+        _emit_status_line(f"agent providers: could not inspect ({exc})", state="warn", indent=4)
 
     # Skill install status
     click.echo()

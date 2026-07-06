@@ -8,6 +8,8 @@ Outputs are capped by a character budget so a tool call never floods the agent.
 """
 from __future__ import annotations
 
+import os
+
 _DEFAULT_LIMIT = 8
 _CHAR_BUDGET = 6000
 
@@ -100,6 +102,12 @@ def sources_list(agent: str | None = None, scope: str | None = None, kind: str |
 # --- Optional cloud-backed tools (require OPENROUTER_API_KEY) ----------------
 
 
+def _blocked_by_recursion() -> dict | None:
+    if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
+        return {"error": "docmancer MCP memory drafting is disabled inside docmancer agent-provider subprocesses"}
+    return None
+
+
 def _redacted_entries(limit: int):
     from docmancer.memory import MemoryAgent
 
@@ -112,6 +120,9 @@ def memory_extract(limit: int = 30) -> dict:
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
 
+    blocked = _blocked_by_recursion()
+    if blocked:
+        return blocked
     if not openrouter_api_key():
         return {"error": "OPENROUTER_API_KEY is not set"}
     entries = _redacted_entries(limit)
@@ -130,6 +141,9 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
     from docmancer.ai.memory_features import consolidate_memory
     from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
 
+    blocked = _blocked_by_recursion()
+    if blocked:
+        return blocked
     if not openrouter_api_key():
         return {"error": "OPENROUTER_API_KEY is not set"}
     entries = _redacted_entries(limit)

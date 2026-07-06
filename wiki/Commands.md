@@ -17,10 +17,10 @@ Reference for the local docs-RAG CLI. For configuration, see [Configuration](./C
 | `docmancer inspect` | Show index stats, source counts, format counts, and extract locations. |
 | `docmancer remove [source]` | Remove an indexed source or docset root. Use `--all` to clear the index. |
 | `docmancer clear` | Wipe docmancer-owned state and related model caches. Use `--dry-run` first. |
-| `docmancer doctor` | Check config, loader availability, index health, Qdrant/vector state, and installed skills. |
+| `docmancer doctor` | Check config, loader availability, index health, Qdrant/vector state, agent consolidation providers, and installed skills. |
 | `docmancer install <agent>` | Install a markdown skill or instruction file for one agent. For `claude-code` and `codex` this also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block). |
 | `docmancer memory {scan,sync,query,sources,status,clear}` | Discover, index, and recall the memory, instructions, and rules your coding agents wrote on this machine. Local and offline. |
-| `docmancer memory {extract,consolidate}` | Cloud-backed memory drafting. Both default to OpenRouter and accept `--provider mistral` for native Mistral where supported. Fails cleanly without the required provider key. |
+| `docmancer memory {extract,consolidate}` | Provider-backed memory drafting. Both default to `--provider agent`, which uses an installed coding-agent CLI. If an agent provider fails and `OPENROUTER_API_KEY` is set, docmancer retries through OpenRouter. Use `--provider openrouter` for the direct API-key path. |
 | `docmancer memory apply --from <draft> --agent <a>` | Materialize a reviewed draft into an agent's always-loaded file inside a managed block (backup taken). Local, keyless, never automatic. |
 | `docmancer mcp {serve,doctor,install}` | Run or install the packaged `docmancer-mcp` stdio server (local memory and docs search; optional OpenRouter tools). Requires the `mcp` extra. |
 | `docmancer qdrant {up,down,status,upgrade,logs}` | Manage the local Qdrant process used for dense, sparse, and hybrid retrieval. |
@@ -32,9 +32,9 @@ Reference for the local docs-RAG CLI. For configuration, see [Configuration](./C
 | `docmancer memory sync` | Harvest, redact, and index agent memory. `--recreate`, `--dry-run`, `--include`, `--exclude`. |
 | `docmancer memory query "<text>"` | Recall from the local memory index (hybrid by default). |
 | `docmancer memory sources` | List every indexed source with provenance (agent, type, scope, title, path, char count). `--agent`, `--scope`, `--type`, `--json`, `--preview`. |
-| `docmancer memory extract` | Extract durable memory facts via OpenRouter by default. `--provider mistral`, `--model`, `--query`, `--limit`, `--yes`. Requires `OPENROUTER_API_KEY` by default or `MISTRAL_API_KEY` with `--provider mistral`. |
-| `docmancer memory consolidate` | Write a review-only consolidated master-memory draft via OpenRouter by default. `--provider mistral` uses native Mistral instead. `--model`, `--query`, `--output`, `--draft-quality`, `--max-output-tokens`, `--timeout`, `--yes`. Requires `OPENROUTER_API_KEY` by default or `MISTRAL_API_KEY` with `--provider mistral`. |
-| `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor` or `--output`). Defaults to `master-memory-draft.md`; use `--from` for another reviewed draft. `--dry-run`, `--print`, `--remove`, `--yes`. |
+| `docmancer memory extract` | Extract durable memory facts. Defaults to `--provider agent`. Provider choices: `agent`, `claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, `cursor`, `openrouter`. Agent-provider failures retry through OpenRouter when `OPENROUTER_API_KEY` is set. |
+| `docmancer memory consolidate` | Write a review-only consolidated master-memory draft. Defaults to `--provider agent`. `--provider openrouter --model mistralai/<model-id>` uses Mistral models through OpenRouter. Agent-provider failures retry through OpenRouter when configured. `--model`, `--query`, `--output`, `--draft-quality`, `--max-output-tokens`, `--timeout`, `--yes`. |
+| `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor\|gemini\|opencode\|github-copilot\|cline` or `--output`). Defaults to `master-memory-draft.md`; use `--from` for another reviewed draft. `--dry-run`, `--print`, `--remove`, `--yes`. |
 
 Discovery is config-extensible: set `discovery.disabled` to turn off harnesses and `discovery.extra_sources` to add custom paths in `docmancer.yaml`.
 

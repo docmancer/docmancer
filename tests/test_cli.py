@@ -218,7 +218,6 @@ def test_ingest_shows_total_and_calls_agent(tmp_path):
         recursive=False,
         skip_known=True,
         with_vectors=True,
-        ocr=None,
     )
 
 

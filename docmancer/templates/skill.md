@@ -41,7 +41,6 @@ Use `ingest` for local files and directories.
 | `--format <format>` | Restrict to formats such as `md`, `txt`, `pdf`, `docx`, `rtf`, or `html` |
 | `--recursive / --no-recursive` | Recurse through directories |
 | `--skip-known` | Skip files whose content hash is already indexed |
-| `--ocr mistral` | Extract markdown from PDFs and images with Mistral OCR before indexing (requires `MISTRAL_API_KEY`) |
 | `--recreate` | Drop and rebuild the index; when vector sync is enabled, drops the vector collection first so embedder or dimension changes rebuild cleanly |
 
 An OKF bundle (a directory of markdown files with YAML frontmatter, produced by `docmancer memory export --format okf` or another OKF tool) can be ingested directly: reserved `index.md` / `log.md` files are skipped and `type` / `tags` / `timestamp` frontmatter is lifted into the index.

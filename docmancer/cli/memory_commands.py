@@ -7,6 +7,7 @@ SQLite-backed files.
 """
 from __future__ import annotations
 
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -47,6 +48,9 @@ def memory_group():
     before writing with `sync --dry-run`; secrets are redacted on index, and
     local sync/query commands do not upload anything.
     """
+    if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
+        click.echo("docmancer memory commands are disabled inside docmancer agent-provider subprocesses.", err=True)
+        sys.exit(2)
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show what would be indexed.")
@@ -203,10 +207,21 @@ def sources(agent_filter, scope_filter, type_filter, as_json, live_preview, incl
         click.echo()
 
 
-_CLOUD_NOTICE = (
-    "Note: this sends your selected local memory text to {provider} (cloud). "
+_PROVIDER_NOTICE = (
+    "Note: this sends your selected local memory text to {provider}. "
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
+_PROVIDER_CHOICES = [
+    "agent",
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "cline",
+    "github-copilot",
+    "cursor",
+    "openrouter",
+]
 _DEFAULT_CLOUD_INPUT_BUDGET = 90_000
 _DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
 _FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
@@ -215,58 +230,140 @@ _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 2048
 _APPROX_CHARS_PER_TOKEN = 4
 
 
-def _require_mistral_key(command: str) -> None:
-    """Exit cleanly (non-zero, no traceback) when MISTRAL_API_KEY is absent."""
-    from docmancer.ai.mistral_client import mistral_api_key
-
-    if not mistral_api_key():
-        click.echo(f"docmancer memory {command} needs MISTRAL_API_KEY. Set it and retry.", err=True)
-        sys.exit(2)
-
-
-def _require_cloud_key(command: str, provider: str) -> None:
-    if provider == "mistral":
-        _require_mistral_key(command)
-        return
-    from docmancer.ai.openrouter_client import openrouter_api_key
-
-    if not openrouter_api_key():
-        click.echo(
-            f"docmancer memory {command} needs OPENROUTER_API_KEY. Set it and retry.",
-            err=True,
-        )
-        sys.exit(2)
+def _provider_disclosure(provider: str, client=None) -> str:
+    label = getattr(client, "provider_name", None) or provider
+    if provider == "openrouter":
+        return "OpenRouter (cloud)"
+    if provider == "agent":
+        return f"{label} through your installed coding-agent CLI"
+    return f"{label} through your installed coding-agent CLI"
 
 
-def _run_cloud_or_exit(command: str, provider: str, fn):
-    """Run a cloud provider call, exiting cleanly on any failure.
+def _is_agent_provider(provider: str) -> bool:
+    return provider != "openrouter"
 
-    Covers config errors (missing key/SDK) and every runtime/provider failure
-    from the provider: 401s, rate limits, network errors, and malformed responses.
-    """
-    from docmancer.ai.mistral_client import MistralConfigError
+
+def _openrouter_fallback_model(model: str | None) -> str | None:
+    if model and "/" in model:
+        return model
+    return None
+
+
+def _expected_provider_errors():
+    from docmancer.ai.agent_cli_client import AgentCliError
     from docmancer.ai.openrouter_client import OpenRouterConfigError
 
-    provider_label = "Mistral" if provider == "mistral" else "OpenRouter"
-    try:
-        return fn()
-    except (MistralConfigError, OpenRouterConfigError) as exc:
-        click.echo(str(exc), err=True)
-        sys.exit(2)
-    except Exception as exc:  # noqa: BLE001 - provider/runtime errors must not traceback
-        click.echo(f"docmancer memory {command} failed calling {provider_label}: {exc}", err=True)
-        sys.exit(1)
+    return (AgentCliError, OpenRouterConfigError)
 
 
-def _make_cloud_client(provider: str, *, model: str | None, timeout: float | None):
-    if provider == "mistral":
-        from docmancer.ai.mistral_client import MistralClient
+def _make_provider_client(provider: str, *, model: str | None, timeout: float | None):
+    if provider == "openrouter":
+        from docmancer.ai.openrouter_client import OpenRouterClient
 
-        return MistralClient(model=model, timeout_seconds=timeout)
+        return OpenRouterClient(model=model, timeout_seconds=timeout)
 
+    from docmancer.ai.agent_cli_client import AgentCliClient
+
+    return AgentCliClient(agent=provider, model=model, timeout_seconds=timeout)
+
+
+def _make_openrouter_fallback_client(*, model: str | None, timeout: float | None):
     from docmancer.ai.openrouter_client import OpenRouterClient
 
-    return OpenRouterClient(model=model, timeout_seconds=timeout)
+    return OpenRouterClient(model=_openrouter_fallback_model(model), timeout_seconds=timeout)
+
+
+def _make_provider_client_with_setup_fallback_or_exit(
+    command: str,
+    provider: str,
+    *,
+    model: str | None,
+    timeout: float | None,
+):
+    try:
+        return _make_provider_client(provider, model=model, timeout=timeout), provider
+    except _expected_provider_errors() as exc:
+        if not _is_agent_provider(provider):
+            click.echo(str(exc), err=True)
+            sys.exit(2)
+        try:
+            fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
+        except _expected_provider_errors() as fallback_exc:
+            click.echo(f"Agent provider setup failed: {exc}", err=True)
+            click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
+            sys.exit(2)
+        except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
+            click.echo(f"Agent provider setup failed: {exc}", err=True)
+            click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
+            sys.exit(1)
+        click.echo(f"Agent provider setup failed: {exc}", err=True)
+        click.echo("Retrying with OpenRouter fallback.", err=True)
+        return fallback, "openrouter"
+    except Exception as exc:  # noqa: BLE001 - provider setup should not traceback
+        if not _is_agent_provider(provider):
+            click.echo(f"docmancer memory {command} provider setup failed: {exc}", err=True)
+            sys.exit(1)
+        try:
+            fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
+        except _expected_provider_errors() as fallback_exc:
+            click.echo(f"Agent provider setup failed: {exc}", err=True)
+            click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
+            sys.exit(2)
+        except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
+            click.echo(f"Agent provider setup failed: {exc}", err=True)
+            click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
+            sys.exit(1)
+        click.echo(f"Agent provider setup failed: {exc}", err=True)
+        click.echo("Retrying with OpenRouter fallback.", err=True)
+        return fallback, "openrouter"
+
+
+def _run_provider_with_openrouter_fallback_or_exit(
+    command: str,
+    provider: str,
+    client,
+    *,
+    model: str | None,
+    timeout: float | None,
+    fn,
+):
+    """Run an agent provider call, falling back to OpenRouter on agent failure."""
+    try:
+        return fn(client, model)
+    except _expected_provider_errors() as exc:
+        if not _is_agent_provider(provider):
+            click.echo(str(exc), err=True)
+            sys.exit(2)
+        primary_error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - provider/runtime errors must not traceback
+        if not _is_agent_provider(provider):
+            provider_label = getattr(client, "provider_name", None) or "provider"
+            click.echo(f"docmancer memory {command} failed calling {provider_label}: {exc}", err=True)
+            sys.exit(1)
+        primary_error = f"{type(exc).__name__}: {exc}"
+
+    try:
+        fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
+    except _expected_provider_errors() as fallback_exc:
+        click.echo(f"Agent provider failed: {primary_error}", err=True)
+        click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
+        sys.exit(2)
+    except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
+        click.echo(f"Agent provider failed: {primary_error}", err=True)
+        click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
+        sys.exit(1)
+
+    fallback_model = _openrouter_fallback_model(model)
+    click.echo(f"Agent provider failed: {primary_error}", err=True)
+    click.echo("Retrying with OpenRouter fallback.", err=True)
+    try:
+        return fn(fallback, fallback_model)
+    except _expected_provider_errors() as fallback_exc:
+        click.echo(f"OpenRouter fallback failed: {fallback_exc}", err=True)
+        sys.exit(2)
+    except Exception as fallback_exc:  # noqa: BLE001 - fallback runtime should not traceback
+        click.echo(f"docmancer memory {command} OpenRouter fallback failed: {fallback_exc}", err=True)
+        sys.exit(1)
 
 
 def _redacted_entries(agent, *, query: str | None, limit: int | None):
@@ -387,7 +484,7 @@ def _chunk_payload_entries(payload: list[dict], *, budget: int | None) -> tuple[
     }
 
 
-def _chunk_status(command: str, chunks: list[list[dict]], stats: dict, *, provider_label: str = "Mistral") -> None:
+def _chunk_status(command: str, chunks: list[list[dict]], stats: dict, *, provider_label: str = "provider") -> None:
     if len(chunks) <= 1 and not stats["split_entries"]:
         return
     click.echo(
@@ -455,16 +552,8 @@ def _emit_consolidation_plan(
     _emit_block("Consolidation Plan", rows)
 
 
-def _mistral_request_status(action: str, client, *, token_count: int | None = None) -> None:
-    model = getattr(client, "model", None) or "configured model"
-    timeout_ms = getattr(client, "timeout_ms", None)
-    timeout = "SDK default timeout" if timeout_ms is None else f"{timeout_ms / 1000:g}s timeout"
-    tokens = "" if token_count is None else f", ~{token_count} input tokens"
-    click.echo(f"Calling Mistral for {action} ({model}, {timeout}{tokens}).", err=True)
-
-
 def _provider_request_status(action: str, client, *, token_count: int | None = None) -> None:
-    provider = getattr(client, "provider_name", None) or "Mistral"
+    provider = getattr(client, "provider_name", None) or "provider"
     model = getattr(client, "model", None) or "configured model"
     timeout_ms = getattr(client, "timeout_ms", None)
     rows: list[tuple[str, object | None]] = [
@@ -520,18 +609,10 @@ def _consolidate_streaming(consolidate_memory, label, **kwargs):
         finish()
 
 
-def _mistral_preflight(client) -> None:
-    """Send a tiny Mistral request before large memory payloads."""
-    _mistral_request_status("API preflight", client)
-    client.preflight()
-    click.echo("Mistral API preflight succeeded.", err=True)
-
-
-def _provider_preflight(client) -> None:
+def _provider_preflight(client, *, model: str | None = None) -> None:
     """Send a tiny provider request before large memory payloads."""
-    provider = getattr(client, "provider_name", None) or "Mistral"
     _provider_request_status("API preflight", client)
-    client.preflight()
+    client.preflight(model=model)
     click.echo(f"  status   ok", err=True)
 
 
@@ -554,7 +635,7 @@ def _consolidate_payload_in_rounds(
 
     while True:
         chunks, stats = _chunk_payload_entries(current_payload, budget=budget)
-        provider_label = getattr(client, "provider_name", None) or "Mistral"
+        provider_label = getattr(client, "provider_name", None) or "provider"
         _emit_consolidation_plan(
             provider_label=provider_label,
             chunks=chunks,
@@ -633,63 +714,39 @@ def _consolidate_payload_in_rounds(
             )
 
 
-def _moderate_or_exit(command: str, entries, *, model, threshold, timeout):
-    """Drop entries flagged by Mistral moderation. Returns the kept entries.
-
-    Runs after the cloud-use confirmation (moderation is itself a cloud call).
-    Exits cleanly if every entry is dropped.
-    """
-    from docmancer.ai.mistral_client import MistralClient
-    from docmancer.ai.moderation import partition_by_moderation
-
-    def _call():
-        client = MistralClient(model=model, timeout_seconds=timeout)
-        _mistral_request_status(f"memory {command} moderation", client)
-        scores = client.moderate([e.content for e in entries])
-        return partition_by_moderation(entries, scores, threshold=threshold)
-
-    kept, dropped = _run_cloud_or_exit(command, "mistral", _call)
-    if dropped:
-        click.echo(
-            f"Moderation dropped {len(dropped)} entr(y/ies) flagged as privacy-sensitive.",
-            err=True,
-        )
-    if not kept:
-        click.echo("All entries were filtered by moderation; nothing to send.", err=True)
-        sys.exit(1)
-    return kept
-
-
-@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with OpenRouter.")
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with an agent CLI.")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
-@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per cloud request; use 0 to send in one request.")
+@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per provider request; use 0 to send in one request.")
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
-@click.option("--provider", type=click.Choice(["mistral", "openrouter"], case_sensitive=False), default="openrouter", show_default=True, help="Cloud provider for extraction.")
-@click.option("--model", default=None, help="Override the chat model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
-@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per cloud request (default 180, or provider timeout env var; use 0 for provider default).")
-@click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
-@click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
-@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
+@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="agent", show_default=True, help="Provider for extraction.")
+@click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example mistralai/mistral-large-2512.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (default 180, or provider timeout env var; use 0 for provider default).")
+@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def extract(limit, budget, query, output_format, provider, model, timeout, moderate, moderation_threshold, assume_yes, include, exclude):
-    """Extract durable memory facts. Requires OPENROUTER_API_KEY by default."""
+def extract(limit, budget, query, output_format, provider, model, timeout, assume_yes, include, exclude):
+    """Extract durable memory facts. Uses an installed agent CLI by default."""
     import json as _json
 
     provider = provider.lower()
-    _require_cloud_key("extract", provider)
     agent = _agent(include, exclude)
     entries = _redacted_entries(agent, query=query, limit=limit)
     if not entries:
         click.echo("No memory entries to extract from. Run: docmancer memory sync")
         sys.exit(1)
-    provider_label = "Mistral" if provider == "mistral" else "OpenRouter"
-    click.echo(_CLOUD_NOTICE.format(provider=provider_label), err=True)
+    client, active_provider = _make_provider_client_with_setup_fallback_or_exit(
+        "extract", provider, model=model, timeout=timeout
+    )
+    provider_label = getattr(client, "provider_name", None) or provider
+    click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
+    if _is_agent_provider(provider):
+        click.echo("If the agent provider fails, docmancer will retry with OpenRouter when configured.", err=True)
     if not assume_yes:
-        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
-    if moderate:
-        entries = _moderate_or_exit("extract", entries, model=model, threshold=moderation_threshold, timeout=timeout)
+        target = provider_label
+        if _is_agent_provider(provider) and active_provider != "openrouter":
+            target = f"{provider_label}, or OpenRouter fallback if the agent provider fails"
+        click.confirm(f"Send the selected memory to {target}?", abort=True, err=True)
 
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.memory_schemas import ExtractedMemoryFacts
@@ -705,9 +762,8 @@ def extract(limit, budget, query, output_format, provider, model, timeout, moder
             for e in chunk
         )
 
-    def _call():
-        client = _make_cloud_client(provider, model=model, timeout=timeout)
-        _provider_preflight(client)
+    def _call(active_client, active_model):
+        _provider_preflight(active_client, model=active_model)
         all_facts = []
         for i, chunk in enumerate(chunks, start=1):
             metadata = {"entries": len(chunk)}
@@ -719,19 +775,22 @@ def extract(limit, budget, query, output_format, provider, model, timeout, moder
                     err=True,
                 )
             token_count = stats["request_tokens"][i - 1] if stats.get("request_tokens") else None
-            _provider_request_status(f"memory extraction batch {i}/{len(chunks)}", client, token_count=token_count)
+            _provider_request_status(f"memory extraction batch {i}/{len(chunks)}", active_client, token_count=token_count)
             on_progress, finish = _streaming_progress(f"memory extraction batch {i}/{len(chunks)}")
             try:
                 result = extract_memory_facts(
-                    _combined(chunk), metadata, client=client, model=model, on_progress=on_progress
+                    _combined(chunk), metadata, client=active_client, model=active_model, on_progress=on_progress
                 )
             finally:
                 finish()
-            click.echo(f"{provider_label} completed extraction batch {i}/{len(chunks)}.", err=True)
+            active_label = getattr(active_client, "provider_name", None) or provider_label
+            click.echo(f"{active_label} completed extraction batch {i}/{len(chunks)}.", err=True)
             all_facts.extend(result.facts)
         return ExtractedMemoryFacts(facts=all_facts)
 
-    result = _run_cloud_or_exit("extract", provider, _call)
+    result = _run_provider_with_openrouter_fallback_or_exit(
+        "extract", active_provider, client, model=model, timeout=timeout, fn=_call
+    )
     click.echo(_json.dumps(result.model_dump(), indent=2))
 
 
@@ -746,15 +805,13 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--output", "output", default=None, help=f"Where to write the draft (default {_DEFAULT_DRAFT}, or a .okf bundle dir for --format okf).")
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
-@click.option("--budget", default=None, type=int, help="Approximate input-token budget per cloud request. Defaults to 50000, or 35000 with --draft-quality fast; use 0 to send in one request.")
-@click.option("--provider", type=click.Choice(["mistral", "openrouter"], case_sensitive=False), default="openrouter", show_default=True, help="Cloud provider for consolidation.")
-@click.option("--model", default=None, help="Override the chat model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
+@click.option("--budget", default=None, type=int, help="Approximate input-token budget per provider request. Defaults to 50000, or 35000 with --draft-quality fast; use 0 to send in one request.")
+@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="agent", show_default=True, help="Provider for consolidation.")
+@click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example mistralai/mistral-large-2512.")
 @click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
 @click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults to 4096, or 2048 with --draft-quality fast; use 0 for provider default.")
-@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per cloud request (default 180, or provider timeout env var; use 0 for provider default).")
-@click.option("--moderate", "moderate", is_flag=True, help="Run Mistral moderation first and drop privacy-flagged entries.")
-@click.option("--moderation-threshold", "moderation_threshold", default=0.5, show_default=True, type=float, help="Score at/above which a moderation category drops an entry.")
-@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the cloud-use confirmation.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (default 180, or provider timeout env var; use 0 for provider default).")
+@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
 def consolidate(
@@ -768,8 +825,6 @@ def consolidate(
     draft_quality,
     max_output_tokens,
     timeout,
-    moderate,
-    moderation_threshold,
     assume_yes,
     include,
     exclude,
@@ -782,25 +837,23 @@ def consolidate(
     """
     provider = provider.lower()
     draft_quality = draft_quality.lower()
-    _require_cloud_key("consolidate", provider)
     agent = _agent(include, exclude)
     entries = _redacted_entries(agent, query=query, limit=limit)
     if not entries:
         click.echo("No memory entries to consolidate. Run: docmancer memory sync")
         sys.exit(1)
-    provider_label = "Mistral" if provider == "mistral" else "OpenRouter"
-    click.echo(_CLOUD_NOTICE.format(provider=provider_label), err=True)
+    client, active_provider = _make_provider_client_with_setup_fallback_or_exit(
+        "consolidate", provider, model=model, timeout=timeout
+    )
+    provider_label = getattr(client, "provider_name", None) or provider
+    click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
+    if _is_agent_provider(provider):
+        click.echo("If the agent provider fails, docmancer will retry with OpenRouter when configured.", err=True)
     if not assume_yes:
-        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
-    if moderate:
-        moderation_model = model if provider == "mistral" else None
-        entries = _moderate_or_exit(
-            "consolidate",
-            entries,
-            model=moderation_model,
-            threshold=moderation_threshold,
-            timeout=timeout,
-        )
+        target = provider_label
+        if _is_agent_provider(provider) and active_provider != "openrouter":
+            target = f"{provider_label}, or OpenRouter fallback if the agent provider fails"
+        click.confirm(f"Send the selected memory to {target}?", abort=True, err=True)
 
     from docmancer.ai.memory_features import draft_to_markdown
 
@@ -819,14 +872,13 @@ def consolidate(
     if resolved_max_output_tokens <= 0:
         resolved_max_output_tokens = None
 
-    def _call():
-        client = _make_cloud_client(provider, model=model, timeout=timeout)
-        _provider_preflight(client)
+    def _call(active_client, active_model):
+        _provider_preflight(active_client, model=active_model)
         return _consolidate_payload_in_rounds(
             payload,
             instruction=query,
-            client=client,
-            model=model,
+            client=active_client,
+            model=active_model,
             budget=resolved_budget,
             draft_quality=draft_quality,
             max_output_tokens=resolved_max_output_tokens,
@@ -834,7 +886,9 @@ def consolidate(
 
     # The draft is only written after a successful call, so any failure leaves
     # no partial output behind.
-    draft = _run_cloud_or_exit("consolidate", provider, _call)
+    draft = _run_provider_with_openrouter_fallback_or_exit(
+        "consolidate", active_provider, client, model=model, timeout=timeout, fn=_call
+    )
 
     if output_format.lower() == "okf":
         from docmancer.okf.adapters import concepts_from_draft
@@ -881,9 +935,13 @@ _MEMORY_BLOCK_BEGIN = "<!-- docmancer:memory:begin (managed; edits inside are ov
 _MEMORY_BLOCK_END = "<!-- docmancer:memory:end -->"
 
 _APPLY_TARGETS = {
-    "codex": (".codex", "AGENTS.md"),
     "claude-code": (".claude", "CLAUDE.md"),
+    "cline": (".cline", "AGENTS.md"),
+    "codex": (".codex", "AGENTS.md"),
     "cursor": (".cursor", "AGENTS.md"),
+    "gemini": (".gemini", "GEMINI.md"),
+    "github-copilot": (".copilot", "copilot-instructions.md"),
+    "opencode": (".config/opencode", "AGENTS.md"),
 }
 
 
@@ -920,7 +978,8 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
 
     target = _apply_target_path(agent, output)
     if target is None:
-        click.echo("Specify a target: --agent {codex|claude-code|cursor} or --output <path>.", err=True)
+        choices = "|".join(sorted(_APPLY_TARGETS))
+        click.echo(f"Specify a target: --agent {{{choices}}} or --output <path>.", err=True)
         sys.exit(2)
 
     if remove:

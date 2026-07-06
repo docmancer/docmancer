@@ -4,6 +4,8 @@
 
 Installs are file-only. They do not register MCP servers, background daemons, or hosted services.
 
+Install targets, memory discovery, and consolidation providers are related but not identical. `docmancer install` writes skills or instructions for an agent. `docmancer memory sync` can also discover memory and rules from agents that do not have install support. `docmancer memory consolidate --provider agent` uses a headless coding-agent CLI when one is available (`claude`, `codex`, `gemini`, `opencode`, `cline`, `copilot`, or `cursor-agent`), and OpenRouter remains available as `--provider openrouter`.
+
 ## Skill locations
 
 | Command | Where the skill lands |

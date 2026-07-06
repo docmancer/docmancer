@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - Unreleased
+### Added
+
+- **Agent-first memory drafting.** `docmancer memory extract` and `docmancer memory consolidate` now default to `--provider agent`, which uses an installed coding-agent CLI when available. Explicit providers include `claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, `cursor`, and `openrouter`.
+- **Agent provider checks in doctor.** `docmancer doctor` now reports which headless coding-agent CLIs are available for memory drafting.
+- **OpenRouter fallback from agent providers.** When `OPENROUTER_API_KEY` is set, agent-provider setup, preflight, and generation failures now retry through OpenRouter before failing the memory draft command.
+
+### Changed
+
+- **OpenRouter is now the direct cloud fallback.** Use `--provider openrouter --model <model-id>` for API-key-backed memory drafting, including Mistral models exposed through OpenRouter.
+- **Memory apply targets expanded.** `docmancer memory apply --agent` now supports `gemini`, `opencode`, `github-copilot`, and `cline` in addition to `codex`, `claude-code`, and `cursor`.
+- **Live CLI validation now exercises agent providers.** `scripts/live_cli_integration.sh` uses `DOCMANCER_LIVE_MEMORY_PROVIDER` and `DOCMANCER_LIVE_MEMORY_MODEL` for real-memory consolidation, with an optional OpenRouter fallback smoke when `OPENROUTER_API_KEY` is exported.
+- **Provider failures are reported cleanly.** Agent-provider and OpenRouter fallback errors now surface as concise CLI messages without tracebacks.
+
+### Removed
+
+- **Direct Mistral SDK support.** Removed the `mistralai` dependency and all native Mistral provider paths: `--provider mistral`, `--moderate`, `ingest --ocr mistral`, `init --embedding-provider mistral`, and `init --embedding-provider codestral`.
+
 ## [0.6.5] - 2026-06-21
 ### Added
 

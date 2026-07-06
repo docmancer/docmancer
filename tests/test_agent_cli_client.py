@@ -1,0 +1,156 @@
+import json
+import subprocess
+
+import pytest
+
+from docmancer.ai.agent_cli_client import AgentCliClient, AgentCliError
+from docmancer.ai.memory_schemas import ExtractedMemoryFacts
+
+
+def test_agent_auto_selects_first_installed(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda binary: "/bin/" + binary if binary == "codex" else None)
+    client = AgentCliClient(agent="agent")
+    assert client.agent == "codex"
+    assert client.provider_name == "Codex"
+
+
+def test_agent_auto_fails_when_no_cli(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda binary: None)
+    with pytest.raises(AgentCliError, match="no supported agent CLI"):
+        AgentCliClient(agent="agent")
+
+
+def test_claude_native_schema_command_and_validation(monkeypatch):
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["env"] = kwargs["env"]
+        payload = {
+            "facts": [
+                {
+                    "subject": "deployment",
+                    "fact": "Use Railway.",
+                    "evidence": "note",
+                    "confidence": "high",
+                    "source_path": "x",
+                }
+            ]
+        }
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"result": json.dumps(payload)}), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="claude")
+    result = client.parse(
+        [{"role": "system", "content": "Extract facts."}, {"role": "user", "content": "We use Railway."}],
+        ExtractedMemoryFacts,
+    )
+    assert result.facts[0].fact == "Use Railway."
+    assert "--json-schema" in calls["cmd"]
+    assert "--strict-mcp-config" in calls["cmd"]
+    assert calls["cmd"][calls["cmd"].index("--mcp-config") + 1] == "{}"
+    assert calls["env"]["DOCMANCER_NO_RECURSE"] == "1"
+
+
+def test_schema_prompt_adapter_validates_json(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        payload = {
+            "facts": [
+                {
+                    "subject": "package manager",
+                    "fact": "Use pnpm.",
+                    "evidence": "note",
+                    "confidence": "high",
+                    "source_path": "x",
+                }
+            ]
+        }
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="gemini")
+    result = client.parse([{"role": "user", "content": "We use pnpm."}], ExtractedMemoryFacts)
+    assert result.facts[0].fact == "Use pnpm."
+
+
+@pytest.mark.parametrize(
+    ("agent", "expected"),
+    [
+        ("codex", ["codex", "exec", "-", "--output-schema", "--output-last-message", "--sandbox", "read-only", "--ephemeral", "--ignore-rules"]),
+        ("opencode", ["opencode", "--pure", "run", "--format", "json"]),
+        ("cline", ["cline", "--json", "--plan", "--auto-approve", "false"]),
+        ("github-copilot", ["copilot", "-p", "-s", "--no-ask-user"]),
+        ("cursor", ["cursor-agent", "-p", "--output-format", "json"]),
+    ],
+)
+def test_adapter_commands_are_mockable(monkeypatch, agent, expected):
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        payload = {
+            "facts": [
+                {
+                    "subject": "adapter",
+                    "fact": f"{agent} works.",
+                    "evidence": "test",
+                    "confidence": "high",
+                    "source_path": "x",
+                }
+            ]
+        }
+        if agent == "codex":
+            output_path = cmd[cmd.index("--output-last-message") + 1]
+            with open(output_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent=agent)
+    result = client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)
+    assert result.facts[0].fact == f"{agent} works."
+    for token in expected:
+        assert token in calls["cmd"]
+
+
+def test_codex_receives_system_instructions_on_stdin(monkeypatch):
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["input"] = kwargs["input"]
+        payload = {
+            "facts": [
+                {
+                    "subject": "system",
+                    "fact": "System prompt arrived.",
+                    "evidence": "stdin",
+                    "confidence": "high",
+                    "source_path": "x",
+                }
+            ]
+        }
+        output_path = cmd[cmd.index("--output-last-message") + 1]
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="codex")
+    result = client.parse(
+        [{"role": "system", "content": "Never invent facts."}, {"role": "user", "content": "x"}],
+        ExtractedMemoryFacts,
+    )
+    assert result.facts[0].fact == "System prompt arrived."
+    assert "Never invent facts." in calls["input"]
+    assert "User request:" in calls["input"]
+
+
+def test_subprocess_failure_is_clean_error(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="not logged in")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = AgentCliClient(agent="gemini")
+    with pytest.raises(AgentCliError, match="not logged in"):
+        client.parse([{"role": "user", "content": "x"}], ExtractedMemoryFacts)

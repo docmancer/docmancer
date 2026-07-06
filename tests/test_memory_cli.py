@@ -82,3 +82,94 @@ def test_clear_removes_and_status_reports_empty(tmp_path, monkeypatch):
     st = CliRunner().invoke(cli, ["memory", "status"])
     assert st.exit_code == 0
     assert "Exists: False" in st.output
+
+
+def test_consolidate_defaults_to_agent_provider(tmp_path, monkeypatch):
+    from docmancer.ai.agent_cli_client import AgentCliClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+
+    _env(monkeypatch, tmp_path)
+
+    def fake_preflight(self, *, model=None):
+        return None
+
+    def fake_parse(self, messages, response_format, **kwargs):
+        return ConsolidatedMemoryDraft(
+            title="Master Memory",
+            summary="summary",
+            sections=[ConsolidatedMemorySection(heading="Infra", body="Railway.")],
+            source_paths=["note.md"],
+        )
+
+    monkeypatch.setattr(AgentCliClient, "_resolve_agent", classmethod(lambda cls, agent: "claude"))
+    monkeypatch.setattr(AgentCliClient, "preflight", fake_preflight)
+    monkeypatch.setattr(AgentCliClient, "parse", fake_parse)
+
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "Claude Code" in r.output
+    assert "Railway" in out.read_text()
+
+
+def test_mistral_provider_is_not_available(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "mistral", "--yes"])
+    assert r.exit_code == 2
+    assert "Invalid value" in r.output
+
+
+def test_default_agent_provider_error_is_clean(tmp_path, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda _binary: None)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    _env(monkeypatch, tmp_path)
+
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--yes"])
+    assert r.exit_code == 2
+    assert "Agent provider setup failed" in r.output
+    assert "no supported agent CLI found on PATH" in r.output
+    assert "OpenRouter fallback unavailable" in r.output
+    assert "Traceback" not in r.output
+
+
+def test_agent_provider_falls_back_to_openrouter_on_runtime_failure(tmp_path, monkeypatch):
+    from docmancer.ai.agent_cli_client import AgentCliClient, AgentCliError
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+    from docmancer.ai.openrouter_client import OpenRouterClient
+
+    _env(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    def failing_preflight(self, *, model=None):
+        raise AgentCliError("Claude Code failed: test failure")
+
+    def openrouter_preflight(self, *, model=None):
+        return None
+
+    def openrouter_parse(self, messages, response_format, **kwargs):
+        return ConsolidatedMemoryDraft(
+            title="Fallback Memory",
+            summary="summary",
+            sections=[ConsolidatedMemorySection(heading="Infra", body="Railway via fallback.")],
+            source_paths=["note.md"],
+        )
+
+    monkeypatch.setattr(AgentCliClient, "_resolve_agent", classmethod(lambda cls, agent: "claude"))
+    monkeypatch.setattr(AgentCliClient, "preflight", failing_preflight)
+    monkeypatch.setattr(OpenRouterClient, "preflight", openrouter_preflight)
+    monkeypatch.setattr(OpenRouterClient, "parse", openrouter_parse)
+
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--output", str(out), "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "Agent provider failed" in r.output
+    assert "Retrying with OpenRouter fallback" in r.output
+    assert "Railway via fallback" in out.read_text()
+    assert "Traceback" not in r.output
+
+
+def test_recursion_guard_blocks_memory_commands(monkeypatch):
+    monkeypatch.setenv("DOCMANCER_NO_RECURSE", "1")
+    r = CliRunner().invoke(cli, ["memory", "status"])
+    assert r.exit_code == 2
+    assert "disabled inside docmancer agent-provider subprocesses" in r.output

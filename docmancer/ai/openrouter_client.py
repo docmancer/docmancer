@@ -5,13 +5,18 @@ It talks to OpenRouter's OpenAI-compatible chat completions endpoint through
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
 import httpx
 
-from .mistral_client import DEFAULT_TIMEOUT_SECONDS
+from .structured_json import (
+    DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+    json_instruction,
+    json_schema,
+    schema_name,
+    strip_json_fences,
+)
 
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4.1-nano"
 DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -37,44 +42,14 @@ def openrouter_timeout(timeout_seconds: float | None = None) -> float | None:
                     f"{_TIMEOUT_ENV} must be a number of seconds, or 0 to disable it."
                 ) from exc
         else:
-            timeout_seconds = DEFAULT_TIMEOUT_SECONDS
+            timeout_seconds = DEFAULT_PROVIDER_TIMEOUT_SECONDS
     if timeout_seconds <= 0:
         return None
     return timeout_seconds
 
 
-def _schema_name(response_format) -> str:
-    return getattr(response_format, "__name__", "DocmancerResponse")
-
-
-def _json_schema(response_format) -> dict[str, Any]:
-    schema = response_format.model_json_schema()
-    schema.setdefault("additionalProperties", False)
-    return schema
-
-
-def _json_instruction(response_format) -> str:
-    schema = json.dumps(_json_schema(response_format), separators=(",", ":"))
-    return (
-        "Return only valid JSON matching this JSON schema. Do not wrap it in "
-        f"markdown fences.\n\n{schema}"
-    )
-
-
-def _strip_json_fences(text: str) -> str:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-    return stripped
-
-
 class OpenRouterClient:
-    """Thin OpenRouter client with the same parse/preflight surface as MistralClient."""
+    """Thin OpenRouter client with a provider-compatible parse/preflight surface."""
 
     provider_name = "OpenRouter"
 
@@ -146,9 +121,9 @@ class OpenRouterClient:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": _schema_name(response_format),
+                    "name": schema_name(response_format),
                     "strict": True,
-                    "schema": _json_schema(response_format),
+                    "schema": json_schema(response_format),
                 },
             },
         }
@@ -159,12 +134,12 @@ class OpenRouterClient:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in (400, 422):
                 raise
-            fallback_messages = [{"role": "system", "content": _json_instruction(response_format)}, *messages]
+            fallback_messages = [{"role": "system", "content": json_instruction(response_format)}, *messages]
             fallback_body = dict(body)
             fallback_body.pop("response_format", None)
             fallback_body["messages"] = fallback_messages
             data = self._post_chat(fallback_body)
-        text = _strip_json_fences(self._completion_text(data))
+        text = strip_json_fences(self._completion_text(data))
         return response_format.model_validate_json(text)
 
     def preflight(self, *, model: str | None = None) -> None:

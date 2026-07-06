@@ -37,7 +37,10 @@ RUN_LOCAL_CORPUS="${DOCMANCER_RUN_LOCAL_CORPUS:-1}"
 RUN_LOCAL_PDF_CORPUS="${DOCMANCER_RUN_LOCAL_PDF_CORPUS:-1}"
 RUN_FULL_LOCAL_CORPUS="${DOCMANCER_RUN_FULL_LOCAL_CORPUS:-0}"
 RUN_REAL_MEMORY="${DOCMANCER_LIVE_REAL_MEMORY:-1}"
+REAL_MEMORY_PROVIDER="${DOCMANCER_LIVE_MEMORY_PROVIDER:-agent}"
+REAL_MEMORY_MODEL="${DOCMANCER_LIVE_MEMORY_MODEL:-}"
 REAL_MEMORY_BUDGET="${DOCMANCER_LIVE_REAL_MEMORY_BUDGET:-90000}"
+RUN_OPENROUTER_FALLBACK="${DOCMANCER_LIVE_OPENROUTER_FALLBACK:-1}"
 BUILD_TEST_CORPUS="${DOCMANCER_BUILD_TEST_CORPUS:-0}"
 TEST_CORPUS_SCRIPT="$WORKSPACE_ROOT/scripts/build-test-corpus.py"
 TEST_CORPUS_MD_DIR="$WORKSPACE_ROOT/test-corpora/stories-md"
@@ -212,8 +215,11 @@ print_info "Local story corpus ingest: $RUN_LOCAL_CORPUS"
 print_info "Full local story corpus ingest: $RUN_FULL_LOCAL_CORPUS"
 print_info "Local PDF corpus ingest: $RUN_LOCAL_PDF_CORPUS"
 print_info "Build test corpus if missing: $BUILD_TEST_CORPUS"
-print_info "Real agent memory Mistral consolidate: $RUN_REAL_MEMORY"
-print_info "Real memory Mistral request budget: $REAL_MEMORY_BUDGET"
+print_info "Real agent memory provider consolidate: $RUN_REAL_MEMORY"
+print_info "Real memory provider: $REAL_MEMORY_PROVIDER"
+print_info "Real memory model: ${REAL_MEMORY_MODEL:-<provider default>}"
+print_info "Real memory request budget: $REAL_MEMORY_BUDGET"
+print_info "OpenRouter fallback smoke: $RUN_OPENROUTER_FALLBACK"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
 print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
@@ -341,18 +347,17 @@ EOF
 )
 
 if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
-  print_banner "Memory harness (REAL agents + Mistral)"
-  print_info "Reading real agent memory from $REAL_HOME into a throwaway index, then consolidating every selected entry with the exported Mistral key."
-  if [[ -z "${MISTRAL_API_KEY:-}" ]]; then
-    print_warn "MISTRAL_API_KEY is not exported; real-memory Mistral consolidation cannot run."
-    exit 1
-  fi
+  print_banner "Memory harness (REAL agents + agent provider)"
+  print_info "Reading real agent memory from $REAL_HOME into a throwaway index, then consolidating every selected entry with provider '$REAL_MEMORY_PROVIDER'."
   REAL_MEMORY_DB="$TMP_ROOT/real-memory.db"
   REAL_MEMORY_SOURCES="$TMP_ROOT/real-memory-sources.json"
   REAL_MEMORY_DRAFT="$TMP_ROOT/real-memory-draft.md"
   REAL_MEMORY_CONSOLIDATE_LOG="$TMP_ROOT/real-memory-consolidate.out"
+  REAL_MEMORY_OPENROUTER_DRAFT="$TMP_ROOT/real-memory-openrouter-draft.md"
+  REAL_MEMORY_OPENROUTER_LOG="$TMP_ROOT/real-memory-openrouter-consolidate.out"
   (
     export DOCMANCER_HARNESS_HOME="$REAL_HOME"
+    export DOCMANCER_AGENT_CLI_HOME="$REAL_HOME"
     export DOCMANCER_MEMORY_DB="$REAL_MEMORY_DB"
     export HF_HUB_OFFLINE=1
     run "${CLI_CMD[@]}" memory scan
@@ -361,7 +366,11 @@ if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
     run "${CLI_CMD[@]}" memory sources --json >"$REAL_MEMORY_SOURCES"
     run test -s "$REAL_MEMORY_SOURCES"
     print_info "Running real memory consolidate with --limit 0 so the default 100-entry cap does not hide oversized memory."
-    if ! "${CLI_CMD[@]}" memory consolidate --limit 0 --budget "$REAL_MEMORY_BUDGET" --output "$REAL_MEMORY_DRAFT" --yes >"$REAL_MEMORY_CONSOLIDATE_LOG" 2>&1; then
+    consolidate_cmd=("${CLI_CMD[@]}" memory consolidate --limit 0 --budget "$REAL_MEMORY_BUDGET" --provider "$REAL_MEMORY_PROVIDER" --output "$REAL_MEMORY_DRAFT" --yes)
+    if [[ -n "$REAL_MEMORY_MODEL" ]]; then
+      consolidate_cmd+=(--model "$REAL_MEMORY_MODEL")
+    fi
+    if ! "${consolidate_cmd[@]}" >"$REAL_MEMORY_CONSOLIDATE_LOG" 2>&1; then
       cat "$REAL_MEMORY_CONSOLIDATE_LOG"
       print_warn "real memory consolidate failed"
       exit 1
@@ -372,9 +381,23 @@ if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
       print_warn "real memory consolidate still hit a provider context limit"
       exit 1
     fi
-    if grep -Eqi "Trimmed Mistral input|Truncated by docmancer|omitted [1-9][0-9]*" "$REAL_MEMORY_CONSOLIDATE_LOG"; then
+    if grep -Eqi "Truncated by docmancer|omitted [1-9][0-9]*" "$REAL_MEMORY_CONSOLIDATE_LOG"; then
       print_warn "real memory consolidate reported dropped or truncated entries"
       exit 1
+    fi
+    if [[ "$RUN_OPENROUTER_FALLBACK" == "1" ]]; then
+      if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+        print_info "Skipping OpenRouter fallback smoke because OPENROUTER_API_KEY is not exported."
+      else
+        print_info "Running explicit OpenRouter fallback smoke."
+        if ! "${CLI_CMD[@]}" memory consolidate --limit 1 --provider openrouter --model "${DOCMANCER_LIVE_OPENROUTER_MODEL:-mistralai/mistral-large-2512}" --output "$REAL_MEMORY_OPENROUTER_DRAFT" --yes >"$REAL_MEMORY_OPENROUTER_LOG" 2>&1; then
+          cat "$REAL_MEMORY_OPENROUTER_LOG"
+          print_warn "OpenRouter fallback memory consolidate failed"
+          exit 1
+        fi
+        cat "$REAL_MEMORY_OPENROUTER_LOG"
+        run test -s "$REAL_MEMORY_OPENROUTER_DRAFT"
+      fi
     fi
     run "${CLI_CMD[@]}" memory clear --yes
   )

@@ -6,16 +6,22 @@ when the optional extra is missing.
 """
 from __future__ import annotations
 
+import os
+
 from . import tools
 
 _MISSING_MCP = (
     "the MCP server requires the 'mcp' extra; install with "
     "`pip install docmancer[mcp]` (or `pipx inject docmancer mcp`)."
 )
+_NO_RECURSE_MESSAGE = "docmancer MCP server is disabled inside docmancer agent-provider subprocesses."
 
 
 def build_server():
     """Construct and return a FastMCP server with docmancer tools registered."""
+    if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
+        raise RuntimeError(_NO_RECURSE_MESSAGE)
+
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:  # pragma: no cover - exercised via doctor/serve hint
@@ -57,7 +63,7 @@ def main() -> None:
     """Console-script entrypoint: run the stdio MCP server."""
     try:
         server = build_server()
-    except ImportError as exc:
+    except (ImportError, RuntimeError) as exc:
         import sys
 
         print(str(exc), file=sys.stderr)

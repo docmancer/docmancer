@@ -1,9 +1,9 @@
-"""Cloud-backed memory intelligence for docmancer.
+"""Provider-backed memory intelligence for docmancer.
 
-These features are key-gated extras on top of the local-first memory harness.
-They require ``OPENROUTER_API_KEY`` by default and call a hosted chat model to
-extract durable memory facts and produce review-only consolidated drafts. The
-default local ``docmancer memory`` commands never touch this package.
+These features sit on top of the local-first memory harness. The default
+drafting provider uses an installed coding-agent CLI. The optional OpenRouter
+fallback requires ``OPENROUTER_API_KEY`` and calls a hosted chat model to
+extract durable memory facts or produce review-only consolidated drafts.
 """
 from __future__ import annotations
 

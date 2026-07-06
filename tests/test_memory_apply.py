@@ -117,3 +117,19 @@ def test_apply_agent_target_resolves_under_home(tmp_path, monkeypatch):
     target = tmp_path / "home" / ".codex" / "AGENTS.md"
     assert target.exists()
     assert BEGIN in target.read_text()
+
+
+def test_apply_new_agent_targets_resolve_under_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(tmp_path / "home"))
+    draft = _draft(tmp_path)
+    expected = {
+        "gemini": tmp_path / "home" / ".gemini" / "GEMINI.md",
+        "opencode": tmp_path / "home" / ".config" / "opencode" / "AGENTS.md",
+        "github-copilot": tmp_path / "home" / ".copilot" / "copilot-instructions.md",
+        "cline": tmp_path / "home" / ".cline" / "AGENTS.md",
+    }
+    for agent, target in expected.items():
+        r = CliRunner().invoke(cli, ["memory", "apply", "--from", str(draft), "--agent", agent, "--yes"])
+        assert r.exit_code == 0, r.output
+        assert target.exists()
+        assert BEGIN in target.read_text()
