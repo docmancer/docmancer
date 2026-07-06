@@ -152,6 +152,12 @@ class OpenRouterClient:
             "model": model or self.model,
             "messages": messages,
             "temperature": temperature,
+            "provider": {
+                "require_parameters": True,
+                "sort": {"by": "throughput", "partition": "none"},
+                "preferred_min_throughput": {"p50": 40},
+                "preferred_max_latency": {"p90": 20},
+            },
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -183,6 +189,11 @@ class OpenRouterClient:
             "messages": [{"role": "user", "content": "Reply with ok."}],
             "temperature": 0.0,
             "max_tokens": _PREFLIGHT_MAX_TOKENS,
+            "provider": {
+                "sort": {"by": "throughput", "partition": "none"},
+                "preferred_min_throughput": {"p50": 40},
+                "preferred_max_latency": {"p90": 20},
+            },
         }
         self._post_chat(body)
 

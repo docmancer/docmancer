@@ -15,7 +15,13 @@ from pathlib import Path
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
-from docmancer.cli.ui import BANNER_COLOR, BANNER_LINES, color_enabled, display_path, style
+from docmancer.cli.ui import (
+    color_enabled,
+    display_path,
+    emit_brand_header,
+    emit_status_line,
+    style,
+)
 
 
 def _effective_config(config_path: str | None) -> str | None:
@@ -305,22 +311,11 @@ def _style(text: str, **styles: str | bool) -> str:
 
 
 def _emit_brand_header(command: str, subtitle: str) -> None:
-    click.echo()
-    for line in BANNER_LINES:
-        click.echo(_style(line, fg=BANNER_COLOR, bold=True))
-    click.echo(_style(f"  {command}", fg="white", bold=True) + _style(f"  {subtitle}", fg="bright_black"))
-    click.echo()
+    emit_brand_header(command, subtitle)
 
 
 def _emit_status_line(message: str, state: str = "ok", indent: int = 2) -> None:
-    palette = {
-        "ok": ("[OK]", "bright_green"),
-        "info": ("[--]", "bright_cyan"),
-        "warn": ("[--]", "yellow"),
-        "error": ("[!!]", "red"),
-    }
-    label, color = palette[state]
-    click.echo(" " * indent + _style(label, fg=color, bold=True) + f" {message}")
+    emit_status_line(message, state=state, indent=indent)
 
 
 def _emit_next_step(text: str) -> None:

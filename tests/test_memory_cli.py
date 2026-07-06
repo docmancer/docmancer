@@ -112,6 +112,76 @@ def test_consolidate_defaults_to_agent_provider(tmp_path, monkeypatch):
     assert "Railway" in out.read_text()
 
 
+def test_consolidate_markdown_compacts_large_source_lists():
+    from docmancer.ai.memory_features import draft_to_markdown
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+
+    draft = ConsolidatedMemoryDraft(
+        title="Master Memory",
+        summary="summary",
+        sections=[ConsolidatedMemorySection(heading="Infra", body="Railway.")],
+        source_paths=[f"/Users/x/app/memory/source-{i}.md" for i in range(30)],
+    )
+
+    markdown = draft_to_markdown(draft)
+
+    assert "This draft cites 30 source file(s)." in markdown
+    assert "more source file(s) omitted" in markdown
+    assert "/Users/x/app/memory/source-29.md" not in markdown
+
+
+def test_merge_text_compacts_verbose_intermediate_drafts():
+    from docmancer.ai.memory_features import draft_to_merge_text
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+
+    draft = ConsolidatedMemoryDraft(
+        title="Batch Memory",
+        summary="summary " * 400,
+        sections=[
+            ConsolidatedMemorySection(heading=f"Section {i}", body="durable detail " * 800)
+            for i in range(5)
+        ],
+        source_paths=[f"/Users/x/app/memory/source-{i}.md" for i in range(100)],
+        warnings=["warning " * 200 for _ in range(20)],
+    )
+
+    text = draft_to_merge_text(draft, max_chars=6_000)
+
+    assert len(text) <= 6_100
+    assert "Source files represented: 100" in text
+    assert "/Users/x/app/memory/source-99.md" not in text
+    assert "truncated for merge" in text
+
+
+def test_codex_consolidate_defaults_to_parallel_batches(tmp_path, monkeypatch):
+    from docmancer.ai.agent_cli_client import AgentCliClient
+    from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+
+    _env(monkeypatch, tmp_path)
+
+    def fake_preflight(self, *, model=None):
+        return None
+
+    def fake_parse(self, messages, response_format, **kwargs):
+        return ConsolidatedMemoryDraft(
+            title="Master Memory",
+            summary="summary",
+            sections=[ConsolidatedMemorySection(heading="Infra", body="Railway.")],
+            source_paths=["note.md"],
+        )
+
+    monkeypatch.setattr(AgentCliClient, "_resolve_agent", classmethod(lambda cls, agent: "codex"))
+    monkeypatch.setattr(AgentCliClient, "preflight", fake_preflight)
+    monkeypatch.setattr(AgentCliClient, "parse", fake_parse)
+
+    out = tmp_path / "draft.md"
+    r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "codex", "--output", str(out), "--yes"])
+
+    assert r.exit_code == 0, r.output
+    assert "provider  Codex" in r.output
+    assert "concurrency        2" in r.output
+
+
 def test_unknown_provider_is_not_available(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     r = CliRunner().invoke(cli, ["memory", "consolidate", "--provider", "not-a-provider", "--yes"])
@@ -169,6 +239,7 @@ def test_agent_provider_falls_back_to_openrouter_on_runtime_failure(tmp_path, mo
     assert "Retrying with OpenRouter fallback" in r.output
     assert "batch budget       25,000 tokens" in r.output
     assert "output cap         8,192 tokens" in r.output
+    assert "concurrency        3" in r.output
     assert seen["max_tokens"] == 8192
     assert "Railway via fallback" in out.read_text()
     assert "Traceback" not in r.output

@@ -10,12 +10,46 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from time import monotonic
 
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
+from docmancer.cli.ui import TAGLINE, display_path, emit_brand_header, emit_status_line, style
+
+
+def _emit_counts(heading: str, counts: Counter) -> None:
+    """Render a labeled count breakdown, largest first, aligned in a column."""
+    if not counts:
+        return
+    click.echo("  " + style(heading, fg="cyan", bold=True))
+    width = max(len(str(key)) for key in counts)
+    for key, count in sorted(counts.items(), key=lambda kv: (-kv[1], str(kv[0]))):
+        click.echo(f"    {str(key).ljust(width)}  " + style(str(count), fg="bright_green", bold=True))
+
+
+def _emit_sync_details(agent) -> None:
+    """Show per-agent and per-kind breakdown plus totals and the index path.
+
+    Reads the freshly written index via ``sources()``/``status()`` (no second
+    harvest of the agent files on disk).
+    """
+    info = agent.status()
+    rows = agent.sources()
+    if rows:
+        by_agent = Counter(r["agent"] for r in rows)
+        by_kind = Counter(r["type"] for r in rows)
+        total_chars = sum(int(r.get("chars") or 0) for r in rows)
+        _emit_counts("By agent", by_agent)
+        _emit_counts("By kind", by_kind)
+        click.echo(
+            "  "
+            + style(f"{total_chars:,}", fg="white", bold=True)
+            + f" characters across {info['sources']} sources, {info['sections']} sections"
+        )
+    click.echo("  " + style("Index", fg="bright_black") + f"  {display_path(info['db_path'])}")
 
 
 def _agent(include=(), exclude=()):
@@ -81,23 +115,36 @@ def scan(include: tuple[str, ...], exclude: tuple[str, ...]):
 def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple[str, ...]):
     """Harvest, redact, and index agent memory into the local store."""
     agent = _agent(include, exclude)
+    emit_brand_header("docmancer memory sync", TAGLINE)
     if dry_run:
         entries = agent.preview()
         if not entries:
-            click.echo("Would index 0 entries.")
+            emit_status_line("Would index 0 entries; no agent memory found yet.", state="info")
             return
         by_scope = Counter(e.scope for e in entries)
-        click.echo(f"Would index {len(entries)} entries from {len(by_scope)} scope(s):")
-        for scope, count in sorted(by_scope.items()):
-            click.echo(f"  {count:>4}  {scope}")
-        click.echo("Secrets are redacted on index. Run without --dry-run to write.")
+        by_kind = Counter(e.extra.get("kind", "agent-memory") for e in entries)
+        emit_status_line(f"Would index {len(entries)} entries from {len(by_scope)} scope(s).", state="info")
+        _emit_counts("By kind", by_kind)
+        _emit_counts("By scope", by_scope)
+        click.echo()
+        emit_status_line("Secrets are redacted on index. Run without --dry-run to write.", state="info")
         return
     n = agent.sync(recreate=recreate)
-    if n:
-        click.echo(f"Indexed {n} memory entries from your coding agents.")
-        click.echo('Try: docmancer memory query "..."')
-    else:
-        click.echo("No agent memory found yet. Once your agents write memory, run: docmancer memory sync")
+    if not n:
+        emit_status_line(
+            "No agent memory found yet. Once your agents write memory, run: docmancer memory sync",
+            state="info",
+        )
+        return
+    verb = "Re-indexed" if recreate else "Indexed"
+    emit_status_line(f"{verb} {n} memory entries from your coding agents.")
+    _emit_sync_details(agent)
+    click.echo()
+    click.echo(
+        "  "
+        + style("Next", fg="bright_green", bold=True)
+        + '  docmancer memory query "why did we pick Railway"'
+    )
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Search your agents' memory.")
@@ -231,6 +278,10 @@ _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
 _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 2048
 _OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS = 8192
 _OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
+_DEFAULT_CONSOLIDATE_CONCURRENCY = 1
+_CODEX_CONSOLIDATE_CONCURRENCY = 2
+_OPENROUTER_CONSOLIDATE_CONCURRENCY = 3
+_MERGE_DRAFT_MAX_CHARS = 12_000
 _APPROX_CHARS_PER_TOKEN = 4
 
 
@@ -523,6 +574,10 @@ def _is_openrouter_client(client) -> bool:
     return (getattr(client, "provider_name", "") or "").lower() == "openrouter"
 
 
+def _is_codex_client(client) -> bool:
+    return (getattr(client, "provider_name", "") or "").lower() == "codex"
+
+
 def _default_consolidate_budget(*, draft_quality: str, client) -> int:
     if _is_openrouter_client(client):
         return (
@@ -541,6 +596,14 @@ def _default_consolidate_max_output_tokens(*, draft_quality: str, client) -> int
             else _OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS
         )
     return _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS if draft_quality == "fast" else _DEFAULT_CONSOLIDATE_MAX_OUTPUT_TOKENS
+
+
+def _default_consolidate_concurrency(*, client) -> int:
+    if _is_openrouter_client(client):
+        return _OPENROUTER_CONSOLIDATE_CONCURRENCY
+    if _is_codex_client(client):
+        return _CODEX_CONSOLIDATE_CONCURRENCY
+    return _DEFAULT_CONSOLIDATE_CONCURRENCY
 
 
 def _emit_block(title: str, rows: list[tuple[str, object | None]], *, err: bool = True) -> None:
@@ -564,6 +627,7 @@ def _emit_consolidation_plan(
     budget: int | None,
     max_output_tokens: int | None,
     draft_quality: str,
+    concurrency: int,
 ) -> None:
     merge_step = "yes" if len(chunks) > 1 else "no"
     rows: list[tuple[str, object | None]] = [
@@ -573,6 +637,7 @@ def _emit_consolidation_plan(
         ("batch budget", "single request" if budget is None or budget <= 0 else _fmt_count(budget, "tokens")),
         ("output cap", "provider default" if max_output_tokens is None else _fmt_count(max_output_tokens, "tokens")),
         ("draft quality", draft_quality),
+        ("concurrency", concurrency),
         ("merge step", merge_step),
     ]
     if stats["split_entries"]:
@@ -653,9 +718,10 @@ def _consolidate_payload_in_rounds(
     budget: int | None,
     draft_quality: str,
     max_output_tokens: int | None,
+    concurrency: int,
 ):
     """Map-reduce memory consolidation while preserving every selected entry."""
-    from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown
+    from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown, draft_to_merge_text
 
     current_payload = payload
     current_instruction = instruction
@@ -671,6 +737,7 @@ def _consolidate_payload_in_rounds(
             budget=budget,
             max_output_tokens=max_output_tokens,
             draft_quality=draft_quality,
+            concurrency=concurrency,
         )
 
         if len(chunks) == 1:
@@ -693,8 +760,7 @@ def _consolidate_payload_in_rounds(
             click.echo(f"  duration {_fmt_seconds(monotonic() - started)}", err=True)
             return draft
 
-        drafts = []
-        for i, chunk in enumerate(chunks, start=1):
+        def _run_batch(i: int, chunk: list[dict]):
             token_count = stats["request_tokens"][i - 1]
             batch_instruction = (
                 f"{current_instruction or 'Consolidate these into a coherent master memory draft.'}\n\n"
@@ -702,7 +768,6 @@ def _consolidate_payload_in_rounds(
                 "Preserve durable facts, conflicts, warnings, and source paths. "
                 "Do not assume other batches contain the same information."
             )
-            _provider_request_status(f"memory consolidation batch {i}/{len(chunks)}", client, token_count=token_count)
             started = monotonic()
             draft = _consolidate_streaming(
                 consolidate_memory,
@@ -715,18 +780,41 @@ def _consolidate_payload_in_rounds(
                 max_tokens=max_output_tokens,
             )
             source_files = [e.get("source_path", "") for e in chunk if e.get("source_path")]
+            draft.source_paths = list(dict.fromkeys([*draft.source_paths, *source_files]))
             markdown = draft_to_markdown(draft, source_files=source_files)
-            click.echo(f"  status   completed", err=True)
-            click.echo(f"  output   {len(markdown):,} chars", err=True)
-            click.echo(f"  duration {_fmt_seconds(monotonic() - started)}", err=True)
-            drafts.append(
-                {
-                    "scope": "docmancer-consolidation",
-                    "title": f"Round {round_no} batch {i} consolidated draft",
-                    "source_path": f"docmancer://memory-consolidate/round-{round_no}/batch-{i}",
-                    "text": markdown,
-                }
-            )
+            merge_text = draft_to_merge_text(draft, source_files=source_files, max_chars=_MERGE_DRAFT_MAX_CHARS)
+            return i, {
+                "scope": "docmancer-consolidation",
+                "title": f"Round {round_no} batch {i} consolidated draft",
+                "source_path": f"docmancer://memory-consolidate/round-{round_no}/batch-{i}",
+                "text": merge_text,
+            }, len(markdown), len(merge_text), monotonic() - started
+
+        drafts_by_index = {}
+        workers = max(1, min(concurrency, len(chunks)))
+        for i, chunk in enumerate(chunks, start=1):
+            token_count = stats["request_tokens"][i - 1]
+            _provider_request_status(f"memory consolidation batch {i}/{len(chunks)}", client, token_count=token_count)
+        if workers == 1:
+            for i, chunk in enumerate(chunks, start=1):
+                index, draft_entry, markdown_size, merge_size, elapsed = _run_batch(i, chunk)
+                click.echo(f"  status   completed", err=True)
+                click.echo(f"  output   {markdown_size:,} chars", err=True)
+                click.echo(f"  merge    {merge_size:,} chars", err=True)
+                click.echo(f"  duration {_fmt_seconds(elapsed)}", err=True)
+                drafts_by_index[index] = draft_entry
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(_run_batch, i, chunk): i for i, chunk in enumerate(chunks, start=1)}
+                for future in as_completed(futures):
+                    index, draft_entry, markdown_size, merge_size, elapsed = future.result()
+                    click.echo(f"  batch    {index}/{len(chunks)} completed", err=True)
+                    click.echo(f"  output   {markdown_size:,} chars", err=True)
+                    click.echo(f"  merge    {merge_size:,} chars", err=True)
+                    click.echo(f"  duration {_fmt_seconds(elapsed)}", err=True)
+                    drafts_by_index[index] = draft_entry
+
+        drafts = [drafts_by_index[i] for i in range(1, len(chunks) + 1)]
 
         current_payload = drafts
         current_instruction = (
@@ -838,6 +926,7 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
 @click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
 @click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults are provider-specific; use 0 for provider default.")
+@click.option("--concurrency", default=None, type=int, help="Parallel consolidation requests. Defaults are provider-specific; use 1 for serial execution.")
 @click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (provider-specific default, or provider timeout env var; use 0 for provider default).")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
@@ -852,6 +941,7 @@ def consolidate(
     model,
     draft_quality,
     max_output_tokens,
+    concurrency,
     timeout,
     assume_yes,
     include,
@@ -898,6 +988,10 @@ def consolidate(
             )
         if resolved_max_output_tokens <= 0:
             resolved_max_output_tokens = None
+        resolved_concurrency = concurrency
+        if resolved_concurrency is None:
+            resolved_concurrency = _default_consolidate_concurrency(client=active_client)
+        resolved_concurrency = max(1, resolved_concurrency)
         _provider_preflight(active_client, model=active_model)
         return _consolidate_payload_in_rounds(
             payload,
@@ -907,6 +1001,7 @@ def consolidate(
             budget=resolved_budget,
             draft_quality=draft_quality,
             max_output_tokens=resolved_max_output_tokens,
+            concurrency=resolved_concurrency,
         )
 
     # The draft is only written after a successful call, so any failure leaves
@@ -914,6 +1009,7 @@ def consolidate(
     draft = _run_provider_with_openrouter_fallback_or_exit(
         "consolidate", active_provider, client, model=model, timeout=timeout, fn=_call
     )
+    draft.source_paths = list(dict.fromkeys(source_files))
 
     if output_format.lower() == "okf":
         from docmancer.okf.adapters import concepts_from_draft

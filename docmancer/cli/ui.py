@@ -36,6 +36,30 @@ def style(text: str, **styles: str | bool) -> str:
     return text
 
 
+def emit_brand_header(command: str, subtitle: str = "") -> None:
+    """Print the docmancer ASCII banner followed by a command/subtitle line."""
+    click.echo()
+    for line in BANNER_LINES:
+        click.echo(style(line, fg=BANNER_COLOR, bold=True))
+    tail = style(f"  {subtitle}", fg="bright_black") if subtitle else ""
+    click.echo(style(f"  {command}", fg="white", bold=True) + tail)
+    click.echo()
+
+
+_STATUS_PALETTE = {
+    "ok": ("[OK]", "bright_green"),
+    "info": ("[--]", "bright_cyan"),
+    "warn": ("[--]", "yellow"),
+    "error": ("[!!]", "red"),
+}
+
+
+def emit_status_line(message: str, state: str = "ok", indent: int = 2) -> None:
+    """Print a status line with a colored ``[OK]``/``[--]``/``[!!]`` label."""
+    label, color = _STATUS_PALETTE[state]
+    click.echo(" " * indent + style(label, fg=color, bold=True) + f" {message}")
+
+
 def display_path(path: str | os.PathLike[str]) -> str:
     raw_path = os.fspath(path)
     if "://" in raw_path:

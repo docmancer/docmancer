@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.10] - Unreleased
+### Changed
+
+- **Branded, detailed `memory sync` output.** `docmancer memory sync` now prints the docmancer ASCII banner and a breakdown of what was indexed: entries by agent and by kind, total characters across sources and sections, and the local index path. The dry-run preview gains the same banner and a by-kind and by-scope breakdown. The brand header and status-line helpers moved into `docmancer/cli/ui.py` so the CLI shares one implementation.
+- **Faster, bounded memory consolidation.** `docmancer memory consolidate` now compacts intermediate batch drafts before merge rounds, so verbose provider output does not recursively create huge second-stage prompts. The final markdown also summarizes source provenance instead of printing every source path as a long appendix.
+- **Provider-aware consolidation concurrency.** OpenRouter consolidation now defaults to three parallel batch requests, Codex defaults to two, and `--concurrency` can override the provider-specific default. OpenRouter requests also prefer high-throughput structured-output routes.
+
 ## [0.6.9] - 2026-07-06
 ### Fixed
 
