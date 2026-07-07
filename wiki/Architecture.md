@@ -1,6 +1,6 @@
 # Architecture
 
-Docmancer is a local-first memory harness for coding agents, with documentation RAG as a secondary capability on the same retrieval engine. It discovers the memory, instructions, and rules your coding agents already wrote on this machine, indexes them into a local hybrid (lexical + dense) store, and recalls, consolidates, and carries them across agents. The same engine indexes docs you point it at and returns compact context packs through `docmancer query`.
+Docmancer is a local-first memory harness for coding agents, with documentation RAG as a secondary capability on the same retrieval engine. It discovers the memory, instructions, and rules your coding agents already wrote on this machine, indexes them into a local hybrid (lexical + dense) store, and recalls relevant snippets through CLI, MCP, and hooks. The same engine indexes docs you point it at and returns compact context packs through `docmancer query`.
 
 There is no hosted query API or separate server runtime in the Python package. The default retrieval stack is fully local and offline: SQLite FTS5 for lexical search, a vendored static `model2vec` embedding model (`potion-base-8M`) for dense vectors, and `sqlite-vec` as a single-file vector store with no daemon. FastEmbed + Qdrant is an optional heavy backend (`pipx install "docmancer[embeddings-heavy]"`).
 
@@ -11,7 +11,8 @@ The primary surface indexes context your agents already leave on disk.
 - **Discovery and harvest** (`docmancer/harness`): per-agent readers locate memory, instruction files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), and rule directories for Claude Code, Codex, Cursor, Gemini, and many external agents, plus repo-level instruction files recovered from each agent's recorded project paths. Entries carry a `kind` (`agent-memory`, `instructions`, or `rules`) and provenance (harness, scope, path).
 - **Privacy** (`docmancer/harness/privacy`): a redaction filter strips secrets before anything is indexed, and `--include` / `--exclude` globs plus `--dry-run` scope the harvest. Nothing is uploaded on the sync/recall path.
 - **Index** (`docmancer/memory`): entries are indexed into a dedicated memory collection under `~/.docmancer/memory.db` with a co-located `sqlite-vec` file, kept separate from any docs index. `docmancer memory query` answers through the same hybrid dispatcher used for docs.
-- **Consolidation** (`docmancer/ai`): `docmancer memory consolidate` sends privacy-redacted entries to a provider and returns a review-only master-memory draft. It defaults to `--provider agent`, which drives an installed coding-agent CLI (Claude Code, Codex, Gemini, and others) in an isolated subprocess; OpenRouter is the direct-API-key path and the automatic fallback when an agent provider fails and `OPENROUTER_API_KEY` is set. `docmancer memory apply` materializes a reviewed draft into an agent's always-loaded file inside a managed block.
+- **Hook recall** (`docmancer/memory/hooks.py`): `docmancer memory hook-context` reads Claude Code or Codex hook JSON from stdin, runs local retrieval only, and emits compact `additionalContext` when relevant source-backed matches clear the threshold. It is timeout-bounded and silent on weak matches, errors, or stale indexes.
+- **Consolidation** (`docmancer/ai`): `docmancer memory consolidate --provider openrouter` sends selected privacy-redacted entries to OpenRouter and returns a review-only master-memory draft. This is optional maintenance, not the main memory-transfer path. `docmancer memory apply` materializes a reviewed draft into an agent's always-loaded file inside a managed block.
 
 ## Docs indexing
 
@@ -54,9 +55,9 @@ Neighbor expansion works for lexical and hybrid modes. Use `--expand` for adjace
 
 ## Agent installs
 
-`docmancer setup` and `docmancer install <agent>` write markdown skill or instruction files for supported agents. The installed guidance teaches agents to run `docmancer memory query`, `docmancer query`, `docmancer ingest`, and `docmancer add` directly. For Claude Code and Codex, setup also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block) so the agent reliably recalls memory before answering questions about past work.
+`docmancer setup` and `docmancer install <agent>` write markdown skill or instruction files for supported agents. The installed guidance teaches agents to run `docmancer memory query`, `docmancer query`, `docmancer ingest`, and `docmancer add` directly. For Claude Code and Codex, setup also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block) so manual pull recall still works when hooks are absent.
 
-No server registration is performed during install.
+No server registration is performed during install. `docmancer install claude-code --hooks` and `docmancer install codex --hooks` additionally install lifecycle hooks for automatic local recall. These hooks call the same CLI, never call OpenRouter, and can be removed with `docmancer remove <agent> --hooks`.
 
 ## Concurrency
 
@@ -68,9 +69,10 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 agent memory + CLAUDE.md / AGENTS.md / rules (Claude Code, Codex, Cursor, Gemini, ...)
   -> discover + harvest + redact
   -> SQLite FTS5 + sqlite-vec (memory.db)
-  -> docmancer memory query        (recall)
-  -> docmancer memory consolidate  (agent CLI or OpenRouter -> review-only draft)
-  -> docmancer memory apply        (managed block in an agent's always-loaded file)
+  -> docmancer memory query        (manual recall)
+  -> docmancer memory hook-context (automatic Claude Code / Codex hook recall)
+  -> docmancer memory consolidate  (optional OpenRouter -> review-only draft)
+  -> docmancer memory apply        (optional managed block in an agent's always-loaded file)
 
 GitBook / Mintlify / web / GitHub / local files
   -> normalized sections
@@ -80,5 +82,6 @@ GitBook / Mintlify / web / GitHub / local files
 
 docmancer setup / install
   -> markdown skill files + recall instruction for coding agents
+  -> optional Claude Code / Codex hooks with --hooks
   -> agents call the same local CLI
 ```

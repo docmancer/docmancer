@@ -2,9 +2,9 @@
 
 `docmancer setup` auto-detects installed coding agents and installs skill files in one pass. For manual per-agent installation, use `docmancer install <agent>`.
 
-Installs are file-only. They do not register MCP servers, background daemons, or hosted services.
+Installs are file-only by default. They do not register MCP servers, background daemons, or hosted services.
 
-Install targets, memory discovery, and consolidation providers are related but not identical. `docmancer install` writes skills or instructions for an agent. `docmancer memory sync` can also discover memory and rules from agents that do not have install support. `docmancer memory consolidate --provider agent` uses a headless coding-agent CLI when one is available (`claude`, `codex`, `gemini`, `opencode`, `cline`, `copilot`, or `cursor-agent`), and OpenRouter remains available as `--provider openrouter`.
+Install targets, memory discovery, and hook recall are related but not identical. `docmancer install` writes skills or instructions for an agent. `docmancer memory sync` can also discover memory and rules from agents that do not have install support. `docmancer install claude-code --hooks` and `docmancer install codex --hooks` add lifecycle hooks that inject relevant local memory automatically; other install targets use manual `docmancer memory query` recall through their installed skills or instructions. Optional consolidation uses OpenRouter through `docmancer memory consolidate --provider openrouter`.
 
 ## Skill locations
 
@@ -24,6 +24,8 @@ Install targets, memory discovery, and consolidation providers are related but n
 ## Project-local installs
 
 Use `--project` with `claude-code`, `gemini`, `cline`, or `github-copilot` to install under the current working directory. This is useful when different projects need different docmancer configurations.
+
+Use `--hooks` with `claude-code` or `codex` to install automatic memory recall hooks. Global hooks land in `~/.claude/settings.json` or `~/.codex/hooks.json`; project hooks land in `.claude/settings.json` or `.codex/hooks.json` when `--project` is passed. Codex may require review through `/hooks` before non-managed command hooks run. Remove docmancer-owned hooks with `docmancer remove <agent> --hooks`.
 
 ## What the skill teaches agents
 

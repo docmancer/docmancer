@@ -47,8 +47,9 @@ def main() -> int:
 from pathlib import Path
 
 import docmancer
-from docmancer.ai import agent_cli_client, openrouter_client
+from docmancer.ai import openrouter_client
 from docmancer._version import __version__
+from docmancer.memory import hooks
 
 repo_root = Path(r"__REPO_ROOT__").resolve()
 module_path = Path(docmancer.__file__).resolve()
@@ -61,10 +62,12 @@ if expected_version and __version__ != expected_version:
 if getattr(openrouter_client, "_PREFLIGHT_MAX_TOKENS", None) != 16:
     raise SystemExit("OpenRouter preflight token floor is missing from installed wheel")
 
-envelope = '{"is_error": true, "result": "Not logged in · Please run /login"}'
-message = agent_cli_client._agent_envelope_error(envelope)
-if not message or "Not logged in" not in message or '"is_error"' in message:
-    raise SystemExit("Claude Code envelope error cleanup is missing from installed wheel")
+if getattr(hooks, "DEFAULT_HOOK_TIMEOUT_MS", None) != 1000:
+    raise SystemExit("hook timeout hardening is missing from installed wheel")
+
+output = hooks.hook_output("UserPromptSubmit", "Relevant docmancer memories:\n- Deploy on Railway. Source: codex, memory, project, note.md")
+if "hookSpecificOutput" not in output or "additionalContext" not in output or "Deploy on Railway" not in output:
+    raise SystemExit("hook additionalContext output is missing from installed wheel")
 
 print(f"verified installed docmancer wheel {__version__} at {module_path}")
 """.replace("__REPO_ROOT__", str(repo_root)).replace("__EXPECTED_VERSION__", args.expected_version or "")

@@ -172,7 +172,7 @@ retrieval:
 
 ## API keys
 
-The default retrieval stack (`model2vec` static embeddings + `sqlite-vec`) needs **no API keys**. Keys are only required when you opt into a cloud embeddings provider, point at a remote Qdrant cluster, or use OpenRouter for memory drafting. OpenRouter can be selected explicitly with `--provider openrouter`, and it is also the automatic fallback when an agent provider fails and `OPENROUTER_API_KEY` is set. docmancer reads keys from your shell environment.
+The default retrieval stack (`model2vec` static embeddings + `sqlite-vec`) needs **no API keys**. Keys are only required when you opt into a cloud embeddings provider, point at a remote Qdrant cluster, or use OpenRouter for optional memory drafting. Hook recall, sync, query, sources, status, apply, and clear are local. docmancer reads keys from your shell environment.
 
 | Provider | Env var | Set when |
 |----------|---------|----------|
@@ -180,7 +180,7 @@ The default retrieval stack (`model2vec` static embeddings + `sqlite-vec`) needs
 | OpenAI-compatible base URL | `OPENAI_BASE_URL` | Pointing the OpenAI provider at Azure / vLLM / Together (optional) |
 | Voyage AI embeddings | `VOYAGE_API_KEY` | `embeddings.provider: voyage` |
 | Cohere embeddings | `COHERE_API_KEY` | `embeddings.provider: cohere` |
-| OpenRouter memory drafting | `OPENROUTER_API_KEY` | `docmancer memory extract --provider openrouter`, `docmancer memory consolidate --provider openrouter`, automatic fallback from agent providers, or MCP cloud tools |
+| OpenRouter memory drafting | `OPENROUTER_API_KEY` | `docmancer memory extract --provider openrouter`, `docmancer memory consolidate --provider openrouter`, or MCP cloud tools |
 | Remote Qdrant | env var named by `vector_store.api_key_env` (e.g. `QDRANT_API_KEY`) | `vector_store.url` points at a managed/cloud Qdrant |
 
 ### Where to put them

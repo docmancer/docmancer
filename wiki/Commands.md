@@ -17,10 +17,12 @@ Reference for the docmancer CLI: the local memory harness first, docs RAG on the
 | `docmancer inspect` | Show index stats, source counts, format counts, and extract locations. |
 | `docmancer remove [source]` | Remove an indexed source or docset root. Use `--all` to clear the index. |
 | `docmancer clear` | Wipe docmancer-owned state and related model caches. Use `--dry-run` first. |
-| `docmancer doctor` | Check config, loader availability, index health, Qdrant/vector state, agent consolidation providers, and installed skills. |
-| `docmancer install <agent>` | Install a markdown skill or instruction file for one agent. For `claude-code` and `codex` this also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block). |
+| `docmancer doctor` | Check config, loader availability, index health, Qdrant/vector state, memory hook presence, and installed skills. |
+| `docmancer install <agent>` | Install a markdown skill or instruction file for one agent. For `claude-code` and `codex` this also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block). Add `--hooks` for automatic local memory recall hooks on Claude Code or Codex. |
+| `docmancer remove <agent> --hooks` | Remove docmancer-owned Claude Code or Codex hook config while preserving unrelated hooks. |
 | `docmancer memory {scan,sync,query,sources,status,clear}` | Discover, index, and recall the memory, instructions, and rules your coding agents wrote on this machine. Local and offline. |
-| `docmancer memory {extract,consolidate}` | Provider-backed memory drafting. Both default to `--provider agent`, which uses an installed coding-agent CLI. If an agent provider fails and `OPENROUTER_API_KEY` is set, docmancer retries through OpenRouter. Use `--provider openrouter` for the direct API-key path. |
+| `docmancer memory hook-context` | Read hook JSON from stdin and emit bounded source-attributed memory context for Claude Code or Codex hooks. Local only, silent when irrelevant or slow. |
+| `docmancer memory {extract,consolidate}` | Optional provider-backed memory drafting. Both use OpenRouter as the current generation provider, with `OPENROUTER_API_KEY` required. Consolidation is maintenance, not the primary memory-transfer path. |
 | `docmancer memory apply --from <draft> --agent <a>` | Materialize a reviewed draft into an agent's always-loaded file inside a managed block (backup taken). Local, keyless, never automatic. |
 | `docmancer mcp {serve,doctor,install}` | Run or install the packaged `docmancer-mcp` stdio server (local memory and docs search; optional OpenRouter tools). Requires the `mcp` extra. |
 | `docmancer qdrant {up,down,status,upgrade,logs}` | Manage the local Qdrant process used for dense, sparse, and hybrid retrieval. |
@@ -32,8 +34,9 @@ Reference for the docmancer CLI: the local memory harness first, docs RAG on the
 | `docmancer memory sync` | Harvest, redact, and index agent memory. `--recreate`, `--dry-run`, `--include`, `--exclude`. |
 | `docmancer memory query "<text>"` | Recall from the local memory index (hybrid by default). |
 | `docmancer memory sources` | List every indexed source with provenance (agent, type, scope, title, path, char count). `--agent`, `--scope`, `--type`, `--json`, `--preview`. |
-| `docmancer memory extract` | Extract durable memory facts. Defaults to `--provider agent`. Provider choices: `agent`, `claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, `cursor`, `openrouter`. Agent-provider failures retry through OpenRouter when `OPENROUTER_API_KEY` is set. |
-| `docmancer memory consolidate` | Write a review-only consolidated master-memory draft. Defaults to `--provider agent`. `--provider openrouter --model <model-id>`. Agent-provider failures retry through OpenRouter when configured. `--model`, `--query`, `--output`, `--draft-quality`, `--max-output-tokens`, `--timeout`, `--yes`. |
+| `docmancer memory hook-context` | Hook entrypoint for Claude Code and Codex. Options: `--agent auto\|claude-code\|codex`, `--limit`, `--max-chars`, `--threshold`, `--debug`. Uses `DOCMANCER_HOOK_TIMEOUT_MS` for the internal timeout. |
+| `docmancer memory extract` | Extract durable memory facts through OpenRouter. Provider choice: `openrouter`. Requires `OPENROUTER_API_KEY`; supports `--model`, `--query`, `--limit`, `--budget`, `--format json`, `--timeout`, `--include`, `--exclude`, and `--yes`. |
+| `docmancer memory consolidate` | Write a review-only consolidated master-memory draft through OpenRouter. Provider choice: `openrouter`. Requires `OPENROUTER_API_KEY`; supports `--model`, `--query`, `--output`, `--format md\|okf`, `--limit`, `--budget`, `--draft-quality`, `--max-output-tokens`, `--timeout`, `--concurrency`, `--include`, `--exclude`, and `--yes`. |
 | `docmancer memory apply` | Write a reviewed draft into an agent file (`--agent codex\|claude-code\|cursor\|gemini\|opencode\|github-copilot\|cline` or `--output`). Defaults to `master-memory-draft.md`; use `--from` for another reviewed draft. `--dry-run`, `--print`, `--remove`, `--yes`. |
 
 Discovery is config-extensible: set `discovery.disabled` to turn off harnesses and `discovery.extra_sources` to add custom paths in `docmancer.yaml`.
@@ -95,6 +98,6 @@ Environment overrides:
 
 ## Install targets
 
-`docmancer install <agent>` writes markdown instructions only. It does not register servers or background processes. Supported agents are `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `github-copilot`, and `opencode`.
+`docmancer install <agent>` writes markdown instructions only by default. It does not register servers or background processes. Supported agents are `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `github-copilot`, and `opencode`. For automatic local memory recall, use `docmancer install claude-code --hooks` or `docmancer install codex --hooks`; remove those hooks with `docmancer remove <agent> --hooks`.
 
 See [Install Targets](./Install-Targets.md) for destination paths.

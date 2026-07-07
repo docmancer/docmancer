@@ -88,14 +88,25 @@ This requires the `browser` optional dependency: `pip install docmancer[browser]
 
 Nothing was discovered on this machine yet. Confirm you have used a supported agent (Claude Code, Codex, Cursor, Gemini, and others) so there is memory, a `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, or a rules directory to harvest. Run `docmancer memory sources --preview` to see what would index, and check that your `docmancer.yaml` `discovery.disabled` list is not excluding the agent. Repo-level instruction files are recovered from each agent's recorded project paths, so a repo you have never opened in an agent will not appear.
 
-## `docmancer memory consolidate` fails on the agent provider
+## `docmancer memory consolidate` fails with OpenRouter
 
-`--provider agent` (the default) drives an installed coding-agent CLI headlessly, so it needs that CLI to be both installed and signed in.
+`memory consolidate` is optional OpenRouter-backed maintenance. It is no longer the main memory-transfer path, and local hook recall does not use OpenRouter.
 
-- **`no supported agent CLI found on PATH`**: none of `claude`, `codex`, `gemini`, `opencode`, `cline`, `copilot`, or `cursor-agent` are installed. Install one, or set `OPENROUTER_API_KEY` and use `--provider openrouter`.
-- **`... failed: ... Not logged in` / auth errors**: the selected agent CLI is not authenticated. Run it once interactively to sign in (for example `claude`), then retry.
-- Run `docmancer doctor` and read the **Agent consolidation providers** section to see which agents are available before relying on one.
-- When `OPENROUTER_API_KEY` is set, agent-provider failures during setup, preflight, or generation automatically retry through OpenRouter.
+- **`OPENROUTER_API_KEY is not set`**: export `OPENROUTER_API_KEY` in your shell, or skip consolidation and use `docmancer memory query` / hooks for local recall.
+- **HTTP 400 or model errors**: pass a model your OpenRouter account can use with `--model <provider/model>`, then retry with `--limit 1` before a full consolidation.
+- **Timeouts**: use `--timeout <seconds>` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS`. Use `--draft-quality fast`, lower `--max-output-tokens`, or reduce `--limit` for a smaller request.
+- **Malformed provider output**: retry with a different model, or use manual `docmancer memory query` to inspect the source memories directly.
+
+## Hook recall injects nothing
+
+Hook recall is intentionally silent when no strong local match is found, the index is empty, or the hook times out.
+
+- Run `docmancer memory status` and `docmancer memory sources` to confirm the index exists.
+- Run `docmancer memory sync` if the index is empty or stale.
+- Test recall manually with `docmancer memory query "<your question>"`.
+- For Claude Code or Codex, reinstall hooks with `docmancer install claude-code --hooks` or `docmancer install codex --hooks`.
+- Codex may require review and trust through `/hooks` before non-managed command hooks run.
+- If cold startup is too slow, raise `DOCMANCER_HOOK_TIMEOUT_MS`; the default internal budget is 1,000 ms.
 
 ## Agent does not know about docmancer commands
 

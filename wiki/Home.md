@@ -2,7 +2,7 @@
 
 This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, the memory loop, and a high-level overview.
 
-Docmancer unifies the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into one local, offline index you can recall, consolidate, and carry across agents. Docs retrieval runs on the same engine as a secondary capability.
+Docmancer unifies the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into one local, offline index you can recall manually or inject automatically into Claude Code and Codex through hooks. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
 
 ## Pick a page
 
