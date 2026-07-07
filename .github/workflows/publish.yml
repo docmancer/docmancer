@@ -10,7 +10,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  smoke-test:
+  validate-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -52,29 +52,6 @@ jobs:
       - name: Check artifacts
         run: python -m twine check dist/*
 
-  build:
-    needs: smoke-test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install build tools
-        run: pip install build twine "hatchling<1.27"
-
-      - name: Build
-        run: python -m build --no-isolation
-
-      - name: Verify built wheel
-        run: python scripts/verify_built_wheel.py --expected-version "${GITHUB_REF_NAME#v}"
-
-      - name: Check artifacts
-        run: python -m twine check dist/*
-
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -82,7 +59,7 @@ jobs:
           path: dist/
 
   publish-pypi:
-    needs: build
+    needs: validate-release
     runs-on: ubuntu-latest
     environment: release
     permissions:
