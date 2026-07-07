@@ -18,6 +18,7 @@ from docmancer.cli.help import (
     HELP_CONTEXT_SETTINGS,
     format_examples,
 )
+from docmancer.cli.ui import display_path
 
 
 @click.group(
@@ -55,9 +56,9 @@ def doctor(path: str):
     warnings = [i for i in issues if i.level == "warning"]
 
     for issue in errors:
-        click.echo(f"error  {issue.path}: {issue.message}")
+        click.echo(f"error  {display_path(issue.path)}: {issue.message}")
     for issue in warnings:
-        click.echo(f"warn   {issue.path}: {issue.message}")
+        click.echo(f"warn   {display_path(issue.path)}: {issue.message}")
 
     if errors:
         click.echo(f"{len(errors)} error(s), {len(warnings)} warning(s). Bundle is not conformant.")

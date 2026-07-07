@@ -30,11 +30,12 @@ Executable: `{{DOCS_KIT_CMD}}`
 ## Core Commands
 
 ```bash
-docmancer memory scan
 docmancer memory sync
 docmancer memory sync --dry-run
 docmancer memory query "why did we pick Railway"
 docmancer memory sources
+docmancer memory sources --preview
+docmancer memory audit
 docmancer memory status
 docmancer memory clear
 ```
@@ -59,6 +60,10 @@ docmancer remove codex --hooks
 
 Run `docmancer memory sources` to see exactly what was indexed and from where (agent, type, scope, title, path, char count). Add `--agent`, `--scope`, `--type`, `--json`, or `--preview` (live re-harvest) to filter.
 
+## Audit
+
+Run `docmancer memory audit` when you need to check what agents have already written into source memory files. It scans harvested sources before redaction and reports likely secrets with masked snippets, line numbers, and short source labels. It is local and read-only; it never edits another tool's files.
+
 ## Export to OKF (local, keyless)
 
 Export the indexed cross-agent memory as a Google Open Knowledge Format (OKF) bundle: a directory of markdown files with YAML frontmatter that any OKF-aware tool can read. This never calls the cloud and needs no API key.
@@ -73,16 +78,15 @@ docmancer okf doctor memory.okf
 These send privacy-redacted local memory to OpenRouter when `OPENROUTER_API_KEY` is set. They are optional maintenance commands, not the main memory recall path. They never edit agent files.
 
 ```bash
-docmancer memory extract --yes
 docmancer memory consolidate --query "..." --output draft.md --draft-quality fast --timeout 180 --yes
 docmancer memory consolidate --format okf --output draft.okf --yes
 docmancer memory consolidate --provider openrouter --model openai/gpt-4.1-nano --yes
 ```
 
-`extract` and `consolidate` default to `--provider openrouter`. Use `--model` to pass any OpenRouter model id your account can use. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
+`consolidate` defaults to `--provider openrouter`. Use `--model` to pass any OpenRouter model id your account can use. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
 
 `docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Supported apply targets include `codex`, `claude-code`, `cursor`, `gemini`, `opencode`, `github-copilot`, and `cline`. Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. Hook recall and local commands never leave the machine; provider-backed drafting commands send redacted text only after a provider-use confirmation.
+Secrets are redacted on index. Use `--dry-run` or `memory sources --preview` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory audit` checks source memory before redaction and masks any likely secret values in its report. `docmancer memory clear` deletes the local index. Hook recall and local commands never leave the machine; provider-backed consolidation sends redacted text only after a provider-use confirmation.

@@ -5,21 +5,7 @@ model returns a validated instance, never free-form JSON we have to parse.
 """
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
-
-
-class ExtractedMemoryFact(BaseModel):
-    subject: str = Field(description="What the fact is about (project, tool, decision).")
-    fact: str = Field(description="The durable fact, stated plainly.")
-    evidence: str = Field(description="Short quote or paraphrase supporting the fact.")
-    confidence: Literal["low", "medium", "high"]
-    source_path: str | None = None
-
-
-class ExtractedMemoryFacts(BaseModel):
-    facts: list[ExtractedMemoryFact] = Field(default_factory=list)
 
 
 class ConsolidatedMemorySection(BaseModel):
@@ -36,8 +22,6 @@ class ConsolidatedMemoryDraft(BaseModel):
 
 
 __all__ = [
-    "ExtractedMemoryFact",
-    "ExtractedMemoryFacts",
     "ConsolidatedMemorySection",
     "ConsolidatedMemoryDraft",
 ]

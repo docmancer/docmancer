@@ -19,7 +19,8 @@ Your coding agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsur
 1. **Sync** (`docmancer memory sync`): discover and index every agent's memory, instructions, and rules into one local SQLite index. Local, offline, no keys.
 2. **Install hooks** (`docmancer install claude-code --hooks` / `docmancer install codex --hooks`): relevant local memories appear in context without the agent choosing to call a tool.
 3. **Recall manually** (`docmancer memory query`): search across everything your agents have ever written, with source provenance, when you want an explicit answer.
-4. **Maintain** (`docmancer memory consolidate` / `apply`): optional OpenRouter-backed cleanup into a reviewed draft, then explicit projection into an agent file if you want a compact shared summary.
+4. **Audit** (`docmancer memory audit`): find likely secrets your agents already wrote into memory, with masked snippets and precise source locations.
+5. **Maintain** (`docmancer memory consolidate` / `apply`): optional OpenRouter-backed cleanup into a reviewed draft, then explicit projection into an agent file if you want a compact shared summary.
 
 The same engine also does docs RAG as a secondary capability: point it at a folder of Markdown / PDF / DOCX / RTF / HTML or a docs URL (GitBook, Mintlify, generic web, GitHub) and query it the same way. A fresh install ships everything you need for the local path: SQLite FTS5 for lexical search, a static embedding model (`potion-base-8M`) vendored in the package so there is no large model download and no network at runtime, and `sqlite-vec` for dense vectors in a single local file with no daemon.
 
@@ -48,6 +49,7 @@ Re-sync any time and see exactly what was indexed and from where:
 docmancer memory sync                # discover, redact, and (re)index everything
 docmancer memory sources             # provenance: agent, type, scope, title, path, char count
 docmancer memory sources --preview   # live re-harvest (what WOULD index) without writing
+docmancer memory audit               # find likely secrets in source memory files
 ```
 
 Want docs RAG too? The same engine indexes documentation:
@@ -107,6 +109,8 @@ Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each OpenRout
 
 **Automatic recall in Claude Code and Codex.** `docmancer install claude-code --hooks` and `docmancer install codex --hooks` inject relevant memory snippets at session start and before matching prompts. The hook path is local, bounded, source-attributed, and silent when nothing relevant clears the threshold.
 
+**Memory audit.** `docmancer memory audit` scans harvested source memory before redaction and reports likely secrets with masked excerpts, short source labels, line numbers, and a clear next action. It is local and read-only. It reports and locates only; it never edits another tool's files.
+
 **Optional consolidation.** `docmancer memory consolidate --provider openrouter` turns selected memory into one review-only master-memory draft when `OPENROUTER_API_KEY` is configured. `docmancer memory apply` can then bake a reviewed draft into an agent's always-loaded file, with diff preview, backups, and undo.
 
 **Callable over MCP.** The packaged `docmancer-mcp` stdio server exposes local memory and docs search to MCP clients. `docmancer mcp install codex` (or `claude-code`, `claude-desktop`) wires it up; optional OpenRouter tools appear when `OPENROUTER_API_KEY` is set. Requires the `mcp` extra.
@@ -117,11 +121,11 @@ Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each OpenRout
 Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.33x agentic runway)
 ```
 
-**No large model download, offline at runtime.** The static embedding model ships inside the wheel, so there are no API keys and no network needed to embed or query. Optional OpenAI / Voyage / Cohere providers exist if you want them; a heavier FastEmbed + Qdrant backend is available via `pipx install "docmancer[embeddings-heavy]"`.
+**No large model download, offline at runtime.** The static embedding model ships inside the wheel, so there are no API keys and no network needed to embed or query. Optional OpenAI / Voyage / Cohere providers exist for users who explicitly configure cloud embeddings.
 
 ## Where your data lives and how to remove it
 
-The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, hook recall, status, sources, apply, and clear run locally. Hook output is sourced from local files, bounded, redacted before index, and source-attributed because it goes directly into agent context. Provider-backed drafting commands are optional and send selected memory text only after privacy redaction and a provider-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, remove hooks with `docmancer remove <agent> --hooks`, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
+The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, audit, hook recall, status, sources, apply, and clear run locally. Hook output is sourced from local files, bounded, redacted before index, and source-attributed because it goes directly into agent context. Provider-backed consolidation is optional and sends selected memory text only after privacy redaction and a provider-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, audit likely leaks with `docmancer memory audit`, remove hooks with `docmancer remove <agent> --hooks`, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
 
 **Inspectable.** Every section is written to `~/.docmancer/extracted/` as Markdown plus JSON. `docmancer inspect` shows index stats. `docmancer query --explain` shows which signal (lexical / dense / sparse) placed each result.
 
@@ -133,7 +137,7 @@ The wiki is the authoritative reference for everything else. Pick a page based o
 
 | Page | When to read it |
 |------|-----------------|
-| **[Commands](./wiki/Commands.md)** | The `memory` group, docs commands, and Qdrant lifecycle |
+| **[Commands](./wiki/Commands.md)** | The memory loop, docs commands, and advanced maintenance |
 | **[Configuration](./wiki/Configuration.md)** | All YAML keys, env vars, and the API-key reference |
 | **[Architecture](./wiki/Architecture.md)** | How the memory harness, ingest, and hybrid retrieval work |
 | **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered |

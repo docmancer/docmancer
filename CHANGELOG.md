@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.12] - Unreleased
+### Added
+
+- **Memory audit.** `docmancer memory audit` scans harvested agent memory before redaction and reports likely secrets with severity, detector type, masked excerpt, short source label, line number, fingerprint-based dedupe, JSON output, include/exclude filters, agent filtering, and CI-friendly failure mode.
+- **Reusable secret detector.** Secret detection now returns structured findings for audit while preserving redaction compatibility for sync, export, and provider flows. The first detector set covers existing token patterns, key-value secrets, private key blocks, and conservative high-entropy contextual tokens.
+
+### Changed
+
+- **Short human paths.** Human CLI output now prefers `~` or compact labels instead of full home-directory paths across memory status, sources, clear, apply, export, hook context, MCP install/doctor, OKF doctor, and advanced Qdrant messages. JSON keeps raw paths and adds display paths where useful.
+- **Memory-first documentation.** README, wiki pages, and installed memory skill templates now lead with hook-first memory recall, audit, sources, and optional consolidation. Docs retrieval remains documented as a secondary workflow on the same local engine, and Qdrant is framed as advanced compatibility.
+- **Release workflow cleanup.** The publish workflow now relies on the full test suite, wheel verification, and Twine checks without a separate smoke CLI step.
+
+### Removed
+
+- **`memory extract`.** The overlapping extraction command, MCP tool, schema, helper code, examples, templates, and docs references were removed. `memory consolidate` remains as the optional review-only maintenance path.
+- **Legacy smoke script.** Removed `scripts/smoke_test.sh`; release validation now runs through pytest, wheel verification, and artifact checks.
+
 ## [0.6.11] - 2026-07-07
 ### Added
 

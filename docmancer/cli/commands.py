@@ -813,21 +813,22 @@ def update_cmd(
     failed = 0
     for entry in targets:
         src = entry["source"]
+        src_label = src if src.startswith(("http://", "https://")) else display_path(src)
         try:
             if src.startswith(("http://", "https://")):
-                click.echo(f"Updating {src}...")
+                click.echo(f"Updating {src_label}...")
                 total = agent.add(src, recreate=False, max_pages=max_pages, browser=browser)
             else:
                 if not Path(src).exists():
-                    click.echo(f"Skipping {src} (path not found on disk)")
+                    click.echo(f"Skipping {src_label} (path not found on disk)")
                     failed += 1
                     continue
-                click.echo(f"Updating {src}...")
+                click.echo(f"Updating {src_label}...")
                 total = agent.add(src, recreate=False)
             click.echo(f"  {total} sections indexed")
             updated += 1
         except Exception as e:
-            click.echo(f"  Error updating {src}: {e}", err=True)
+            click.echo(f"  Error updating {src_label}: {e}", err=True)
             failed += 1
 
     click.echo()
@@ -1582,7 +1583,7 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
 
     click.echo("Will remove:")
     for t in targets:
-        click.echo(f"  {_format_size(sizes[t]):>10}  {t}")
+        click.echo(f"  {_format_size(sizes[t]):>10}  {display_path(t)}")
     click.echo(f"  {'-' * 10}")
     click.echo(f"  {_format_size(total):>10}  total")
 
@@ -1620,7 +1621,7 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
     if failed:
         click.echo("Some paths could not be removed:", err=True)
         for path, msg in failed:
-            click.echo(f"  {path}: {msg}", err=True)
+            click.echo(f"  {display_path(path)}: {msg}", err=True)
         sys.exit(1)
 
 

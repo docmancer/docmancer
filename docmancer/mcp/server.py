@@ -48,10 +48,6 @@ def build_server():
     from docmancer.ai.openrouter_client import openrouter_api_key
 
     if openrouter_api_key():
-        @server.tool(description="CLOUD: extract durable memory facts via OpenRouter. Sends privacy-redacted local memory to OpenRouter.")
-        def docmancer_memory_extract(limit: int = 30) -> dict:
-            return tools.memory_extract(limit=limit)
-
         @server.tool(description="CLOUD: produce a review-only consolidated memory draft via OpenRouter. Sends privacy-redacted local memory to OpenRouter.")
         def docmancer_memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
             return tools.memory_consolidate_draft(query=query, limit=limit)

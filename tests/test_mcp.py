@@ -34,6 +34,7 @@ def test_build_server_registers_local_tools(monkeypatch):
     assert {"docmancer_memory_search", "docmancer_docs_search", "docmancer_memory_status", "docmancer_sources_list"} <= names
     # Cloud tools absent without a key.
     assert "docmancer_memory_extract" not in names
+    assert "docmancer_memory_consolidate_draft" not in names
 
 
 def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
@@ -43,7 +44,7 @@ def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
 
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert "docmancer_memory_extract" in names
+    assert "docmancer_memory_extract" not in names
     assert "docmancer_memory_consolidate_draft" in names
 
 
@@ -60,7 +61,6 @@ def test_cloud_tools_blocked_inside_docmancer_subprocess(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp import tools
 
-    assert "disabled inside docmancer subprocesses" in tools.memory_extract()["error"]
     assert "disabled inside docmancer subprocesses" in tools.memory_consolidate_draft()["error"]
 
 

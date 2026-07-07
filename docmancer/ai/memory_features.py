@@ -1,9 +1,9 @@
-"""Cloud-backed memory features: structured extraction and consolidation.
+"""Cloud-backed memory features for consolidation.
 
 Both functions are pure transforms over already-redacted text. Privacy
 filtering happens at the call site (the CLI) before any text reaches here, but
-these never write to disk or mutate agent files: extraction returns facts and
-consolidation returns a review-only draft.
+these never write to disk or mutate agent files: consolidation returns a
+review-only draft.
 """
 from __future__ import annotations
 
@@ -11,14 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .memory_schemas import ConsolidatedMemoryDraft, ExtractedMemoryFacts
-
-_EXTRACT_SYSTEM = (
-    "You extract durable, reusable memory facts from a developer's agent memory "
-    "and instruction files. Keep only facts that stay true across sessions "
-    "(decisions, conventions, project constraints, tooling). Drop transient "
-    "chatter. Cite short evidence for each fact and set confidence honestly."
-)
+from .memory_schemas import ConsolidatedMemoryDraft
 
 _CONSOLIDATE_SYSTEM = (
     "You consolidate a developer's scattered agent memory into one coherent, "
@@ -37,36 +30,6 @@ _FAST_CONSOLIDATE_SUFFIX = (
     "evidence, transient status, verbose narrative, and low-value detail. "
     "Write dense paragraphs, not long prose."
 )
-
-
-def _facts_user_prompt(text: str, metadata: dict | None) -> str:
-    meta = metadata or {}
-    header = ""
-    if meta:
-        pairs = ", ".join(f"{k}={v}" for k, v in meta.items() if v)
-        if pairs:
-            header = f"Source metadata: {pairs}\n\n"
-    return f"{header}Extract memory facts from the following content:\n\n{text}"
-
-
-def extract_memory_facts(
-    text: str,
-    metadata: dict | None = None,
-    *,
-    client: Any | None = None,
-    model: str | None = None,
-    on_progress=None,
-) -> ExtractedMemoryFacts:
-    """Extract durable memory facts from one block of text via structured output."""
-    if client is None:
-        from .openrouter_client import OpenRouterClient
-
-        client = OpenRouterClient(model=model)
-    messages = [
-        {"role": "system", "content": _EXTRACT_SYSTEM},
-        {"role": "user", "content": _facts_user_prompt(text, metadata)},
-    ]
-    return client.parse(messages, ExtractedMemoryFacts, model=model, on_progress=on_progress)
 
 
 def consolidate_memory(
@@ -222,4 +185,4 @@ def draft_to_markdown(draft: ConsolidatedMemoryDraft, *, source_files: list[str]
     return "\n".join(lines).rstrip() + "\n"
 
 
-__all__ = ["extract_memory_facts", "consolidate_memory", "draft_to_markdown", "draft_to_merge_text"]
+__all__ = ["consolidate_memory", "draft_to_markdown", "draft_to_merge_text"]

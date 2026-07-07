@@ -22,6 +22,7 @@ def _truncate(text: str, budget: int = _CHAR_BUDGET) -> str:
 
 def memory_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
     """Search the local memory index. Returns source-attributed excerpts."""
+    from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
 
     agent = MemoryAgent()
@@ -36,6 +37,7 @@ def memory_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
                 "kind": meta.get("kind", ""),
                 "title": meta.get("title", ""),
                 "source_path": meta.get("source_path", ""),
+                "display_path": display_path(meta.get("source_path", "")),
                 "excerpt": _truncate(c.text, 1200),
             }
         )
@@ -81,12 +83,16 @@ def docs_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
 
 
 def memory_status() -> dict:
+    from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
 
-    return MemoryAgent().status()
+    status = MemoryAgent().status()
+    status["display_path"] = display_path(status.get("db_path", ""))
+    return status
 
 
 def sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
+    from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
 
     rows = MemoryAgent().sources()
@@ -96,6 +102,7 @@ def sources_list(agent: str | None = None, scope: str | None = None, kind: str |
         rows = [r for r in rows if r["scope"].startswith(scope.lower())]
     if kind:
         rows = [r for r in rows if r["type"].lower() == kind.lower()]
+    rows = [dict(r, display_path=display_path(r.get("path", ""))) for r in rows]
     return rows
 
 
@@ -113,27 +120,6 @@ def _redacted_entries(limit: int):
 
     agent = MemoryAgent()
     return [agent.privacy.clean(e) for e in agent.preview()][:limit]
-
-
-def memory_extract(limit: int = 30) -> dict:
-    """Cloud: extract durable memory facts via OpenRouter."""
-    from docmancer.ai.memory_features import extract_memory_facts
-    from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
-
-    blocked = _blocked_by_recursion()
-    if blocked:
-        return blocked
-    if not openrouter_api_key():
-        return {"error": "OPENROUTER_API_KEY is not set"}
-    entries = _redacted_entries(limit)
-    if not entries:
-        return {"facts": []}
-    combined = "\n\n".join(f"### {e.title}\n{e.content}" for e in entries)
-    try:
-        client = OpenRouterClient()
-        return extract_memory_facts(combined, {"entries": len(entries)}, client=client).model_dump()
-    except Exception as exc:  # noqa: BLE001 - return an error payload, never raise to the client
-        return {"error": f"OpenRouter extract failed: {exc}"}
 
 
 def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
@@ -165,6 +151,5 @@ __all__ = [
     "docs_search",
     "memory_status",
     "sources_list",
-    "memory_extract",
     "memory_consolidate_draft",
 ]

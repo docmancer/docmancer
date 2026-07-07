@@ -118,10 +118,15 @@ def _one_line(text: str, *, max_len: int = 320) -> str:
 def _short_source(path: str) -> str:
     if not path:
         return "unknown source"
-    home = str(Path.home())
-    if path.startswith(home):
-        return "~" + path[len(home):]
-    return path
+    try:
+        from docmancer.cli.ui import display_path
+
+        return display_path(path)
+    except Exception:  # noqa: BLE001 - hooks must stay best effort
+        home = str(Path.home())
+        if path.startswith(home):
+            return "~" + path[len(home):]
+        return path
 
 
 def _format_context(chunks: list[Any], *, max_chars: int) -> str:

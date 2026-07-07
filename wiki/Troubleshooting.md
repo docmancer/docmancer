@@ -88,6 +88,16 @@ This requires the `browser` optional dependency: `pip install docmancer[browser]
 
 Nothing was discovered on this machine yet. Confirm you have used a supported agent (Claude Code, Codex, Cursor, Gemini, and others) so there is memory, a `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, or a rules directory to harvest. Run `docmancer memory sources --preview` to see what would index, and check that your `docmancer.yaml` `discovery.disabled` list is not excluding the agent. Repo-level instruction files are recovered from each agent's recorded project paths, so a repo you have never opened in an agent will not appear.
 
+## `docmancer memory audit` reports a likely secret
+
+Audit findings are intentionally conservative, but false positives are possible. Treat the report as a location aid, not proof that a credential is live.
+
+- Check the masked source line in the reported file.
+- If it is a real credential, rotate it first.
+- Remove the value from the source agent memory or instruction file.
+- Run `docmancer memory sync --recreate` so the local index is rebuilt from cleaned sources.
+- If you need automation, run `docmancer memory audit --json --fail-on-findings`.
+
 ## `docmancer memory consolidate` fails with OpenRouter
 
 `memory consolidate` is optional OpenRouter-backed maintenance. It is no longer the main memory-transfer path, and local hook recall does not use OpenRouter.
@@ -112,19 +122,19 @@ Hook recall is intentionally silent when no strong local match is found, the ind
 
 Re-run `docmancer setup` or `docmancer install <target>` to update the skill file. Older skill installations may not include newer commands. See [Install Targets](./Install-Targets.md) for where skills land.
 
-## Hybrid retrieval and Qdrant
+## Hybrid retrieval and advanced Qdrant
 
 ### macOS asks "qdrant is attempting to connect to ec2-...amazonaws.com"
 
-That is Qdrant's own anonymous telemetry, not docmancer. The managed lifecycle spawns Qdrant with `QDRANT__TELEMETRY_DISABLED=true`, so the prompt should not appear from new spawns. If you see it from an older manually started binary, deny the prompt (Qdrant runs fine offline) and restart with `docmancer qdrant down && docmancer qdrant up`.
+That is Qdrant's own anonymous telemetry, not docmancer. The managed lifecycle spawns Qdrant with `QDRANT__TELEMETRY_DISABLED=true`, so the prompt should not appear from new spawns. This applies only if you explicitly configured the optional Qdrant backend. If you see it from an older manually started binary, deny the prompt (Qdrant runs fine offline) and restart with `docmancer qdrant down && docmancer qdrant up`.
 
 ### `docmancer ingest` does not embed anything
 
-The default ingest path embeds + upserts vectors via the managed local Qdrant. If you see FTS5-only behaviour, check:
+The default ingest path embeds and upserts vectors through the local `sqlite-vec` backend. If you see FTS5-only behaviour, check:
 
 - `DOCMANCER_AUTO_VECTORS=0` is set in env (or `--no-vectors` was passed). Unset the env var to re-enable.
-- The configured embeddings provider is a cloud one (`openai`, `voyage`, `cohere`) but its API key env var is missing. Docmancer falls back to FTS5-only and logs the missing key; set the env var or switch to `embeddings.provider: fastembed`.
-- The Qdrant binary is unavailable for your platform. Run `docmancer doctor` to see the platform matrix decision. `SqliteVecStore` is used as a fallback when possible.
+- The configured embeddings provider is a cloud one (`openai`, `voyage`, `cohere`) but its API key env var is missing. Docmancer falls back to FTS5-only and logs the missing key; set the env var or switch back to the default `model2vec`.
+- The optional Qdrant backend is configured but unavailable. Run `docmancer doctor` to see the vector backend decision.
 
 ### `PermissionError: qdrant collection 'X' already exists on http://... but does not carry the docmancer ownership sentinel`
 
@@ -132,7 +142,7 @@ You pointed `vector_store.collection` at a collection that docmancer did not cre
 
 ### `docmancer query --mode hybrid` says "lexical-fallback" or returns no contributions
 
-The dispatcher fell back to lexical because either the vector store could not be reached, the embeddings provider failed to load, or no Qdrant collection exists yet. Run `docmancer doctor` to see Qdrant + embeddings status, and `docmancer ingest --recreate` once to populate the collection.
+The dispatcher fell back to lexical because either the vector store could not be reached, the embeddings provider failed to load, or no vector collection exists yet. Run `docmancer doctor` to see vector and embeddings status, and `docmancer ingest --recreate` once to populate the collection.
 
 ### `Section count drifts from vector count after `ingest --recreate``
 
@@ -140,4 +150,4 @@ This should not happen: `sync_vector_store` prunes orphaned vector points and `e
 
 ### macOS Apple Silicon: managed Qdrant won't start
 
-Confirm with `file ~/.docmancer/qdrant/qdrant` that the binary is `arm64` if you are on Apple Silicon. The `qdrant_manager` selects the right artefact from the verified matrix, but a mixed-arch venv can pick the wrong path. Reinstall the binary with `docmancer qdrant upgrade`.
+This only matters for users who explicitly configured the optional Qdrant backend. Confirm with `file ~/.docmancer/qdrant/qdrant` that the binary is `arm64` if you are on Apple Silicon. The `qdrant_manager` selects the right artefact from the verified matrix, but a mixed-arch venv can pick the wrong path. Reinstall the binary with `docmancer qdrant upgrade`.

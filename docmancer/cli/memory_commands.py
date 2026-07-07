@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from time import monotonic
@@ -67,8 +67,9 @@ def _agent(include=(), exclude=()):
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Index and recall your coding agents' memory.",
     epilog=format_examples(
-        "docmancer memory scan",
         "docmancer memory sync",
+        "docmancer memory sources --preview",
+        "docmancer memory audit",
         'docmancer memory query "why did we pick Railway"',
         "docmancer memory sources",
         "docmancer memory status",
@@ -81,17 +82,22 @@ def memory_group():
     Discovers and indexes three kinds of content from every agent on this
     machine (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and
     more): agent-written memory, user-authored instruction files (CLAUDE.md /
-    AGENTS.md / GEMINI.md), and project rule directories. `scan` and `sync`
-    report the split by kind; `sources` shows exact provenance per file. Preview
-    before writing with `sync --dry-run`; secrets are redacted on index, and
-    local sync/query commands do not upload anything.
+    AGENTS.md / GEMINI.md), and project rule directories. `sources` shows exact
+    provenance per file, and `sources --preview` shows what would index before
+    writing. Secrets are redacted on index, and local sync/query commands do not
+    upload anything.
     """
     if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
         click.echo("docmancer memory commands are disabled inside docmancer subprocesses.", err=True)
         sys.exit(2)
 
 
-@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show what would be indexed.")
+@memory_group.command(
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Show what would be indexed.",
+    hidden=True,
+)
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
 def scan(include: tuple[str, ...], exclude: tuple[str, ...]):
@@ -149,6 +155,109 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
         + style("Next", fg="bright_green", bold=True)
         + '  docmancer memory query "why did we pick Railway"'
     )
+
+
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Audit harvested memory for likely secrets.")
+@click.option("--agent", "agent_filter", default=None, help="Only audit one agent/harness name.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option("--fail-on-findings", is_flag=True, help="Exit 1 when likely secrets are found.")
+@click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
+@click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
+def audit(agent_filter, as_json, fail_on_findings, include, exclude):
+    """Find likely secrets already written into agent memory files.
+
+    This is local and read-only. It scans harvested source files before
+    redaction, reports precise locations and masked excerpts, and never edits
+    another tool's files.
+    """
+    import json as _json
+
+    from docmancer.harness.secrets import detect_secrets
+
+    agent = _agent(include, exclude)
+    entries = agent.preview()
+    if agent_filter:
+        entries = [e for e in entries if e.harness.lower() == agent_filter.lower()]
+
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for entry in entries:
+        for finding in detect_secrets(entry.content or ""):
+            grouped[finding.fingerprint].append(
+                {
+                    "type": finding.type,
+                    "severity": finding.severity,
+                    "line": finding.line,
+                    "source_path": entry.path,
+                    "display_path": display_path(entry.path),
+                    "agent": entry.harness,
+                    "scope": entry.scope,
+                    "title": entry.title,
+                    "masked_excerpt": finding.masked_excerpt,
+                    "fingerprint": finding.fingerprint,
+                }
+            )
+
+    findings = []
+    for fingerprint, occurrences in sorted(
+        grouped.items(),
+        key=lambda item: (
+            {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item[1][0]["severity"], 9),
+            item[1][0]["display_path"],
+            item[1][0]["line"],
+        ),
+    ):
+        first = occurrences[0]
+        findings.append(
+            {
+                "fingerprint": fingerprint,
+                "type": first["type"],
+                "severity": first["severity"],
+                "occurrences": occurrences,
+                "occurrence_count": len(occurrences),
+            }
+        )
+
+    if as_json:
+        click.echo(
+            _json.dumps(
+                {
+                    "finding_count": sum(item["occurrence_count"] for item in findings),
+                    "unique_secret_count": len(findings),
+                    "findings": findings,
+                },
+                indent=2,
+            )
+        )
+        if findings and fail_on_findings:
+            sys.exit(1)
+        return
+
+    if not findings:
+        click.echo("No likely secrets found in harvested memory sources.")
+        return
+
+    occurrence_total = sum(item["occurrence_count"] for item in findings)
+    source_total = len({occ["source_path"] for item in findings for occ in item["occurrences"]})
+    click.echo(f"Found {occurrence_total} likely secret occurrence(s) across {source_total} source file(s).")
+    click.echo("Review these source files, rotate any real secrets, then remove them from agent memory.")
+    click.echo()
+
+    for index, item in enumerate(findings, start=1):
+        first = item["occurrences"][0]
+        click.echo(f"[{index}] {item['severity'].upper()}  {item['type']}  ({item['occurrence_count']} occurrence(s))")
+        for occurrence in item["occurrences"][:3]:
+            click.echo(f"    {occurrence['display_path']}:{occurrence['line']}")
+            click.echo(f"    {occurrence['masked_excerpt']}")
+        remaining = item["occurrence_count"] - 3
+        if remaining > 0:
+            click.echo(f"    {remaining} more occurrence(s) omitted.")
+        click.echo("    Next: rotate if real, delete from the source memory file, then run `docmancer memory sync --recreate`.")
+        if first.get("scope"):
+            click.echo(f"    Scope: {first['scope']}")
+        click.echo()
+
+    if fail_on_findings:
+        sys.exit(1)
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Search your agents' memory.")
@@ -273,16 +382,12 @@ def sources(agent_filter, scope_filter, type_filter, as_json, live_preview, incl
 
     rows = [r for r in rows if _keep(r)]
     if as_json:
+        rows = [dict(r, display_path=display_path(r["path"])) for r in rows]
         click.echo(_json.dumps(rows, indent=2))
         return
     if not rows:
         click.echo("No indexed sources match. Run: docmancer memory sync")
         return
-
-    home = str(Path.home())
-
-    def _short(path: str) -> str:
-        return path.replace(home, "~") if path.startswith(home) else path
 
     by_agent: Counter = Counter(r["agent"] for r in rows)
     by_type: Counter = Counter(r["type"] for r in rows)
@@ -311,7 +416,7 @@ def sources(agent_filter, scope_filter, type_filter, as_json, live_preview, incl
         click.echo(f"  {agent_name.upper()}  ({count})")
         for r in group:
             kind = r["type"]
-            short_path = _short(r["path"])
+            short_path = display_path(r["path"])
             chars = f"{r['chars']:,}"
             # Fit type label in 13 chars, path fills the middle, chars right-padded
             click.echo(f"    {kind:<13}  {short_path:<60}  {chars} chars")
@@ -323,7 +428,6 @@ _PROVIDER_NOTICE = (
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
 _PROVIDER_CHOICES = ["openrouter"]
-_DEFAULT_CLOUD_INPUT_BUDGET = 90_000
 _DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
 _FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
 _OPENROUTER_CONSOLIDATE_INPUT_BUDGET = 25_000
@@ -506,21 +610,6 @@ def _chunk_payload_entries(payload: list[dict], *, budget: int | None) -> tuple[
         "split_entries": split_entries,
         "expanded_entries": len(expanded),
     }
-
-
-def _chunk_status(command: str, chunks: list[list[dict]], stats: dict, *, provider_label: str = "provider") -> None:
-    if len(chunks) <= 1 and not stats["split_entries"]:
-        return
-    click.echo(
-        f"docmancer memory {command}: sending {stats['expanded_entries']} payload part(s) "
-        f"in {len(chunks)} {provider_label} request(s), then merging results as needed.",
-        err=True,
-    )
-    if stats["split_entries"]:
-        click.echo(
-            f"Split {stats['split_entries']} oversized source entr(y/ies) into ordered parts; no selected text was trimmed.",
-            err=True,
-        )
 
 
 def _fmt_count(value: int | None, suffix: str) -> str:
@@ -793,79 +882,6 @@ def _consolidate_payload_in_rounds(
             )
 
 
-@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with OpenRouter.")
-@click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
-@click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per provider request; use 0 to send in one request.")
-@click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
-@click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
-@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="openrouter", show_default=True, help="Provider for extraction.")
-@click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
-@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (default 180, or provider timeout env var; use 0 for provider default).")
-@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
-@click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
-@click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def extract(limit, budget, query, output_format, provider, model, timeout, assume_yes, include, exclude):
-    """Extract durable memory facts with an explicit provider call."""
-    import json as _json
-
-    provider = provider.lower()
-    agent = _agent(include, exclude)
-    entries = _redacted_entries(agent, query=query, limit=limit)
-    if not entries:
-        click.echo("No memory entries to extract from. Run: docmancer memory sync")
-        sys.exit(1)
-    client, active_provider = _make_provider_client_or_exit("extract", provider, model=model, timeout=timeout)
-    provider_label = getattr(client, "provider_name", None) or provider
-    click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
-    if not assume_yes:
-        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
-
-    from docmancer.ai.memory_features import extract_memory_facts
-    from docmancer.ai.memory_schemas import ExtractedMemoryFacts
-
-    payload = _entries_to_payload(entries)
-    chunks, stats = _chunk_payload_entries(payload, budget=budget)
-    _chunk_status("extract", chunks, stats, provider_label=provider_label)
-
-    def _combined(chunk: list[dict]) -> str:
-        return "\n\n".join(
-            f"### {e.get('title', '')} ({e.get('scope', '')})\n"
-            f"source: {e.get('source_path', '')}\n\n{e.get('text', '')}"
-            for e in chunk
-        )
-
-    def _call(active_client, active_model):
-        _provider_preflight(active_client, model=active_model)
-        all_facts = []
-        for i, chunk in enumerate(chunks, start=1):
-            metadata = {"entries": len(chunk)}
-            if len(chunks) > 1:
-                metadata["batch"] = f"{i}/{len(chunks)}"
-                click.echo(
-                    f"Extracting memory batch {i}/{len(chunks)} "
-                    f"(~{stats['request_tokens'][i - 1]} tokens).",
-                    err=True,
-                )
-            token_count = stats["request_tokens"][i - 1] if stats.get("request_tokens") else None
-            _provider_request_status(f"memory extraction batch {i}/{len(chunks)}", active_client, token_count=token_count)
-            on_progress, finish = _streaming_progress(f"memory extraction batch {i}/{len(chunks)}")
-            try:
-                result = extract_memory_facts(
-                    _combined(chunk), metadata, client=active_client, model=active_model, on_progress=on_progress
-                )
-            finally:
-                finish()
-            active_label = getattr(active_client, "provider_name", None) or provider_label
-            click.echo(f"{active_label} completed extraction batch {i}/{len(chunks)}.", err=True)
-            all_facts.extend(result.facts)
-        return ExtractedMemoryFacts(facts=all_facts)
-
-    result = _run_provider_or_exit(
-        "extract", active_provider, client, model=model, timeout=timeout, fn=_call
-    )
-    click.echo(_json.dumps(result.model_dump(), indent=2))
-
-
 # Default draft path shared by `consolidate` (where it writes) and `apply`
 # (what it reads when `--from` is omitted), so the two commands chain with no
 # arguments: `consolidate` then `apply --agent codex`.
@@ -973,10 +989,10 @@ def consolidate(
         _emit_block(
             "Output",
             [
-                ("path", result.root),
+                ("path", display_path(result.root)),
                 ("format", "okf"),
                 ("sources", len(entries)),
-                ("next", f"docmancer okf doctor {result.root}"),
+                ("next", f"docmancer okf doctor {display_path(result.root)}"),
             ],
             err=False,
         )
@@ -991,11 +1007,11 @@ def consolidate(
     _emit_block(
         "Output",
         [
-            ("path", out_path),
+            ("path", display_path(out_path)),
             ("format", "markdown"),
             ("sources", len(entries)),
             ("size", f"{len(markdown):,} chars"),
-            ("next", f"docmancer memory apply --from {out_path} --agent codex"),
+            ("next", f"docmancer memory apply --from {display_path(out_path)} --agent codex"),
         ],
         err=False,
     )
@@ -1054,18 +1070,19 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
 
     if remove:
         if not target.exists():
-            click.echo(f"Nothing to remove; {target} does not exist.")
+            click.echo(f"Nothing to remove; {display_path(target)} does not exist.")
             return
         if print_only or dry_run:
-            click.echo(f"Would remove docmancer managed block from {target}.")
+            click.echo(f"Would remove docmancer managed block from {display_path(target)}.")
             return
         if not assume_yes:
-            click.confirm(f"Remove docmancer's managed block from {target}?", abort=True)
+            click.confirm(f"Remove docmancer's managed block from {display_path(target)}?", abort=True)
         removed, backup = remove_block(target, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END)
         if removed:
-            click.echo(f"Removed managed block from {target}." + (f" Backup: {backup}" if backup else ""))
+            suffix = f" Backup: {display_path(backup)}" if backup else ""
+            click.echo(f"Removed managed block from {display_path(target)}.{suffix}")
         else:
-            click.echo(f"No docmancer managed block found in {target}.")
+            click.echo(f"No docmancer managed block found in {display_path(target)}.")
         return
 
     used_default = from_path is None
@@ -1087,12 +1104,12 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
             sys.exit(2)
         src = Path(answer).expanduser()
     if not src.is_file():
-        click.echo(f"Draft not found: {src}", err=True)
+        click.echo(f"Draft not found: {display_path(src)}", err=True)
         sys.exit(2)
     body = src.read_text(encoding="utf-8")
 
     if print_only:
-        click.echo(f"Target: {target}")
+        click.echo(f"Target: {display_path(target)}")
         click.echo("")
         from docmancer.cli.managed_block import build_block
 
@@ -1100,18 +1117,22 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
         return
 
     if dry_run:
-        click.echo(f"Target: {target}")
+        click.echo(f"Target: {display_path(target)}")
         click.echo(diff_block(target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END) or "(no changes)")
         return
 
     if not assume_yes:
-        click.confirm(f"Write docmancer's managed block into {target}?", abort=True)
+        click.confirm(f"Write docmancer's managed block into {display_path(target)}?", abort=True)
 
     action, backup = upsert_block(target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END)
-    click.echo(f"{action.capitalize()} docmancer managed block in {target}.")
+    click.echo(f"{action.capitalize()} docmancer managed block in {display_path(target)}.")
     if backup:
-        click.echo(f"Backup written to {backup}")
-    click.echo("Undo: docmancer memory apply --remove" + (f" --agent {agent}" if agent else f" --output {target}") + f", or restore the backup.")
+        click.echo(f"Backup written to {display_path(backup)}")
+    click.echo(
+        "Undo: docmancer memory apply --remove"
+        + (f" --agent {agent}" if agent else f" --output {display_path(target)}")
+        + ", or restore the backup."
+    )
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export memory as a portable OKF bundle.")
@@ -1146,8 +1167,8 @@ def export(output_format, output, query, limit, include, exclude):
         title="docmancer cross-agent memory",
         log_entries=[f"{today}: exported {len(concepts)} concept(s) from docmancer memory"],
     )
-    click.echo(f"Wrote OKF bundle to {result.root} ({result.concept_count} concept(s)).")
-    click.echo(f"Validate it with: docmancer okf doctor {result.root}")
+    click.echo(f"Wrote OKF bundle to {display_path(result.root)} ({result.concept_count} concept(s)).")
+    click.echo(f"Validate it with: docmancer okf doctor {display_path(result.root)}")
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show memory index status.")
@@ -1156,7 +1177,7 @@ def status():
     agent = _agent()
     info = agent.status()
     db = Path(info["db_path"])
-    click.echo(f"Memory index: {db}")
+    click.echo(f"Memory index: {display_path(db)}")
     click.echo(f"Exists: {db.exists()}")
     click.echo(f"Sources: {info['sources']}")
     click.echo(f"Sections: {info['sections']}")
@@ -1175,7 +1196,7 @@ def clear(dry_run: bool, assume_yes: bool):
         return
     click.echo("Will remove:")
     for p in paths:
-        click.echo(f"  {p}")
+        click.echo(f"  {display_path(p)}")
     if dry_run:
         click.echo("Dry run; no changes made.")
         return

@@ -73,6 +73,7 @@ def test_cli_help():
     # The memory/docs MCP server group is a real command now (not the old
     # API-pack compiler, which stays gone).
     assert "mcp" in result.output
+    assert "qdrant" not in result.output
     assert "install" + "-pack" not in result.output
     assert "un" + "install" not in result.output
     assert "pipeline" not in result.output

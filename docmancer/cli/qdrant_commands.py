@@ -10,6 +10,8 @@ from pathlib import Path
 
 import click
 
+from docmancer.cli.ui import display_path
+
 
 def _manager():
     from docmancer.runtime.qdrant_manager import QdrantManager
@@ -17,7 +19,7 @@ def _manager():
     return QdrantManager()
 
 
-@click.group(name="qdrant", help="Manage the local docmancer-owned Qdrant process.")
+@click.group(name="qdrant", help="Manage the local docmancer-owned Qdrant process.", hidden=True)
 def qdrant_group() -> None:
     pass
 
@@ -108,7 +110,7 @@ def qdrant_upgrade_cmd(binary_path: str | None, force: bool) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(Path(binary_path).read_bytes())
         target.chmod(0o755)
-        click.echo(f"installed {binary_path} -> {target}")
+        click.echo(f"installed {display_path(binary_path)} -> {display_path(target)}")
     else:
         # Re-download pinned version.
         if mgr.paths.binary.exists():
@@ -117,7 +119,7 @@ def qdrant_upgrade_cmd(binary_path: str | None, force: bool) -> None:
         if binary is None:
             click.secho("could not acquire a qdrant binary for this platform.", fg="red", err=True)
             sys.exit(1)
-        click.echo(f"installed pinned qdrant at {binary}")
+        click.echo(f"installed pinned qdrant at {display_path(binary)}")
 
 
 @qdrant_group.command("logs")
@@ -128,7 +130,7 @@ def qdrant_logs_cmd(lines: int, stderr: bool) -> None:
     mgr = _manager()
     log_file = mgr.paths.logs_dir / ("qdrant.stderr.log" if stderr else "qdrant.stdout.log")
     if not log_file.exists():
-        click.echo(f"no log file at {log_file}")
+        click.echo(f"no log file at {display_path(log_file)}")
         return
     data = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in data[-lines:]:

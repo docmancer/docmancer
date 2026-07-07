@@ -1,4 +1,4 @@
-"""OpenRouter client for cloud memory extraction and consolidation.
+"""OpenRouter client for cloud memory consolidation.
 
 It talks to OpenRouter's OpenAI-compatible chat completions endpoint through
 ``httpx`` so docmancer does not need another provider SDK.

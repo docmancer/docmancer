@@ -9,7 +9,7 @@ There is no hosted query API or separate server runtime in the Python package. T
 The primary surface indexes context your agents already leave on disk.
 
 - **Discovery and harvest** (`docmancer/harness`): per-agent readers locate memory, instruction files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), and rule directories for Claude Code, Codex, Cursor, Gemini, and many external agents, plus repo-level instruction files recovered from each agent's recorded project paths. Entries carry a `kind` (`agent-memory`, `instructions`, or `rules`) and provenance (harness, scope, path).
-- **Privacy** (`docmancer/harness/privacy`): a redaction filter strips secrets before anything is indexed, and `--include` / `--exclude` globs plus `--dry-run` scope the harvest. Nothing is uploaded on the sync/recall path.
+- **Privacy and audit** (`docmancer/harness/privacy`, `docmancer/harness/secrets`): a shared detector redacts secrets before anything is indexed. `docmancer memory audit` runs the same detector over harvested source files before redaction and reports likely leaks with masked excerpts, short paths, and line numbers. Nothing is uploaded on the sync, audit, or recall path.
 - **Index** (`docmancer/memory`): entries are indexed into a dedicated memory collection under `~/.docmancer/memory.db` with a co-located `sqlite-vec` file, kept separate from any docs index. `docmancer memory query` answers through the same hybrid dispatcher used for docs.
 - **Hook recall** (`docmancer/memory/hooks.py`): `docmancer memory hook-context` reads Claude Code or Codex hook JSON from stdin, runs local retrieval only, and emits compact `additionalContext` when relevant source-backed matches clear the threshold. It is timeout-bounded and silent on weak matches, errors, or stale indexes.
 - **Consolidation** (`docmancer/ai`): `docmancer memory consolidate --provider openrouter` sends selected privacy-redacted entries to OpenRouter and returns a review-only master-memory draft. This is optional maintenance, not the main memory-transfer path. `docmancer memory apply` materializes a reviewed draft into an agent's always-loaded file inside a managed block.
@@ -41,11 +41,11 @@ Dense retrieval uses the vendored static `model2vec` model in `sqlite-vec` by de
 
 The default vector store is `sqlite-vec` (a single local file, no daemon). On the optional heavy backend, Qdrant takes over: `QdrantStore.ensure_collection` refuses to claim a pre-existing collection that lacks the docmancer ownership sentinel, and collection deletion only operates on docmancer-owned collections.
 
-## Qdrant lifecycle
+## Advanced Qdrant backend
 
-`docmancer.runtime.qdrant_manager` owns the local Qdrant lifecycle. It downloads the pinned binary, chooses a port under a file lock, starts the process with telemetry disabled, writes runtime metadata, and refuses to stop foreign processes.
+The default vector store is `sqlite-vec`. Users who explicitly configure the optional Qdrant backend can still use `docmancer.runtime.qdrant_manager` and the hidden `docmancer qdrant` command group. That path downloads the pinned binary, chooses a port under a file lock, starts the process with telemetry disabled, writes runtime metadata, and refuses to stop foreign processes.
 
-Set `DOCMANCER_QDRANT_URL` to use an external Qdrant instead. Set `DOCMANCER_AUTO_VECTORS=0` or run `ingest --no-vectors` to stay on FTS5 only.
+Set `vector_store.url` to use an external Qdrant instead. Set `DOCMANCER_AUTO_VECTORS=0` or run `ingest --no-vectors` to stay on FTS5 only.
 
 ## Context packs
 
@@ -68,6 +68,7 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 ```text
 agent memory + CLAUDE.md / AGENTS.md / rules (Claude Code, Codex, Cursor, Gemini, ...)
   -> discover + harvest + redact
+  -> docmancer memory audit        (local secret audit over source files)
   -> SQLite FTS5 + sqlite-vec (memory.db)
   -> docmancer memory query        (manual recall)
   -> docmancer memory hook-context (automatic Claude Code / Codex hook recall)

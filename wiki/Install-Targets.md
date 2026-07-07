@@ -27,12 +27,14 @@ Use `--project` with `claude-code`, `gemini`, `cline`, or `github-copilot` to in
 
 Use `--hooks` with `claude-code` or `codex` to install automatic memory recall hooks. Global hooks land in `~/.claude/settings.json` or `~/.codex/hooks.json`; project hooks land in `.claude/settings.json` or `.codex/hooks.json` when `--project` is passed. Codex may require review through `/hooks` before non-managed command hooks run. Remove docmancer-owned hooks with `docmancer remove <agent> --hooks`.
 
-## What the skill teaches agents
+## What the skills teach agents
 
-Installed skills cover the local docs workflow:
+Installed skills cover memory recall first, then docs retrieval when the user asks for documentation context:
 
-- `docmancer list` to see indexed documentation.
-- `docmancer query` to get compact, source-attributed context.
+- `docmancer memory query` to recall past decisions, conventions, and project context.
+- `docmancer memory sources --preview` to inspect what would be harvested.
+- `docmancer memory audit` to find likely secrets in source memory before re-indexing.
+- `docmancer query` to get compact, source-attributed docs context.
 - `docmancer ingest` to index local files.
 - `docmancer add` to index URL documentation.
 - `docmancer update` to refresh sources.

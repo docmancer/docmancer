@@ -14,6 +14,7 @@ from pathlib import Path
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
+from docmancer.cli.ui import display_path
 
 _MCP_CLIENTS = ["codex", "claude-code", "claude-desktop"]
 
@@ -60,7 +61,7 @@ def doctor():
 
     resolved = shutil.which("docmancer-mcp")
     if resolved:
-        click.echo(f"docmancer-mcp: {Path(resolved).resolve()}")
+        click.echo(f"docmancer-mcp: {display_path(Path(resolved).resolve())}")
     else:
         click.echo(f"docmancer-mcp: not on PATH; will launch via {sys.executable} -m docmancer.mcp.server")
 
@@ -83,21 +84,21 @@ def install(client, print_only, project, assume_yes):
     client = client.lower()
     if print_only:
         target = mcp_install.target_for(client, project=project)
-        click.echo(f"# Add to {target.path}")
+        click.echo(f"# Add to {display_path(target.path)}")
         click.echo(mcp_install.render(client))
         return
     target = mcp_install.target_for(client, project=project)
     if not assume_yes:
-        click.confirm(f"Write docmancer MCP config into {target.path}?", abort=True)
+        click.confirm(f"Write docmancer MCP config into {display_path(target.path)}?", abort=True)
     try:
         path, action = mcp_install.install(client, project=project)
     except ValueError as exc:
         click.echo(str(exc), err=True)
         sys.exit(2)
     if action == "exists":
-        click.echo(f"docmancer MCP server already configured in {path}; left unchanged.")
+        click.echo(f"docmancer MCP server already configured in {display_path(path)}; left unchanged.")
     else:
-        click.echo(f"{action.capitalize()} docmancer MCP server in {path}.")
+        click.echo(f"{action.capitalize()} docmancer MCP server in {display_path(path)}.")
     click.echo("Restart the client to pick up the new server.")
 
 

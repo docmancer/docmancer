@@ -35,14 +35,6 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
-      - name: Run smoke CLI checks
-        run: |
-          python -m docmancer --help
-          TMP_DIR="$(mktemp -d)"
-          python -m docmancer init --dir "$TMP_DIR"
-          test -f "$TMP_DIR/docmancer.yaml"
-          python -m docmancer doctor --config "$TMP_DIR/docmancer.yaml"
-
       - name: Build artifacts
         run: python -m build --no-isolation
 

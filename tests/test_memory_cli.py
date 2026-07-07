@@ -54,13 +54,91 @@ def test_sources_preview_lists_provenance(tmp_path, monkeypatch):
     assert "CLAUDE-CODE" in r.output  # grouped section header
 
 
+def test_sources_preview_shortens_home_paths(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    _plant(home)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    r = CliRunner().invoke(cli, ["memory", "sources", "--preview"])
+
+    assert r.exit_code == 0, r.output
+    assert str(home) not in r.output
+    assert "~/.claude/projects" in r.output
+
+
 def test_sources_json_and_filter(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     r = CliRunner().invoke(cli, ["memory", "sources", "--preview", "--json", "--agent", "claude-code"])
     assert r.exit_code == 0, r.output
     data = json.loads(r.output)
     assert data and all(row["agent"] == "claude-code" for row in data)
-    assert "chars" in data[0] and "path" in data[0]
+    assert "chars" in data[0] and "path" in data[0] and "display_path" in data[0]
+
+
+def test_audit_reports_no_findings(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    r = CliRunner().invoke(cli, ["memory", "audit"])
+    assert r.exit_code == 0
+    assert "No likely secrets found" in r.output
+
+
+def test_audit_reports_masked_actionable_findings(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    _plant(home)
+    secret_file = home / ".claude" / "projects" / "-Users-x-app" / "memory" / "creds.md"
+    secret_file.write_text("api_key = supersecretvalue123\n")
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    r = CliRunner().invoke(cli, ["memory", "audit", "--agent", "claude-code"])
+
+    assert r.exit_code == 0, r.output
+    assert "Found 1 likely secret" in r.output
+    assert "Key-value secret" in r.output
+    assert "supersecretvalue123" not in r.output
+    assert "[SECRET]" in r.output
+    assert "~/.claude/projects" in r.output
+    assert "Next: rotate if real" in r.output
+
+
+def test_audit_json_includes_raw_and_display_paths(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _plant(home)
+    secret_file = home / ".claude" / "projects" / "-Users-x-app" / "memory" / "creds.md"
+    secret_file.write_text("ghp_abcd1234efgh\n")
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+    r = CliRunner().invoke(cli, ["memory", "audit", "--json"])
+
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data["finding_count"] == 1
+    occurrence = data["findings"][0]["occurrences"][0]
+    assert occurrence["source_path"].endswith("creds.md")
+    assert "display_path" in occurrence
+    assert "ghp_abcd1234efgh" not in r.output
+
+
+def test_audit_fail_on_findings_exits_nonzero(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _plant(home)
+    secret_file = home / ".claude" / "projects" / "-Users-x-app" / "memory" / "creds.md"
+    secret_file.write_text("AKIA0123456789ABCDEF\n")
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+    r = CliRunner().invoke(cli, ["memory", "audit", "--fail-on-findings"])
+
+    assert r.exit_code == 1
+    assert "AWS access key" in r.output
 
 
 def test_sources_stored_index_after_sync(tmp_path, monkeypatch):

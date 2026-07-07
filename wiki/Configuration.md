@@ -1,237 +1,157 @@
 # Configuration
 
-**Resolution order:** `--config` flag, then `./docmancer.yaml` in the current directory, then `~/.docmancer/docmancer.yaml` (auto-created by `docmancer setup`). For details on what each command does, see [Commands](./Commands.md).
+`docmancer setup` creates `~/.docmancer/docmancer.yaml` when no config exists. Resolution order is: `--config`, then `./docmancer.yaml` in the current directory, then `~/.docmancer/docmancer.yaml`. For command behavior, see [Commands](./Commands.md).
 
-## Migration: static-embeddings + sqlite-vec + hybrid defaults
+## Defaults
 
-The defaults moved to a fully local, offline stack:
+A fresh install uses a fully local retrieval stack:
 
-- `embeddings.provider` defaults to `model2vec` (`minishlab/potion-base-8M`, 256-dim), vendored in the package. No large model download and no network at runtime.
-- `vector_store.provider` defaults to `sqlite-vec` (one local file, no daemon).
-- `retrieval.default_mode` defaults to `hybrid` (lexical + dense; degrades to lexical when no vector store is available).
+- `embeddings.provider: model2vec`, using the vendored `minishlab/potion-base-8M` static model.
+- `vector_store.provider: sqlite-vec`, using one local SQLite-backed vector file.
+- `retrieval.default_mode: hybrid`, combining lexical and dense retrieval and degrading to lexical when vector retrieval is unavailable.
 
-Existing `qdrant` / `fastembed` configs keep working once the heavy extra is installed: `pipx install "docmancer[embeddings-heavy]"`. Sparse (SPLADE) retrieval is only available on the Qdrant backend. The memory index (`docmancer memory`) uses its own collection and a co-located `sqlite-vec` file, so switching defaults does not require re-ingesting your docs index.
+The memory index uses its own database under `~/.docmancer/memory.db` and a co-located vector file. The docs index uses the configured `index.db_path`. Neither path needs API keys or a daemon.
 
-## Configuration Reference
+## Common environment variables
+
+Most users only need these:
+
+| Variable | What it does |
+|----------|--------------|
+| `DOCMANCER_HOME` | Override the storage root. Defaults to `~/.docmancer`. |
+| `DOCMANCER_MEMORY_DB` | Override the memory index database path. |
+| `DOCMANCER_HOOK_TIMEOUT_MS` | Bound automatic hook recall. Default: `1000`. |
+| `OPENROUTER_API_KEY` | Enable optional `docmancer memory consolidate` and MCP consolidation tools. |
+
+Do not put real keys in `docmancer.yaml`. docmancer reads provider keys from the shell environment.
+
+## YAML reference
 
 ### Index
 
-These settings control the SQLite FTS5 index described in [Architecture](./Architecture.md).
-
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `index.provider` | `sqlite` | Index backend (only `sqlite` is supported) |
-| `index.db_path` | `~/.docmancer/docmancer.db` | Path to the SQLite database |
-| `index.extracted_dir` | `~/.docmancer/extracted` | Directory for extracted markdown/json inspection files |
+| `index.provider` | `sqlite` | Index backend. Only SQLite is supported. |
+| `index.db_path` | `~/.docmancer/docmancer.db` | Docs SQLite database path. |
+| `index.extracted_dir` | `~/.docmancer/extracted` | Directory for inspectable extracted Markdown and JSON. |
 
 ### Query
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `query.default_budget` | `2400` | Default token budget for context packs |
-| `query.default_limit` | `8` | Maximum sections returned per query |
-| `query.default_expand` | `adjacent` | Default expansion mode (`none`, `adjacent`, `page`) |
+| `query.default_budget` | `2400` | Default token budget for context packs. |
+| `query.default_limit` | `8` | Maximum sections returned per query. |
+| `query.default_expand` | `adjacent` | Default expansion mode: `none`, `adjacent`, or `page`. |
 
 ### Web fetch
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `web_fetch.workers` | `8` | Parallelism for web page fetching |
-| `web_fetch.default_page_cap` | `500` | Default maximum pages for URL sources |
-| `web_fetch.browser_fallback` | `false` | Enable Playwright browser fallback by default |
+| `web_fetch.workers` | `8` | Parallelism for web page fetching. |
+| `web_fetch.default_page_cap` | `500` | Default maximum pages for URL sources. |
+| `web_fetch.browser_fallback` | `false` | Enable Playwright browser fallback by default. |
 
 ### Loaders
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `loaders.default_chunk_size` | `800` | Default chunk size used by paragraph + sliding-window chunkers |
-| `loaders.default_chunk_overlap` | `100` | Default overlap; must be smaller than `chunk_size` |
-| `loaders.formats.<fmt>.chunk_size` | unset | Per-format override (`md`, `pdf`, `docx`, `rtf`, `html`, `txt`) |
-| `loaders.formats.<fmt>.chunk_overlap` | unset | Per-format override |
+| `loaders.default_chunk_size` | `800` | Default chunk size used by paragraph and sliding-window chunkers. |
+| `loaders.default_chunk_overlap` | `100` | Default overlap. Must be smaller than `chunk_size`. |
+| `loaders.formats.<fmt>.chunk_size` | unset | Per-format override for `md`, `pdf`, `docx`, `rtf`, `html`, or `txt`. |
+| `loaders.formats.<fmt>.chunk_overlap` | unset | Per-format overlap override. |
 
 ### Vector store
 
-A fresh install runs hybrid retrieval by default: ingest auto-starts a managed Qdrant and embeds chunks with FastEmbed. The `vector_store:` block tunes how that store is configured. Set `DOCMANCER_AUTO_VECTORS=0` (or run `docmancer ingest --no-vectors`) for FTS5-only behaviour.
-
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `vector_store.provider` | `sqlite-vec` | `sqlite-vec` (default; one local file, no separate process) or `qdrant` (managed local or remote, optional heavy backend) |
-| `vector_store.url` | unset | Explicit Qdrant URL. When set, the managed lifecycle is skipped and docmancer uses the existing server |
-| `vector_store.api_key_env` | unset | Name of the env var holding the Qdrant API key (e.g. `QDRANT_API_KEY`) |
-| `vector_store.collection` | derived from project name | Collection name. Must be a docmancer-owned collection; `ensure_collection` refuses to claim pre-existing collections |
-| `vector_store.options.on_disk` | `true` | Store vectors + HNSW on disk |
-| `vector_store.options.hnsw_m` | `16` | HNSW graph degree |
-| `vector_store.options.hnsw_ef_construct` | `128` | HNSW build-time accuracy/speed tradeoff |
-| `vector_store.options.quantization` | unset | Set to `scalar` for INT8 scalar quantization |
-| `vector_store.options.db_path` | `~/.docmancer/sqlite-vec.db` | Storage path for the `sqlite-vec` provider only |
+| `vector_store.provider` | `sqlite-vec` | Default local vector backend. Advanced users may set `qdrant`. |
+| `vector_store.collection` | derived from project name | Vector collection name. |
+| `vector_store.options.db_path` | `~/.docmancer/sqlite-vec.db` | Storage path for the default `sqlite-vec` provider. |
 
 ### Embeddings
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `embeddings.provider` | `model2vec` | Vendored static `model2vec` by default (offline, no keys); `fastembed` on the heavy backend; cloud providers `voyage`, `openai`, `cohere` (each behind its own extra) |
-| `embeddings.model` | `minishlab/potion-base-8M` | Dense model id |
-| `embeddings.dimensions` | `256` | Dense vector dimensions; must match the model |
-| `embeddings.sparse_model` | unset (defaults to `prithivida/Splade_PP_en_v1` when sparse is needed) | SPLADE-family sparse model id |
-| `embeddings.batch_size` | `64` | Provider batch size for `embed(texts)` |
-| `embeddings.cache` | `~/.docmancer/embeddings-cache/` | Disk cache for embedded chunks; keyed by content + provider + model |
+| `embeddings.provider` | `model2vec` | Vendored static embeddings by default. Advanced providers include `fastembed`, `openai`, `voyage`, and `cohere`. |
+| `embeddings.model` | `minishlab/potion-base-8M` | Dense model id. |
+| `embeddings.dimensions` | `256` | Dense vector dimensions. Must match the model. |
+| `embeddings.batch_size` | `64` | Provider batch size for `embed(texts)`. |
+| `embeddings.cache` | `~/.docmancer/embeddings-cache/` | Disk cache for embedded chunks. |
 
 ### Retrieval
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `retrieval.default_mode` | `lexical` (auto-flips to `hybrid` when a `vector_store:` block is set) | `lexical`, `dense`, `sparse`, or `hybrid` |
-| `retrieval.fusion.method` | `rrf` | `rrf` (vanilla Reciprocal Rank Fusion) or `weighted_rrf` |
-| `retrieval.fusion.rrf_k` | `60` | RRF rank-discount constant |
-| `retrieval.fusion.weights` | `{}` | Per-source weights for `weighted_rrf`, e.g. `{lexical: 1.0, dense: 2.0, sparse: 0.5}` |
-| `retrieval.hierarchical.enabled` | `false` | Switch to two-stage retrieval: pick top documents, then top sections inside them |
-| `retrieval.hierarchical.documents_limit` | `5` | Number of documents to keep from stage 1 |
-| `retrieval.hierarchical.candidate_pool` | `200` | Per-source candidate pool size in stage 1 |
-| `retrieval.hierarchical.sections_per_document` | `10` | Cap on sections fetched per document in stage 2 |
-| `retrieval.routers` | `[]` | Ordered `[{match: <regex>, filters: {...}, description: ...}]`. First match merges its filters into the dispatcher filters for that call. |
-| `retrieval.expand` | unset | `adjacent` or `page`: plumb neighbor expansion through hybrid mode the same way `--expand` works for lexical-only retrieval. |
-| `retrieval.budget` | unset | Optional override for `query.default_budget` |
-| `retrieval.limit` | unset | Optional override for `query.default_limit` |
+| `retrieval.default_mode` | `hybrid` | `lexical`, `dense`, `sparse`, or `hybrid`. |
+| `retrieval.fusion.method` | `rrf` | `rrf` or `weighted_rrf`. |
+| `retrieval.fusion.rrf_k` | `60` | RRF rank-discount constant. |
+| `retrieval.fusion.weights` | `{}` | Per-source weights for `weighted_rrf`. |
+| `retrieval.hierarchical.enabled` | `false` | Force two-stage retrieval. |
+| `retrieval.hierarchical.auto` | `true` | Automatically enable two-stage retrieval for larger corpora. |
+| `retrieval.routers` | `[]` | Ordered regex routers that add dispatcher filters. |
+| `retrieval.expand` | unset | `adjacent` or `page` expansion for hybrid retrieval. |
+| `retrieval.budget` | unset | Optional override for `query.default_budget`. |
+| `retrieval.limit` | unset | Optional override for `query.default_limit`. |
 
-### Environment variables
+### Discovery
 
-| Variable | What it does |
-|----------|--------------|
-| `DOCMANCER_INDEX_*` | Override any `index.*` field (for example `DOCMANCER_INDEX_DB_PATH`) |
-| `DOCMANCER_QUERY_*` | Override any `query.*` field |
-| `DOCMANCER_WEB_FETCH_*` | Override any `web_fetch.*` field |
-| `DOCMANCER_HOME` | Override the storage root (defaults to `~/.docmancer`) |
-| `DOCMANCER_VECTOR_STORE_*` | Override any `vector_store.*` field (for example `DOCMANCER_VECTOR_STORE_PROVIDER=sqlite-vec`) |
-| `DOCMANCER_EMBEDDINGS_*` | Override any `embeddings.*` field (for example `DOCMANCER_EMBEDDINGS_MODEL`) |
-| `DOCMANCER_RETRIEVAL_*` | Override any `retrieval.*` field (for example `DOCMANCER_RETRIEVAL_DEFAULT_MODE=hybrid`) |
-| `DOCMANCER_QDRANT_URL` | Point at an existing Qdrant; short-circuits the managed lifecycle |
-| `DOCMANCER_QDRANT_API_KEY` | API key for the above |
-| `DOCMANCER_QDRANT_BINARY` | Pre-staged Qdrant binary path for air-gapped hosts |
-| `DOCMANCER_AUTO_VECTORS` | Set to `0` to skip vector indexing and keep ingest/query on FTS5 only |
-| `DOCMANCER_FASTEMBED_CACHE_DIR` | Pre-staged FastEmbed model cache for offline installs |
+| Key | Default | What it controls |
+|-----|---------|------------------|
+| `discovery.disabled` | `[]` | Harness names to skip during memory discovery. |
+| `discovery.extra_sources` | `[]` | Custom memory, instruction, or rule sources to harvest. |
 
-## Example `docmancer.yaml`
+Each extra source uses:
+
+```yaml
+discovery:
+  extra_sources:
+    - harness: custom
+      path: ~/path/to/file-or-folder
+      kind: instructions
+      scope: global
+```
+
+## Minimal example
 
 ```yaml
 index:
-  provider: sqlite
   db_path: ~/.docmancer/docmancer.db
   extracted_dir: ~/.docmancer/extracted
 
 query:
   default_budget: 2400
   default_limit: 8
-  default_expand: adjacent
-
-web_fetch:
-  workers: 8
-  default_page_cap: 500
 ```
 
-## Example with hybrid retrieval
+## Advanced providers and backends
+
+The default stack needs no provider keys. These settings are for explicit opt-in use:
+
+| Use case | Variables or config |
+|----------|---------------------|
+| OpenRouter consolidation | `OPENROUTER_API_KEY` for `docmancer memory consolidate --provider openrouter`. |
+| Cloud embeddings | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VOYAGE_API_KEY`, or `COHERE_API_KEY`, depending on `embeddings.provider`. |
+| FTS5-only operation | `DOCMANCER_AUTO_VECTORS=0` or `docmancer ingest --no-vectors`. |
+| FastEmbed cache override | `DOCMANCER_FASTEMBED_CACHE_DIR`. |
+| Advanced Qdrant backend | `vector_store.provider: qdrant`, optional `vector_store.url`, optional `vector_store.api_key_env`, and the `embeddings-heavy` extra. |
+
+Example advanced Qdrant config:
 
 ```yaml
-index:
-  provider: sqlite
-  db_path: ~/.docmancer/docmancer.db
-
 vector_store:
   provider: qdrant
-  # url: http://localhost:6333         # uncomment to point at an existing Qdrant
   collection: docmancer_docs
-  options:
-    on_disk: true
-    hnsw_m: 16
-    hnsw_ef_construct: 128
 
 embeddings:
   provider: fastembed
   model: BAAI/bge-base-en-v1.5
   dimensions: 768
-  sparse_model: prithivida/Splade_PP_en_v1
-  batch_size: 64
-
-retrieval:
-  # default_mode auto-flips to "hybrid" when vector_store is set.
-  fusion:
-    method: rrf
-    rrf_k: 60
-  hierarchical:
-    enabled: true
-    documents_limit: 5
-  routers:
-    - match: "(?i)api reference|endpoint"
-      filters:
-        source_path_prefix: api
-      description: prefer-api-reference
-    - match: "(?i)markdown docs"
-      filters:
-        format: markdown
-      description: prefer-markdown
 ```
 
-## API keys
-
-The default retrieval stack (`model2vec` static embeddings + `sqlite-vec`) needs **no API keys**. Keys are only required when you opt into a cloud embeddings provider, point at a remote Qdrant cluster, or use OpenRouter for optional memory drafting. Hook recall, sync, query, sources, status, apply, and clear are local. docmancer reads keys from your shell environment.
-
-| Provider | Env var | Set when |
-|----------|---------|----------|
-| OpenAI embeddings | `OPENAI_API_KEY` | `embeddings.provider: openai` |
-| OpenAI-compatible base URL | `OPENAI_BASE_URL` | Pointing the OpenAI provider at Azure / vLLM / Together (optional) |
-| Voyage AI embeddings | `VOYAGE_API_KEY` | `embeddings.provider: voyage` |
-| Cohere embeddings | `COHERE_API_KEY` | `embeddings.provider: cohere` |
-| OpenRouter memory drafting | `OPENROUTER_API_KEY` | `docmancer memory extract --provider openrouter`, `docmancer memory consolidate --provider openrouter`, or MCP cloud tools |
-| Remote Qdrant | env var named by `vector_store.api_key_env` (e.g. `QDRANT_API_KEY`) | `vector_store.url` points at a managed/cloud Qdrant |
-
-### Where to put them
-
-Pick one. **Never commit a real key.**
-
-**1. Your shell rc file**: best for personal machines.
-
-```bash
-# in ~/.zshrc or ~/.bashrc
-export OPENAI_API_KEY="sk-..."
-```
-
-Reload the shell and `docmancer doctor` will report `embeddings: provider=openai ...` without warning.
-
-**2. Inline for a single command**: best for one-off CI runs.
-
-```bash
-OPENAI_API_KEY=sk-... docmancer ingest ./docs
-```
-
-### What happens when a key is missing
-
-If `embeddings.provider` is a cloud provider and the matching env var is unset, docmancer logs a one-line warning and falls back to FTS5-only ingest. The lexical index still populates; the next ingest with the key present backfills vectors via the embeddings cache so no work is wasted.
-
-### Switching to local embeddings instead
-
-Edit `~/.docmancer/docmancer.yaml`:
-
-```yaml
-embeddings:
-  provider: fastembed
-  model: BAAI/bge-base-en-v1.5
-  dimensions: 768
-```
-
-FastEmbed is the default and needs no env vars.
-
-## Example with OpenAI embeddings
-
-```yaml
-embeddings:
-  provider: openai
-  model: text-embedding-3-small
-  dimensions: 1536
-  batch_size: 128
-```
-
-Set `OPENAI_API_KEY` (see [API keys](#api-keys) above).
+Qdrant remains supported for users who explicitly configure the heavy backend, but it is not the default path. The default `sqlite-vec` backend is the product path optimized for local memory recall.
 
 ## Notes
 
-- Relative `index.db_path` values are resolved relative to the location of `docmancer.yaml`, not the current shell directory.
+- Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
 - Project-local configs are created by `docmancer init` and point to `.docmancer/docmancer.db` inside the project.
+- If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.
