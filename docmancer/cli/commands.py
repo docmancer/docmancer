@@ -492,6 +492,138 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
     dest.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+_HOOK_COMMAND_MARKER = "docmancer memory hook-context"
+
+
+def _hook_command(agent: str, config_path: str | Path | None) -> str:
+    return f"{_resolve_skill_command(config_path)} memory hook-context --agent {shlex.quote(agent)}"
+
+
+def _load_json_object(path: Path) -> dict:
+    if not path.exists() or not path.read_text(encoding="utf-8").strip():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"Could not update {display_path(path)} because it is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise click.ClickException(f"Could not update {display_path(path)} because it must contain a JSON object.")
+    return data
+
+
+def _is_docmancer_hook(handler: object) -> bool:
+    return isinstance(handler, dict) and _HOOK_COMMAND_MARKER in str(handler.get("command") or "")
+
+
+def _install_hook_json(path: Path, *, event: str, command: str, status: str, matcher: str | None = None) -> bool:
+    data = _load_json_object(path)
+    hooks_root = data.setdefault("hooks", {})
+    if not isinstance(hooks_root, dict):
+        raise click.ClickException(f"Could not update {display_path(path)} because hooks must be a JSON object.")
+    groups = hooks_root.setdefault(event, [])
+    if not isinstance(groups, list):
+        raise click.ClickException(f"Could not update {display_path(path)} because hooks.{event} must be a list.")
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        handlers = group.get("hooks")
+        if isinstance(handlers, list) and any(_is_docmancer_hook(handler) for handler in handlers):
+            return False
+
+    group: dict[str, object] = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": command,
+                "timeout": 2,
+                "statusMessage": status,
+            }
+        ]
+    }
+    if matcher is not None:
+        group["matcher"] = matcher
+    groups.append(group)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return True
+
+
+def _remove_hook_json(path: Path) -> bool:
+    if not path.exists():
+        return False
+    data = _load_json_object(path)
+    hooks_root = data.get("hooks")
+    if not isinstance(hooks_root, dict):
+        return False
+    changed = False
+    for event, groups in list(hooks_root.items()):
+        if not isinstance(groups, list):
+            continue
+        kept_groups = []
+        for group in groups:
+            if not isinstance(group, dict):
+                kept_groups.append(group)
+                continue
+            handlers = group.get("hooks")
+            if not isinstance(handlers, list):
+                kept_groups.append(group)
+                continue
+            kept_handlers = [handler for handler in handlers if not _is_docmancer_hook(handler)]
+            if len(kept_handlers) != len(handlers):
+                changed = True
+            if kept_handlers:
+                updated = dict(group)
+                updated["hooks"] = kept_handlers
+                kept_groups.append(updated)
+        if kept_groups:
+            hooks_root[event] = kept_groups
+        else:
+            hooks_root.pop(event, None)
+    if not changed:
+        return False
+    if not hooks_root:
+        data.pop("hooks", None)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return True
+
+
+def _install_agent_hooks(agent: str, *, project: bool, config_path: str | Path | None) -> list[tuple[str, Path]]:
+    home = Path.home()
+    if agent == "claude-code":
+        path = (Path(".claude") / "settings.json") if project else (home / ".claude" / "settings.json")
+        command = _hook_command("claude-code", config_path)
+        installed = []
+        if _install_hook_json(path, event="SessionStart", command=command, status="Loading docmancer memories"):
+            installed.append(("Installed Claude Code SessionStart hook at", path))
+        if _install_hook_json(path, event="UserPromptSubmit", command=command, status="Searching docmancer memory"):
+            installed.append(("Installed Claude Code UserPromptSubmit hook at", path))
+        return installed or [("Docmancer hooks already present at", path)]
+    if agent == "codex":
+        path = (Path(".codex") / "hooks.json") if project else (home / ".codex" / "hooks.json")
+        command = _hook_command("codex", config_path)
+        installed = []
+        if _install_hook_json(path, event="SessionStart", command=command, status="Loading docmancer memories", matcher="startup|resume"):
+            installed.append(("Installed Codex SessionStart hook at", path))
+        if _install_hook_json(path, event="UserPromptSubmit", command=command, status="Searching docmancer memory"):
+            installed.append(("Installed Codex UserPromptSubmit hook at", path))
+        return installed or [("Docmancer hooks already present at", path)]
+    raise click.ClickException("--hooks is currently supported for claude-code and codex.")
+
+
+def _remove_agent_hooks(agent: str, *, project: bool) -> list[tuple[str, Path]]:
+    home = Path.home()
+    if agent == "claude-code":
+        path = (Path(".claude") / "settings.json") if project else (home / ".claude" / "settings.json")
+    elif agent == "codex":
+        path = (Path(".codex") / "hooks.json") if project else (home / ".codex" / "hooks.json")
+    else:
+        raise click.ClickException("--hooks removal is currently supported for claude-code and codex.")
+    if _remove_hook_json(path):
+        return [("Removed docmancer hooks from", path)]
+    return [("No docmancer hooks found at", path)]
+
+
 # ---------------------------------------------------------------------------
 # CLI commands
 # ---------------------------------------------------------------------------
@@ -1108,20 +1240,21 @@ def doctor_cmd(config_path: str | None):
         pass
 
     click.echo()
-    click.echo(_style("  Agent consolidation providers", fg="white", bold=True))
-    try:
-        from docmancer.ai.agent_cli_client import DEFAULT_AGENT_ORDER, agent_provider_binaries
-
-        binaries = agent_provider_binaries()
-        for provider in DEFAULT_AGENT_ORDER:
-            binary = binaries[provider]
-            path = shutil.which(binary)
-            if path:
-                _emit_status_line(f"{provider}: {display_path(path)}", indent=4)
-            else:
-                _emit_status_line(f"{provider}: not available ({binary} not on PATH)", state="warn", indent=4)
-    except Exception as exc:  # noqa: BLE001 - doctor should not fail on optional provider inspection
-        _emit_status_line(f"agent providers: could not inspect ({exc})", state="warn", indent=4)
+    click.echo(_style("  Memory hooks", fg="white", bold=True))
+    hook_locations = [
+        ("claude-code", home / ".claude" / "settings.json"),
+        ("codex", home / ".codex" / "hooks.json"),
+    ]
+    for label, path in hook_locations:
+        try:
+            data = _load_json_object(path) if path.exists() else {}
+            has_hook = _HOOK_COMMAND_MARKER in json.dumps(data)
+        except Exception:
+            has_hook = False
+        if has_hook:
+            _emit_status_line(f"{label}: hooks installed at {display_path(path)}", indent=4)
+        else:
+            _emit_status_line(f"{label}: no hooks installed (run: docmancer install {label} --hooks)", state="warn", indent=4)
 
     # Skill install status
     click.echo()
@@ -1300,6 +1433,8 @@ def query_cmd(
     short_help="Remove an indexed source.",
     epilog=format_examples(
         "docmancer remove --all",
+        "docmancer remove claude-code --hooks",
+        "docmancer remove codex --hooks",
         "docmancer remove https://docs.example.com",
         "docmancer remove https://docs.example.com/page",
         "docmancer remove ./docs/getting-started.md",
@@ -1307,9 +1442,22 @@ def query_cmd(
 )
 @click.argument("source", required=False)
 @click.option("--all", "remove_all", is_flag=True, default=False, help="Remove every stored source and docset.")
+@click.option("--hooks", is_flag=True, default=False, help="Remove docmancer hook integration for claude-code or codex.")
+@click.option("--project", is_flag=True, default=False, help="Remove project-level hook config instead of user-level hook config.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def remove_cmd(source: str | None, remove_all: bool, config_path: str | None):
-    """Remove an indexed source (URL or file path) from the knowledge base."""
+def remove_cmd(source: str | None, remove_all: bool, hooks: bool, project: bool, config_path: str | None):
+    """Remove an indexed source or a docmancer hook integration."""
+    if hooks:
+        if remove_all:
+            click.echo("Do not pass --all when using --hooks.", err=True)
+            sys.exit(1)
+        if not source:
+            click.echo("Specify claude-code or codex when using --hooks.", err=True)
+            sys.exit(2)
+        removed = _remove_agent_hooks(source.lower(), project=project)
+        for label, path in removed:
+            _emit_status_line(f"{label}: {display_path(path)}")
+        return
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     agent = _get_agent_class()(config=config)
@@ -1520,8 +1668,9 @@ def list_cmd(show_all: bool, config_path: str | None):
 @click.argument("agent", type=click.Choice(INSTALL_TARGETS, case_sensitive=False))
 @click.option("--project", is_flag=True, default=False,
               help="Install in project-level settings (claude-code, gemini, cline, or github-copilot).")
+@click.option("--hooks", is_flag=True, default=False, help="Install automatic memory recall hooks (claude-code or codex).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def install_cmd(agent: str, project: bool, config_path: str | None):
+def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
     Teaches the agent to recall your unified memory and search indexed docs
@@ -1532,6 +1681,8 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
     """
     config_path = _effective_config(config_path)
     normalized = agent.lower()
+    if hooks and normalized not in {"claude-code", "codex", "codex-app", "codex-desktop"}:
+        raise click.ClickException("--hooks is currently supported for claude-code and codex.")
     home = Path.home()
     user_config_exists_before = _get_user_config_path().exists()
     effective_config_path = _resolve_install_config_path(config_path, project)
@@ -1578,17 +1729,24 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             "{{DOCS_KIT_CMD}}", _resolve_skill_command(effective_config_path)
         )
         _install_or_append_agents_md(claude_md, instruction_body)
+        installed_paths = [
+            ("Installed docmancer skill at", dest),
+            ("Installed docmancer-memory skill at", mem_dest),
+            ("Injected recall instruction into", claude_md),
+        ]
+        extra_lines = ["Claude Code can use docmancer commands as a fallback."]
+        next_step = "Claude Code can use docmancer immediately. No restart needed."
+        if hooks:
+            installed_paths.extend(_install_agent_hooks("claude-code", project=project, config_path=effective_config_path))
+            extra_lines.insert(0, "Automatic recall hooks installed for SessionStart and UserPromptSubmit.")
+            next_step = "Start Claude Code; relevant memories will be injected automatically when they match."
         _emit_install_summary(
             "Install skill for Claude Code.",
-            [
-                ("Installed docmancer skill at", dest),
-                ("Installed docmancer-memory skill at", mem_dest),
-                ("Injected recall instruction into", claude_md),
-            ],
+            installed_paths,
             created_user_config,
             effective_config_path,
-            "Claude Code can use docmancer immediately. No restart needed.",
-            extra_lines=["Claude Code will automatically use docmancer commands."],
+            next_step,
+            extra_lines=extra_lines,
         )
         return
 
@@ -1608,20 +1766,31 @@ def install_cmd(agent: str, project: bool, config_path: str | None):
             "{{DOCS_KIT_CMD}}", _resolve_skill_command(effective_config_path)
         )
         _install_or_append_agents_md(codex_agents_md, instruction_body)
+        installed_paths = [
+            ("Installed docmancer skill at", dest),
+            ("Installed docmancer-memory skill at", mem_dest),
+            ("Also installed shared compatibility skill at", shared_dest),
+            ("Injected recall instruction into", codex_agents_md),
+        ]
+        extra_lines = ["Codex can use docmancer commands as a fallback."]
+        next_step = 'Run `docmancer query "your question"` to verify retrieval from the CLI.'
+        if hooks:
+            installed_paths.extend(_install_agent_hooks("codex", project=project, config_path=effective_config_path))
+            extra_lines.insert(0, "Automatic recall hooks installed for SessionStart and UserPromptSubmit.")
+            extra_lines.append("Codex may ask you to review and trust hooks. Open /hooks if prompted.")
+            next_step = "Start Codex and review /hooks if requested; relevant memories will be injected automatically when they match."
         _emit_install_summary(
             "Install skill for Codex.",
-            [
-                ("Installed docmancer skill at", dest),
-                ("Installed docmancer-memory skill at", mem_dest),
-                ("Also installed shared compatibility skill at", shared_dest),
-                ("Injected recall instruction into", codex_agents_md),
-            ],
+            installed_paths,
             created_user_config,
             effective_config_path,
-            'Run `docmancer query "your question"` to verify retrieval from the CLI.',
-            extra_lines=["Codex will automatically use docmancer commands."],
+            next_step,
+            extra_lines=extra_lines,
         )
         return
+
+    if hooks:
+        raise click.ClickException("--hooks is currently supported for claude-code and codex.")
 
     if normalized == "cursor":
         dest = home / ".cursor" / "skills" / "docmancer" / "SKILL.md"

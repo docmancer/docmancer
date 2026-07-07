@@ -92,8 +92,8 @@ def test_okf_doctor_flags_bad_bundle(tmp_path):
 
 
 def _install_fake_consolidate(monkeypatch):
-    from docmancer.ai.agent_cli_client import AgentCliClient
     from docmancer.ai.memory_schemas import ConsolidatedMemoryDraft, ConsolidatedMemorySection
+    from docmancer.ai.openrouter_client import OpenRouterClient
 
     def fake_preflight(self, *, model=None):
         return None
@@ -106,8 +106,9 @@ def _install_fake_consolidate(monkeypatch):
             source_paths=["/Users/x/app/CLAUDE.md"],
         )
 
-    monkeypatch.setattr(AgentCliClient, "preflight", fake_preflight)
-    monkeypatch.setattr(AgentCliClient, "parse", fake_parse)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(OpenRouterClient, "preflight", fake_preflight)
+    monkeypatch.setattr(OpenRouterClient, "parse", fake_parse)
 
 
 def test_consolidate_format_okf_writes_bundle(tmp_path, monkeypatch):
@@ -115,7 +116,7 @@ def test_consolidate_format_okf_writes_bundle(tmp_path, monkeypatch):
     _install_fake_consolidate(monkeypatch)
     out = tmp_path / "draft.okf"
     r = CliRunner().invoke(
-        cli, ["memory", "consolidate", "--provider", "claude", "--format", "okf", "--output", str(out), "--yes"]
+        cli, ["memory", "consolidate", "--provider", "openrouter", "--format", "okf", "--output", str(out), "--yes"]
     )
     assert r.exit_code == 0, r.output
     assert (out / "index.md").exists()

@@ -1,3 +1,4 @@
+import json
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -91,6 +92,38 @@ def test_install_claude_code_backs_up_existing_user_file():
         assert "Keep these." in backups[0].read_text()
 
 
+def test_install_claude_code_hooks_and_remove_preserves_other_hooks():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        settings = fake_home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": "echo keep"}]}
+                        ]
+                    }
+                }
+            )
+        )
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "claude-code", "--hooks"])
+            second = runner.invoke(cli, ["install", "claude-code", "--hooks"])
+            removed = runner.invoke(cli, ["remove", "claude-code", "--hooks"])
+
+        assert result.exit_code == 0, result.output
+        assert second.exit_code == 0, second.output
+        assert removed.exit_code == 0, removed.output
+        data = json.loads(settings.read_text())
+        blob = json.dumps(data)
+        assert "echo keep" in blob
+        assert "docmancer memory hook-context" not in blob
+
+
 def test_install_codex_creates_native_and_shared_skills():
     runner = CliRunner()
     with runner.isolated_filesystem() as tmp_dir:
@@ -107,6 +140,43 @@ def test_install_codex_creates_native_and_shared_skills():
         injected = codex_agents.read_text()
         assert "<!-- docmancer:start -->" in injected
         assert "docmancer memory query" in injected
+
+
+def test_install_codex_hooks_mentions_trust_flow():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "codex", "--hooks"])
+        assert result.exit_code == 0, result.output
+        hooks_file = fake_home / ".codex" / "hooks.json"
+        data = json.loads(hooks_file.read_text())
+        blob = json.dumps(data)
+        assert "SessionStart" in data["hooks"]
+        assert "UserPromptSubmit" in data["hooks"]
+        assert "docmancer" in blob
+        assert "memory hook-context --agent codex" in blob
+        assert '"timeout": 2' in blob
+        assert "/hooks" in result.output
+
+
+def test_install_codex_hooks_use_documented_hooks_json_shape():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "codex", "--hooks"])
+        assert result.exit_code == 0, result.output
+        data = json.loads((fake_home / ".codex" / "hooks.json").read_text())
+
+        session_group = data["hooks"]["SessionStart"][0]
+        prompt_group = data["hooks"]["UserPromptSubmit"][0]
+        assert session_group["matcher"] == "startup|resume"
+        assert session_group["hooks"][0]["type"] == "command"
+        assert prompt_group["hooks"][0]["type"] == "command"
+        assert "memory hook-context --agent codex" in prompt_group["hooks"][0]["command"]
 
 
 def test_install_cursor_creates_agents_md_fallback():

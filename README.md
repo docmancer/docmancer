@@ -14,12 +14,12 @@
 
 ---
 
-Your coding agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more) already write memory, instructions, and rules all over this machine, each locked inside its own tool. Docmancer **discovers all of it, syncs it into one local hybrid (lexical + dense) index, and lets you recall any past decision instantly and offline.** The full memory loop is four steps:
+Your coding agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more) already write memory, instructions, and rules all over this machine, each locked inside its own tool. Docmancer **discovers all of it, syncs it into one local hybrid (lexical + dense) index, and injects relevant memories into Claude Code and Codex automatically through local hooks.** The full memory loop is four steps:
 
 1. **Sync** (`docmancer memory sync`): discover and index every agent's memory, instructions, and rules into one local SQLite index. Local, offline, no keys.
-2. **Recall** (`docmancer memory query`): hybrid search across everything your agents have ever written, with source provenance.
-3. **Consolidate** (`docmancer memory consolidate`): use the coding-agent CLI you already run to turn scattered, duplicated memory into one coherent, review-only master-memory draft.
-4. **Apply** (`docmancer memory apply`): materialize the reviewed draft into an agent's always-loaded file, so the context loads every session with no tool call.
+2. **Install hooks** (`docmancer install claude-code --hooks` / `docmancer install codex --hooks`): relevant local memories appear in context without the agent choosing to call a tool.
+3. **Recall manually** (`docmancer memory query`): search across everything your agents have ever written, with source provenance, when you want an explicit answer.
+4. **Maintain** (`docmancer memory consolidate` / `apply`): optional OpenRouter-backed cleanup into a reviewed draft, then explicit projection into an agent file if you want a compact shared summary.
 
 The same engine also does docs RAG as a secondary capability: point it at a folder of Markdown / PDF / DOCX / RTF / HTML or a docs URL (GitBook, Mintlify, generic web, GitHub) and query it the same way. A fresh install ships everything you need for the local path: SQLite FTS5 for lexical search, a static embedding model (`potion-base-8M`) vendored in the package so there is no large model download and no network at runtime, and `sqlite-vec` for dense vectors in a single local file with no daemon.
 
@@ -58,22 +58,39 @@ docmancer add https://docs.pytest.org               # or a docs URL
 docmancer query "How do I parametrize a fixture?"   # hybrid search across the docs index
 ```
 
-## Consolidate and carry memory across agents
+## Automatic recall with hooks
 
-Syncing gives you one searchable index. **Consolidation turns that pile into a single coherent memory.** `docmancer memory consolidate` sends your retrieved local memory (privacy-redacted first) through an installed coding-agent CLI by default, using `claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, or `cursor` when one is available. It gets back a review-only master-memory draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
+Syncing gives you one searchable index. Hooks make that index useful while you work: on `SessionStart` and `UserPromptSubmit`, docmancer runs a fast local query and injects only the top relevant source-backed snippets into Claude Code or Codex context. Most prompts inject nothing. Weak matches stay silent, and a per-session cache avoids repeating the same memory every turn.
 
 ```bash
-docmancer memory consolidate \
-  --query "deployment and infra decisions" \
-  --output master-memory-draft.md \
-  --draft-quality fast \
-  --timeout 180
-
-docmancer memory consolidate --provider claude --yes
-docmancer memory consolidate --provider codex --yes
+docmancer install claude-code --hooks
+docmancer install codex --hooks
 ```
 
-Once you have reviewed the draft, materialize it into an agent's always-loaded file so the context loads every session with no tool call and, crucially, so memory written in one agent shows up in the others:
+Hooks are local and bounded. They read hook JSON from stdin, query the existing local memory index, and output hook-compatible `additionalContext` only when relevant matches clear the threshold. They never call OpenRouter or another provider. If the hook is slow, malformed, or has nothing useful to add, it exits successfully with no output so the agent turn continues normally. The internal hook budget defaults to 1,000 ms and can be adjusted with `DOCMANCER_HOOK_TIMEOUT_MS`. Remove hooks with:
+
+```bash
+docmancer remove claude-code --hooks
+docmancer remove codex --hooks
+```
+
+Codex hooks use the documented `~/.codex/hooks.json` hook shape and emit `hookSpecificOutput.additionalContext` on stdout. Codex may require you to review and trust the installed hook through `/hooks`.
+
+## Optional consolidation and apply
+
+Consolidation is optional maintenance, not the main memory-transfer path. `docmancer memory consolidate` sends selected, privacy-redacted memory to OpenRouter and returns a review-only draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
+
+```bash
+export OPENROUTER_API_KEY=...
+docmancer memory consolidate \
+  --provider openrouter \
+  --model openai/gpt-4.1-nano \
+  --query "deployment and infra decisions" \
+  --output master-memory-draft.md \
+  --yes
+```
+
+Once you have reviewed the draft, materialize it into an agent's always-loaded file only if you want a compact stable summary:
 
 ```bash
 docmancer memory apply --agent codex   # uses master-memory-draft.md by default
@@ -82,38 +99,15 @@ docmancer memory apply --agent codex --dry-run   # preview the diff first
 
 `apply` is local and keyless. It writes only inside a clearly delimited managed block, takes a timestamped backup first, and never touches your own surrounding content. `--remove` strips the block for a clean uninstall. This is the only command that writes consolidated memory into agent-owned files, and it is never automatic. (`docmancer install codex` / `claude-code` also inject a short recall instruction into the same files, in their own managed block.)
 
-The default provider is `agent`, which auto-selects the first supported agent CLI on your `PATH`. Pass `--provider claude`, `--provider codex`, `--provider gemini`, `--provider opencode`, `--provider cline`, `--provider github-copilot`, or `--provider cursor` to force one. This is not offline: the selected agent may call Anthropic, OpenAI, Google, or another configured provider through that agent's own account.
-
-The chosen agent CLI has to be installed and signed in (drafting runs it headlessly, so it uses the login and model already configured for that tool). Run `docmancer doctor` to see which agent consolidation providers are available on this machine before you rely on one:
-
-```text
-Agent consolidation providers
-  [OK] claude: ~/.local/bin/claude
-  [OK] codex: ~/.nvm/versions/node/v22.17.1/bin/codex
-  [OK] gemini: /usr/local/bin/gemini
-  [--] opencode: not available (opencode not on PATH)
-```
-
-OpenRouter is still available as the only direct cloud API fallback. When `OPENROUTER_API_KEY` is set, `memory extract` and `memory consolidate` automatically retry through OpenRouter if an agent CLI provider fails during setup, preflight, or generation. `--model` accepts any OpenRouter chat model id your account can use, including Anthropic models, OpenAI models, Google models, and others. Set `DOCMANCER_OPENROUTER_MODEL` to change the OpenRouter default from `openai/gpt-4.1-nano`.
-
-```bash
-export OPENROUTER_API_KEY=...
-docmancer memory consolidate \
-  --provider openrouter \
-  --model openai/gpt-4.1-nano \
-  --output master-memory-draft.md \
-  --yes
-```
-
-When docmancer drives an agent CLI, it runs it in an isolated subprocess: a fresh temporary working directory so none of your own project files or instructions load, the agent's read-only or plan (non-editing) mode, and a recursion guard that stops the subprocess from calling back into `docmancer memory`. For Claude Code it also loads no MCP servers and keeps no session. So a consolidation run cannot edit your repo, pick up unrelated project context, or loop back into docmancer.
-
-Use `--timeout`, `DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each provider request, with a finite 180 second default and `0` for the provider default. Every provider-backed command fails gracefully with a concise message (no tracebacks, long CLI or OpenRouter errors trimmed to the useful part) when both the selected agent and OpenRouter fallback are unavailable, prints a provider-use notice before the first call, runs a preflight before large memory payloads, logs each request before sending it, and runs secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
+Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each OpenRouter request, with a finite 180 second default and `0` for the provider default. Provider-backed commands fail gracefully with concise messages, print a provider-use notice before the first call, run a preflight before large memory payloads, log each request before sending it, and run secret redaction before any text leaves your machine. See the [Configuration](./wiki/Configuration.md) and [Commands](./wiki/Commands.md) pages for details.
 
 ## What you get
 
 **Your agents' memory, unified.** `docmancer memory sync` discovers and indexes the memory, instructions, and rules your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more, plus repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), then answers questions about them through one local index. `docmancer memory sources` shows exact provenance per file. The local path uploads nothing.
 
-**Consolidate with the agents you already run.** `docmancer memory consolidate` turns the scattered index into one review-only master-memory draft via an installed coding-agent CLI by default, and `docmancer memory apply` bakes the reviewed result into an agent's always-loaded file so context carries across agents. OpenRouter is available with `--provider openrouter` when you want a direct API key path or a specific OpenRouter model id, and it is used automatically as a fallback when an agent provider fails and `OPENROUTER_API_KEY` is set.
+**Automatic recall in Claude Code and Codex.** `docmancer install claude-code --hooks` and `docmancer install codex --hooks` inject relevant memory snippets at session start and before matching prompts. The hook path is local, bounded, source-attributed, and silent when nothing relevant clears the threshold.
+
+**Optional consolidation.** `docmancer memory consolidate --provider openrouter` turns selected memory into one review-only master-memory draft when `OPENROUTER_API_KEY` is configured. `docmancer memory apply` can then bake a reviewed draft into an agent's always-loaded file, with diff preview, backups, and undo.
 
 **Callable over MCP.** The packaged `docmancer-mcp` stdio server exposes local memory and docs search to MCP clients. `docmancer mcp install codex` (or `claude-code`, `claude-desktop`) wires it up; optional OpenRouter tools appear when `OPENROUTER_API_KEY` is set. Requires the `mcp` extra.
 
@@ -127,11 +121,11 @@ Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.
 
 ## Where your data lives and how to remove it
 
-The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, status, sources, apply, and clear run locally. Provider-backed drafting commands are optional and send selected memory text only after privacy redaction and a provider-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
+The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, hook recall, status, sources, apply, and clear run locally. Hook output is sourced from local files, bounded, redacted before index, and source-attributed because it goes directly into agent context. Provider-backed drafting commands are optional and send selected memory text only after privacy redaction and a provider-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, remove hooks with `docmancer remove <agent> --hooks`, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
 
 **Inspectable.** Every section is written to `~/.docmancer/extracted/` as Markdown plus JSON. `docmancer inspect` shows index stats. `docmancer query --explain` shows which signal (lexical / dense / sparse) placed each result.
 
-**Agent integration built in.** `docmancer setup` drops skill files for Claude Code, Cursor, Codex, Cline, Claude Desktop, Gemini, GitHub Copilot, and OpenCode. For Claude Code and Codex it also injects a memory-recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (a managed block), so the agent reliably calls `docmancer memory query` before answering questions about past work.
+**Agent integration built in.** `docmancer setup` drops skill files for Claude Code, Cursor, Codex, Cline, Claude Desktop, Gemini, GitHub Copilot, and OpenCode. For Claude Code and Codex it also injects a memory-recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (a managed block), so manual pull recall still works when hooks are not installed.
 
 ## Where to next
 

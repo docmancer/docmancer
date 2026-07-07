@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.11] - Unreleased
+### Added
+
+- **Hook-based memory recall.** `docmancer install claude-code --hooks` and `docmancer install codex --hooks` install local `SessionStart` and `UserPromptSubmit` hooks that inject bounded, source-attributed memory snippets only when relevant matches clear the threshold. `docmancer memory hook-context` is the read-only hook entrypoint, and `docmancer remove <agent> --hooks` removes the hook config.
+- **Hook runtime hardening.** Hook recall now allows a 1,000 ms internal budget by default, installs command hooks with a 2 second outer timeout, and avoids letting broad `SessionStart` recall suppress later prompt-specific memories in the same session.
+- **Codex hook contract coverage.** The Codex hook path is covered against the documented `hooks.json` config shape and `hookSpecificOutput.additionalContext` output envelope.
+
+### Changed
+
+- **Consolidation is now optional OpenRouter-backed maintenance.** `docmancer memory extract` and `docmancer memory consolidate` now expose only `--provider openrouter`; agent-CLI generation providers and automatic OpenRouter fallback from those providers were removed from the drafting path.
+
 ## [0.6.10] - 2026-07-06
 ### Changed
 

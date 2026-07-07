@@ -14,7 +14,7 @@ _MISSING_MCP = (
     "the MCP server requires the 'mcp' extra; install with "
     "`pip install docmancer[mcp]` (or `pipx inject docmancer mcp`)."
 )
-_NO_RECURSE_MESSAGE = "docmancer MCP server is disabled inside docmancer agent-provider subprocesses."
+_NO_RECURSE_MESSAGE = "docmancer MCP server is disabled inside docmancer subprocesses."
 
 
 def build_server():

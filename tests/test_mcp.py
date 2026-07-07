@@ -47,21 +47,21 @@ def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
     assert "docmancer_memory_consolidate_draft" in names
 
 
-def test_build_server_blocked_inside_agent_provider(monkeypatch):
+def test_build_server_blocked_inside_docmancer_subprocess(monkeypatch):
     monkeypatch.setenv("DOCMANCER_NO_RECURSE", "1")
     from docmancer.mcp.server import build_server
 
-    with pytest.raises(RuntimeError, match="disabled inside docmancer agent-provider subprocesses"):
+    with pytest.raises(RuntimeError, match="disabled inside docmancer subprocesses"):
         build_server()
 
 
-def test_cloud_tools_blocked_inside_agent_provider(monkeypatch):
+def test_cloud_tools_blocked_inside_docmancer_subprocess(monkeypatch):
     monkeypatch.setenv("DOCMANCER_NO_RECURSE", "1")
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp import tools
 
-    assert "disabled inside docmancer agent-provider subprocesses" in tools.memory_extract()["error"]
-    assert "disabled inside docmancer agent-provider subprocesses" in tools.memory_consolidate_draft()["error"]
+    assert "disabled inside docmancer subprocesses" in tools.memory_extract()["error"]
+    assert "disabled inside docmancer subprocesses" in tools.memory_consolidate_draft()["error"]
 
 
 def test_tools_memory_search_local(tmp_path, monkeypatch):

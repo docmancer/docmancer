@@ -104,7 +104,7 @@ def sources_list(agent: str | None = None, scope: str | None = None, kind: str |
 
 def _blocked_by_recursion() -> dict | None:
     if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
-        return {"error": "docmancer MCP memory drafting is disabled inside docmancer agent-provider subprocesses"}
+        return {"error": "docmancer MCP memory drafting is disabled inside docmancer subprocesses"}
     return None
 
 

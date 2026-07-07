@@ -8,6 +8,7 @@ SQLite-backed files.
 from __future__ import annotations
 
 import os
+import signal
 import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,10 +40,13 @@ def _emit_sync_details(agent) -> None:
     info = agent.status()
     rows = agent.sources()
     if rows:
-        by_agent = Counter(r["agent"] for r in rows)
+        # The "agent" field is the harness that owns each source; it includes
+        # non-agent buckets like "instructions" for user-authored files, so
+        # label it "By harness" to match the `scan` command's vocabulary.
+        by_harness = Counter(r["agent"] for r in rows)
         by_kind = Counter(r["type"] for r in rows)
         total_chars = sum(int(r.get("chars") or 0) for r in rows)
-        _emit_counts("By agent", by_agent)
+        _emit_counts("By harness", by_harness)
         _emit_counts("By kind", by_kind)
         click.echo(
             "  "
@@ -83,7 +87,7 @@ def memory_group():
     local sync/query commands do not upload anything.
     """
     if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
-        click.echo("docmancer memory commands are disabled inside docmancer agent-provider subprocesses.", err=True)
+        click.echo("docmancer memory commands are disabled inside docmancer subprocesses.", err=True)
         sys.exit(2)
 
 
@@ -175,6 +179,66 @@ def query(text: str, limit: int | None, mode: str):
         click.echo("---")
 
 
+@memory_group.command(
+    "hook-context",
+    cls=DocmancerCommand,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    short_help="Emit bounded memory context for agent hooks.",
+)
+@click.option("--agent", type=click.Choice(["auto", "claude-code", "codex"], case_sensitive=False), default="auto", show_default=True)
+@click.option("--limit", default=3, type=int, show_default=True, help="Maximum snippets to inject.")
+@click.option("--max-chars", default=2_000, type=int, show_default=True, help="Maximum injected context characters.")
+@click.option("--threshold", default=0.01, type=float, show_default=True, help="Minimum retrieval score required to inject.")
+@click.option("--debug", is_flag=True, help="Print diagnostic errors to stderr.")
+def hook_context(agent: str, limit: int, max_chars: int, threshold: float, debug: bool):
+    """Read hook JSON on stdin and emit hook-compatible additional context.
+
+    This command is for Claude Code and Codex lifecycle hooks. It is local and
+    read-only from the perspective of agent memory: it queries the existing
+    memory index and prints nothing unless relevant, source-backed snippets are
+    found quickly.
+    """
+    from docmancer.memory.hooks import (
+        build_hook_context,
+        hook_output,
+        hook_timeout_ms,
+        parse_hook_payload,
+    )
+
+    class _HookTimeout(Exception):
+        pass
+
+    def _alarm(_signum, _frame):
+        raise _HookTimeout()
+
+    previous = None
+    timeout_seconds = hook_timeout_ms() / 1000
+    if hasattr(signal, "SIGALRM"):
+        previous = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        raw = sys.stdin.read()
+        payload = parse_hook_payload(raw, agent=agent.lower())
+        if payload is None:
+            return
+        context = build_hook_context(payload, limit=max(0, limit), max_chars=max(1, max_chars), threshold=threshold)
+        output = hook_output(payload.event, context)
+        if output:
+            click.echo(output)
+    except _HookTimeout:
+        if debug:
+            click.echo("docmancer hook-context timed out; injecting no context.", err=True)
+    except Exception as exc:  # noqa: BLE001 - hooks must never break the agent turn
+        if debug:
+            click.echo(f"docmancer hook-context failed: {exc}", err=True)
+    finally:
+        if hasattr(signal, "SIGALRM"):
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if previous is not None:
+                signal.signal(signal.SIGALRM, previous)
+
+
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List indexed sources with provenance.")
 @click.option("--agent", "agent_filter", default=None, help="Filter by agent/harness name.")
 @click.option("--scope", "scope_filter", type=click.Choice(["global", "project"], case_sensitive=False), default=None, help="Filter by scope.")
@@ -258,17 +322,7 @@ _PROVIDER_NOTICE = (
     "Note: this sends your selected local memory text to {provider}. "
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
-_PROVIDER_CHOICES = [
-    "agent",
-    "claude",
-    "codex",
-    "gemini",
-    "opencode",
-    "cline",
-    "github-copilot",
-    "cursor",
-    "openrouter",
-]
+_PROVIDER_CHOICES = ["openrouter"]
 _DEFAULT_CLOUD_INPUT_BUDGET = 90_000
 _DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
 _FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
@@ -279,7 +333,6 @@ _FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 2048
 _OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS = 8192
 _OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS = 4096
 _DEFAULT_CONSOLIDATE_CONCURRENCY = 1
-_CODEX_CONSOLIDATE_CONCURRENCY = 2
 _OPENROUTER_CONSOLIDATE_CONCURRENCY = 3
 _MERGE_DRAFT_MAX_CHARS = 12_000
 _APPROX_CHARS_PER_TOKEN = 4
@@ -289,26 +342,13 @@ def _provider_disclosure(provider: str, client=None) -> str:
     label = getattr(client, "provider_name", None) or provider
     if provider == "openrouter":
         return "OpenRouter (cloud)"
-    if provider == "agent":
-        return f"{label} through your installed coding-agent CLI"
-    return f"{label} through your installed coding-agent CLI"
-
-
-def _is_agent_provider(provider: str) -> bool:
-    return provider != "openrouter"
-
-
-def _openrouter_fallback_model(model: str | None) -> str | None:
-    if model and "/" in model:
-        return model
-    return None
+    return label
 
 
 def _expected_provider_errors():
-    from docmancer.ai.agent_cli_client import AgentCliError
     from docmancer.ai.openrouter_client import OpenRouterConfigError
 
-    return (AgentCliError, OpenRouterConfigError)
+    return (OpenRouterConfigError,)
 
 
 def _make_provider_client(provider: str, *, model: str | None, timeout: float | None):
@@ -316,64 +356,21 @@ def _make_provider_client(provider: str, *, model: str | None, timeout: float | 
         from docmancer.ai.openrouter_client import OpenRouterClient
 
         return OpenRouterClient(model=model, timeout_seconds=timeout)
-
-    from docmancer.ai.agent_cli_client import AgentCliClient
-
-    return AgentCliClient(agent=provider, model=model, timeout_seconds=timeout)
+    raise click.ClickException(f"Unsupported provider: {provider}")
 
 
-def _make_openrouter_fallback_client(*, model: str | None, timeout: float | None):
-    from docmancer.ai.openrouter_client import OpenRouterClient
-
-    return OpenRouterClient(model=_openrouter_fallback_model(model), timeout_seconds=timeout)
-
-
-def _make_provider_client_with_setup_fallback_or_exit(
-    command: str,
-    provider: str,
-    *,
-    model: str | None,
-    timeout: float | None,
-):
+def _make_provider_client_or_exit(command: str, provider: str, *, model: str | None, timeout: float | None):
     try:
         return _make_provider_client(provider, model=model, timeout=timeout), provider
     except _expected_provider_errors() as exc:
-        if not _is_agent_provider(provider):
-            click.echo(str(exc), err=True)
-            sys.exit(2)
-        try:
-            fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
-        except _expected_provider_errors() as fallback_exc:
-            click.echo(f"Agent provider setup failed: {exc}", err=True)
-            click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
-            sys.exit(2)
-        except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
-            click.echo(f"Agent provider setup failed: {exc}", err=True)
-            click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
-            sys.exit(1)
-        click.echo(f"Agent provider setup failed: {exc}", err=True)
-        click.echo("Retrying with OpenRouter fallback.", err=True)
-        return fallback, "openrouter"
+        click.echo(str(exc), err=True)
+        sys.exit(2)
     except Exception as exc:  # noqa: BLE001 - provider setup should not traceback
-        if not _is_agent_provider(provider):
-            click.echo(f"docmancer memory {command} provider setup failed: {exc}", err=True)
-            sys.exit(1)
-        try:
-            fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
-        except _expected_provider_errors() as fallback_exc:
-            click.echo(f"Agent provider setup failed: {exc}", err=True)
-            click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
-            sys.exit(2)
-        except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
-            click.echo(f"Agent provider setup failed: {exc}", err=True)
-            click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
-            sys.exit(1)
-        click.echo(f"Agent provider setup failed: {exc}", err=True)
-        click.echo("Retrying with OpenRouter fallback.", err=True)
-        return fallback, "openrouter"
+        click.echo(f"docmancer memory {command} provider setup failed: {exc}", err=True)
+        sys.exit(1)
 
 
-def _run_provider_with_openrouter_fallback_or_exit(
+def _run_provider_or_exit(
     command: str,
     provider: str,
     client,
@@ -382,42 +379,14 @@ def _run_provider_with_openrouter_fallback_or_exit(
     timeout: float | None,
     fn,
 ):
-    """Run an agent provider call, falling back to OpenRouter on agent failure."""
     try:
         return fn(client, model)
     except _expected_provider_errors() as exc:
-        if not _is_agent_provider(provider):
-            click.echo(str(exc), err=True)
-            sys.exit(2)
-        primary_error = str(exc)
+        click.echo(str(exc), err=True)
+        sys.exit(2)
     except Exception as exc:  # noqa: BLE001 - provider/runtime errors must not traceback
-        if not _is_agent_provider(provider):
-            provider_label = getattr(client, "provider_name", None) or "provider"
-            click.echo(f"docmancer memory {command} failed calling {provider_label}: {exc}", err=True)
-            sys.exit(1)
-        primary_error = f"{type(exc).__name__}: {exc}"
-
-    try:
-        fallback = _make_openrouter_fallback_client(model=model, timeout=timeout)
-    except _expected_provider_errors() as fallback_exc:
-        click.echo(f"Agent provider failed: {primary_error}", err=True)
-        click.echo(f"OpenRouter fallback unavailable: {fallback_exc}", err=True)
-        sys.exit(2)
-    except Exception as fallback_exc:  # noqa: BLE001 - fallback setup should not traceback
-        click.echo(f"Agent provider failed: {primary_error}", err=True)
-        click.echo(f"OpenRouter fallback setup failed: {fallback_exc}", err=True)
-        sys.exit(1)
-
-    fallback_model = _openrouter_fallback_model(model)
-    click.echo(f"Agent provider failed: {primary_error}", err=True)
-    click.echo("Retrying with OpenRouter fallback.", err=True)
-    try:
-        return fn(fallback, fallback_model)
-    except _expected_provider_errors() as fallback_exc:
-        click.echo(f"OpenRouter fallback failed: {fallback_exc}", err=True)
-        sys.exit(2)
-    except Exception as fallback_exc:  # noqa: BLE001 - fallback runtime should not traceback
-        click.echo(f"docmancer memory {command} OpenRouter fallback failed: {fallback_exc}", err=True)
+        provider_label = getattr(client, "provider_name", None) or provider
+        click.echo(f"docmancer memory {command} failed calling {provider_label}: {exc}", err=True)
         sys.exit(1)
 
 
@@ -574,10 +543,6 @@ def _is_openrouter_client(client) -> bool:
     return (getattr(client, "provider_name", "") or "").lower() == "openrouter"
 
 
-def _is_codex_client(client) -> bool:
-    return (getattr(client, "provider_name", "") or "").lower() == "codex"
-
-
 def _default_consolidate_budget(*, draft_quality: str, client) -> int:
     if _is_openrouter_client(client):
         return (
@@ -601,8 +566,6 @@ def _default_consolidate_max_output_tokens(*, draft_quality: str, client) -> int
 def _default_consolidate_concurrency(*, client) -> int:
     if _is_openrouter_client(client):
         return _OPENROUTER_CONSOLIDATE_CONCURRENCY
-    if _is_codex_client(client):
-        return _CODEX_CONSOLIDATE_CONCURRENCY
     return _DEFAULT_CONSOLIDATE_CONCURRENCY
 
 
@@ -830,19 +793,19 @@ def _consolidate_payload_in_rounds(
             )
 
 
-@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with an agent CLI.")
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Extract durable memory facts with OpenRouter.")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max entries to feed the extractor.")
 @click.option("--budget", default=_DEFAULT_CLOUD_INPUT_BUDGET, type=int, show_default=True, help="Approximate input-token budget per provider request; use 0 to send in one request.")
 @click.option("--query", "query", default=None, help="Only extract from memory relevant to this query.")
 @click.option("output_format", "--format", type=click.Choice(["json"], case_sensitive=False), default="json", show_default=True)
-@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="agent", show_default=True, help="Provider for extraction.")
+@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="openrouter", show_default=True, help="Provider for extraction.")
 @click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
 @click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (default 180, or provider timeout env var; use 0 for provider default).")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
 def extract(limit, budget, query, output_format, provider, model, timeout, assume_yes, include, exclude):
-    """Extract durable memory facts. Uses an installed agent CLI by default."""
+    """Extract durable memory facts with an explicit provider call."""
     import json as _json
 
     provider = provider.lower()
@@ -851,18 +814,11 @@ def extract(limit, budget, query, output_format, provider, model, timeout, assum
     if not entries:
         click.echo("No memory entries to extract from. Run: docmancer memory sync")
         sys.exit(1)
-    client, active_provider = _make_provider_client_with_setup_fallback_or_exit(
-        "extract", provider, model=model, timeout=timeout
-    )
+    client, active_provider = _make_provider_client_or_exit("extract", provider, model=model, timeout=timeout)
     provider_label = getattr(client, "provider_name", None) or provider
     click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
-    if _is_agent_provider(provider):
-        click.echo("If the agent provider fails, docmancer will retry with OpenRouter when configured.", err=True)
     if not assume_yes:
-        target = provider_label
-        if _is_agent_provider(provider) and active_provider != "openrouter":
-            target = f"{provider_label}, or OpenRouter fallback if the agent provider fails"
-        click.confirm(f"Send the selected memory to {target}?", abort=True, err=True)
+        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
 
     from docmancer.ai.memory_features import extract_memory_facts
     from docmancer.ai.memory_schemas import ExtractedMemoryFacts
@@ -904,7 +860,7 @@ def extract(limit, budget, query, output_format, provider, model, timeout, assum
             all_facts.extend(result.facts)
         return ExtractedMemoryFacts(facts=all_facts)
 
-    result = _run_provider_with_openrouter_fallback_or_exit(
+    result = _run_provider_or_exit(
         "extract", active_provider, client, model=model, timeout=timeout, fn=_call
     )
     click.echo(_json.dumps(result.model_dump(), indent=2))
@@ -922,7 +878,7 @@ _DEFAULT_DRAFT = "master-memory-draft.md"
 @click.option("output_format", "--format", type=click.Choice(["md", "okf"], case_sensitive=False), default="md", show_default=True, help="Draft format: a single markdown file, or an OKF bundle.")
 @click.option("--limit", default=100, type=int, show_default=True, help="Max entries to consolidate.")
 @click.option("--budget", default=None, type=int, help="Approximate input-token budget per provider request. Defaults are provider-specific; use 0 to send in one request.")
-@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="agent", show_default=True, help="Provider for consolidation.")
+@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="openrouter", show_default=True, help="Provider for consolidation.")
 @click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
 @click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
 @click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults are provider-specific; use 0 for provider default.")
@@ -960,18 +916,11 @@ def consolidate(
     if not entries:
         click.echo("No memory entries to consolidate. Run: docmancer memory sync")
         sys.exit(1)
-    client, active_provider = _make_provider_client_with_setup_fallback_or_exit(
-        "consolidate", provider, model=model, timeout=timeout
-    )
+    client, active_provider = _make_provider_client_or_exit("consolidate", provider, model=model, timeout=timeout)
     provider_label = getattr(client, "provider_name", None) or provider
     click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
-    if _is_agent_provider(provider):
-        click.echo("If the agent provider fails, docmancer will retry with OpenRouter when configured.", err=True)
     if not assume_yes:
-        target = provider_label
-        if _is_agent_provider(provider) and active_provider != "openrouter":
-            target = f"{provider_label}, or OpenRouter fallback if the agent provider fails"
-        click.confirm(f"Send the selected memory to {target}?", abort=True, err=True)
+        click.confirm(f"Send the selected memory to {provider_label}?", abort=True, err=True)
 
     from docmancer.ai.memory_features import draft_to_markdown
 
@@ -1006,7 +955,7 @@ def consolidate(
 
     # The draft is only written after a successful call, so any failure leaves
     # no partial output behind.
-    draft = _run_provider_with_openrouter_fallback_or_exit(
+    draft = _run_provider_or_exit(
         "consolidate", active_provider, client, model=model, timeout=timeout, fn=_call
     )
     draft.source_paths = list(dict.fromkeys(source_files))

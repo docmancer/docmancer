@@ -24,7 +24,8 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 1. Run `docmancer memory status` to check the index exists and holds entries.
 2. If empty or stale, run `docmancer memory sync` to (re)index local agent memory.
-3. Run `docmancer memory query "question"` and use the recalled entries as grounding.
+3. If hooks are installed, relevant memories may already be injected into context.
+4. Otherwise, run `docmancer memory query "question"` and use the recalled entries as grounding.
 
 ## Core Commands
 
@@ -36,6 +37,22 @@ docmancer memory query "why did we pick Railway"
 docmancer memory sources
 docmancer memory status
 docmancer memory clear
+```
+
+## Automatic Hook Recall
+
+Claude Code and Codex can receive relevant memories automatically before a turn:
+
+```bash
+docmancer install claude-code --hooks
+docmancer install codex --hooks
+```
+
+The hook path is local and bounded. It queries the existing memory index, injects only source-attributed snippets that clear the relevance threshold, and prints nothing when it has no useful context. Remove hooks with:
+
+```bash
+docmancer remove claude-code --hooks
+docmancer remove codex --hooks
 ```
 
 ## Provenance
@@ -53,21 +70,19 @@ docmancer okf doctor memory.okf
 
 ## Provider-backed drafting (optional)
 
-These send privacy-redacted local memory through an installed coding-agent CLI by default. If an agent provider fails and `OPENROUTER_API_KEY` is set, docmancer retries through OpenRouter. If both paths fail, it exits cleanly with a clear message. They never edit agent files.
+These send privacy-redacted local memory to OpenRouter when `OPENROUTER_API_KEY` is set. They are optional maintenance commands, not the main memory recall path. They never edit agent files.
 
 ```bash
 docmancer memory extract --yes
 docmancer memory consolidate --query "..." --output draft.md --draft-quality fast --timeout 180 --yes
 docmancer memory consolidate --format okf --output draft.okf --yes
-docmancer memory consolidate --provider claude --yes
-docmancer memory consolidate --provider codex --yes
 docmancer memory consolidate --provider openrouter --model openai/gpt-4.1-nano --yes
 ```
 
-`extract` and `consolidate` default to `--provider agent`, which auto-selects a supported agent CLI. Use `--provider claude`, `codex`, `gemini`, `opencode`, `cline`, `github-copilot`, or `cursor` to force one. Use `--provider openrouter` with `OPENROUTER_API_KEY` when you want a direct API key path; OpenRouter also acts as the automatic fallback for agent-provider setup, preflight, and generation failures when its key is present. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout`, `DOCMANCER_AGENT_CLI_TIMEOUT_SECONDS`, or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
+`extract` and `consolidate` default to `--provider openrouter`. Use `--model` to pass any OpenRouter model id your account can use. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
 
 `docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Supported apply targets include `codex`, `claude-code`, `cursor`, `gemini`, `opencode`, `github-copilot`, and `cline`. Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
 
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. The local commands never leave the machine; provider-backed drafting commands send redacted text only after a provider-use confirmation.
+Secrets are redacted on index. Use `--dry-run` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory clear` deletes the local index. Hook recall and local commands never leave the machine; provider-backed drafting commands send redacted text only after a provider-use confirmation.
