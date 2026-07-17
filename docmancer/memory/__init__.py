@@ -12,11 +12,17 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import hashlib
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
+from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 
 if TYPE_CHECKING:
     from docmancer.core.config import DocmancerConfig
@@ -26,6 +32,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MEMORY_COLLECTION = "docmancer_memory"
+
+# Bump when extraction logic changes so stale cached atoms are not reused.
+_ATOM_CACHE_VERSION = 2
+MEMORY_SCHEMA_VERSION = 2
+_SCHEMA_META_TABLE = "docmancer_memory_meta"
+_DEFAULT_SYNC_LOCK_TIMEOUT = 10.0
+
+
+class SyncInProgressError(RuntimeError):
+    """Raised when another Docmancer process is rebuilding the memory index."""
+
+
+class SchemaMismatchError(RuntimeError):
+    """Raised when the local memory index uses an incompatible projection."""
+
+
+def sync_lock_path(db_path: str) -> Path:
+    return Path(db_path).parent / "sync.lock"
+
+
+def _read_schema_meta(db_path: str) -> dict[str, str]:
+    if not Path(db_path).exists():
+        return {}
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(f"SELECT key, value FROM {_SCHEMA_META_TABLE}").fetchall()
+    except sqlite3.Error:
+        return {}
+    return {str(key): str(value) for key, value in rows}
+
+
+def _write_schema_meta(db_path: str, meta: dict[str, str]) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {_SCHEMA_META_TABLE} "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.executemany(
+            f"INSERT INTO {_SCHEMA_META_TABLE} (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [(key, str(value)) for key, value in meta.items()],
+        )
 
 
 def default_memory_db() -> str:
@@ -47,6 +95,7 @@ class MemoryAgent:
         self.home = Path(home) if home is not None else default_home()
         self.db_path = str(db_path or os.getenv("DOCMANCER_MEMORY_DB") or default_memory_db())
         self.privacy = PrivacyFilter(include=list(include or []), exclude=list(exclude or []))
+        self._last_sync_stats: dict = {}
         self.config = config or self._build_config()
         from docmancer.agent import DocmancerAgent
 
@@ -104,23 +153,199 @@ class MemoryAgent:
         """Return the entries that WOULD be indexed (post-filter), no writes."""
         return [e for e in harvest_all(self.home, config=self.config) if self.privacy.allows(e)]
 
+    def atom_preview(self) -> list[AtomicMemoryEntry]:
+        """Return atomic records that WOULD be indexed, no writes."""
+        return self._atoms_from_entries(self.preview())
+
     def sync(self, *, recreate: bool = False) -> int:
-        """Harvest, filter, redact, and index. Returns the entry count."""
-        entries = self.preview()
-        if recreate:
-            # Rebuild from scratch: drop the vector collection up front so
-            # "--recreate" truly starts clean, even when the harvest is now
-            # empty (all entries deleted or excluded). Otherwise the FTS index
-            # is cleared but the co-located sqlite-vec collection keeps stale
-            # vectors from the previous sync.
+        """Harvest, filter, redact, extract atoms, and index them."""
+        with self._sync_lock():
+            entries = self.preview()
+            cleaned_entries = [self.privacy.clean(e) for e in entries]
+            atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate)
+            # Memory is a dedicated index, so every sync rebuilds the atom projection
+            # from harvested sources. This prevents stale atom records after source
+            # files are edited or removed.
             self._drop_vectors()
-        if not entries:
-            if recreate:
+            self._clear_embedding_bookkeeping()
+            if not atoms:
                 self._agent.store.add_documents([], recreate=True)
-            return 0
-        docs = [self.privacy.clean(e).to_document() for e in entries]
-        self._agent.ingest_documents(docs, recreate=recreate, with_vectors=True)
-        return len(docs)
+            else:
+                docs = [atom.to_document() for atom in atoms]
+                self._agent.ingest_documents(docs, recreate=True, with_vectors=True)
+            self._write_source_snapshot(cleaned_entries, atoms)
+            self._stamp_schema()
+            return len(atoms)
+
+    @contextmanager
+    def _sync_lock(self):
+        from filelock import FileLock, Timeout
+
+        timeout = float(os.getenv("DOCMANCER_SYNC_LOCK_TIMEOUT", _DEFAULT_SYNC_LOCK_TIMEOUT))
+        lock = FileLock(str(sync_lock_path(self.db_path)), timeout=timeout)
+        try:
+            lock.acquire()
+        except Timeout as exc:
+            raise SyncInProgressError(
+                "another Docmancer sync is in progress; wait for it to finish, then retry"
+            ) from exc
+        try:
+            yield
+        finally:
+            lock.release()
+
+    def _stamp_schema(self) -> None:
+        emb = self.config.embeddings
+        _write_schema_meta(
+            self.db_path,
+            {
+                "schema_version": str(MEMORY_SCHEMA_VERSION),
+                "memory_layer": "atomic",
+                "embeddings_provider": str(emb.provider or ""),
+                "embeddings_model": str(emb.model or ""),
+                "embeddings_dim": str(emb.dimensions or 0),
+            },
+        )
+
+    def validate_schema(self) -> None:
+        meta = _read_schema_meta(self.db_path)
+        if not meta:
+            return
+        if meta.get("schema_version") != str(MEMORY_SCHEMA_VERSION) or meta.get("memory_layer") != "atomic":
+            raise SchemaMismatchError(
+                "this memory index predates atomic memory; run `docmancer memory sync --recreate`"
+            )
+
+    def _atoms_from_entries(
+        self,
+        entries: list["MemoryEntry"],
+        *,
+        already_clean: bool = False,
+        merge: bool = True,
+    ) -> list[AtomicMemoryEntry]:
+        atoms: list[AtomicMemoryEntry] = []
+        seen: set[tuple[str, str, str]] = set()
+        for entry in entries:
+            clean_entry = entry if already_clean else self.privacy.clean(entry)
+            for atom in extract_atoms(clean_entry):
+                key = (atom.scope, atom.source_path, atom.content_hash)
+                if key in seen:
+                    continue
+                seen.add(key)
+                atoms.append(atom)
+        if merge and len(atoms) > 1:
+            embed = self._embed_fn()
+            if embed is not None:
+                atoms = merge_atoms(atoms, embed_texts=embed)
+        return atoms
+
+    def _embed_fn(self):
+        """Return the local embedding function, or None if unavailable.
+
+        Cross-agent merge needs vectors; if the embeddings backend cannot load
+        we skip merge rather than fail the sync.
+        """
+        try:
+            from docmancer.embeddings import get_embeddings_provider
+
+            provider = get_embeddings_provider(self.config.embeddings)
+            return provider.embed
+        except Exception as exc:  # noqa: BLE001 - degrade to unmerged atoms
+            logger.debug("merge embeddings unavailable: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # Incremental extraction cache
+    # ------------------------------------------------------------------
+
+    def _atom_cache_path(self) -> Path:
+        db = Path(self.db_path)
+        return db.with_name(db.stem + "-atom-cache.json")
+
+    def _load_atom_cache(self) -> dict[str, list[dict]]:
+        path = self._atom_cache_path()
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - a broken cache just means full re-extract
+            return {}
+        if not isinstance(data, dict) or data.get("version") != _ATOM_CACHE_VERSION:
+            return {}
+        sources = data.get("sources")
+        return sources if isinstance(sources, dict) else {}
+
+    def _save_atom_cache(self, cache: dict[str, list[dict]]) -> None:
+        path = self._atom_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": _ATOM_CACHE_VERSION, "sources": cache}
+        try:
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 - cache is best effort
+            logger.debug("could not write atom cache: %s", exc)
+
+    @staticmethod
+    def _cache_key(path: str, content: str) -> str:
+        digest = hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+        return f"{path}\n{digest}"
+
+    def _atoms_from_entries_cached(
+        self,
+        entries: list["MemoryEntry"],
+        *,
+        recreate: bool = False,
+    ) -> list[AtomicMemoryEntry]:
+        """Extract atoms, reusing cached per-source atoms for unchanged files.
+
+        Only sources whose content changed since the last sync are re-extracted;
+        unchanged sources reuse their cached atoms keyed by content hash. The
+        rebuilt cache holds only sources present this run, so deleted or edited
+        files drop out. Cross-agent merge still runs globally over the combined
+        atom set, since a merge cluster can span several sources.
+        """
+        old_cache: dict[str, list[dict]] = {} if recreate else self._load_atom_cache()
+        new_cache: dict[str, list[dict]] = {}
+        raw_atoms: list[AtomicMemoryEntry] = []
+        seen: set[tuple[str, str, str]] = set()
+        reused_sources = 0
+        extracted_sources = 0
+        for entry in entries:  # entries are already privacy-cleaned
+            key = self._cache_key(entry.path, entry.content or "")
+            cached = old_cache.get(key)
+            if cached is not None:
+                entry_atoms = [AtomicMemoryEntry(**record) for record in cached]
+                reused_sources += 1
+            else:
+                entry_atoms = extract_atoms(entry)
+                extracted_sources += 1
+            new_cache[key] = [asdict(atom) for atom in entry_atoms]
+            for atom in entry_atoms:
+                dedupe = (atom.scope, atom.source_path, atom.content_hash)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                raw_atoms.append(atom)
+
+        self._save_atom_cache(new_cache)
+
+        pre_merge = len(raw_atoms)
+        if pre_merge > 1:
+            embed = self._embed_fn()
+            if embed is not None:
+                raw_atoms = merge_atoms(raw_atoms, embed_texts=embed)
+        self._last_sync_stats = {
+            "sources_total": len(entries),
+            "sources_reused": reused_sources,
+            "sources_extracted": extracted_sources,
+            "atoms_before_merge": pre_merge,
+            "atoms_after_merge": len(raw_atoms),
+            "duplicates_merged": pre_merge - len(raw_atoms),
+            "cross_agent_atoms": sum(1 for atom in raw_atoms if atom.source_count > 1),
+        }
+        return raw_atoms
+
+    def last_sync_stats(self) -> dict:
+        return dict(getattr(self, "_last_sync_stats", {}) or {})
 
     def _drop_vectors(self) -> None:
         """Best-effort removal of the memory vector collection and its metadata."""
@@ -147,6 +372,14 @@ class MemoryAgent:
         except Exception:  # noqa: BLE001
             pass
 
+    def _clear_embedding_bookkeeping(self) -> None:
+        """Clear embedding_upserts for the memory collection, best effort."""
+        try:
+            collection = self._agent._vector_collection_name()
+            self._agent.store.clear_embedding_upserts(collection)
+        except Exception as exc:  # noqa: BLE001 - bookkeeping cleanup is best effort
+            logger.debug("could not clear embedding bookkeeping: %s", exc)
+
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------
@@ -161,6 +394,8 @@ class MemoryAgent:
         allow_degraded: bool = True,
     ) -> list["RetrievedChunk"]:
         from docmancer.retrieval.dispatch import RetrievalDispatcher
+
+        self.validate_schema()
 
         vector_store, provider = self._build_retrieval_backends()
         dispatcher = RetrievalDispatcher(
@@ -195,27 +430,30 @@ class MemoryAgent:
         # Do not construct the store when the index does not exist; that would
         # create an empty SQLite file and make `status` lie about existence.
         if not Path(self.db_path).exists():
-            return {"db_path": self.db_path, "sources": 0, "sections": 0}
+            return {"db_path": self.db_path, "sources": 0, "atoms": 0, "sections": 0}
         try:
             stats = self._agent.collection_stats()
         except Exception:  # noqa: BLE001
             stats = {}
+        rows = self.sources()
         return {
             "db_path": self.db_path,
-            "sources": stats.get("sources_count", 0),
+            "sources": len(rows),
+            "atoms": stats.get("sections_count", 0),
             "sections": stats.get("sections_count", 0),
         }
 
     def sources(self, *, live_preview: bool = False) -> list[dict]:
-        """Return provenance rows: agent, type, scope, title, path, chars.
+        """Return source-file provenance rows with atomic-memory counts.
 
         ``live_preview=True`` re-harvests (post-privacy, no writes) to show what
-        WOULD index; otherwise it reads the stored index (what was actually
-        consolidated). Rows are sorted by agent, then scope, then path.
+        WOULD index; otherwise it reads the stored atomic index. Rows are sorted
+        by agent, then scope, then path.
         """
         rows: list[dict] = []
         if live_preview or not Path(self.db_path).exists():
-            for e in self.preview():
+            for e in [self.privacy.clean(item) for item in self.preview()]:
+                atoms = extract_atoms(e)
                 rows.append(
                     {
                         "agent": e.harness,
@@ -224,6 +462,7 @@ class MemoryAgent:
                         "title": e.title,
                         "path": e.path,
                         "chars": len(e.content or ""),
+                        "atoms": len(atoms),
                     }
                 )
         else:
@@ -231,24 +470,81 @@ class MemoryAgent:
                 provenance = self._agent.store.list_source_provenance()
             except Exception:  # noqa: BLE001
                 provenance = []
+            grouped: dict[str, dict] = {}
             for item in provenance:
                 meta = item.get("metadata", {})
-                rows.append(
+                path = meta.get("source_path", item["source"].split(":", 1)[-1])
+                row = grouped.setdefault(
+                    str(path),
                     {
                         "agent": meta.get("harness", item["source"].split(":", 1)[0]),
                         "type": meta.get("kind", "agent-memory"),
                         "scope": meta.get("scope", ""),
                         "title": meta.get("title", ""),
-                        "path": meta.get("source_path", item["source"].split(":", 1)[-1]),
-                        "chars": item["chars"],
-                    }
+                        "path": str(path),
+                        "chars": 0,
+                        "atoms": 0,
+                    },
                 )
+                row["chars"] = max(int(row["chars"] or 0), int(meta.get("source_chars") or item.get("chars") or 0))
+                row["atoms"] += 1
+            rows = list(grouped.values())
         rows.sort(key=lambda r: (r["agent"], r["scope"], r["path"]))
         return rows
 
+    def indexed_atoms(self, *, limit: int | None = None) -> list[AtomicMemoryEntry]:
+        """Read atomic records from the stored index."""
+        if not Path(self.db_path).exists():
+            return []
+        try:
+            provenance = self._agent.store.list_source_provenance()
+        except Exception:  # noqa: BLE001
+            return []
+        atoms: list[AtomicMemoryEntry] = []
+        for item in provenance:
+            atom = self._atom_from_provenance(item)
+            if atom is not None:
+                atoms.append(atom)
+        atoms.sort(key=_atom_sort_key)
+        if limit is not None:
+            atoms = atoms[: max(0, limit)]
+        return atoms
+
+    def _atom_from_provenance(self, item: dict) -> AtomicMemoryEntry | None:
+        meta = item.get("metadata", {}) or {}
+        if meta.get("memory_layer") != "atomic":
+            return None
+        text = str(item.get("content") or "")
+        return AtomicMemoryEntry(
+            atom_id=str(meta.get("atom_id") or item.get("source") or ""),
+            text=text,
+            type=str(meta.get("memory_type") or "fact"),
+            harness=str(meta.get("harness") or ""),
+            kind=str(meta.get("kind") or "agent-memory"),
+            scope=str(meta.get("scope") or ""),
+            source_path=str(meta.get("source_path") or ""),
+            source_title=str(meta.get("title") or ""),
+            line_start=int(meta.get("line_start") or 0),
+            line_end=int(meta.get("line_end") or 0),
+            source_hash=str(meta.get("source_hash") or ""),
+            content_hash=str(meta.get("content_hash") or ""),
+            source_chars=int(meta.get("source_chars") or 0),
+            confidence=float(meta.get("confidence") or 1.0),
+            tags=[str(tag) for tag in meta.get("tags", []) if tag],
+            status=str(meta.get("status") or "active"),
+            timestamp=meta.get("timestamp"),
+            source_count=int(meta.get("source_count") or 1),
+            merged_from=[str(p) for p in meta.get("merged_from", []) if p],
+        )
+
     def memory_paths(self) -> list[Path]:
         db = Path(self.db_path)
-        return [db, db.with_name(db.stem + "-vec.db")]
+        return [
+            db,
+            db.with_name(db.stem + "-vec.db"),
+            self._source_snapshot_path(),
+            self._atom_cache_path(),
+        ]
 
     def clear(self) -> list[Path]:
         """Delete the memory index files. Returns the paths removed."""
@@ -274,5 +570,58 @@ class MemoryAgent:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _source_snapshot_path(self) -> Path:
+        db = Path(self.db_path)
+        return db.with_name(db.stem + "-sources.json")
 
-__all__ = ["MemoryAgent", "default_memory_db"]
+    def _write_source_snapshot(
+        self,
+        entries: list["MemoryEntry"],
+        atoms: list[AtomicMemoryEntry],
+    ) -> None:
+        counts: dict[str, int] = {}
+        for atom in atoms:
+            counts[atom.source_path] = counts.get(atom.source_path, 0) + 1
+        payload = {
+            "sources": [
+                {
+                    "harness": entry.harness,
+                    "scope": entry.scope,
+                    "title": entry.title,
+                    "path": entry.path,
+                    "kind": entry.extra.get("kind", "agent-memory"),
+                    "content": entry.content,
+                    "chars": len(entry.content or ""),
+                    "atoms": counts.get(entry.path, 0),
+                }
+                for entry in entries
+            ],
+            "atom_count": len(atoms),
+        }
+        path = self._source_snapshot_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _atom_sort_key(atom: AtomicMemoryEntry):
+    priority = {
+        "decision": 0,
+        "preference": 1,
+        "constraint": 2,
+        "workflow": 3,
+        "command": 4,
+        "warning": 5,
+        "fact": 6,
+        "status": 7,
+    }
+    return (priority.get(atom.type, 9), atom.scope, atom.source_path, atom.line_start, atom.text)
+
+
+__all__ = [
+    "MemoryAgent",
+    "default_memory_db",
+    "MEMORY_SCHEMA_VERSION",
+    "SchemaMismatchError",
+    "SyncInProgressError",
+    "sync_lock_path",
+]

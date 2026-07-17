@@ -8,7 +8,7 @@ allowed-tools:
 
 # docmancer memory
 
-Docmancer indexes the memory and instruction files your coding agents already wrote on this machine and answers questions about them through one local hybrid (lexical + dense) index. It reads agent memory, instructions, and rules across many agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more), including repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`. Local commands do not upload anything; the index is stored in SQLite-backed files under the docmancer home folder.
+Docmancer reads the memory and instruction files your coding agents already wrote on this machine, extracts source-attributed atomic memories, and answers questions through one local hybrid (lexical + dense) index. It reads agent memory, instructions, and rules across many agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more), including repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`. Local commands do not upload anything; the index is stored in SQLite-backed files under the docmancer home folder.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -22,10 +22,10 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Workflow
 
-1. Run `docmancer memory status` to check the index exists and holds entries.
-2. If empty or stale, run `docmancer memory sync` to (re)index local agent memory.
+1. Run `docmancer memory status` to check the index exists and holds atomic memories.
+2. If empty or stale, run `docmancer memory sync` to rebuild local atomic memory.
 3. If hooks are installed, relevant memories may already be injected into context.
-4. Otherwise, run `docmancer memory query "question"` and use the recalled entries as grounding.
+4. Otherwise, run `docmancer memory query "question"` and use the recalled atomic entries as grounding.
 
 ## Core Commands
 
@@ -49,7 +49,7 @@ docmancer install claude-code --hooks
 docmancer install codex --hooks
 ```
 
-The hook path is local and bounded. It queries the existing memory index, injects only source-attributed snippets that clear the relevance threshold, and prints nothing when it has no useful context. Remove hooks with:
+The hook path is local and bounded. It queries the existing atomic memory index, injects only source-attributed snippets that clear the relevance threshold, and prints nothing when it has no useful context. Remove hooks with:
 
 ```bash
 docmancer remove claude-code --hooks
@@ -58,7 +58,7 @@ docmancer remove codex --hooks
 
 ## Provenance
 
-Run `docmancer memory sources` to see exactly what was indexed and from where (agent, type, scope, title, path, char count). Add `--agent`, `--scope`, `--type`, `--json`, or `--preview` (live re-harvest) to filter.
+Run `docmancer memory sources` to see exactly what source files were harvested and how many atoms each produced (agent, type, scope, title, path, char count, atom count). Add `--agent`, `--scope`, `--type`, `--json`, or `--preview` (live re-harvest) to filter.
 
 ## Audit
 
@@ -66,7 +66,7 @@ Run `docmancer memory audit` when you need to check what agents have already wri
 
 ## Export to OKF (local, keyless)
 
-Export the indexed cross-agent memory as a Google Open Knowledge Format (OKF) bundle: a directory of markdown files with YAML frontmatter that any OKF-aware tool can read. This never calls the cloud and needs no API key.
+Export the indexed cross-agent atomic memories as a Google Open Knowledge Format (OKF) bundle: a directory of markdown files with YAML frontmatter that any OKF-aware tool can read. This never calls the cloud and needs no API key.
 
 ```bash
 docmancer memory export --format okf --output memory.okf
@@ -75,7 +75,7 @@ docmancer okf doctor memory.okf
 
 ## Provider-backed drafting (optional)
 
-These send privacy-redacted local memory to OpenRouter when `OPENROUTER_API_KEY` is set. They are optional maintenance commands, not the main memory recall path. They never edit agent files.
+These send privacy-redacted atomic memories to OpenRouter when `OPENROUTER_API_KEY` is set. They are optional maintenance commands, not the main memory recall path. They never edit agent files.
 
 ```bash
 docmancer memory consolidate --query "..." --output draft.md --draft-quality fast --timeout 180 --yes
@@ -85,7 +85,7 @@ docmancer memory consolidate --provider openrouter --model openai/gpt-4.1-nano -
 
 `consolidate` defaults to `--provider openrouter`. Use `--model` to pass any OpenRouter model id your account can use. Use `--max-output-tokens` to cap generated output per request and `--draft-quality fast` for smaller batches with more aggressive compression. Provider calls run a preflight before large memory payloads, so configuration and network failures surface before batching. Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each request; the default is 180 seconds, and `0` leaves the provider default in charge.
 
-`docmancer memory apply --agent codex` materializes a reviewed `master-memory-draft.md` into an agent's always-loaded file (managed block, backup taken, never automatic). Supported apply targets include `codex`, `claude-code`, `cursor`, `gemini`, `opencode`, `github-copilot`, and `cline`. Use `--from draft.md` to apply a different reviewed draft. It is local and keyless. `memory apply` expects a markdown draft, not an OKF bundle.
+`docmancer memory apply --agent codex` renders selected atomic memories from the local index into an agent's always-loaded file (managed block, backup taken, never automatic). Supported apply targets include `codex`, `claude-code`, `cursor`, `gemini`, `opencode`, `github-copilot`, and `cline`. Use `--from draft.md` only when applying an older reviewed markdown draft. It is local and keyless. `memory apply` expects atomic memory from the index or a markdown draft, not an OKF bundle.
 
 ## Privacy
 

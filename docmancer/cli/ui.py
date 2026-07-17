@@ -60,6 +60,24 @@ def emit_status_line(message: str, state: str = "ok", indent: int = 2) -> None:
     click.echo(" " * indent + style(label, fg=color, bold=True) + f" {message}")
 
 
+_SEVERITY_PALETTE = {
+    "critical": ("bright_red", True),
+    "high": ("red", True),
+    "medium": ("yellow", False),
+    "low": ("bright_black", False),
+}
+
+
+def severity_style(severity: str) -> tuple[str, bool]:
+    """Return (color, bold) for a severity label; unknown severities are neutral."""
+    return _SEVERITY_PALETTE.get(severity.lower(), ("white", False))
+
+
+def rule(char: str = "─", width: int = 78) -> str:
+    """A dim horizontal divider line, sized to roughly match the banner width."""
+    return style(char * width, fg="bright_black")
+
+
 def display_path(path: str | os.PathLike[str]) -> str:
     raw_path = os.fspath(path)
     if "://" in raw_path:

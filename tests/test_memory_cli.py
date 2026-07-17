@@ -43,6 +43,40 @@ def test_sync_then_query(tmp_path, monkeypatch):
     q = CliRunner().invoke(cli, ["memory", "query", "where do we deploy"])
     assert q.exit_code == 0, q.output
     assert "Railway" in q.output
+    assert "decision" in q.output or "fact" in q.output
+
+
+def test_sync_rebuilds_stale_atoms_after_source_change(tmp_path, monkeypatch):
+    db = _env(monkeypatch, tmp_path)
+    note = tmp_path / "home" / ".claude" / "projects" / "-Users-x-app" / "memory" / "note.md"
+    runner = CliRunner()
+
+    first = runner.invoke(cli, ["memory", "sync"])
+    assert first.exit_code == 0, first.output
+    assert "Railway" in runner.invoke(cli, ["memory", "query", "where deploy"]).output
+
+    note.write_text("We deploy on Kubernetes.\n")
+    second = runner.invoke(cli, ["memory", "sync"])
+    assert second.exit_code == 0, second.output
+    assert db.exists()
+
+    old = runner.invoke(cli, ["memory", "query", "Railway"])
+    assert old.exit_code == 1
+    new = runner.invoke(cli, ["memory", "query", "Kubernetes"])
+    assert new.exit_code == 0, new.output
+    assert "Kubernetes" in new.output
+
+
+def test_status_reports_atomic_memory_count(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    sync = CliRunner().invoke(cli, ["memory", "sync"])
+    assert sync.exit_code == 0, sync.output
+
+    r = CliRunner().invoke(cli, ["memory", "status"])
+
+    assert r.exit_code == 0, r.output
+    assert "Source files: 1" in r.output
+    assert "Atomic memories: 1" in r.output
 
 
 def test_sources_preview_lists_provenance(tmp_path, monkeypatch):
@@ -148,6 +182,7 @@ def test_sources_stored_index_after_sync(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert "files indexed" in r.output
     assert "claude-code" in r.output
+    assert "1 atoms" in r.output
 
 
 def test_clear_removes_and_status_reports_empty(tmp_path, monkeypatch):
@@ -185,7 +220,7 @@ def test_hook_context_injects_relevant_memory_and_dedupes(tmp_path, monkeypatch)
     data = json.loads(r.output)
     context = data["hookSpecificOutput"]["additionalContext"]
     assert data["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "Relevant docmancer memories:" in context
+    assert "Relevant docmancer atomic memories:" in context
     assert "Railway" in context
     assert "Source:" in context
 
@@ -290,12 +325,17 @@ def test_consolidate_defaults_to_openrouter_provider(tmp_path, monkeypatch):
     from docmancer.ai.openrouter_client import OpenRouterClient
 
     _env(monkeypatch, tmp_path)
+    note = tmp_path / "home" / ".claude" / "projects" / "-Users-x-app" / "memory" / "note.md"
+    note.write_text("# Deploy\n\nWe deploy on Railway.\n")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
     def fake_preflight(self, *, model=None):
         return None
 
+    seen = {}
+
     def fake_parse(self, messages, response_format, **kwargs):
+        seen["messages"] = messages
         return ConsolidatedMemoryDraft(
             title="Master Memory",
             summary="summary",
@@ -311,6 +351,9 @@ def test_consolidate_defaults_to_openrouter_provider(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert "OpenRouter" in r.output
     assert "Railway" in out.read_text()
+    payload = "\n".join(str(m.get("content", "")) for m in seen["messages"])
+    assert "We deploy on Railway." in payload
+    assert "# Deploy" not in payload
 
 
 def test_consolidate_markdown_compacts_large_source_lists():

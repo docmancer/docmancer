@@ -786,6 +786,7 @@ class SQLiteStore:
                 out.append(
                     {
                         "source": str(row["source"]),
+                        "content": str(row["content"] or ""),
                         "chars": len(row["content"] or ""),
                         "metadata": meta,
                     }
@@ -858,6 +859,22 @@ class SQLiteStore:
                 f"DELETE FROM embedding_upserts "
                 f"WHERE qdrant_collection = ? AND chunk_id IN ({placeholders})",
                 (collection, *chunk_ids),
+            )
+            return cur.rowcount or 0
+
+    def clear_embedding_upserts(self, collection: str) -> int:
+        """Drop all embedding bookkeeping rows for a collection.
+
+        A full rebuild deletes the sections and (separately) the vector points,
+        but ``add_documents(recreate=True)`` leaves ``embedding_upserts`` intact.
+        Callers that wipe the vectors must also clear this bookkeeping, or the
+        next sync treats already-recorded sections as up to date, skips
+        re-embedding, and the vector consistency check then sees zero points.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM embedding_upserts WHERE qdrant_collection = ?",
+                (collection,),
             )
             return cur.rowcount or 0
 

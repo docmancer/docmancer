@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.13] - Unreleased
+### Changed
+
+- **First-class atomic memory.** `docmancer memory sync` now extracts source-attributed atomic memories and rebuilds the dedicated memory index around those records. Query, hooks, sources, status, export, consolidate, and apply now operate on atomic memories by default while keeping source files as provenance.
+- **Self-contained atoms.** Extraction now keeps a bullet together with its sub-bullets and wrapped lines instead of shredding them into separate fragments, and it folds the heading breadcrumb into each atom (for example `Deployment > Production: uses Railway`) so an atom still makes sense when it is recalled far from its source file.
+- **Cross-agent memory merge.** When several agents record the same fact in the same scope, sync clusters compatible near-duplicate atoms by local embedding similarity and keeps one canonical record with merged provenance (`source_count` and the contributing `merged_from` paths), so recall returns one clean answer rather than the same fact repeated per agent. Conflicting positive and negative instructions remain separate.
+- **Incremental extraction.** Sync reuses cached atoms for source files whose content has not changed since the last run and only re-extracts the files that actually changed. `sync` also reports how many duplicate memories it merged and how many sources it reused versus re-read.
+
+### Fixed
+
+- **Repeated `memory sync` no longer breaks the vector index.** A rebuild dropped the vectors but left the embedding bookkeeping in place, so the second sync onward skipped re-embedding and then failed a consistency check reporting zero indexed points. The rebuild now clears that bookkeeping in step with the vectors, so memory can be synced repeatedly.
+- **Managed memory no longer feeds back into itself.** Atomic extraction skips docmancer-managed blocks before indexing, so repeated sync and apply cycles cannot turn generated memory into progressively nested copies. CLI and desktop syncs now share an atomic schema stamp and process lock so either surface can safely rebuild the same local index.
+- **`memory audit` precision and coverage.** The high-entropy heuristic no longer flags a long identifier just because a secret-sounding word (`apiKey`, `token`, and similar) appears anywhere in the preceding text; it now requires the keyword to sit immediately before the value, as in a real `key: value` assignment. Session ids (UUIDs) and filenames with a common extension (`.md`, `.py`, `.jsonl`, and similar) are no longer misreported as secrets. Added dedicated high-severity detectors for Anthropic, Stripe, Google, GitHub fine-grained, and npm tokens, JWTs, and database connection strings (skipping documented placeholder passwords like `user:password@localhost`). A single secret matched by more than one pattern is now reported once, at its most specific type and severity, instead of twice.
+- **Branded `memory audit` output.** `docmancer memory audit` now prints the docmancer banner, a severity breakdown, and color-coded severity badges and dividers for each finding (plain text when colors are disabled or output is piped). The `docmancer/cli/ui.py` module gained shared `severity_style()` and `rule()` helpers for this and future commands.
+
 ## [0.6.12] - 2026-07-07
 ### Added
 

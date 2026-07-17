@@ -40,16 +40,20 @@ def concepts_from_memory_entries(entries, *, include_timestamps: bool = True) ->
     for entry in entries:
         extra = getattr(entry, "extra", {}) or {}
         kind = extra.get("kind", "agent-memory")
+        memory_type = extra.get("memory_type")
         scope_prefix = _scope_prefix(getattr(entry, "scope", ""))
         timestamp = _iso_mtime(entry.path) if include_timestamps else None
+        tags = [entry.harness, kind, scope_prefix]
+        if memory_type:
+            tags.append(str(memory_type))
         concepts.append(
             OKFConcept(
                 type=_KIND_TO_TYPE.get(kind, "Note"),
                 title=entry.title,
                 body=entry.content,
                 resource=entry.path,
-                tags=[entry.harness, kind, scope_prefix],
-                timestamp=timestamp,
+                tags=tags,
+                timestamp=getattr(entry, "timestamp", None) or timestamp,
                 filename=f"{slugify(entry.harness)}/{slugify(entry.title)}.md",
             )
         )

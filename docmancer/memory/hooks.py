@@ -130,10 +130,10 @@ def _short_source(path: str) -> str:
 
 
 def _format_context(chunks: list[Any], *, max_chars: int) -> str:
-    lines = ["Relevant docmancer memories:"]
+    lines = ["Relevant docmancer atomic memories:"]
     for chunk in chunks:
         meta = chunk.metadata or {}
-        kind = meta.get("kind") or "memory"
+        kind = meta.get("memory_type") or meta.get("kind") or "memory"
         scope = meta.get("scope") or "unknown scope"
         harness = meta.get("harness") or str(chunk.source or "").split(":", 1)[0] or "agent"
         source_path = _short_source(str(meta.get("source_path") or chunk.source or ""))
