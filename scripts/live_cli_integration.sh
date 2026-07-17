@@ -36,11 +36,9 @@ RUN_FETCH_STEP="${DOCMANCER_RUN_FETCH_STEP:-1}"
 RUN_LOCAL_CORPUS="${DOCMANCER_RUN_LOCAL_CORPUS:-1}"
 RUN_LOCAL_PDF_CORPUS="${DOCMANCER_RUN_LOCAL_PDF_CORPUS:-1}"
 RUN_FULL_LOCAL_CORPUS="${DOCMANCER_RUN_FULL_LOCAL_CORPUS:-0}"
-RUN_REAL_MEMORY="${DOCMANCER_LIVE_REAL_MEMORY:-1}"
-REAL_MEMORY_PROVIDER="${DOCMANCER_LIVE_MEMORY_PROVIDER:-agent}"
+RUN_REAL_MEMORY="${DOCMANCER_LIVE_REAL_MEMORY:-0}"
 REAL_MEMORY_MODEL="${DOCMANCER_LIVE_MEMORY_MODEL:-}"
 REAL_MEMORY_BUDGET="${DOCMANCER_LIVE_REAL_MEMORY_BUDGET:-90000}"
-RUN_OPENROUTER_FALLBACK="${DOCMANCER_LIVE_OPENROUTER_FALLBACK:-1}"
 BUILD_TEST_CORPUS="${DOCMANCER_BUILD_TEST_CORPUS:-0}"
 TEST_CORPUS_SCRIPT="$WORKSPACE_ROOT/scripts/build-test-corpus.py"
 TEST_CORPUS_MD_DIR="$WORKSPACE_ROOT/test-corpora/stories-md"
@@ -215,11 +213,9 @@ print_info "Local story corpus ingest: $RUN_LOCAL_CORPUS"
 print_info "Full local story corpus ingest: $RUN_FULL_LOCAL_CORPUS"
 print_info "Local PDF corpus ingest: $RUN_LOCAL_PDF_CORPUS"
 print_info "Build test corpus if missing: $BUILD_TEST_CORPUS"
-print_info "Real agent memory provider consolidate: $RUN_REAL_MEMORY"
-print_info "Real memory provider: $REAL_MEMORY_PROVIDER"
+print_info "Real agent memory OpenRouter consolidate: $RUN_REAL_MEMORY"
 print_info "Real memory model: ${REAL_MEMORY_MODEL:-<provider default>}"
 print_info "Real memory request budget: $REAL_MEMORY_BUDGET"
-print_info "OpenRouter fallback smoke: $RUN_OPENROUTER_FALLBACK"
 print_info "Alternate web strategy: $RUN_WEB_VARIANTS"
 print_info "Browser fallback variant: $RUN_BROWSER_VARIANT"
 print_info "Crawl4AI variant: $RUN_CRAWL4AI_VARIANT"
@@ -260,7 +256,7 @@ done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
 done
-for command in scan sync query sources extract consolidate apply export status clear; do
+for command in sync query sources audit hook-context consolidate apply export status clear; do
   run "${CLI_CMD[@]}" memory "$command" --help
 done
 for command in doctor; do
@@ -295,7 +291,7 @@ print_info "Exercising every supported install target without touching the real 
 )
 
 print_banner "Memory harness (isolated local commands)"
-print_info "Planting one synthetic note in the temporary HOME for local scan/sync/query/redaction/apply/clear checks."
+print_info "Planting synthetic atomic memories in the temporary HOME for preview, audit, sync, query, export, apply, and clear checks."
 MEMORY_HOME="$TMP_HOME"
 MEMORY_DB="$TMP_ROOT/memory.db"
 PLANT_PROJ="$MEMORY_HOME/.claude/projects/-Users-x-demo-app"
@@ -305,19 +301,59 @@ cat >"$PLANT_PROJ/memory/decisions.md" <<'EOF'
 
 We deploy on Railway because the team already runs Postgres there.
 An old token sk-ABCDEF1234567890ABCDEF should never end up in the index.
+The service once logged DATABASE_URL=postgresql://app:real-password-123@db.example.com/main.
+The bearer value eyJabcdefghijk.abcdefghijklmnop.abcdefghijklmnop must be rotated.
 EOF
 printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"}' >"$PLANT_PROJ/session.jsonl"
 (
   export DOCMANCER_HARNESS_HOME="$MEMORY_HOME"
   export DOCMANCER_MEMORY_DB="$MEMORY_DB"
   export HF_HUB_OFFLINE=1
-  run "${CLI_CMD[@]}" memory scan
   run "${CLI_CMD[@]}" memory sources --preview
-  run "${CLI_CMD[@]}" memory sync
+  MEMORY_AUDIT_JSON="$TMP_ROOT/memory-audit.json"
+  "${CLI_CMD[@]}" memory audit --json >"$MEMORY_AUDIT_JSON"
+  run "$VENV_PYTHON" -c "
+import json
+from pathlib import Path
+payload = json.loads(Path('$MEMORY_AUDIT_JSON').read_text())
+items = payload['findings']
+types = {item['type'] for item in items}
+assert payload['unique_secret_count'] == len(items), payload
+assert 'OpenAI-style API key' in types, types
+assert 'Database connection string' in types, types
+assert 'JWT / bearer token' in types, types
+print('audit detector types:', sorted(types))
+"
+  MEMORY_SYNC_FIRST="$TMP_ROOT/memory-sync-first.out"
+  MEMORY_SYNC_SECOND="$TMP_ROOT/memory-sync-second.out"
+  "${CLI_CMD[@]}" memory sync >"$MEMORY_SYNC_FIRST"
+  run cat "$MEMORY_SYNC_FIRST"
+  run grep -q "atomic memories" "$MEMORY_SYNC_FIRST"
+  "${CLI_CMD[@]}" memory sync >"$MEMORY_SYNC_SECOND"
+  run cat "$MEMORY_SYNC_SECOND"
+  run grep -q "reused" "$MEMORY_SYNC_SECOND"
   run "${CLI_CMD[@]}" memory sources
+  MEMORY_SOURCES_JSON="$TMP_ROOT/memory-sources.json"
+  "${CLI_CMD[@]}" memory sources --json >"$MEMORY_SOURCES_JSON"
+  run "$VENV_PYTHON" -c "
+import json
+from pathlib import Path
+rows = json.loads(Path('$MEMORY_SOURCES_JSON').read_text())
+assert rows, 'stored atomic source list is empty'
+assert all(int(row.get('atoms', 0)) > 0 for row in rows), rows
+print('stored sources:', len(rows), 'atoms:', sum(int(row['atoms']) for row in rows))
+"
   run "${CLI_CMD[@]}" memory status
+  run "$VENV_PYTHON" -c "
+import sqlite3
+from docmancer.memory import MEMORY_SCHEMA_VERSION
+with sqlite3.connect('$MEMORY_DB') as conn:
+    meta = dict(conn.execute('SELECT key, value FROM docmancer_memory_meta'))
+assert meta['schema_version'] == str(MEMORY_SCHEMA_VERSION), meta
+assert meta['memory_layer'] == 'atomic', meta
+print('memory schema:', meta['schema_version'], meta['memory_layer'])
+"
   run "${CLI_CMD[@]}" memory query "why did we pick Railway"
-  print_info "The redacted secret must not appear in recall output."
   if "${CLI_CMD[@]}" memory query "old token" 2>/dev/null | grep -q "sk-ABCDEF1234567890ABCDEF"; then
     print_warn "redacted secret leaked into memory recall"
     exit 1
@@ -326,47 +362,54 @@ printf '%s\n' '{"type":"summary","summary":"older"}' '{"cwd":"/Users/x/demo-app"
   MEMORY_OKF="$TMP_ROOT/memory.okf"
   run "${CLI_CMD[@]}" memory export --output "$MEMORY_OKF"
   run "${CLI_CMD[@]}" okf doctor "$MEMORY_OKF"
-  APPLY_DRAFT="$TMP_ROOT/reviewed-memory-draft.md"
-  APPLY_TARGET="$TMP_ROOT/applied/AGENTS.md"
-  mkdir -p "$(dirname "$APPLY_TARGET")"
-  cat >"$APPLY_DRAFT" <<'EOF'
-# Reviewed Memory
-
-Railway is the deployment choice for this synthetic project.
-EOF
-  run "${CLI_CMD[@]}" memory apply --from "$APPLY_DRAFT" --output "$APPLY_TARGET" --dry-run
-  run "${CLI_CMD[@]}" memory apply --from "$APPLY_DRAFT" --output "$APPLY_TARGET" --yes
+  APPLY_TARGET="$MEMORY_HOME/.codex/AGENTS.md"
+  run "${CLI_CMD[@]}" memory apply --agent codex --dry-run
+  run "${CLI_CMD[@]}" memory apply --agent codex --yes
   run grep -q "docmancer:memory:begin" "$APPLY_TARGET"
-  run "${CLI_CMD[@]}" memory apply --remove --output "$APPLY_TARGET" --yes
+  APPLY_SNAPSHOT="$TMP_ROOT/applied-agents.snapshot"
+  run cp "$APPLY_TARGET" "$APPLY_SNAPSHOT"
+  run "${CLI_CMD[@]}" memory sync --recreate
+  run "${CLI_CMD[@]}" memory apply --agent codex --yes
+  run cmp "$APPLY_SNAPSHOT" "$APPLY_TARGET"
+  if grep -q "\[.*\] docmancer atomic memory:" "$APPLY_TARGET"; then
+    print_warn "generated atomic memory fed back into the managed block"
+    exit 1
+  fi
+  print_ok "Default atom-first apply is stable across a sync/apply cycle."
+  run "${CLI_CMD[@]}" memory apply --remove --agent codex --yes
   if grep -q "docmancer:memory:begin" "$APPLY_TARGET"; then
     print_warn "memory apply --remove left the managed block behind"
     exit 1
   fi
   run "${CLI_CMD[@]}" memory clear --yes
+  run test ! -e "$MEMORY_DB"
+  run test ! -e "${MEMORY_DB%.db}-atom-cache.json"
+  run test ! -e "${MEMORY_DB%.db}-sources.json"
   run "${CLI_CMD[@]}" memory status
 )
 
 if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
-  print_banner "Memory harness (REAL agents + agent provider)"
-  print_info "Reading real agent memory from $REAL_HOME into a throwaway index, then consolidating every selected entry with provider '$REAL_MEMORY_PROVIDER'."
+  print_banner "Memory harness (REAL agents + OpenRouter)"
+  if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    print_warn "DOCMANCER_LIVE_REAL_MEMORY=1 requires OPENROUTER_API_KEY."
+    exit 1
+  fi
+  print_info "Reading real agent memory from $REAL_HOME into a throwaway atomic index, then consolidating it with OpenRouter."
   REAL_MEMORY_DB="$TMP_ROOT/real-memory.db"
   REAL_MEMORY_SOURCES="$TMP_ROOT/real-memory-sources.json"
   REAL_MEMORY_DRAFT="$TMP_ROOT/real-memory-draft.md"
   REAL_MEMORY_CONSOLIDATE_LOG="$TMP_ROOT/real-memory-consolidate.out"
-  REAL_MEMORY_OPENROUTER_DRAFT="$TMP_ROOT/real-memory-openrouter-draft.md"
-  REAL_MEMORY_OPENROUTER_LOG="$TMP_ROOT/real-memory-openrouter-consolidate.out"
   (
     export DOCMANCER_HARNESS_HOME="$REAL_HOME"
     export DOCMANCER_AGENT_CLI_HOME="$REAL_HOME"
     export DOCMANCER_MEMORY_DB="$REAL_MEMORY_DB"
     export HF_HUB_OFFLINE=1
-    run "${CLI_CMD[@]}" memory scan
     run "${CLI_CMD[@]}" memory sync --recreate
     run "${CLI_CMD[@]}" memory status
     run "${CLI_CMD[@]}" memory sources --json >"$REAL_MEMORY_SOURCES"
     run test -s "$REAL_MEMORY_SOURCES"
     print_info "Running real memory consolidate with --limit 0 so the default 100-entry cap does not hide oversized memory."
-    consolidate_cmd=("${CLI_CMD[@]}" memory consolidate --limit 0 --budget "$REAL_MEMORY_BUDGET" --provider "$REAL_MEMORY_PROVIDER" --output "$REAL_MEMORY_DRAFT" --yes)
+    consolidate_cmd=("${CLI_CMD[@]}" memory consolidate --limit 0 --budget "$REAL_MEMORY_BUDGET" --provider openrouter --output "$REAL_MEMORY_DRAFT" --yes)
     if [[ -n "$REAL_MEMORY_MODEL" ]]; then
       consolidate_cmd+=(--model "$REAL_MEMORY_MODEL")
     fi
@@ -384,20 +427,6 @@ if [[ "$RUN_REAL_MEMORY" == "1" ]]; then
     if grep -Eqi "Truncated by docmancer|omitted [1-9][0-9]*" "$REAL_MEMORY_CONSOLIDATE_LOG"; then
       print_warn "real memory consolidate reported dropped or truncated entries"
       exit 1
-    fi
-    if [[ "$RUN_OPENROUTER_FALLBACK" == "1" ]]; then
-      if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-        print_info "Skipping OpenRouter fallback smoke because OPENROUTER_API_KEY is not exported."
-      else
-        print_info "Running explicit OpenRouter fallback smoke."
-        if ! "${CLI_CMD[@]}" memory consolidate --limit 1 --provider openrouter --model "${DOCMANCER_LIVE_OPENROUTER_MODEL:-openai/gpt-4.1-nano}" --output "$REAL_MEMORY_OPENROUTER_DRAFT" --yes >"$REAL_MEMORY_OPENROUTER_LOG" 2>&1; then
-          cat "$REAL_MEMORY_OPENROUTER_LOG"
-          print_warn "OpenRouter fallback memory consolidate failed"
-          exit 1
-        fi
-        cat "$REAL_MEMORY_OPENROUTER_LOG"
-        run test -s "$REAL_MEMORY_OPENROUTER_DRAFT"
-      fi
     fi
     run "${CLI_CMD[@]}" memory clear --yes
   )
