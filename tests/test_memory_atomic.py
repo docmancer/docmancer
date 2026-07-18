@@ -164,6 +164,39 @@ def test_merge_collapses_cross_agent_duplicates():
     assert kept.source_count == 1
 
 
+def test_merge_preserves_durable_record_identity_when_harvested_text_wins():
+    durable = _atom("Deploy: production runs on Railway.", harness="docmancer", path="/memories/record.md")
+    durable.record_id = "record-123"
+    durable.origin = "manual"
+    harvested = _atom(
+        "Deploy: production runs on Railway with automatic restarts enabled.",
+        harness="codex",
+        path="/repo/AGENTS.md",
+    )
+    harvested.scope = durable.scope
+    embed = _fake_embed({durable.text: [1.0, 0.0], harvested.text: [1.0, 0.0]})
+
+    merged = merge_atoms([durable, harvested], embed_texts=embed, threshold=0.9)
+
+    assert len(merged) == 1
+    assert merged[0].text == harvested.text
+    assert merged[0].record_id == durable.record_id
+    assert merged[0].origin == "manual"
+
+
+def test_merge_keeps_distinct_durable_records_addressable():
+    first = _atom("Deploy: production runs on Railway.", harness="docmancer", path="/memories/a.md")
+    first.record_id = "record-a"
+    second = _atom("Deploy: production runs on Railway with restarts.", harness="docmancer", path="/memories/b.md")
+    second.record_id = "record-b"
+    second.scope = first.scope
+    embed = _fake_embed({first.text: [1.0, 0.0], second.text: [1.0, 0.0]})
+
+    merged = merge_atoms([first, second], embed_texts=embed, threshold=0.9)
+
+    assert {atom.record_id for atom in merged} == {"record-a", "record-b"}
+
+
 def test_merge_is_noop_below_threshold():
     a = _atom("Deploy: use Railway.", harness="codex", path="/a/CODEX.md")
     b = _atom("Deploy: use Vercel.", harness="claude-code", path="/b/CLAUDE.md")

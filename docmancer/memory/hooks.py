@@ -162,7 +162,12 @@ def build_hook_context(
 
     from docmancer.memory import MemoryAgent
 
-    chunks = MemoryAgent().query(query, limit=max(limit * 3, limit), mode="hybrid")
+    chunks = MemoryAgent().query(
+        query,
+        limit=max(limit * 3, limit),
+        mode="hybrid",
+        project_path=payload.cwd or None,
+    )
     if not chunks:
         return ""
     if max(float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks) < threshold:

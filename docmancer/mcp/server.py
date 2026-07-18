@@ -45,6 +45,43 @@ def build_server():
     def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
         return tools.sources_list(agent=agent, scope=scope, kind=kind)
 
+    @server.tool(description="Add a durable local memory record. Personal and project records stay local; team records are written to the repository without staging or committing them.")
+    def docmancer_memory_add(
+        text: str,
+        scope: str = "global",
+        project_path: str | None = None,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict:
+        return tools.memory_add(
+            text,
+            scope=scope,
+            project_path=project_path,
+            memory_type=memory_type,
+            tags=tags,
+        )
+
+    @server.tool(description="List inspectable local memory atoms and their stable record IDs.")
+    def docmancer_memory_list(
+        scope: str | None = None,
+        memory_type: str | None = None,
+        origin: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        return tools.memory_list(scope=scope, memory_type=memory_type, origin=origin, limit=limit)
+
+    @server.tool(description="Show one local memory atom with provenance and merge metadata.")
+    def docmancer_memory_show(identifier: str) -> dict:
+        return tools.memory_show(identifier)
+
+    @server.tool(description="Forget a local memory. Set confirm=true only after reviewing the preview returned by confirm=false.")
+    def docmancer_memory_forget(identifier: str, confirm: bool = False) -> dict:
+        return tools.memory_forget(identifier, confirm=confirm)
+
+    @server.tool(description="Promote a reviewed memory into a repository's Git-versioned team store. Set confirm=true only after reviewing the preview.")
+    def docmancer_memory_promote(identifier: str, project_path: str, confirm: bool = False) -> dict:
+        return tools.memory_promote(identifier, project_path=project_path, confirm=confirm)
+
     from docmancer.ai.openrouter_client import openrouter_api_key
 
     if openrouter_api_key():

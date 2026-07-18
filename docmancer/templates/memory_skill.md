@@ -1,6 +1,6 @@
 ---
 name: docmancer-memory
-description: Recall the memory and working context your coding agents already wrote on this machine (Claude Code, Codex, Cursor), unified into one local searchable index. Use when the user asks "why did we" / "what did we decide" / "how did we set up" about past work, or wants to recall a prior decision, convention, or project fact.
+description: Recall, write, and inspect the local memory shared by coding agents on this machine. Use for past decisions, conventions, project facts, explicit requests to remember something, or reviewed promotion into repository team memory.
 allowed-tools:
   - Bash(docmancer memory *)
   - Bash({{DOCS_KIT_CMD}} memory *)
@@ -19,13 +19,17 @@ Executable: `{{DOCS_KIT_CMD}}`
 - User asks why a past decision was made ("why did we pick Railway").
 - User asks what a convention or setup is, based on earlier work.
 - User wants to recall a project fact that an agent recorded previously.
+- User explicitly asks to remember a durable decision, preference, workflow, warning, or fact.
+- User wants to inspect or promote an existing memory after review.
 
 ## Workflow
 
 1. Run `docmancer memory status` to check the index exists and holds atomic memories.
 2. If empty or stale, run `docmancer memory sync` to rebuild local atomic memory.
 3. If hooks are installed, relevant memories may already be injected into context.
-4. Otherwise, run `docmancer memory query "question"` and use the recalled atomic entries as grounding.
+4. Otherwise, run `docmancer memory query "question" --project "$PWD"` and use the recalled atomic entries as grounding.
+5. When the user explicitly asks to remember something durable, run `docmancer memory add`. Use project scope for repository-specific facts and global scope only for truly cross-project preferences.
+6. Inspect with `memory list` or `memory show` before promotion or deletion. Never forget a memory without explicit user confirmation. Never write or promote team memory automatically.
 
 ## Core Commands
 
@@ -33,12 +37,20 @@ Executable: `{{DOCS_KIT_CMD}}`
 docmancer memory sync
 docmancer memory sync --dry-run
 docmancer memory query "why did we pick Railway"
+docmancer memory query "what is the deploy command" --project "$PWD"
+docmancer memory add "Production deploys run on Railway" --type decision --scope project --project "$PWD"
+docmancer memory list --scope project --project "$PWD"
+docmancer memory show <id>
+docmancer memory forget <id> --dry-run
+docmancer memory promote <id> --team --project "$PWD" --dry-run
 docmancer memory sources
 docmancer memory sources --preview
 docmancer memory audit
 docmancer memory status
 docmancer memory clear
 ```
+
+`memory add --scope team` and `memory promote --team` write reviewable files under `.docmancer/memory/`, but they never stage or commit them. Use either only when the user has explicitly chosen team scope. Capture hooks never promote directly to team memory.
 
 ## Automatic Hook Recall
 
@@ -54,6 +66,13 @@ The hook path is local and bounded. It queries the existing atomic memory index,
 ```bash
 docmancer remove claude-code --hooks
 docmancer remove codex --hooks
+```
+
+Optional capture is installed separately and should never be enabled without an explicit user request:
+
+```bash
+docmancer install claude-code --capture-hooks
+docmancer install codex --capture-hooks
 ```
 
 ## Provenance
@@ -89,4 +108,4 @@ docmancer memory consolidate --provider openrouter --model openai/gpt-4.1-nano -
 
 ## Privacy
 
-Secrets are redacted on index. Use `--dry-run` or `memory sources --preview` to preview without writing, and `--include` / `--exclude` globs to scope what is harvested. `docmancer memory audit` checks source memory before redaction and masks any likely secret values in its report. `docmancer memory clear` deletes the local index. Hook recall and local commands never leave the machine; provider-backed consolidation sends redacted text only after a provider-use confirmation.
+Secrets are redacted before durable writes and indexing. Use `memory show` to inspect provenance, and use `memory forget --dry-run` before any destructive action. Forgetting harvested memory creates a suppression record without editing another agent's source. Forgetting Docmancer-owned memory removes its Markdown body and leaves only a content-free tombstone. `docmancer memory clear` deletes the rebuildable index, not durable records. Hook recall, capture, local MCP, and local commands never leave the machine; provider-backed consolidation sends redacted text only after a provider-use confirmation.

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
+from docmancer.memory.records import MemoryRecord, MemoryRecordStore
 
 if TYPE_CHECKING:
     from docmancer.core.config import DocmancerConfig
@@ -97,6 +98,9 @@ class MemoryAgent:
         self.privacy = PrivacyFilter(include=list(include or []), exclude=list(exclude or []))
         self._last_sync_stats: dict = {}
         self.config = config or self._build_config()
+        record_root = Path(self.db_path).parent
+        self.records = MemoryRecordStore(record_root)
+        self._extra_project_paths: set[str] = set()
         from docmancer.agent import DocmancerAgent
 
         # Lazy: constructing the store would create the SQLite file, so defer
@@ -155,14 +159,25 @@ class MemoryAgent:
 
     def atom_preview(self) -> list[AtomicMemoryEntry]:
         """Return atomic records that WOULD be indexed, no writes."""
-        return self._atoms_from_entries(self.preview())
+        entries = self.preview()
+        atoms = self._atoms_from_entries(entries, merge=False)
+        atoms.extend(record.to_atom() for record in self.records.records(project_paths=self._project_paths(entries)))
+        atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
+        return self._merge_all(atoms)
 
     def sync(self, *, recreate: bool = False) -> int:
         """Harvest, filter, redact, extract atoms, and index them."""
         with self._sync_lock():
             entries = self.preview()
             cleaned_entries = [self.privacy.clean(e) for e in entries]
-            atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate)
+            atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate, merge=False)
+            atoms.extend(
+                record.to_atom()
+                for record in self.records.records(project_paths=self._project_paths(cleaned_entries))
+            )
+            atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
+            atoms = self._merge_all(atoms)
+            self._last_sync_stats["atoms_after_merge"] = len(atoms)
             # Memory is a dedicated index, so every sync rebuilds the atom projection
             # from harvested sources. This prevents stale atom records after source
             # files are edited or removed.
@@ -294,6 +309,7 @@ class MemoryAgent:
         entries: list["MemoryEntry"],
         *,
         recreate: bool = False,
+        merge: bool = True,
     ) -> list[AtomicMemoryEntry]:
         """Extract atoms, reusing cached per-source atoms for unchanged files.
 
@@ -329,7 +345,7 @@ class MemoryAgent:
         self._save_atom_cache(new_cache)
 
         pre_merge = len(raw_atoms)
-        if pre_merge > 1:
+        if merge and pre_merge > 1:
             embed = self._embed_fn()
             if embed is not None:
                 raw_atoms = merge_atoms(raw_atoms, embed_texts=embed)
@@ -343,6 +359,40 @@ class MemoryAgent:
             "cross_agent_atoms": sum(1 for atom in raw_atoms if atom.source_count > 1),
         }
         return raw_atoms
+
+    def _merge_all(self, atoms: list[AtomicMemoryEntry]) -> list[AtomicMemoryEntry]:
+        if len(atoms) <= 1:
+            return atoms
+        embed = self._embed_fn()
+        return merge_atoms(atoms, embed_texts=embed) if embed is not None else atoms
+
+    def index_records(self, records: list[MemoryRecord]) -> int:
+        """Incrementally index newly persisted records without harvesting all sources."""
+        atoms = [record.to_atom() for record in records]
+        atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
+        if not atoms:
+            return 0
+        with self._sync_lock():
+            self._agent.ingest_documents(
+                [atom.to_document() for atom in atoms],
+                recreate=False,
+                with_vectors=True,
+            )
+            self._stamp_schema()
+        return len(atoms)
+
+    def _project_paths(self, entries: list["MemoryEntry"] | None = None) -> list[str]:
+        paths: set[str] = set(self._extra_project_paths)
+        for entry in entries or []:
+            prefix, _, value = (entry.scope or "").partition(":")
+            if prefix == "project" and value:
+                paths.add(str(Path(value).expanduser().resolve()))
+        cwd = Path.cwd().resolve()
+        for candidate in [cwd, *cwd.parents]:
+            if (candidate / ".git").exists():
+                paths.add(str(candidate))
+                break
+        return sorted(paths)
 
     def last_sync_stats(self) -> dict:
         return dict(getattr(self, "_last_sync_stats", {}) or {})
@@ -392,6 +442,8 @@ class MemoryAgent:
         budget: int | None = None,
         mode: str = "hybrid",
         allow_degraded: bool = True,
+        project_path: str | Path | None = None,
+        scope: str | None = None,
     ) -> list["RetrievedChunk"]:
         from docmancer.retrieval.dispatch import RetrievalDispatcher
 
@@ -405,8 +457,32 @@ class MemoryAgent:
             provider=provider,
             collection=self._agent._vector_collection_name(),
         )
-        result = dispatcher.run(text, mode=mode, limit=limit, budget=budget, allow_degraded=allow_degraded)
-        return result.chunks
+        requested_limit = limit or self.config.query.default_limit
+        search_limit = requested_limit * 4 if project_path or scope else requested_limit
+        result = dispatcher.run(text, mode=mode, limit=search_limit, budget=budget, allow_degraded=allow_degraded)
+        chunks = result.chunks
+        if scope:
+            chunks = [chunk for chunk in chunks if str((chunk.metadata or {}).get("scope_kind") or (chunk.metadata or {}).get("scope", "").split(":", 1)[0]) == scope]
+        if project_path:
+            project = Path(project_path).expanduser().resolve()
+
+            def bucket(chunk):
+                meta = chunk.metadata or {}
+                kind = str(meta.get("scope_kind") or str(meta.get("scope", "")).split(":", 1)[0])
+                raw = meta.get("project_path")
+                if kind in {"project", "team"} and raw:
+                    try:
+                        memory_project = Path(str(raw)).expanduser().resolve()
+                        if project == memory_project or memory_project in project.parents:
+                            return 0 if kind == "project" else 1
+                    except OSError:
+                        pass
+                    return 9
+                return 2 if kind == "global" else 9
+
+            chunks = [chunk for chunk in chunks if bucket(chunk) < 9]
+            chunks.sort(key=bucket)
+        return chunks[:requested_limit]
 
     def _build_retrieval_backends(self):
         try:
@@ -535,6 +611,92 @@ class MemoryAgent:
             timestamp=meta.get("timestamp"),
             source_count=int(meta.get("source_count") or 1),
             merged_from=[str(p) for p in meta.get("merged_from", []) if p],
+            record_id=meta.get("record_id"),
+            origin=str(meta.get("origin") or "harvested"),
+            scope_kind=str(meta.get("scope_kind") or str(meta.get("scope") or "unknown").split(":", 1)[0]),
+            project_path=meta.get("project_path"),
+        )
+
+    # ------------------------------------------------------------------
+    # Durable record operations
+    # ------------------------------------------------------------------
+
+    def add_record(
+        self,
+        text: str,
+        *,
+        scope_kind: str = "global",
+        project_path: str | Path | None = None,
+        memory_type: str | None = None,
+        tags: list[str] | None = None,
+        origin: str = "manual",
+        session_id: str | None = None,
+        promoted_from: str | None = None,
+        sync_index: bool = True,
+    ) -> tuple[MemoryRecord, bool]:
+        if scope_kind == "team":
+            project = Path(project_path or Path.cwd()).expanduser().resolve()
+            if not (project / ".git").exists():
+                raise ValueError("team memory requires an existing Git repository root")
+            project_path = project
+            self._extra_project_paths.add(str(project))
+        elif scope_kind == "project" and project_path:
+            self._extra_project_paths.add(str(Path(project_path).expanduser().resolve()))
+        record = self.records.add(
+            text,
+            scope_kind=scope_kind,
+            project_path=project_path,
+            memory_type=memory_type,
+            tags=tags,
+            origin=origin,
+            session_id=session_id,
+            promoted_from=promoted_from,
+        )
+        indexed = False
+        if sync_index:
+            try:
+                self.index_records([record])
+                indexed = True
+            except SyncInProgressError:
+                indexed = False
+        return record, indexed
+
+    def find_atom(self, identifier: str) -> AtomicMemoryEntry | None:
+        matches = [
+            atom
+            for atom in self.indexed_atoms()
+            if atom.atom_id.startswith(identifier) or (atom.record_id or "").startswith(identifier)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def forget(self, identifier: str) -> AtomicMemoryEntry:
+        atom = self.find_atom(identifier)
+        if atom is None:
+            raise ValueError("memory id is missing or ambiguous")
+        self.records.add_tombstone(atom)
+        if atom.record_id:
+            roots = self._project_paths()
+            if atom.project_path:
+                roots.append(atom.project_path)
+                self._extra_project_paths.add(str(Path(atom.project_path).expanduser().resolve()))
+            record = self.records.find_record(atom.record_id, project_paths=roots)
+            if record is not None:
+                self.records.delete_record(record)
+        self.sync()
+        return atom
+
+    def promote(self, identifier: str, *, project_path: str | Path | None = None) -> tuple[MemoryRecord, bool]:
+        atom = self.find_atom(identifier)
+        if atom is None:
+            raise ValueError("memory id is missing or ambiguous")
+        return self.add_record(
+            atom.text,
+            scope_kind="team",
+            project_path=project_path or Path.cwd(),
+            memory_type=atom.type,
+            tags=atom.tags,
+            origin="promoted",
+            promoted_from=atom.record_id or atom.atom_id,
         )
 
     def memory_paths(self) -> list[Path]:

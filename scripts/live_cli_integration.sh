@@ -256,7 +256,7 @@ done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
 done
-for command in sync query sources audit hook-context consolidate apply export status clear; do
+for command in sync query add list show forget promote sources audit hook-context consolidate apply export eval status clear; do
   run "${CLI_CMD[@]}" memory "$command" --help
 done
 for command in doctor; do

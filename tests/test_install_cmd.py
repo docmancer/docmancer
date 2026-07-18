@@ -179,6 +179,61 @@ def test_install_codex_hooks_use_documented_hooks_json_shape():
         assert "memory hook-context --agent codex" in prompt_group["hooks"][0]["command"]
 
 
+def test_install_and_remove_codex_capture_hooks_separately():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            installed = runner.invoke(cli, ["install", "codex", "--hooks", "--capture-hooks"])
+            removed = runner.invoke(cli, ["remove", "codex", "--capture-hooks"])
+
+        assert installed.exit_code == 0, installed.output
+        assert removed.exit_code == 0, removed.output
+        data = json.loads((fake_home / ".codex" / "hooks.json").read_text())
+        blob = json.dumps(data)
+        assert "memory capture-hook" not in blob
+        assert "memory hook-context --agent codex" in blob
+
+
+def test_remove_hooks_removes_recall_and_capture_but_preserves_unrelated_hooks():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        hooks_file = fake_home / ".codex" / "hooks.json"
+        hooks_file.parent.mkdir(parents=True, exist_ok=True)
+        hooks_file.write_text(
+            json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo keep"}]}]}})
+        )
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            installed = runner.invoke(cli, ["install", "codex", "--hooks", "--capture-hooks"])
+            removed = runner.invoke(cli, ["remove", "codex", "--hooks"])
+
+        assert installed.exit_code == 0, installed.output
+        assert removed.exit_code == 0, removed.output
+        blob = hooks_file.read_text()
+        assert "memory hook-context" not in blob
+        assert "memory capture-hook" not in blob
+        assert "echo keep" in blob
+
+
+def test_install_claude_capture_hooks_uses_compaction_and_session_events():
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
+            result = runner.invoke(cli, ["install", "claude-code", "--capture-hooks"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads((fake_home / ".claude" / "settings.json").read_text())
+        blob = json.dumps(data)
+        assert "PostCompact" in data["hooks"]
+        assert "SessionEnd" in data["hooks"]
+        assert "memory capture-hook --agent claude-code" in blob
+
+
 def test_install_cursor_creates_agents_md_fallback():
     runner = CliRunner()
     with runner.isolated_filesystem() as tmp_dir:

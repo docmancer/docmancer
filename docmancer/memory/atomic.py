@@ -76,6 +76,10 @@ class AtomicMemoryEntry:
     # record stands in for, and the distinct source paths they came from.
     source_count: int = 1
     merged_from: list[str] = field(default_factory=list)
+    record_id: str | None = None
+    origin: str = "harvested"
+    scope_kind: str = "unknown"
+    project_path: str | None = None
 
     @property
     def title(self) -> str:
@@ -100,6 +104,10 @@ class AtomicMemoryEntry:
             "tags": list(self.tags),
             "source_count": self.source_count,
             "merged_from": list(self.merged_from),
+            "record_id": self.record_id,
+            "origin": self.origin,
+            "scope_kind": self.scope_kind,
+            "project_path": self.project_path,
         }
 
     def to_document(self) -> "Document":
@@ -125,6 +133,10 @@ class AtomicMemoryEntry:
             "timestamp": self.timestamp,
             "source_count": self.source_count,
             "merged_from": list(self.merged_from),
+            "record_id": self.record_id,
+            "origin": self.origin,
+            "scope_kind": self.scope_kind,
+            "project_path": self.project_path,
             "format": "memory-atomic",
             "chunking_strategy": "single",
             "anchor": f"{self.source_title}:{self.line_start}",
@@ -160,7 +172,9 @@ def extract_atoms(entry: "MemoryEntry") -> list[AtomicMemoryEntry]:
         content_hash = _hash(normalized)
         atom_id = _atom_id(entry, line_start, normalized)
         kind = str(entry.extra.get("kind", "agent-memory"))
-        scope_prefix = (entry.scope or "").split(":", 1)[0] or "unknown"
+        scope_prefix, _, scope_value = (entry.scope or "").partition(":")
+        scope_prefix = scope_prefix or "unknown"
+        project_path = scope_value if scope_prefix in {"project", "team"} and scope_value else None
         tags = [entry.harness, kind, scope_prefix, memory_type]
         atoms.append(
             AtomicMemoryEntry(
@@ -179,6 +193,9 @@ def extract_atoms(entry: "MemoryEntry") -> list[AtomicMemoryEntry]:
                 source_chars=len(content),
                 tags=tags,
                 timestamp=timestamp,
+                origin="harvested",
+                scope_kind=scope_prefix,
+                project_path=project_path,
             )
         )
     return atoms
@@ -231,7 +248,7 @@ def merge_atoms(
         best_cluster = -1
         best_sim = threshold
         for c, rep in enumerate(reps):
-            if not _can_merge(atoms[i], atoms[rep]):
+            if not all(_can_merge(atoms[i], atoms[member]) for member in clusters[c]):
                 continue
             sim = float(unit[i] @ unit[rep])
             if sim >= best_sim:
@@ -255,6 +272,8 @@ def merge_atoms(
 def _can_merge(left: AtomicMemoryEntry, right: AtomicMemoryEntry) -> bool:
     """Only compare atoms whose metadata and polarity make a merge safe."""
     if left.type != right.type or left.scope != right.scope:
+        return False
+    if left.record_id and right.record_id and left.record_id != right.record_id:
         return False
     return _is_negative(left.text) == _is_negative(right.text)
 
@@ -282,6 +301,10 @@ def _elect_canonical(group: list[AtomicMemoryEntry]) -> AtomicMemoryEntry:
     winner.source_count = len(group)
     winner.merged_from = sources
     winner.confidence = min(1.0, winner.confidence + 0.1 * (len(group) - 1))
+    durable = next((atom for atom in group if atom.record_id), None)
+    if durable is not None:
+        winner.record_id = durable.record_id
+        winner.origin = durable.origin
     return winner
 
 

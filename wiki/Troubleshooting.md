@@ -118,6 +118,22 @@ Hook recall is intentionally silent when no strong local match is found, the ind
 - Codex may require review and trust through `/hooks` before non-managed command hooks run.
 - If cold startup is too slow, raise `DOCMANCER_HOOK_TIMEOUT_MS`; the default internal budget is 1,000 ms.
 
+## A saved memory is not searchable yet
+
+`memory add` writes the Markdown record before it tries to update the index. If another sync holds the lock, the command reports that the record was saved durably but not indexed. Run `docmancer memory sync` after the active writer finishes. The next sync repairs the index from the Markdown source.
+
+## A forgotten harvested memory returns after editing
+
+Tombstones match the indexed atom ID and the content hash within its scope. A materially edited source can produce a new atom, which is treated as new evidence rather than the deleted content. Inspect it with `memory show`, then forget the new ID if it should also be suppressed. Docmancer never edits the source agent file.
+
+## Capture hooks store nothing
+
+Capture is intentionally selective and silent. Confirm it was installed separately with `docmancer install <agent> --capture-hooks`. Unsupported lifecycle events, malformed payloads, active background work, short acknowledgements, and duplicates are skipped. Capture stores extracted durable atoms, not a raw transcript, so a session with no durable outcome can correctly produce no new record.
+
+## Team promotion is rejected
+
+Team memory requires an existing Git repository root passed with `--project`. Run the command from the repository root or pass its path explicitly. Docmancer writes only under `<repo>/.docmancer/memory/` and does not stage or commit the file.
+
 ## Agent does not know about docmancer commands
 
 Re-run `docmancer setup` or `docmancer install <target>` to update the skill file. Older skill installations may not include newer commands. See [Install Targets](./Install-Targets.md) for where skills land.

@@ -1,5 +1,6 @@
 .claude/
 __pycache__/
+tests/fixtures/memory-eval-private.jsonl
 *.pyc
 .pytest_cache/
 .qdrant/

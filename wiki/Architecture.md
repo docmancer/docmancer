@@ -11,7 +11,11 @@ The primary surface indexes context your agents already leave on disk.
 - **Discovery and harvest** (`docmancer/harness`): per-agent readers locate memory, instruction files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), and rule directories for Claude Code, Codex, Cursor, Gemini, and many external agents, plus repo-level instruction files recovered from each agent's recorded project paths. Entries carry a `kind` (`agent-memory`, `instructions`, or `rules`) and provenance (harness, scope, path).
 - **Privacy and audit** (`docmancer/harness/privacy`, `docmancer/harness/secrets`): a shared detector redacts secrets before anything is indexed. `docmancer memory audit` runs the same detector over harvested source files before redaction and reports likely leaks with masked excerpts, short paths, and line numbers. Nothing is uploaded on the sync, audit, or recall path.
 - **Index** (`docmancer/memory`): entries are indexed into a dedicated memory collection under `~/.docmancer/memory.db` with a co-located `sqlite-vec` file, kept separate from any docs index. `docmancer memory query` answers through the same hybrid dispatcher used for docs.
+- **Durable records** (`docmancer/memory/records.py`): personal and project records are editable Markdown with versioned YAML frontmatter under `~/.docmancer/memories/`. Team records use the same format under `<repo>/.docmancer/memory/`. Stable `record_id` values identify the editable record; content-addressed `atom_id` values identify the indexed version.
+- **Tombstones**: forgetting harvested memory stores a content-free suppression record and leaves the source file untouched. Forgetting Docmancer-owned memory removes its Markdown body and retains only the tombstone, so sync cannot resurrect it.
 - **Hook recall** (`docmancer/memory/hooks.py`): `docmancer memory hook-context` reads Claude Code or Codex hook JSON from stdin, runs local retrieval only, and emits compact `additionalContext` when relevant source-backed matches clear the threshold. It is timeout-bounded and silent on weak matches, errors, or stale indexes.
+- **Capture** (`docmancer/memory/capture.py`): separately installed lifecycle hooks redact a bounded payload or transcript tail, deterministically extract durable atoms, and store only those records. Unknown events, malformed transcript records, active background work, acknowledgements, and duplicates are skipped. Capture never writes team memory.
+- **Local MCP** (`docmancer/mcp`): the stdio server exposes memory CRUD and promotion in addition to retrieval. Forget and promotion require explicit confirmation, and promotion derives the output location from a validated project path.
 - **Consolidation** (`docmancer/ai`): `docmancer memory consolidate --provider openrouter` sends selected privacy-redacted entries to OpenRouter and returns a review-only master-memory draft. This is optional maintenance, not the main memory-transfer path. `docmancer memory apply` materializes a reviewed draft into an agent's always-loaded file inside a managed block.
 
 ## Docs indexing
@@ -57,7 +61,7 @@ Neighbor expansion works for lexical and hybrid modes. Use `--expand` for adjace
 
 `docmancer setup` and `docmancer install <agent>` write markdown skill or instruction files for supported agents. The installed guidance teaches agents to run `docmancer memory query`, `docmancer query`, `docmancer ingest`, and `docmancer add` directly. For Claude Code and Codex, setup also injects a recall instruction into the always-loaded `CLAUDE.md` / `~/.codex/AGENTS.md` (managed block) so manual pull recall still works when hooks are absent.
 
-No server registration is performed during install. `docmancer install claude-code --hooks` and `docmancer install codex --hooks` additionally install lifecycle hooks for automatic local recall. These hooks call the same CLI, never call OpenRouter, and can be removed with `docmancer remove <agent> --hooks`.
+No server registration is performed during install. `--hooks` installs read-only recall; `--capture-hooks` separately installs opt-in lifecycle capture. Claude Code capture uses `PostCompact` and `SessionEnd`; Codex capture uses `PreCompact` and `Stop`. Both call the local CLI, never call OpenRouter, and fail silently without blocking an agent turn.
 
 ## Concurrency
 
@@ -66,12 +70,15 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 ## Flow
 
 ```text
-agent memory + CLAUDE.md / AGENTS.md / rules (Claude Code, Codex, Cursor, Gemini, ...)
+agent memory + CLAUDE.md / AGENTS.md / rules + Docmancer Markdown records
   -> discover + harvest + redact
   -> docmancer memory audit        (local secret audit over source files)
   -> SQLite FTS5 + sqlite-vec (memory.db)
   -> docmancer memory query        (manual recall)
   -> docmancer memory hook-context (automatic Claude Code / Codex hook recall)
+  -> docmancer memory add/list/show/forget
+  -> optional capture hooks        (durable extracted atoms only)
+  -> .docmancer/memory/*.md        (reviewed Git team memory)
   -> docmancer memory consolidate  (optional OpenRouter -> review-only draft)
   -> docmancer memory apply        (optional managed block in an agent's always-loaded file)
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-**Your agents' memory, unified, local, and yours.**
+**Your agents' memory, unified, writable, and yours.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
@@ -14,13 +14,14 @@
 
 ---
 
-Your coding agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more) already write memory, instructions, and rules all over this machine, each locked inside its own tool. Docmancer **discovers all of it, extracts atomic memories, syncs them into one local hybrid (lexical + dense) index, and injects the relevant atoms into Claude Code and Codex automatically through local hooks.** The full memory loop is five steps:
+Your coding agents (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more) already write memory, instructions, and rules all over this machine, each locked inside its own tool. Docmancer **unearths that context, recalls it at the right time, lets people and local agents write new memories, makes every atom inspectable and forgettable, and shares reviewed team knowledge through Git.** The local loop is six steps:
 
 1. **Sync** (`docmancer memory sync`): discover, redact, and extract small source-attributed atomic memories into one local SQLite index. Local, offline, no keys.
-2. **Install hooks** (`docmancer install claude-code --hooks` / `docmancer install codex --hooks`): relevant local atoms appear in context without the agent choosing to call a tool.
-3. **Recall manually** (`docmancer memory query`): search across the atomic memories your agents have already written, with source provenance, when you want an explicit answer.
-4. **Audit** (`docmancer memory audit`): find likely secrets your agents already wrote into memory, with masked snippets and precise source locations.
-5. **Maintain** (`docmancer memory consolidate` / `apply`): optional cleanup over atomic memories, then explicit projection into an agent file if you want a compact shared summary.
+2. **Recall** (`docmancer memory query` or `docmancer install <agent> --hooks`): retrieve project, team, and global memory while excluding unrelated projects.
+3. **Remember** (`docmancer memory add` or local MCP): write a redacted Markdown record with a stable ID and index it immediately.
+4. **Inspect and forget** (`memory list`, `show`, and `forget`): review provenance, remove Docmancer-owned records, or suppress harvested atoms without editing another agent's files.
+5. **Capture, optionally** (`docmancer install <agent> --capture-hooks`): extract durable atoms from local lifecycle payloads without storing raw transcripts or calling a hosted model.
+6. **Share after review** (`docmancer memory promote <id> --team`): copy a memory into `<repo>/.docmancer/memory/` for normal Git review. Docmancer never stages or commits it.
 
 The same engine also does docs RAG as a secondary capability: point it at a folder of Markdown / PDF / DOCX / RTF / HTML or a docs URL (GitBook, Mintlify, generic web, GitHub) and query it the same way. A fresh install ships everything you need for the local path: SQLite FTS5 for lexical search, a static embedding model (`potion-base-8M`) vendored in the package so there is no large model download and no network at runtime, and `sqlite-vec` for dense vectors in a single local file with no daemon.
 
@@ -52,6 +53,41 @@ docmancer memory sources --preview   # live re-harvest (what WOULD index) withou
 docmancer memory audit               # find likely secrets in source memory files
 ```
 
+## Write, inspect, forget, and share memory
+
+Add a project decision, then inspect the stable record and atom IDs:
+
+```bash
+docmancer memory add "Production deploys run on Railway" --type decision --scope project --project "$PWD"
+docmancer memory list --scope project
+docmancer memory show <record-id>
+docmancer memory query "where do production deploys run?" --project "$PWD"
+```
+
+`memory forget` behaves according to provenance. For a Docmancer-owned record it deletes the Markdown body and leaves a content-free tombstone. For harvested memory it leaves the other agent's source file alone and writes a local suppression record so repeated syncs do not bring the atom back.
+
+```bash
+docmancer memory forget <id> --dry-run
+docmancer memory forget <id> --yes
+```
+
+Team memory is one editable Markdown file per atom. Add it directly when the decision is already reviewed, or promote a personal or captured memory after inspection:
+
+```bash
+docmancer memory add "Every schema change needs a rollback note" --scope team --project "$PWD"
+docmancer memory promote <id> --team --project "$PWD"
+git diff -- .docmancer/memory/
+```
+
+The packaged local MCP exposes `docmancer_memory_add`, `docmancer_memory_list`, `docmancer_memory_show`, `docmancer_memory_forget`, and `docmancer_memory_promote` alongside memory search. Destructive operations return a preview unless the caller explicitly sets `confirm=true`, and promotion accepts only a repository memory destination derived from `project_path`.
+
+Run the checked-in recall regression corpus, or use the same JSONL format for a private machine-specific set:
+
+```bash
+docmancer memory eval --dataset tests/fixtures/memory-eval-synthetic.jsonl
+docmancer memory eval --dataset memory-eval-private.jsonl --format json
+```
+
 Want docs RAG too? The same engine indexes documentation:
 
 ```bash
@@ -77,6 +113,15 @@ docmancer remove codex --hooks
 ```
 
 Codex hooks use the documented `~/.codex/hooks.json` hook shape and emit `hookSpecificOutput.additionalContext` on stdout. Codex may require you to review and trust the installed hook through `/hooks`.
+
+Capture is a separate opt-in. Claude Code capture uses `PostCompact` and `SessionEnd`; Codex uses `PreCompact` and `Stop`. Capture redacts first, reads only a bounded transcript tail when needed, stores extracted durable atoms rather than raw transcripts, skips malformed or low-value events, and never blocks an agent turn.
+
+```bash
+docmancer install claude-code --capture-hooks
+docmancer install codex --capture-hooks
+docmancer remove claude-code --capture-hooks
+docmancer remove codex --capture-hooks
+```
 
 ## Optional consolidation and apply
 
@@ -105,7 +150,7 @@ Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each OpenRout
 
 ## What you get
 
-**Your agents' memory, unified.** `docmancer memory sync` discovers the memory, instructions, and rules your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and more, plus repo-level `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), redacts likely secrets, extracts source-attributed atomic memories, then answers questions through one local index. `docmancer memory sources` shows exact provenance and atom counts per file. The local path uploads nothing.
+**A complete local memory loop.** `docmancer memory sync` unifies existing agent memory; `add`, `list`, `show`, and `forget` make the layer writable and inspectable; project-aware recall isolates workspaces; optional capture extracts durable local atoms; team promotion produces reviewable Git files. The local path uploads nothing.
 
 **Automatic recall in Claude Code and Codex.** `docmancer install claude-code --hooks` and `docmancer install codex --hooks` inject relevant atomic memories at session start and before matching prompts. The hook path is local, bounded, source-attributed, and silent when nothing relevant clears the threshold.
 
@@ -113,7 +158,7 @@ Use `--timeout` or `DOCMANCER_OPENROUTER_TIMEOUT_SECONDS` to bound each OpenRout
 
 **Optional consolidation.** `docmancer memory consolidate --provider openrouter` turns selected atomic memories into one review-only master-memory draft when `OPENROUTER_API_KEY` is configured. `docmancer memory apply` can render atomic memories into an agent's always-loaded file, with diff preview, backups, and undo.
 
-**Callable over MCP.** The packaged `docmancer-mcp` stdio server exposes local memory and docs search to MCP clients. `docmancer mcp install codex` (or `claude-code`, `claude-desktop`) wires it up; optional OpenRouter tools appear when `OPENROUTER_API_KEY` is set. Requires the `mcp` extra.
+**Readable and writable over MCP.** The packaged `docmancer-mcp` stdio server exposes local memory search, add, list, show, forget, and promote tools plus docs search. Forget and promote require explicit confirmation. `docmancer mcp install codex` (or `claude-code`, `claude-desktop`) wires it up; optional OpenRouter consolidation appears only when `OPENROUTER_API_KEY` is set. Requires the `mcp` extra.
 
 **Hybrid search by default.** `query` and `memory query` fan out across SQLite FTS5 (lexical, BM25-reranked) and dense vectors from a vendored static model (`potion-base-8M`) in `sqlite-vec`, then fuse results with Reciprocal Rank Fusion. Sparse (SPLADE) signals are available on the optional heavy Qdrant backend. The token budget keeps responses small so your agent has room for actual work:
 
@@ -125,7 +170,16 @@ Context pack: ~900 tokens vs ~4800 raw docs tokens (81.2% less docs overhead, 5.
 
 ## Where your data lives and how to remove it
 
-The local memory index is stored in SQLite-backed files under `~/.docmancer/` (override the main database with `DOCMANCER_MEMORY_DB`). Sync, query, audit, hook recall, status, sources, apply, and clear run locally. Hook output is sourced from atomic memories, bounded, redacted before index, and source-attributed because it goes directly into agent context. Provider-backed consolidation is optional and sends selected memory text only after privacy redaction and a provider-use confirmation. You can preview exactly what would be indexed with `docmancer memory sync --dry-run`, scope the harvest with `--include` / `--exclude` globs, audit likely leaks with `docmancer memory audit`, remove hooks with `docmancer remove <agent> --hooks`, and delete the local memory index files with `docmancer memory clear`. There is no telemetry and no phone-home.
+The local surfaces have separate, inspectable locations:
+
+- `~/.docmancer/memory.db` and its co-located sqlite-vec file are the rebuildable search index.
+- `~/.docmancer/memories/*.md` contains personal, project, manual, and captured records as Markdown with YAML frontmatter.
+- `<repo>/.docmancer/memory/*.md` contains free, MIT-licensed team memory intended for Git review.
+- `~/.docmancer/memory-tombstones.json` contains content-free suppression identifiers and hashes.
+- The atom extraction cache and hook dedupe cache live under `~/.docmancer/`; neither is a transcript archive.
+- OpenRouter receives privacy-redacted selected memory only when you explicitly run optional consolidation. Local sync, CRUD, MCP, hooks, capture, and evaluation do not call it.
+
+`docmancer memory clear` deletes the rebuildable index but deliberately leaves durable Markdown records and tombstones. `docmancer remove <agent> --hooks` removes all Docmancer hooks. Use `docmancer remove <agent> --capture-hooks` when you want to remove capture while leaving recall installed. There is no telemetry and no phone-home.
 
 **Inspectable.** Every section is written to `~/.docmancer/extracted/` as Markdown plus JSON. `docmancer inspect` shows index stats. `docmancer query --explain` shows which signal (lexical / dense / sparse) placed each result.
 

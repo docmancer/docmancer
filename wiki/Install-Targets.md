@@ -4,7 +4,7 @@
 
 Installs are file-only by default. They do not register MCP servers, background daemons, or hosted services.
 
-Install targets, memory discovery, and hook recall are related but not identical. `docmancer install` writes skills or instructions for an agent. `docmancer memory sync` can also discover memory and rules from agents that do not have install support. `docmancer install claude-code --hooks` and `docmancer install codex --hooks` add lifecycle hooks that inject relevant local memory automatically; other install targets use manual `docmancer memory query` recall through their installed skills or instructions. Optional consolidation uses OpenRouter through `docmancer memory consolidate --provider openrouter`.
+Install targets, memory discovery, recall hooks, and capture hooks are related but not identical. `docmancer install` writes skills or instructions for an agent. `docmancer memory sync` can also discover memory and rules from agents that do not have install support. `--hooks` adds read-only project-aware recall. The separate `--capture-hooks` opt-in adds durable local capture for Claude Code or Codex. Other install targets use manual `docmancer memory query` recall through their installed skills or instructions.
 
 ## Skill locations
 
@@ -25,13 +25,18 @@ Install targets, memory discovery, and hook recall are related but not identical
 
 Use `--project` with `claude-code`, `gemini`, `cline`, or `github-copilot` to install under the current working directory. This is useful when different projects need different docmancer configurations.
 
-Use `--hooks` with `claude-code` or `codex` to install automatic memory recall hooks. Global hooks land in `~/.claude/settings.json` or `~/.codex/hooks.json`; project hooks land in `.claude/settings.json` or `.codex/hooks.json` when `--project` is passed. Codex may require review through `/hooks` before non-managed command hooks run. Remove docmancer-owned hooks with `docmancer remove <agent> --hooks`.
+Use `--hooks` with `claude-code` or `codex` to install automatic memory recall hooks. Global hooks land in `~/.claude/settings.json` or `~/.codex/hooks.json`; project hooks land in `.claude/settings.json` or `.codex/hooks.json` when `--project` is passed. Codex may require review through `/hooks` before non-managed command hooks run. Remove all docmancer-owned recall and capture hooks with `docmancer remove <agent> --hooks`.
+
+Use `--capture-hooks` only as a separate explicit choice. Remove them with `docmancer remove <agent> --capture-hooks`; this does not remove recall hooks. Capture never promotes directly into repository team memory.
 
 ## What the skills teach agents
 
 Installed skills cover memory recall first, then docs retrieval when the user asks for documentation context:
 
 - `docmancer memory query` to recall past decisions, conventions, and project context.
+- `docmancer memory add` when the user explicitly asks to remember a durable item.
+- `docmancer memory list` and `show` before changing or promoting a memory.
+- `docmancer memory promote --team --dry-run` for reviewed team-memory previews, never automatic team writes.
 - `docmancer memory sources --preview` to inspect what would be harvested.
 - `docmancer memory audit` to find likely secrets in source memory before re-indexing.
 - `docmancer query` to get compact, source-attributed docs context.

@@ -26,12 +26,22 @@ def test_build_server_registers_local_tools(monkeypatch):
     from docmancer.mcp.server import build_server
 
     server = build_server()
-    # FastMCP exposes registered tools; names should include the four local ones.
+    # FastMCP exposes the local read and write tools.
     import asyncio
 
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    assert {"docmancer_memory_search", "docmancer_docs_search", "docmancer_memory_status", "docmancer_sources_list"} <= names
+    assert {
+        "docmancer_memory_search",
+        "docmancer_docs_search",
+        "docmancer_memory_status",
+        "docmancer_sources_list",
+        "docmancer_memory_add",
+        "docmancer_memory_list",
+        "docmancer_memory_show",
+        "docmancer_memory_forget",
+        "docmancer_memory_promote",
+    } <= names
     # Cloud tools absent without a key.
     assert "docmancer_memory_extract" not in names
     assert "docmancer_memory_consolidate_draft" not in names
@@ -75,6 +85,66 @@ def test_tools_memory_search_local(tmp_path, monkeypatch):
     results = tools.memory_search("where do we deploy")
     assert results
     assert any("Railway" in r["excerpt"] for r in results)
+
+
+def test_mcp_memory_crud_requires_confirmation_for_forget(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "state" / "memory.db"))
+    from docmancer.mcp import tools
+
+    added = tools.memory_add("Production deploys run on Railway.", memory_type="decision")
+    assert added["indexed"] is True
+    rows = tools.memory_list(origin="mcp")
+    assert len(rows) == 1
+    identifier = rows[0]["record_id"]
+    assert tools.memory_show(identifier)["text"].endswith("Railway.")
+
+    preview = tools.memory_forget(identifier, confirm=False)
+    assert preview["requires_confirmation"] is True
+    assert tools.memory_list(origin="mcp")
+    result = tools.memory_forget(identifier, confirm=True)
+    assert result["forgotten"] is True
+    assert tools.memory_list(origin="mcp") == []
+
+
+def test_mcp_promote_validates_git_project_and_requires_confirmation(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "repo"
+    (project / ".git").mkdir(parents=True)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "state" / "memory.db"))
+    from docmancer.mcp import tools
+
+    identifier = tools.memory_add("Schema changes need rollback notes.")["record_id"]
+    preview = tools.memory_promote(identifier, project_path=str(project), confirm=False)
+    assert preview["requires_confirmation"] is True
+    assert not (project / ".docmancer" / "memory").exists()
+    promoted = tools.memory_promote(identifier, project_path=str(project), confirm=True)
+    assert promoted["promoted"] is True
+    assert (project / ".docmancer" / "memory").is_dir()
+
+
+def test_mcp_memory_mutations_return_value_errors(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "state" / "memory.db"))
+    from docmancer.mcp import tools
+    from docmancer.memory import MemoryAgent
+
+    identifier = tools.memory_add("Schema changes need rollback notes.")["record_id"]
+    missing_repo = tmp_path / "not-a-repo"
+    missing_repo.mkdir()
+
+    promoted = tools.memory_promote(identifier, project_path=str(missing_repo), confirm=True)
+    assert promoted == {"error": "team memory requires an existing Git repository root"}
+
+    monkeypatch.setattr(MemoryAgent, "forget", lambda self, value: (_ for _ in ()).throw(ValueError("cannot forget now")))
+    forgotten = tools.memory_forget(identifier, confirm=True)
+    assert forgotten == {"error": "cannot forget now"}
 
 
 def test_mcp_install_codex_print():

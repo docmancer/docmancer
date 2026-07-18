@@ -318,6 +318,8 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Search your agents' memory.")
 @click.argument("text")
 @click.option("--limit", default=None, type=int, help="Maximum entries to return.")
+@click.option("--project", "project_path", default=None, type=click.Path(path_type=Path), help="Prefer this project's memory and exclude unrelated projects.")
+@click.option("--scope", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None, help="Only return one memory scope.")
 @click.option(
     "--mode",
     type=click.Choice(["lexical", "dense", "hybrid"], case_sensitive=False),
@@ -325,10 +327,10 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
     show_default=True,
     help="Retrieval mode.",
 )
-def query(text: str, limit: int | None, mode: str):
+def query(text: str, limit: int | None, project_path: Path | None, scope: str | None, mode: str):
     """Recall atomic memories from the local memory index."""
     agent = _agent()
-    chunks = agent.query(text, limit=limit, mode=mode.lower())
+    chunks = agent.query(text, limit=limit, mode=mode.lower(), project_path=project_path, scope=scope)
     if not chunks:
         click.echo("No results found.")
         sys.exit(1)
@@ -346,6 +348,285 @@ def query(text: str, limit: int | None, mode: str):
             click.echo(f"    Source: {display_path(meta['source_path'])}{suffix}")
         click.echo(chunk.text)
         click.echo("---")
+
+
+@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a durable local memory.")
+@click.argument("text")
+@click.option("--scope", "scope_kind", type=click.Choice(["global", "project", "team"], case_sensitive=False), default="global", show_default=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path), default=None, help="Project or Git repository root.")
+@click.option("--type", "memory_type", type=click.Choice(["fact", "decision", "preference", "constraint", "workflow", "warning", "command", "status"], case_sensitive=False), default=None)
+@click.option("--tag", "tags", multiple=True, help="Tag the memory; repeatable.")
+def memory_add(text: str, scope_kind: str, project_path: Path | None, memory_type: str | None, tags: tuple[str, ...]):
+    """Add one inspectable memory and index it immediately when possible."""
+    agent = _agent()
+    try:
+        record, indexed = agent.add_record(
+            text,
+            scope_kind=scope_kind.lower(),
+            project_path=project_path,
+            memory_type=memory_type.lower() if memory_type else None,
+            tags=list(tags),
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Added {record.record_id[:12]}  {record.type}  {record.scope}")
+    click.echo(f"Stored: {display_path(record.source_path)}")
+    if not indexed:
+        click.echo("Saved durably; another sync is active, so run `docmancer memory sync` afterward.")
+
+
+def _atom_dict(atom) -> dict:
+    return {
+        "id": atom.record_id or atom.atom_id,
+        "atom_id": atom.atom_id,
+        "record_id": atom.record_id,
+        "text": atom.text,
+        "type": atom.type,
+        "origin": atom.origin,
+        "scope": atom.scope,
+        "scope_kind": atom.scope_kind,
+        "project_path": atom.project_path,
+        "tags": atom.tags,
+        "source_path": atom.source_path,
+        "source_count": atom.source_count,
+        "merged_from": atom.merged_from,
+        "timestamp": atom.timestamp,
+    }
+
+
+@memory_group.command("list", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List inspectable atomic memories.")
+@click.option("--scope", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None)
+@click.option("--type", "memory_type", default=None, help="Filter by atom type.")
+@click.option("--origin", default=None, help="Filter by origin, such as manual, capture, or harvested.")
+@click.option("--project", "project_path", type=click.Path(path_type=Path), default=None)
+@click.option("--limit", default=100, show_default=True, type=int)
+@click.option("--json", "as_json", is_flag=True)
+def memory_list(scope, memory_type, origin, project_path, limit, as_json):
+    """Browse atomic memory with stable IDs and provenance."""
+    import json as _json
+
+    atoms = _agent().indexed_atoms()
+    if scope:
+        atoms = [atom for atom in atoms if atom.scope_kind == scope.lower()]
+    if memory_type:
+        atoms = [atom for atom in atoms if atom.type == memory_type.lower()]
+    if origin:
+        atoms = [atom for atom in atoms if atom.origin == origin.lower()]
+    if project_path:
+        project = project_path.expanduser().resolve()
+        atoms = [atom for atom in atoms if atom.project_path and Path(atom.project_path).expanduser().resolve() == project]
+    atoms = atoms[: max(0, limit)]
+    if as_json:
+        click.echo(_json.dumps([_atom_dict(atom) for atom in atoms], indent=2))
+        return
+    if not atoms:
+        click.echo("No atomic memories match.")
+        return
+    for atom in atoms:
+        identifier = (atom.record_id or atom.atom_id)[:12]
+        click.echo(f"{identifier}  {atom.type:<10}  {atom.scope:<30}  {atom.origin}")
+        click.echo(f"  {atom.text}")
+
+
+@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show one atomic memory and its provenance.")
+@click.argument("identifier")
+@click.option("--json", "as_json", is_flag=True)
+def memory_show(identifier: str, as_json: bool):
+    import json as _json
+
+    atom = _agent().find_atom(identifier)
+    if atom is None:
+        raise click.ClickException("memory id is missing or ambiguous")
+    data = _atom_dict(atom)
+    if as_json:
+        click.echo(_json.dumps(data, indent=2))
+        return
+    click.echo(f"ID: {data['id']}")
+    click.echo(f"Atom: {atom.atom_id}")
+    click.echo(f"Type: {atom.type}")
+    click.echo(f"Origin: {atom.origin}")
+    click.echo(f"Scope: {atom.scope}")
+    click.echo(f"Source: {display_path(atom.source_path)}")
+    if atom.merged_from:
+        click.echo("Merged from: " + ", ".join(display_path(path) for path in atom.merged_from))
+    click.echo()
+    click.echo(atom.text)
+
+
+@memory_group.command("forget", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Suppress or remove one atomic memory.")
+@click.argument("identifier")
+@click.option("--dry-run", is_flag=True)
+@click.option("--yes", is_flag=True)
+def memory_forget(identifier: str, dry_run: bool, yes: bool):
+    agent = _agent()
+    atom = agent.find_atom(identifier)
+    if atom is None:
+        raise click.ClickException("memory id is missing or ambiguous")
+    action = "remove the Docmancer-owned record" if atom.record_id else "suppress this harvested atom without editing its source"
+    click.echo(f"Would {action}: {atom.text}")
+    if dry_run:
+        return
+    if not yes:
+        click.confirm("Forget this memory?", abort=True)
+    agent.forget(identifier)
+    click.echo("Memory forgotten. Its content is absent from the tombstone.")
+
+
+@memory_group.command("promote", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Copy a reviewed memory into the Git team store.")
+@click.argument("identifier")
+@click.option("--team", is_flag=True, required=True, help="Confirm the destination is team memory.")
+@click.option("--project", "project_path", type=click.Path(path_type=Path), default=None)
+@click.option("--dry-run", is_flag=True)
+def memory_promote(identifier: str, team: bool, project_path: Path | None, dry_run: bool):
+    agent = _agent()
+    atom = agent.find_atom(identifier)
+    if atom is None:
+        raise click.ClickException("memory id is missing or ambiguous")
+    project = (project_path or Path.cwd()).expanduser().resolve()
+    click.echo(f"Team destination: {display_path(project / '.docmancer' / 'memory')}")
+    click.echo(atom.text)
+    if dry_run:
+        return
+    try:
+        record, indexed = agent.promote(identifier, project_path=project)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Promoted {record.record_id[:12]} to {display_path(record.source_path)}")
+    if not indexed:
+        click.echo("Saved durably; run `docmancer memory sync` after the active sync finishes.")
+
+
+@memory_group.command("capture-hook", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, hidden=True)
+@click.option("--agent", type=click.Choice(["claude-code", "codex"], case_sensitive=False), required=True)
+@click.option("--debug", is_flag=True)
+def capture_hook(agent: str, debug: bool):
+    """Capture durable local memories from a lifecycle hook payload."""
+    import json as _json
+
+    try:
+        payload = _json.loads(sys.stdin.read() or "{}")
+        if not isinstance(payload, dict):
+            return
+        from docmancer.memory.capture import capture_payload
+
+        count, indexed = capture_payload(payload, agent=agent.lower())
+        if debug and count:
+            click.echo(f"captured {count} memory atom(s); indexed={indexed}", err=True)
+    except Exception as exc:  # noqa: BLE001 - capture must never block the agent
+        if debug:
+            click.echo(f"docmancer capture failed: {exc}", err=True)
+
+
+@memory_group.command("eval", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Measure recall quality against a JSONL dataset.")
+@click.option("--dataset", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text", show_default=True)
+def memory_eval(dataset: Path, output_format: str):
+    """Run deterministic top-one, hit-rate, MRR, and latency evaluation."""
+    import json as _json
+    import statistics
+    import tempfile
+    import time
+
+    cases = []
+    corpus = []
+    for number, line in enumerate(dataset.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            case = _json.loads(line)
+        except _json.JSONDecodeError as exc:
+            raise click.ClickException(f"invalid JSONL at line {number}: {exc}") from exc
+        if case.get("kind") == "memory":
+            corpus.append(case)
+        else:
+            cases.append(case)
+    if not cases:
+        raise click.ClickException("dataset contains no cases")
+    tempdir = None
+    if corpus:
+        from docmancer.memory import MemoryAgent
+
+        tempdir = tempfile.TemporaryDirectory(prefix="docmancer-memory-eval-")
+        root = Path(tempdir.name)
+        agent = MemoryAgent(db_path=str(root / "memory.db"), home=root)
+        for item in corpus:
+            if item.get("forgotten"):
+                continue
+            agent.records.add(
+                str(item["text"]),
+                scope_kind=str(item.get("scope") or "global"),
+                project_path=item.get("project_path"),
+                memory_type=item.get("type"),
+                tags=[str(tag) for tag in item.get("tags", [])],
+                origin=str(item.get("origin") or "eval"),
+            )
+        agent._extra_project_paths.update(
+            str(Path(str(item["project_path"])).expanduser().resolve())
+            for item in corpus
+            if item.get("project_path")
+        )
+        agent.sync(recreate=True)
+    else:
+        agent = _agent()
+    results = []
+    latencies = []
+    reciprocal = []
+    for case in cases:
+        started = time.perf_counter()
+        chunks = agent.query(
+            str(case["query"]),
+            limit=max(5, int(case.get("k") or 5)),
+            project_path=case.get("project_path"),
+            scope=case.get("scope"),
+        )
+        latency = (time.perf_counter() - started) * 1000
+        latencies.append(latency)
+        expected_ids = {str(value) for value in case.get("expected_atom_ids", [])}
+        fragments = [str(value).lower() for value in case.get("expected_contains", [])]
+        absent_fragments = [str(value).lower() for value in case.get("expected_absent", [])]
+        rank = 0
+        if absent_fragments:
+            combined = "\n".join((chunk.text or "").lower() for chunk in chunks)
+            rank = 1 if all(fragment not in combined for fragment in absent_fragments) else 0
+        else:
+            for index, chunk in enumerate(chunks, start=1):
+                meta = chunk.metadata or {}
+                ids = {str(meta.get("atom_id") or ""), str(meta.get("record_id") or "")}
+                text_lower = (chunk.text or "").lower()
+                if expected_ids.intersection(ids) or any(fragment in text_lower for fragment in fragments):
+                    rank = index
+                    break
+        reciprocal.append(1 / rank if rank else 0.0)
+        results.append({"query": case["query"], "rank": rank or None, "latency_ms": round(latency, 2)})
+    count = len(results)
+    sorted_latency = sorted(latencies)
+    percentile = lambda p: sorted_latency[min(len(sorted_latency) - 1, int((len(sorted_latency) - 1) * p))]
+    report = {
+        "cases": count,
+        "top_one_correct": sum(1 for item in results if item["rank"] == 1) / count,
+        "hit_at_3": sum(1 for item in results if item["rank"] and item["rank"] <= 3) / count,
+        "hit_at_5": sum(1 for item in results if item["rank"] and item["rank"] <= 5) / count,
+        "mrr": statistics.mean(reciprocal),
+        "latency_p50_ms": round(percentile(0.50), 2),
+        "latency_p95_ms": round(percentile(0.95), 2),
+        "failed": [item for item in results if item["rank"] is None],
+        "results": results,
+    }
+    if output_format == "json":
+        click.echo(_json.dumps(report, indent=2))
+        if tempdir is not None:
+            tempdir.cleanup()
+        return
+    click.echo(f"Cases: {count}")
+    click.echo(f"Top-one correct: {report['top_one_correct']:.1%}")
+    click.echo(f"Hit@3: {report['hit_at_3']:.1%}  Hit@5: {report['hit_at_5']:.1%}  MRR: {report['mrr']:.3f}")
+    click.echo(f"Latency: p50 {report['latency_p50_ms']:.2f} ms  p95 {report['latency_p95_ms']:.2f} ms")
+    if report["failed"]:
+        click.echo("Failed cases:")
+        for item in report["failed"]:
+            click.echo(f"  - {item['query']}")
+    if tempdir is not None:
+        tempdir.cleanup()
 
 
 @memory_group.command(
@@ -410,7 +691,7 @@ def hook_context(agent: str, limit: int, max_chars: int, threshold: float, debug
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List indexed sources with provenance.")
 @click.option("--agent", "agent_filter", default=None, help="Filter by agent/harness name.")
-@click.option("--scope", "scope_filter", type=click.Choice(["global", "project"], case_sensitive=False), default=None, help="Filter by scope.")
+@click.option("--scope", "scope_filter", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None, help="Filter by scope.")
 @click.option(
     "--type",
     "type_filter",

@@ -106,6 +106,128 @@ def sources_list(agent: str | None = None, scope: str | None = None, kind: str |
     return rows
 
 
+def memory_add(
+    text: str,
+    *,
+    scope: str = "global",
+    project_path: str | None = None,
+    memory_type: str | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    from docmancer.memory import MemoryAgent
+
+    record, indexed = MemoryAgent().add_record(
+        text,
+        scope_kind=scope,
+        project_path=project_path,
+        memory_type=memory_type,
+        tags=tags or [],
+        origin="mcp",
+    )
+    return {
+        "record_id": record.record_id,
+        "scope": record.scope,
+        "type": record.type,
+        "source_path": record.source_path,
+        "indexed": indexed,
+    }
+
+
+def memory_list(
+    *,
+    scope: str | None = None,
+    memory_type: str | None = None,
+    origin: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    from docmancer.memory import MemoryAgent
+
+    atoms = MemoryAgent().indexed_atoms()
+    if scope:
+        atoms = [atom for atom in atoms if atom.scope_kind == scope]
+    if memory_type:
+        atoms = [atom for atom in atoms if atom.type == memory_type]
+    if origin:
+        atoms = [atom for atom in atoms if atom.origin == origin]
+    return [
+        {
+            "id": atom.record_id or atom.atom_id,
+            "atom_id": atom.atom_id,
+            "record_id": atom.record_id,
+            "text": _truncate(atom.text, 1200),
+            "type": atom.type,
+            "scope": atom.scope,
+            "origin": atom.origin,
+            "source_path": atom.source_path,
+        }
+        for atom in atoms[: max(0, limit)]
+    ]
+
+
+def memory_show(identifier: str) -> dict:
+    from docmancer.memory import MemoryAgent
+
+    atom = MemoryAgent().find_atom(identifier)
+    if atom is None:
+        return {"error": "memory id is missing or ambiguous"}
+    return {
+        "id": atom.record_id or atom.atom_id,
+        "atom_id": atom.atom_id,
+        "record_id": atom.record_id,
+        "text": atom.text,
+        "type": atom.type,
+        "scope": atom.scope,
+        "origin": atom.origin,
+        "tags": atom.tags,
+        "source_path": atom.source_path,
+        "merged_from": atom.merged_from,
+    }
+
+
+def memory_forget(identifier: str, *, confirm: bool = False) -> dict:
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    atom = agent.find_atom(identifier)
+    if atom is None:
+        return {"error": "memory id is missing or ambiguous"}
+    if not confirm:
+        return {
+            "requires_confirmation": True,
+            "id": atom.record_id or atom.atom_id,
+            "text": _truncate(atom.text, 500),
+            "action": "remove owned record" if atom.record_id else "suppress harvested atom",
+        }
+    try:
+        forgotten = agent.forget(identifier)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"forgotten": True, "id": forgotten.record_id or forgotten.atom_id}
+
+
+def memory_promote(identifier: str, *, project_path: str, confirm: bool = False) -> dict:
+    from pathlib import Path
+    from docmancer.memory import MemoryAgent
+
+    project = Path(project_path).expanduser().resolve()
+    agent = MemoryAgent()
+    atom = agent.find_atom(identifier)
+    if atom is None:
+        return {"error": "memory id is missing or ambiguous"}
+    if not confirm:
+        return {
+            "requires_confirmation": True,
+            "id": atom.record_id or atom.atom_id,
+            "text": _truncate(atom.text, 500),
+            "destination": str(project / ".docmancer" / "memory"),
+        }
+    try:
+        record, indexed = agent.promote(identifier, project_path=project)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"promoted": True, "record_id": record.record_id, "source_path": record.source_path, "indexed": indexed}
+
+
 # --- Optional cloud-backed tools (require OPENROUTER_API_KEY) ----------------
 
 

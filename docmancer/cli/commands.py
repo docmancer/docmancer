@@ -492,11 +492,16 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
     dest.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-_HOOK_COMMAND_MARKER = "docmancer memory hook-context"
+_HOOK_COMMAND_MARKER = "memory hook-context"
+_CAPTURE_HOOK_COMMAND_MARKER = "memory capture-hook"
 
 
 def _hook_command(agent: str, config_path: str | Path | None) -> str:
     return f"{_resolve_skill_command(config_path)} memory hook-context --agent {shlex.quote(agent)}"
+
+
+def _capture_hook_command(agent: str, config_path: str | Path | None) -> str:
+    return f"{_resolve_skill_command(config_path)} memory capture-hook --agent {shlex.quote(agent)}"
 
 
 def _load_json_object(path: Path) -> dict:
@@ -511,11 +516,14 @@ def _load_json_object(path: Path) -> dict:
     return data
 
 
-def _is_docmancer_hook(handler: object) -> bool:
-    return isinstance(handler, dict) and _HOOK_COMMAND_MARKER in str(handler.get("command") or "")
+def _is_docmancer_hook(handler: object, marker: str | None = None) -> bool:
+    command = str(handler.get("command") or "") if isinstance(handler, dict) else ""
+    if marker:
+        return marker in command
+    return _HOOK_COMMAND_MARKER in command or _CAPTURE_HOOK_COMMAND_MARKER in command
 
 
-def _install_hook_json(path: Path, *, event: str, command: str, status: str, matcher: str | None = None) -> bool:
+def _install_hook_json(path: Path, *, event: str, command: str, status: str, matcher: str | None = None, timeout: int = 2) -> bool:
     data = _load_json_object(path)
     hooks_root = data.setdefault("hooks", {})
     if not isinstance(hooks_root, dict):
@@ -528,7 +536,8 @@ def _install_hook_json(path: Path, *, event: str, command: str, status: str, mat
         if not isinstance(group, dict):
             continue
         handlers = group.get("hooks")
-        if isinstance(handlers, list) and any(_is_docmancer_hook(handler) for handler in handlers):
+        marker = _CAPTURE_HOOK_COMMAND_MARKER if _CAPTURE_HOOK_COMMAND_MARKER in command else _HOOK_COMMAND_MARKER
+        if isinstance(handlers, list) and any(_is_docmancer_hook(handler, marker) for handler in handlers):
             return False
 
     group: dict[str, object] = {
@@ -536,7 +545,7 @@ def _install_hook_json(path: Path, *, event: str, command: str, status: str, mat
             {
                 "type": "command",
                 "command": command,
-                "timeout": 2,
+                "timeout": timeout,
                 "statusMessage": status,
             }
         ]
@@ -549,7 +558,7 @@ def _install_hook_json(path: Path, *, event: str, command: str, status: str, mat
     return True
 
 
-def _remove_hook_json(path: Path) -> bool:
+def _remove_hook_json(path: Path, *, marker: str | None = None) -> bool:
     if not path.exists():
         return False
     data = _load_json_object(path)
@@ -569,7 +578,7 @@ def _remove_hook_json(path: Path) -> bool:
             if not isinstance(handlers, list):
                 kept_groups.append(group)
                 continue
-            kept_handlers = [handler for handler in handlers if not _is_docmancer_hook(handler)]
+            kept_handlers = [handler for handler in handlers if not _is_docmancer_hook(handler, marker)]
             if len(kept_handlers) != len(handlers):
                 changed = True
             if kept_handlers:
@@ -611,7 +620,26 @@ def _install_agent_hooks(agent: str, *, project: bool, config_path: str | Path |
     raise click.ClickException("--hooks is currently supported for claude-code and codex.")
 
 
-def _remove_agent_hooks(agent: str, *, project: bool) -> list[tuple[str, Path]]:
+def _install_capture_hooks(agent: str, *, project: bool, config_path: str | Path | None) -> list[tuple[str, Path]]:
+    home = Path.home()
+    if agent == "claude-code":
+        path = (Path(".claude") / "settings.json") if project else (home / ".claude" / "settings.json")
+        command = _capture_hook_command("claude-code", config_path)
+        events = [("PostCompact", "Capturing compacted memory"), ("SessionEnd", "Saving session memory")]
+    elif agent == "codex":
+        path = (Path(".codex") / "hooks.json") if project else (home / ".codex" / "hooks.json")
+        command = _capture_hook_command("codex", config_path)
+        events = [("PreCompact", "Capturing memory before compaction"), ("Stop", "Saving durable memory")]
+    else:
+        raise click.ClickException("--capture-hooks is currently supported for claude-code and codex.")
+    installed = []
+    for event, status in events:
+        if _install_hook_json(path, event=event, command=command, status=status, timeout=10):
+            installed.append((f"Installed {agent} {event} capture hook at", path))
+    return installed or [("Docmancer capture hooks already present at", path)]
+
+
+def _remove_agent_hooks(agent: str, *, project: bool, capture_only: bool = False) -> list[tuple[str, Path]]:
     home = Path.home()
     if agent == "claude-code":
         path = (Path(".claude") / "settings.json") if project else (home / ".claude" / "settings.json")
@@ -619,9 +647,12 @@ def _remove_agent_hooks(agent: str, *, project: bool) -> list[tuple[str, Path]]:
         path = (Path(".codex") / "hooks.json") if project else (home / ".codex" / "hooks.json")
     else:
         raise click.ClickException("--hooks removal is currently supported for claude-code and codex.")
-    if _remove_hook_json(path):
-        return [("Removed docmancer hooks from", path)]
-    return [("No docmancer hooks found at", path)]
+    marker = _CAPTURE_HOOK_COMMAND_MARKER if capture_only else None
+    if _remove_hook_json(path, marker=marker):
+        label = "Removed docmancer capture hooks from" if capture_only else "Removed all docmancer hooks from"
+        return [(label, path)]
+    label = "No docmancer capture hooks found at" if capture_only else "No docmancer hooks found at"
+    return [(label, path)]
 
 
 # ---------------------------------------------------------------------------
@@ -1443,19 +1474,23 @@ def query_cmd(
 )
 @click.argument("source", required=False)
 @click.option("--all", "remove_all", is_flag=True, default=False, help="Remove every stored source and docset.")
-@click.option("--hooks", is_flag=True, default=False, help="Remove docmancer hook integration for claude-code or codex.")
+@click.option("--hooks", is_flag=True, default=False, help="Remove all docmancer recall and capture hooks for claude-code or codex.")
+@click.option("--capture-hooks", is_flag=True, default=False, help="Remove opt-in memory capture hooks for claude-code or codex.")
 @click.option("--project", is_flag=True, default=False, help="Remove project-level hook config instead of user-level hook config.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def remove_cmd(source: str | None, remove_all: bool, hooks: bool, project: bool, config_path: str | None):
+def remove_cmd(source: str | None, remove_all: bool, hooks: bool, capture_hooks: bool, project: bool, config_path: str | None):
     """Remove an indexed source or a docmancer hook integration."""
-    if hooks:
+    if hooks or capture_hooks:
+        if hooks and capture_hooks:
+            click.echo("Remove recall and capture hooks with two explicit commands.", err=True)
+            sys.exit(1)
         if remove_all:
-            click.echo("Do not pass --all when using --hooks.", err=True)
+            click.echo("Do not pass --all when removing hooks.", err=True)
             sys.exit(1)
         if not source:
-            click.echo("Specify claude-code or codex when using --hooks.", err=True)
+            click.echo("Specify claude-code or codex when removing hooks.", err=True)
             sys.exit(2)
-        removed = _remove_agent_hooks(source.lower(), project=project)
+        removed = _remove_agent_hooks(source.lower(), project=project, capture_only=capture_hooks)
         for label, path in removed:
             _emit_status_line(f"{label}: {display_path(path)}")
         return
@@ -1670,8 +1705,9 @@ def list_cmd(show_all: bool, config_path: str | None):
 @click.option("--project", is_flag=True, default=False,
               help="Install in project-level settings (claude-code, gemini, cline, or github-copilot).")
 @click.option("--hooks", is_flag=True, default=False, help="Install automatic memory recall hooks (claude-code or codex).")
+@click.option("--capture-hooks", is_flag=True, default=False, help="Install opt-in local memory capture hooks (claude-code or codex).")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None):
+def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, config_path: str | None):
     """Install docmancer skill files into an AI agent.
 
     Teaches the agent to recall your unified memory and search indexed docs
@@ -1682,8 +1718,8 @@ def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None)
     """
     config_path = _effective_config(config_path)
     normalized = agent.lower()
-    if hooks and normalized not in {"claude-code", "codex", "codex-app", "codex-desktop"}:
-        raise click.ClickException("--hooks is currently supported for claude-code and codex.")
+    if (hooks or capture_hooks) and normalized not in {"claude-code", "codex", "codex-app", "codex-desktop"}:
+        raise click.ClickException("memory hooks are currently supported for claude-code and codex.")
     home = Path.home()
     user_config_exists_before = _get_user_config_path().exists()
     effective_config_path = _resolve_install_config_path(config_path, project)
@@ -1741,6 +1777,10 @@ def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None)
             installed_paths.extend(_install_agent_hooks("claude-code", project=project, config_path=effective_config_path))
             extra_lines.insert(0, "Automatic recall hooks installed for SessionStart and UserPromptSubmit.")
             next_step = "Start Claude Code; relevant memories will be injected automatically when they match."
+        if capture_hooks:
+            installed_paths.extend(_install_capture_hooks("claude-code", project=project, config_path=effective_config_path))
+            extra_lines.insert(0, "Opt-in capture hooks installed for PostCompact and SessionEnd.")
+            next_step = "Start Claude Code; durable session memories will be saved locally at lifecycle boundaries."
         _emit_install_summary(
             "Install skill for Claude Code.",
             installed_paths,
@@ -1780,6 +1820,11 @@ def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None)
             extra_lines.insert(0, "Automatic recall hooks installed for SessionStart and UserPromptSubmit.")
             extra_lines.append("Codex may ask you to review and trust hooks. Open /hooks if prompted.")
             next_step = "Start Codex and review /hooks if requested; relevant memories will be injected automatically when they match."
+        if capture_hooks:
+            installed_paths.extend(_install_capture_hooks("codex", project=project, config_path=effective_config_path))
+            extra_lines.insert(0, "Opt-in capture hooks installed for PreCompact and Stop.")
+            extra_lines.append("Codex may ask you to review and trust hooks. Open /hooks if prompted.")
+            next_step = "Start Codex and review /hooks if requested; durable memories will be saved locally."
         _emit_install_summary(
             "Install skill for Codex.",
             installed_paths,
@@ -1790,8 +1835,8 @@ def install_cmd(agent: str, project: bool, hooks: bool, config_path: str | None)
         )
         return
 
-    if hooks:
-        raise click.ClickException("--hooks is currently supported for claude-code and codex.")
+    if hooks or capture_hooks:
+        raise click.ClickException("memory hooks are currently supported for claude-code and codex.")
 
     if normalized == "cursor":
         dest = home / ".cursor" / "skills" / "docmancer" / "SKILL.md"

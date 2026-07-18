@@ -9,11 +9,19 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | `docmancer setup` | Create config and the SQLite database, index the memory and instruction files your coding agents already wrote, auto-detect installed agents, and install skill files. Use `--all` for non-interactive installation and `--no-index-memory` to skip memory indexing. |
 | `docmancer memory sync` | Harvest, redact, and index agent memory, instructions, and rules. Supports `--recreate`, `--dry-run`, `--include`, and `--exclude`. |
 | `docmancer memory query "<text>"` | Recall from the local memory index. Hybrid retrieval is the default. |
+| `docmancer memory query "<text>" --project <path>` | Recall matching project, team, and global memory while excluding unrelated projects. Add `--scope global\|project\|team` to restrict the result set. |
+| `docmancer memory add "<text>"` | Write a redacted Markdown memory with a stable record ID. Supports `--scope`, `--project`, `--type`, and repeatable `--tag`. Team scope requires a Git repository and never stages the file. |
+| `docmancer memory list` | List indexed atoms with stable IDs, type, scope, origin, and text. Supports filters plus JSON output. |
+| `docmancer memory show <id>` | Inspect one atom, including its record ID, atom ID, provenance, scope, tags, and merge sources. |
+| `docmancer memory forget <id>` | Preview, then remove an owned record or suppress a harvested atom. Use `--yes` only after review. Tombstones contain no memory text. |
+| `docmancer memory promote <id> --team --project <repo>` | Copy a reviewed personal or captured atom into `<repo>/.docmancer/memory/` without staging or committing it. |
 | `docmancer memory sources` | Show indexed provenance by agent, type, scope, title, short path, and character count. Use `--preview` for a live re-harvest without writing. |
 | `docmancer memory audit` | Scan harvested source memory before redaction and report likely secrets with masked snippets, short paths, line numbers, severity, and next actions. Use `--json` or `--fail-on-findings` for automation. |
 | `docmancer install claude-code --hooks` | Install Claude Code hook recall so relevant local memories are injected automatically. |
 | `docmancer install codex --hooks` | Install Codex hook recall. Codex may ask you to review and trust the hook through `/hooks`. |
-| `docmancer remove <agent> --hooks` | Remove docmancer-owned Claude Code or Codex hook config while preserving unrelated hooks. |
+| `docmancer remove <agent> --hooks` | Remove all docmancer-owned Claude Code or Codex recall and capture hooks while preserving unrelated hooks. |
+| `docmancer install <agent> --capture-hooks` | Separately opt into local durable capture for Claude Code or Codex. Raw transcripts are not persisted and no hosted model is called. |
+| `docmancer remove <agent> --capture-hooks` | Remove only capture hooks while leaving recall hooks intact. |
 | `docmancer memory status` | Show memory index location and source/section counts. |
 | `docmancer memory clear` | Delete the local memory index files. Use `--dry-run` first when checking scope. |
 
@@ -27,6 +35,7 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | `docmancer okf doctor memory.okf` | Validate an OKF bundle. |
 | `docmancer memory hook-context` | Internal hook entrypoint for Claude Code and Codex. It reads hook JSON from stdin and emits bounded `additionalContext` when relevant local memory clears the threshold. |
 | `docmancer memory scan` | Compatibility preview command. Prefer `docmancer memory sources --preview` for provenance. |
+| `docmancer memory eval --dataset <jsonl>` | Report top-one correctness, Hit@3, Hit@5, MRR, failed cases, and latency p50/p95. Use `--format json` for automation. A dataset can contain its own synthetic memory corpus. |
 
 ## Docs retrieval
 
@@ -80,11 +89,11 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 |---------|-------------|
 | `docmancer mcp serve` | Run the packaged `docmancer-mcp` stdio server. Requires the `mcp` extra. |
 | `docmancer mcp doctor` | Check the MCP server environment. |
-| `docmancer mcp install <client>` | Install MCP config into Codex, Claude Code, or Claude Desktop. Search tools are local; OpenRouter consolidation tools appear only when `OPENROUTER_API_KEY` is set. |
+| `docmancer mcp install <client>` | Install MCP config into Codex, Claude Code, or Claude Desktop. Local tools cover memory search, add, list, show, forget, promote, status, sources, and docs search. Destructive memory operations require explicit confirmation. OpenRouter consolidation appears only when `OPENROUTER_API_KEY` is set. |
 | `docmancer qdrant ...` | Advanced compatibility surface for users who explicitly configure the optional heavy Qdrant backend. It is hidden from top-level help because the default backend is `sqlite-vec`. |
 
 ## Install targets
 
-`docmancer install <agent>` writes markdown instructions only by default. It does not register servers or background processes. Supported agents are `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `github-copilot`, and `opencode`. For automatic local memory recall, use `docmancer install claude-code --hooks` or `docmancer install codex --hooks`; remove those hooks with `docmancer remove <agent> --hooks`.
+`docmancer install <agent>` writes markdown instructions only by default. It does not register servers or background processes. Supported agents are `claude-code`, `claude-desktop`, `cline`, `cursor`, `codex`, `codex-app`, `codex-desktop`, `gemini`, `github-copilot`, and `opencode`. Automatic recall uses `--hooks`; optional lifecycle capture uses the separate `--capture-hooks`. Removal with `--hooks` removes both kinds so capture cannot remain active unexpectedly. Use `--capture-hooks` to remove only capture while retaining recall.
 
 See [Install Targets](./Install-Targets.md) for destination paths.

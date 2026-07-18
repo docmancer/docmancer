@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.14] - Unreleased
+### Added
+
+- **Writable, inspectable local memory.** Added durable versioned Markdown records with stable record IDs, content-addressed atom versions, secret redaction, provenance, and `memory add`, `list`, `show`, `forget`, and `promote` commands.
+- **Project and team scopes.** Recall can isolate a project while retaining matching team and global memory. Reviewed memories can be written or promoted into `<repo>/.docmancer/memory/` for normal Git review without automatic staging or commits.
+- **Opt-in lifecycle capture.** Separate `--capture-hooks` support for Claude Code and Codex extracts durable local atoms from supported lifecycle events without storing raw transcripts or calling a hosted model.
+- **Writable local MCP.** The packaged stdio server now exposes memory add, list, show, forget, and promote tools. Destructive operations require explicit confirmation.
+- **Recall evaluation.** `memory eval` reports top-one correctness, Hit@3, Hit@5, MRR, failures, and p50/p95 latency from JSONL, with a checked-in synthetic regression corpus.
+
+### Changed
+
+- **Unified sync and trust controls.** Sync combines harvested atoms, personal records, team records, and content-free tombstones while remaining compatible with existing atomic indexes. Hook recall uses the working directory to exclude unrelated projects.
+- **Installed guidance and public documentation.** README, wiki pages, and installed memory skills now teach the complete sync, recall, remember, inspect, forget, capture, and team-promotion loop.
+
+### Fixed
+
+- **Durable identity survives semantic merging.** When a longer harvested atom wins a near-duplicate merge, the canonical atom retains the durable record ID and origin. Distinct durable records are kept separately addressable.
+- **Capture indexing stays lightweight.** Lifecycle capture incrementally indexes only newly persisted records instead of harvesting and embedding the full memory corpus inside a ten-second hook.
+- **Hook removal and MCP mutation errors are predictable.** `remove <agent> --hooks` removes both recall and capture hooks while preserving unrelated hooks, and MCP forget or promote failures return structured errors instead of uncaught exceptions.
+
 ## [0.6.13] - 2026-07-17
 ### Changed
 
