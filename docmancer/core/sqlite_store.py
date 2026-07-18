@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -142,6 +143,43 @@ def _sections_for_document(doc: Document) -> list[tuple[str, int, str, dict[str,
 
 def _chunk_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _lexical_relevance_score(
+    query: str,
+    title: str,
+    body: str,
+    *,
+    term_weights: dict[str, float] | None = None,
+) -> float:
+    """Return an interpretable 0..1 lexical relevance score.
+
+    FTS5's BM25 value is useful for ordering matches within one query, but its
+    magnitude is not comparable across queries. Token coverage is. A score of
+    1 means every meaningful query term is present, while a partial literal
+    match receives the corresponding fraction. Exact phrase matches receive a
+    small boost without turning rank position into fake confidence.
+    """
+    query_terms = [
+        token.lower()
+        for token in re.findall(r"\w+", query)
+        if token.lower() not in _QUERY_STOPWORDS
+    ]
+    if not query_terms:
+        query_terms = [token.lower() for token in re.findall(r"\w+", query)]
+    if not query_terms:
+        return 0.0
+    haystack = f"{title}\n{body}".lower()
+    haystack_terms = set(re.findall(r"\w+", haystack))
+    unique_query_terms = set(query_terms)
+    weights = term_weights or {term: 1.0 for term in unique_query_terms}
+    total_weight = sum(weights.get(term, 1.0) for term in unique_query_terms)
+    matched_weight = sum(weights.get(term, 1.0) for term in unique_query_terms & haystack_terms)
+    coverage = matched_weight / total_weight if total_weight else 0.0
+    phrase = " ".join(query_terms)
+    if phrase and phrase in haystack:
+        coverage = min(1.0, coverage + 0.1)
+    return round(max(0.0, min(1.0, coverage)), 6)
 
 
 class SQLiteStore:
@@ -410,6 +448,7 @@ class SQLiteStore:
     ) -> list[RetrievedChunk]:
         expand_mode = expand or "none"
         rows = [dict(r) for r in self._search_rows(text, max(limit * 4, limit))]
+        term_weights = self._query_term_weights(text)
 
         # --- Re-ranking passes (BM25 rank is negative, lower = better) ---
         query_lower = text.lower()
@@ -507,8 +546,12 @@ class SQLiteStore:
                     "runway_multiplier": round(runway, 2),
                 }
             )
-            # FTS5 bm25 is lower-is-better. Present a positive rank-like score.
-            score = max(0.0, 1.0 - (index * 0.05))
+            score = _lexical_relevance_score(
+                text,
+                row["title"],
+                row["text"],
+                term_weights=term_weights,
+            )
             results.append(
                 RetrievedChunk(
                     source=row["source"],
@@ -525,6 +568,8 @@ class SQLiteStore:
         section_ids: list[int],
         *,
         budget: int = 2400,
+        scores: dict[int, float] | None = None,
+        fusion_scores: dict[int, float] | None = None,
     ) -> list[RetrievedChunk]:
         """Hydrate ``RetrievedChunk`` objects from raw section ids, preserving order."""
         if not section_ids:
@@ -573,7 +618,9 @@ class SQLiteStore:
             metadata["raw_tokens"] = raw_tokens
             metadata["savings_percent"] = round(savings, 1)
             metadata["runway_multiplier"] = round(runway, 2)
-            score = max(0.0, 1.0 - (rank * 0.05))
+            score = float((scores or {}).get(int(row["id"]), 0.0))
+            if fusion_scores and int(row["id"]) in fusion_scores:
+                metadata["fusion_score"] = float(fusion_scores[int(row["id"])])
             results.append(
                 RetrievedChunk(
                     source=row["source"],
@@ -591,6 +638,38 @@ class SQLiteStore:
         tokens = re.findall(r"\w+", query)
         filtered = [t for t in tokens if t.lower() not in _QUERY_STOPWORDS]
         return " ".join(filtered) if filtered else query
+
+    def _query_term_weights(self, query: str) -> dict[str, float]:
+        """Compute per-query IDF weights from the current section corpus."""
+        cleaned = self._strip_stopwords(query)
+        terms = sorted({token.lower() for token in re.findall(r"\w+", cleaned) if token})
+        original_tokens = re.findall(r"\w+", query)
+        named_terms = {
+            token.lower()
+            for index, token in enumerate(original_tokens)
+            if index > 0 and token[:1].isupper()
+        }
+        if not terms:
+            return {}
+        with self._connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM sections").fetchone()[0] or 0)
+            weights: dict[str, float] = {}
+            for term in terms:
+                try:
+                    count = int(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM sections_fts WHERE sections_fts MATCH ?",
+                            (term,),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                except sqlite3.OperationalError:
+                    count = total
+                weight = math.log((total + 1) / (count + 1)) + 1.0
+                if term in named_terms:
+                    weight *= 3.0
+                weights[term] = weight
+        return weights
 
     def _search_rows(self, query: str, limit: int) -> list[sqlite3.Row]:
         cleaned = self._strip_stopwords(query)

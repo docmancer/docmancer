@@ -2,7 +2,7 @@
 
 Executable: `{{DOCS_KIT_CMD}}`
 
-Docmancer may inject relevant local atomic memories automatically through hooks when they are installed. If no docmancer memory context is present and the user asks about past decisions, prior work, or project context, you MUST first run `docmancer memory query "<the question>" --project "$PWD"` and ground your answer in the returned atomic entries. This recalls relevant project, team, and global memory while excluding unrelated projects.
+Docmancer may inject relevant local memory atoms automatically through hooks when they are installed. A memory atom is one small self-contained, source-attributed fact, decision, rule, preference, or workflow. If no Docmancer memory context is present and the user asks about past decisions, prior work, or project context, you MUST first run `docmancer memory query "<the question>" --project "$PWD"` and ground your answer in the returned atoms. This recalls relevant project, team, and global memory while excluding unrelated projects.
 
 If the query returns nothing useful, say so and proceed normally. Run `docmancer memory sync` first if the index looks empty, and `docmancer memory sources` to see which source files were harvested and how many atoms they produced.
 

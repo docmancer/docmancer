@@ -80,7 +80,9 @@ def test_apply_requires_target(tmp_path):
     assert "Specify a target" in r.output
 
 
-def test_apply_without_from_uses_default_draft(tmp_path):
+def test_apply_without_from_uses_default_draft(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "empty-memory.db"))
     runner = CliRunner()
     with runner.isolated_filesystem():
         target = Path("AGENTS.md")
@@ -106,7 +108,7 @@ def test_apply_without_from_renders_atomic_memory(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     text = target.read_text()
     assert BEGIN in text
-    assert "docmancer atomic memory" in text
+    assert "docmancer memory atoms" in text
     assert "We deploy on Railway." in text
 
 

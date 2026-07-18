@@ -7,20 +7,21 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | Command | Description |
 |---------|-------------|
 | `docmancer setup` | Create config and the SQLite database, index the memory and instruction files your coding agents already wrote, auto-detect installed agents, and install skill files. Use `--all` for non-interactive installation and `--no-index-memory` to skip memory indexing. |
-| `docmancer memory sync` | Harvest, redact, and index agent memory, instructions, and rules. Supports `--recreate`, `--dry-run`, `--include`, and `--exclude`. |
-| `docmancer memory query "<text>"` | Recall from the local memory index. Hybrid retrieval is the default. |
+| `docmancer memory sync` | Harvest agent memory, instructions, and rules, redact them, extract memory atoms, and rebuild the local index. Supports `--recreate`, `--dry-run`, `--include`, and `--exclude`. |
+| `docmancer memory query "<text>"` | Recall memory atoms from the local index. Hybrid retrieval is the default and results below the shared `0.05` relevance floor are omitted. Use `--min-score 0` only for retrieval diagnostics. |
 | `docmancer memory query "<text>" --project <path>` | Recall matching project, team, and global memory while excluding unrelated projects. Add `--scope global\|project\|team` to restrict the result set. |
-| `docmancer memory add "<text>"` | Write a redacted Markdown memory with a stable record ID. Supports `--scope`, `--project`, `--type`, and repeatable `--tag`. Team scope requires a Git repository and never stages the file. |
-| `docmancer memory list` | List indexed atoms with stable IDs, type, scope, origin, and text. Supports filters plus JSON output. |
-| `docmancer memory show <id>` | Inspect one atom, including its record ID, atom ID, provenance, scope, tags, and merge sources. |
-| `docmancer memory forget <id>` | Preview, then remove an owned record or suppress a harvested atom. Use `--yes` only after review. Tombstones contain no memory text. |
-| `docmancer memory promote <id> --team --project <repo>` | Copy a reviewed personal or captured atom into `<repo>/.docmancer/memory/` without staging or committing it. |
+| `docmancer memory add "<text>"` | Write a redacted Markdown memory atom with a stable record ID. Supports `--scope`, `--project`, `--type`, and repeatable `--tag`. Team scope requires a Git repository and never stages the file. |
+| `docmancer memory list` | List indexed memory atoms with stable IDs, type, scope, origin, and text. Supports filters plus JSON output. |
+| `docmancer memory show <id>` | Inspect one memory atom, including its record ID, atom ID, provenance, scope, tags, and merge sources. |
+| `docmancer memory forget <id>` | Preview, then remove an owned record or suppress a harvested memory atom. Use `--yes` only after review. Tombstones contain no memory text. |
+| `docmancer memory promote <id> --team --project <repo>` | Copy a reviewed personal or captured memory atom into `<repo>/.docmancer/memory/` without staging or committing it. |
 | `docmancer memory sources` | Show indexed provenance by agent, type, scope, title, short path, and character count. Use `--preview` for a live re-harvest without writing. |
-| `docmancer memory audit` | Scan harvested source memory before redaction and report likely secrets with masked snippets, short paths, line numbers, severity, and next actions. Use `--json` or `--fail-on-findings` for automation. |
+| `docmancer memory audit` | Run a local, read-only corpus health report covering masked secret findings, index drift, exact cross-source duplicates, oversized sources, and large sources that produce no usable atoms. Human output shows up to `--max-findings`; JSON includes every finding. Use `--fail-on-findings` for automation. |
 | `docmancer install claude-code --hooks` | Install Claude Code hook recall so relevant local memories are injected automatically. |
 | `docmancer install codex --hooks` | Install Codex hook recall. Codex may ask you to review and trust the hook through `/hooks`. |
 | `docmancer remove <agent> --hooks` | Remove all docmancer-owned Claude Code or Codex recall and capture hooks while preserving unrelated hooks. |
 | `docmancer install <agent> --capture-hooks` | Separately opt into local durable capture for Claude Code or Codex. Raw transcripts are not persisted and no hosted model is called. |
+| `docmancer memory capture --agent <agent> --input <payload.json>` | Preview the redacted memory candidates a supported lifecycle payload would retain. This never creates records, changes the index, or enables hooks. Add `--json` for machine-readable output. |
 | `docmancer remove <agent> --capture-hooks` | Remove only capture hooks while leaving recall hooks intact. |
 | `docmancer memory status` | Show memory index location and source/section counts. |
 | `docmancer memory clear` | Delete the local memory index files. Use `--dry-run` first when checking scope. |
@@ -35,7 +36,7 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | `docmancer okf doctor memory.okf` | Validate an OKF bundle. |
 | `docmancer memory hook-context` | Internal hook entrypoint for Claude Code and Codex. It reads hook JSON from stdin and emits bounded `additionalContext` when relevant local memory clears the threshold. |
 | `docmancer memory scan` | Compatibility preview command. Prefer `docmancer memory sources --preview` for provenance. |
-| `docmancer memory eval --dataset <jsonl>` | Report top-one correctness, Hit@3, Hit@5, MRR, failed cases, and latency p50/p95. Use `--format json` for automation. A dataset can contain its own synthetic memory corpus. |
+| `docmancer memory eval --dataset <jsonl>` | Report top-one correctness, Hit@3, Hit@5, MRR, failed cases, and latency p50/p95. Use the checked `tests/fixtures/memory-eval-sanitized-real.jsonl` corpus with `--gate` to require 85 percent top-one, 95 percent Hit@3, and zero strict-feature failures. `--min-score` evaluates a deliberate relevance-floor change. |
 
 ## Docs retrieval
 

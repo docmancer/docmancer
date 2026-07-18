@@ -156,6 +156,8 @@ class RetrievalDispatcher:
 
         section_ids = self._top_section_ids(ranked, limit=limit)
         contributions = {sid: dict(c) for hid, _s, c in ranked for sid in [int(hid)] if sid in section_ids}
+        relevance_scores = self._relevance_scores(candidate_lists)
+        fusion_scores = {int(hid): float(score) for hid, score, _c in ranked}
 
         # Neighbor expansion in hybrid mode: pull adjacent section ids before
         # hydrate. Lexical mode handles this inside ``SQLiteStore.query``;
@@ -165,9 +167,15 @@ class RetrievalDispatcher:
                 section_ids,
                 mode=retrieval_expand,
                 budget_cap=limit * 3,
+                scores=relevance_scores,
             )
 
-        chunks = self._hydrate(section_ids, budget=budget)
+        chunks = self._hydrate(
+            section_ids,
+            budget=budget,
+            scores=relevance_scores,
+            fusion_scores=fusion_scores,
+        )
         return DispatchResult(
             chunks=chunks,
             contributions=contributions,
@@ -311,11 +319,21 @@ class RetrievalDispatcher:
         ranked = reciprocal_rank_fusion(candidate_lists, k_rrf=k_rrf)
         section_ids = self._top_section_ids(ranked, limit=limit)
         contributions = {sid: dict(c) for hid, _s, c in ranked for sid in [int(hid)] if sid in section_ids}
+        relevance_scores = self._relevance_scores(candidate_lists)
+        fusion_scores = {int(hid): float(score) for hid, score, _c in ranked}
         if (expand or "").lower() in {"adjacent", "page"}:
             section_ids = self._expand_section_ids(
-                section_ids, mode=expand, budget_cap=limit * 3
+                section_ids,
+                mode=expand,
+                budget_cap=limit * 3,
+                scores=relevance_scores,
             )
-        chunks = self._hydrate(section_ids, budget=budget)
+        chunks = self._hydrate(
+            section_ids,
+            budget=budget,
+            scores=relevance_scores,
+            fusion_scores=fusion_scores,
+        )
         return DispatchResult(
             chunks=chunks,
             contributions=contributions,
@@ -359,7 +377,61 @@ class RetrievalDispatcher:
                 break
         return section_ids
 
-    def _expand_section_ids(self, section_ids: list[int], *, mode: str, budget_cap: int) -> list[int]:
+    @staticmethod
+    def _relevance_scores(candidate_lists: dict[str, list[Any]]) -> dict[int, float]:
+        """Preserve real signal strength separately from rank-only RRF.
+
+        RRF decides ordering, but cannot say whether the nearest candidate is
+        actually relevant. The public chunk score is the strongest normalized
+        retrieval signal for that section. The raw fused score remains in
+        metadata for diagnostics.
+        """
+        signals: dict[int, dict[str, float]] = {}
+        for source, hits in candidate_lists.items():
+            for hit in hits:
+                try:
+                    section_id = int(hit["id"] if isinstance(hit, dict) else hit.id)
+                    raw = float(hit.get("score", 0.0) if isinstance(hit, dict) else hit.score)
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    continue
+                normalized = max(0.0, min(1.0, raw))
+                signals.setdefault(section_id, {})[source] = max(
+                    signals.get(section_id, {}).get(source, 0.0),
+                    normalized,
+                )
+        scores: dict[int, float] = {}
+        for section_id, section_signals in signals.items():
+            lexical = section_signals.get("lexical")
+            dense_raw = section_signals.get("dense")
+            sparse = section_signals.get("sparse")
+            # Static embeddings have a non-zero nearest-neighbour baseline.
+            # Map the observed 0.40 noise floor to zero confidence while
+            # preserving the upper end of cosine similarity.
+            dense = (
+                max(0.0, min(1.0, (dense_raw - 0.40) / 0.60))
+                if dense_raw is not None
+                else None
+            )
+            semantic = max(value for value in (dense, sparse) if value is not None) if any(
+                value is not None for value in (dense, sparse)
+            ) else None
+            if lexical is not None and semantic is not None:
+                score = (lexical + semantic) / 2.0
+            elif lexical is not None:
+                score = lexical
+            else:
+                score = semantic or 0.0
+            scores[section_id] = round(max(0.0, min(1.0, score)), 6)
+        return scores
+
+    def _expand_section_ids(
+        self,
+        section_ids: list[int],
+        *,
+        mode: str,
+        budget_cap: int,
+        scores: dict[int, float] | None = None,
+    ) -> list[int]:
         """Add adjacent or full-page section ids while preserving order."""
         if not section_ids or not hasattr(self.store, "adjacent_section_ids"):
             return section_ids
@@ -374,6 +446,8 @@ class RetrievalDispatcher:
                 if nid in seen:
                     continue
                 seen.add(nid)
+                if scores is not None and nid not in scores:
+                    scores[nid] = float(scores.get(int(sid), 0.0))
                 out.append(nid)
                 if len(out) >= budget_cap:
                     return out
@@ -487,10 +561,45 @@ class RetrievalDispatcher:
                     counts[source] = len(shaped)
         return candidate_lists, counts, failures
 
-    def _hydrate(self, section_ids: list[int], *, budget: int) -> list:
+    def _hydrate(
+        self,
+        section_ids: list[int],
+        *,
+        budget: int,
+        scores: dict[int, float] | None = None,
+        fusion_scores: dict[int, float] | None = None,
+    ) -> list:
         if not section_ids:
             return []
-        return self.store.fetch_sections_by_id(section_ids, budget=budget)
+        from inspect import Parameter, signature
+
+        fetch = self.store.fetch_sections_by_id
+        try:
+            parameters = signature(fetch).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_extra_keywords = any(
+            parameter.kind == Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        supports_scores = accepts_extra_keywords or (
+            "scores" in parameters and "fusion_scores" in parameters
+        )
+        if supports_scores:
+            return self.store.fetch_sections_by_id(
+                section_ids,
+                budget=budget,
+                scores=scores,
+                fusion_scores=fusion_scores,
+            )
+        # Compatibility for third-party stores implementing the older
+        # hydration protocol without score maps.
+        chunks = fetch(section_ids, budget=budget)
+        for chunk in chunks:
+            section_id = int((chunk.metadata or {}).get("section_id") or 0)
+            if section_id in (scores or {}):
+                chunk.score = float(scores[section_id])
+        return chunks
 
 
 def _shape_for_fusion(source: str, hits: list[Any]) -> list[dict]:

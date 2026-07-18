@@ -46,6 +46,18 @@ def test_sync_then_query(tmp_path, monkeypatch):
     assert "decision" in q.output or "fact" in q.output
 
 
+def test_sync_prints_intermediate_progress_states(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli, ["memory", "sync"])
+
+    assert result.exit_code == 0, result.output
+    assert "Waiting for the local sync lock" in result.output
+    assert "Discovering memory and instruction files" in result.output
+    assert "Redacting and extracting" in result.output
+    assert "Rebuilding the local search index" in result.output
+
+
 def test_sync_rebuilds_stale_atoms_after_source_change(tmp_path, monkeypatch):
     db = _env(monkeypatch, tmp_path)
     note = tmp_path / "home" / ".claude" / "projects" / "-Users-x-app" / "memory" / "note.md"
@@ -76,7 +88,7 @@ def test_status_reports_atomic_memory_count(tmp_path, monkeypatch):
 
     assert r.exit_code == 0, r.output
     assert "Source files: 1" in r.output
-    assert "Atomic memories: 1" in r.output
+    assert "Memory atoms: 1" in r.output
 
 
 def test_sources_preview_lists_provenance(tmp_path, monkeypatch):
@@ -175,6 +187,70 @@ def test_audit_fail_on_findings_exits_nonzero(tmp_path, monkeypatch):
     assert "AWS access key" in r.output
 
 
+def test_audit_reports_index_drift_after_source_changes(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(cli, ["memory", "sync"]).exit_code == 0
+    note = tmp_path / "home" / ".claude" / "projects" / "-Users-x-app" / "memory" / "note.md"
+    note.write_text("We deploy on Kubernetes.\n")
+
+    result = runner.invoke(cli, ["memory", "audit"])
+
+    assert result.exit_code == 0, result.output
+    assert "index-drift" in result.output
+    assert "Run `docmancer memory sync`" in result.output
+
+
+def test_health_audit_does_not_double_count_oversized_zero_yield_source(tmp_path):
+    from docmancer.cli.memory_commands import _memory_health_audit
+    from docmancer.harness.base import MemoryEntry
+    from docmancer.harness.privacy import PrivacyFilter
+
+    class FakeAgent:
+        privacy = PrivacyFilter()
+
+        @staticmethod
+        def _source_snapshot_path():
+            return tmp_path / "missing-snapshot.json"
+
+    entry = MemoryEntry(
+        harness="codex",
+        scope="global:codex",
+        title="noise",
+        content="x" * 100_001,
+        path=str(tmp_path / "noise.md"),
+        extra={"kind": "agent-memory"},
+    )
+
+    report = _memory_health_audit(FakeAgent(), [entry])
+    codes = [finding["code"] for finding in report["findings"]]
+    assert codes == ["low-yield-source"]
+
+
+def test_selected_atoms_disables_relevance_floor_for_maintenance_queries():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from docmancer.cli.memory_commands import _selected_atoms
+
+    chunk = SimpleNamespace(
+        text="Low-scoring but requested memory.",
+        source="memory",
+        metadata={"atom_id": "a1", "section_id": 1},
+    )
+    agent = Mock()
+    agent.query.return_value = [chunk]
+
+    atoms = _selected_atoms(agent, query="broad maintenance topic", limit=20)
+
+    agent.query.assert_called_once_with(
+        "broad maintenance topic",
+        limit=20,
+        min_score=None,
+    )
+    assert atoms[0].text == chunk.text
+
+
 def test_sources_stored_index_after_sync(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     CliRunner().invoke(cli, ["memory", "sync"])
@@ -220,7 +296,7 @@ def test_hook_context_injects_relevant_memory_and_dedupes(tmp_path, monkeypatch)
     data = json.loads(r.output)
     context = data["hookSpecificOutput"]["additionalContext"]
     assert data["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "Relevant docmancer atomic memories:" in context
+    assert "Relevant docmancer memory atoms:" in context
     assert "Railway" in context
     assert "Source:" in context
 
@@ -264,6 +340,15 @@ def test_codex_hook_payload_outputs_documented_additional_context(tmp_path, monk
         }
     }
     assert "Railway" in data["hookSpecificOutput"]["additionalContext"]
+
+
+def test_hook_context_help_uses_shared_relevance_threshold():
+    from docmancer.memory import DEFAULT_MEMORY_RELEVANCE_THRESHOLD
+
+    result = CliRunner().invoke(cli, ["memory", "hook-context", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert f"[default: {DEFAULT_MEMORY_RELEVANCE_THRESHOLD};" in result.output
 
 
 def test_session_start_does_not_dedupe_later_user_prompt(tmp_path, monkeypatch):

@@ -16,7 +16,10 @@ from typing import Any
 
 DEFAULT_HOOK_LIMIT = 3
 DEFAULT_HOOK_MAX_CHARS = 2_000
-DEFAULT_HOOK_THRESHOLD = 0.01
+# Calibrated against tests/fixtures/memory-eval-sanitized-real.jsonl. This
+# shared floor rejects the irrelevant control while meeting the checked
+# top-one and Hit@3 gates across real-workflow shapes.
+DEFAULT_HOOK_THRESHOLD = 0.05
 DEFAULT_HOOK_TIMEOUT_MS = 1_000
 _MAX_SEEN_FINGERPRINTS = 200
 
@@ -130,7 +133,7 @@ def _short_source(path: str) -> str:
 
 
 def _format_context(chunks: list[Any], *, max_chars: int) -> str:
-    lines = ["Relevant docmancer atomic memories:"]
+    lines = ["Relevant docmancer memory atoms:"]
     for chunk in chunks:
         meta = chunk.metadata or {}
         kind = meta.get("memory_type") or meta.get("kind") or "memory"

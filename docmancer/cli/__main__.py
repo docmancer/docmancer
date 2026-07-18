@@ -35,7 +35,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
-        'docmancer memory query "why did we pick Railway"',
+        'docmancer memory query "what deployment decisions have we recorded?"',
         "docmancer install claude-code --hooks",
         "docmancer memory consolidate --provider openrouter --yes",
         "docmancer ingest ./docs",

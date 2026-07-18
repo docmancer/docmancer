@@ -2,7 +2,7 @@
 
 This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, the memory loop, and a high-level overview.
 
-Docmancer unifies the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into one local, offline index you can recall manually or inject automatically into Claude Code and Codex through hooks. It can also audit those source files for likely secrets before redaction. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
+Docmancer turns the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into **memory atoms**: small self-contained facts, decisions, rules, preferences, and workflows with stable identity and source provenance. It stores those atoms in one local, offline index that you can query manually or inject automatically into Claude Code and Codex through hooks. Recall uses a benchmark-calibrated relevance floor, and the read-only audit covers masked secret findings, stale index state, duplicates, oversized sources, and sources that produce no usable atoms. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
 
 ## Pick a page
 
@@ -18,9 +18,13 @@ Docmancer unifies the memory your coding agents already wrote (Claude Code, Code
 ## What lives where
 
 - `~/.docmancer/docmancer.yaml`: global config.
-- `~/.docmancer/docmancer.db`: SQLite FTS5 index.
+- `~/.docmancer/memory.db`: rebuildable memory SQLite FTS5 index, with co-located sqlite-vec state.
+- `~/.docmancer/memories/`: editable personal and project memory records.
+- `<repo>/.docmancer/memory/`: reviewable Git team memory records.
+- `~/.docmancer/memory-tombstones.json`: content-free suppression records for forgotten memory.
+- `~/.docmancer/docmancer.db`: default docs SQLite FTS5 index.
 - `~/.docmancer/extracted/`: inspectable Markdown and JSON copies of indexed sections.
-- `~/.docmancer/sqlite-vec.db`: local dense-vector store for the default memory/docs path.
+- `~/.docmancer/sqlite-vec.db`: local dense-vector store for the default docs path.
 - `~/.docmancer/models/`: optional heavy backend model cache.
 - `~/.docmancer/embeddings-cache/`: content-hash-keyed cache of embedded chunks.
 - `./docmancer.yaml`: project-local config when present.

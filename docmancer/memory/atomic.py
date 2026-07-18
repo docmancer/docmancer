@@ -1,4 +1,4 @@
-"""Deterministic atomic memory extraction.
+"""Deterministic memory atom extraction.
 
 The memory index is built from small, source-attributed records. Each atom is
 one durable memory item and is indexed as one SQLite section.
@@ -53,7 +53,7 @@ _NOISE = {
 
 @dataclass
 class AtomicMemoryEntry:
-    """One source-attributed memory record."""
+    """One source-attributed memory atom."""
 
     atom_id: str
     text: str

@@ -240,7 +240,7 @@ def test_extract_ignores_docmancer_managed_blocks():
         content=(
             "- Keep this user-authored instruction.\n"
             "<!-- docmancer:memory:begin (managed; edits inside are overwritten on next apply) -->\n"
-            "# docmancer atomic memory\n"
+            "# docmancer memory atoms\n"
             "- [fact] Generated memory that must not be re-harvested.\n"
             "<!-- docmancer:memory:end -->\n"
             "<!-- docmancer:start -->\n"

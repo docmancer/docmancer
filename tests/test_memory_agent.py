@@ -34,6 +34,20 @@ def test_sync_and_query_recall(tmp_path, monkeypatch):
     assert "sk-ABCDEF1234567890ABCDEF" not in text
 
 
+def test_hybrid_query_rejects_gibberish_instead_of_returning_rank_score(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _plant_memory(home, secret=False)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    agent.sync()
+
+    assert agent.query("xyzzy plugh flibbertigibbet quux") == []
+
+
 def test_preview_writes_nothing(tmp_path, monkeypatch):
     home = tmp_path / "home"
     _plant_memory(home, secret=False)

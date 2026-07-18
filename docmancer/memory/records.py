@@ -2,8 +2,8 @@
 
 Personal records live under ``~/.docmancer/memories``. Team records live in
 ``<repo>/.docmancer/memory`` so they can be reviewed and versioned with code.
-Each record is one Markdown file with YAML frontmatter and maps to one atomic
-memory entry. Tombstones contain identifiers and hashes only, never deleted
+Each record is one Markdown file with YAML frontmatter and maps to one memory
+atom. Tombstones contain identifiers and hashes only, never deleted
 memory text.
 """
 from __future__ import annotations
@@ -131,6 +131,7 @@ class MemoryRecordStore:
         self,
         text: str,
         *,
+        record_id: str | None = None,
         scope_kind: str = "global",
         project_path: str | Path | None = None,
         memory_type: str | None = None,
@@ -146,7 +147,7 @@ class MemoryRecordStore:
         if scope_kind in {"project", "team"} and not project:
             project = _clean_path(Path.cwd())
         record = MemoryRecord(
-            record_id=uuid.uuid4().hex,
+            record_id=record_id or uuid.uuid4().hex,
             text=cleaned,
             type=memory_type or classify_memory(cleaned),
             tags=list(tags or []),

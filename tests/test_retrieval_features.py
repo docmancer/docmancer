@@ -9,7 +9,7 @@ from docmancer.core.config import (
     QueryRouter,
     VectorStoreConfig,
 )
-from docmancer.core.models import Document
+from docmancer.core.models import Document, RetrievedChunk
 from docmancer.core.sqlite_store import SQLiteStore
 from docmancer.retrieval.dispatch import HybridRetrievalError, RetrievalDispatcher
 from docmancer.stores.base import VectorHit
@@ -337,3 +337,33 @@ def test_hybrid_neighbor_expansion_pulls_adjacent_sections(tmp_path):
     # Hybrid mode now returns the hit plus its two neighbors.
     chunk_indices = {c.chunk_index for c in result.chunks}
     assert chunk_indices.issuperset({sections[0]["chunk_index"], sections[2]["chunk_index"]})
+    assert all(chunk.score == 1.0 for chunk in result.chunks)
+
+
+def test_hydrate_uses_legacy_signature_without_masking_internal_type_errors(tmp_path):
+    class LegacyStore:
+        def fetch_sections_by_id(self, section_ids, *, budget=2400):
+            return [
+                RetrievedChunk(
+                    source="legacy",
+                    chunk_index=0,
+                    text="legacy result",
+                    score=0.0,
+                    metadata={"section_id": section_ids[0]},
+                )
+            ]
+
+    config, _ = _agent(tmp_path)
+    dispatcher = RetrievalDispatcher(
+        store=LegacyStore(), config=config, vector_store=None, provider=None, collection="c"
+    )
+    chunks = dispatcher._hydrate([7], budget=100, scores={7: 0.8})
+    assert chunks[0].score == 0.8
+
+    class BrokenModernStore:
+        def fetch_sections_by_id(self, section_ids, *, budget=2400, scores=None, fusion_scores=None):
+            raise TypeError("internal score bug")
+
+    dispatcher.store = BrokenModernStore()
+    with pytest.raises(TypeError, match="internal score bug"):
+        dispatcher._hydrate([7], budget=100, scores={7: 0.8})

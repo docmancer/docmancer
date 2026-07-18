@@ -48,6 +48,29 @@ def test_owned_record_crud_redacts_and_leaves_content_free_tombstone(tmp_path, m
     assert json.loads(runner.invoke(cli, ["memory", "list", "--json"]).output) == []
 
 
+def test_record_store_accepts_deterministic_ids_for_repeatable_imports(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    from docmancer.memory import MemoryAgent
+
+    record = MemoryAgent().records.add(
+        "Production deploys run on Railway.",
+        record_id="eval-deploy",
+    )
+
+    assert record.record_id == "eval-deploy"
+    assert Path(record.source_path).name.endswith("eval-dep.md")
+
+
+def test_forget_help_explains_memory_id(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+
+    result = CliRunner().invoke(cli, ["memory", "forget", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "ID from ``memory list``" in result.output
+    assert "unique prefix" in result.output
+
+
 def test_forgetting_harvested_atom_suppresses_repeated_sync_without_editing_source(tmp_path, monkeypatch):
     db = _memory_env(tmp_path, monkeypatch)
     source = tmp_path / "harness-home" / ".claude" / "projects" / "-tmp-app" / "memory" / "note.md"
@@ -105,6 +128,29 @@ def test_team_memory_is_reviewable_and_promotion_never_stages(tmp_path, monkeypa
     assert promoted.promoted_from == personal.record_id
     assert "rollback note" in path.read_text()
     assert not (project / ".git" / "index").exists()
+
+
+def test_team_add_explains_untracked_git_review(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    project = tmp_path / "repo"
+    (project / ".git").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "add",
+            "Every schema change needs a rollback note.",
+            "--scope",
+            "team",
+            "--project",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "plain `git diff` can be empty" in result.output
+    assert "git status --short .docmancer/memory/" in result.output
 
 
 def test_capture_supported_events_are_redacted_deduplicated_and_project_scoped(tmp_path, monkeypatch):
@@ -183,6 +229,40 @@ def test_capture_skips_unknown_events_background_work_and_malformed_transcripts(
     assert (unknown, background, malformed_tail) == (0, 0, 0)
 
 
+def test_capture_preview_is_public_redacted_and_read_only(tmp_path, monkeypatch):
+    db = _memory_env(tmp_path, monkeypatch)
+    project = tmp_path / "repo"
+    project.mkdir()
+    payload = tmp_path / "capture.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "hook_event_name": "Stop",
+                "session_id": "session-preview",
+                "cwd": str(project),
+                "last_assistant_message": (
+                    "We decided to use SQLite for the durable queue. "
+                    "token=supersecretvalue123"
+                ),
+            }
+        )
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["memory", "capture", "--agent", "codex", "--input", str(payload), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["scope"] == f"project:{project.resolve()}"
+    assert report["candidate_count"] == 1
+    assert "[REDACTED]" in report["candidates"][0]["text"]
+    assert "supersecretvalue123" not in result.output
+    assert not db.exists()
+    assert not (tmp_path / "state" / "memories").exists()
+
+
 def test_memory_eval_reports_expected_metrics(tmp_path, monkeypatch):
     _memory_env(tmp_path, monkeypatch)
     runner = CliRunner()
@@ -201,3 +281,54 @@ def test_memory_eval_reports_expected_metrics(tmp_path, monkeypatch):
     assert report["hit_at_3"] == 1.0
     assert report["mrr"] == 1.0
     assert report["failed"] == []
+
+
+def test_memory_eval_gate_fails_metric_and_strict_feature_regressions(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    dataset = tmp_path / "eval.jsonl"
+    dataset.write_text(
+        json.dumps({"kind": "memory", "text": "Production deploys run on Railway."})
+        + "\n"
+        + json.dumps(
+            {
+                "kind": "case",
+                "feature": "scope-isolation",
+                "query": "which database backs production",
+                "expected_contains": ["PostgreSQL"],
+            }
+        )
+        + "\n"
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["memory", "eval", "--dataset", str(dataset), "--format", "json", "--gate"],
+    )
+
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.output)
+    assert report["gate"]["passed"] is False
+    assert any("Top-one" in failure for failure in report["gate"]["failures"])
+    assert any("scope-isolation" in failure for failure in report["gate"]["failures"])
+
+
+def test_memory_eval_assigns_unique_ids_when_explicit_and_generated_ids_overlap(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    dataset = tmp_path / "eval.jsonl"
+    rows = [
+        {"kind": "memory", "id": "first", "text": "Production deploys run on Railway."},
+        {"kind": "memory", "id": "2", "text": "The primary database is PostgreSQL."},
+        {"kind": "memory", "text": "The formatter is Ruff."},
+        {"kind": "case", "query": "which database is primary", "expected_contains": ["PostgreSQL"]},
+        {"kind": "case", "query": "which formatter is used", "expected_contains": ["Ruff"]},
+    ]
+    dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+    result = CliRunner().invoke(
+        cli,
+        ["memory", "eval", "--dataset", str(dataset), "--format", "json", "--min-score", "0"],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["hit_at_3"] == 1.0

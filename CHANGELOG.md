@@ -4,10 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.15] - Unreleased
+
+### Added
+
+- **Checked real-workflow recall gate.** Added a twenty-case sanitised corpus derived from Claude Code, Codex, and Cursor memory workflows. CI and release validation now require at least 85 percent top-one correctness, 95 percent Hit@3, and zero failures for scope isolation, forgotten memory, and current-versus-obsolete facts.
+- **Read-only capture preview.** Added `docmancer memory capture --agent <agent> --input <payload.json>` so users can inspect redacted lifecycle-memory candidates before enabling capture hooks. Preview never writes records or index state.
+
+### Changed
+
+- **Calibrated relevance floor.** Memory query and hook recall now share a normalized `0.05` relevance threshold, selected by the checked corpus. RRF remains the ordering signal while the public score represents retrieval strength, so irrelevant queries return no memory instead of a positional confidence placeholder.
+- **Broader memory health audit.** `memory audit` now combines masked secret detection with live-versus-index drift, exact duplicate, oversized-source, and low-yield-source findings.
+
+### Fixed
+
+- **Expanded context survives relevance filtering.** Adjacent and page-expanded sections inherit the relevance of the result that selected them, so useful context is not discarded by the shared relevance floor.
+- **Retrieval compatibility errors stay visible.** Hydration detects older third-party store signatures before calling them and no longer mistakes an internal `TypeError` for a legacy protocol.
+- **Evaluation and maintenance remain complete.** Evaluation corpus records use deterministic collision-resistant IDs, while export and consolidation selection bypass the interactive relevance floor so broad maintenance queries do not silently omit requested atoms.
+- **Audit findings are not double-counted.** An oversized source that produces no usable atoms is reported once as the more actionable low-yield issue.
+
 ## [0.6.14] - 2026-07-18
 ### Added
 
-- **Writable, inspectable local memory.** Added durable versioned Markdown records with stable record IDs, content-addressed atom versions, secret redaction, provenance, and `memory add`, `list`, `show`, `forget`, and `promote` commands.
+- **Writable, inspectable local memory.** Added durable schema-versioned Markdown records with stable record IDs, content-addressed atom versions, secret redaction, provenance, and `memory add`, `list`, `show`, `forget`, and `promote` commands.
 - **Project and team scopes.** Recall can isolate a project while retaining matching team and global memory. Reviewed memories can be written or promoted into `<repo>/.docmancer/memory/` for normal Git review without automatic staging or commits.
 - **Opt-in lifecycle capture.** Separate `--capture-hooks` support for Claude Code and Codex extracts durable local atoms from supported lifecycle events without storing raw transcripts or calling a hosted model.
 - **Writable local MCP.** The packaged stdio server now exposes memory add, list, show, forget, and promote tools. Destructive operations require explicit confirmation.
@@ -15,7 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **Unified sync and trust controls.** Sync combines harvested atoms, personal records, team records, and content-free tombstones while remaining compatible with existing atomic indexes. Hook recall uses the working directory to exclude unrelated projects.
+- **Unified sync and trust controls.** Sync combines harvested atoms, personal records, team records, and content-free tombstones while remaining compatible with existing memory atom indexes. Hook recall uses the working directory to exclude unrelated projects.
 - **Installed guidance and public documentation.** README, wiki pages, and installed memory skills now teach the complete sync, recall, remember, inspect, forget, capture, and team-promotion loop.
 
 ### Fixed
@@ -27,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.6.13] - 2026-07-17
 ### Changed
 
-- **First-class atomic memory.** `docmancer memory sync` now extracts source-attributed atomic memories and rebuilds the dedicated memory index around those records. Query, hooks, sources, status, export, consolidate, and apply now operate on atomic memories by default while keeping source files as provenance.
+- **First-class memory atoms.** `docmancer memory sync` now extracts source-attributed memory atoms and rebuilds the dedicated memory index around those records. Query, hooks, sources, status, export, consolidate, and apply now operate on memory atoms by default while keeping source files as provenance.
 - **Self-contained atoms.** Extraction now keeps a bullet together with its sub-bullets and wrapped lines instead of shredding them into separate fragments, and it folds the heading breadcrumb into each atom (for example `Deployment > Production: uses Railway`) so an atom still makes sense when it is recalled far from its source file.
 - **Cross-agent memory merge.** When several agents record the same fact in the same scope, sync clusters compatible near-duplicate atoms by local embedding similarity and keeps one canonical record with merged provenance (`source_count` and the contributing `merged_from` paths), so recall returns one clean answer rather than the same fact repeated per agent. Conflicting positive and negative instructions remain separate.
 - **Incremental extraction.** Sync reuses cached atoms for source files whose content has not changed since the last run and only re-extracts the files that actually changed. `sync` also reports how many duplicate memories it merged and how many sources it reused versus re-read.

@@ -221,9 +221,11 @@ class SqliteVecStore(VectorStore):
                 payload = json.loads(payload_json) if payload_json else {}
             except json.JSONDecodeError:
                 payload = {}
-            # vec0 returns a distance; smaller is closer. Convert to a similarity-like
-            # score so callers can sort descending consistently.
-            score = -float(distance)
+            # The default vec0 metric is L2 distance. Model2Vec emits normalized
+            # vectors, so cosine similarity is 1 - d^2/2. Clamp it to the public
+            # 0..1 relevance scale used by memory recall.
+            distance = float(distance)
+            score = max(0.0, min(1.0, 1.0 - ((distance * distance) / 2.0)))
             hits.append(VectorHit(id=str(point_id), score=score, payload=payload))
         return hits
 

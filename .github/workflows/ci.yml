@@ -29,3 +29,10 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+      - name: Gate memory recall quality
+        if: matrix.python-version == '3.11'
+        run: >-
+          python -m docmancer memory eval
+          --dataset tests/fixtures/memory-eval-sanitized-real.jsonl
+          --gate

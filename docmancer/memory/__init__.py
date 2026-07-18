@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
+from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
 from docmancer.memory.records import MemoryRecord, MemoryRecordStore
 
 if TYPE_CHECKING:
@@ -165,10 +166,14 @@ class MemoryAgent:
         atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
         return self._merge_all(atoms)
 
-    def sync(self, *, recreate: bool = False) -> int:
+    def sync(self, *, recreate: bool = False, progress_callback=None) -> int:
         """Harvest, filter, redact, extract atoms, and index them."""
+        progress = progress_callback or (lambda _stage, _detail="": None)
+        progress("lock", "Waiting for the local sync lock")
         with self._sync_lock():
+            progress("harvest", "Discovering memory and instruction files")
             entries = self.preview()
+            progress("redact", f"Redacting and extracting {len(entries):,} source file(s)")
             cleaned_entries = [self.privacy.clean(e) for e in entries]
             atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate, merge=False)
             atoms.extend(
@@ -176,6 +181,7 @@ class MemoryAgent:
                 for record in self.records.records(project_paths=self._project_paths(cleaned_entries))
             )
             atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
+            progress("merge", f"Deduplicating {len(atoms):,} extracted memory atoms")
             atoms = self._merge_all(atoms)
             self._last_sync_stats["atoms_after_merge"] = len(atoms)
             # Memory is a dedicated index, so every sync rebuilds the atom projection
@@ -183,13 +189,16 @@ class MemoryAgent:
             # files are edited or removed.
             self._drop_vectors()
             self._clear_embedding_bookkeeping()
+            progress("index", f"Rebuilding the local search index with {len(atoms):,} memory atoms")
             if not atoms:
                 self._agent.store.add_documents([], recreate=True)
             else:
                 docs = [atom.to_document() for atom in atoms]
                 self._agent.ingest_documents(docs, recreate=True, with_vectors=True)
+            progress("finalize", "Writing provenance and schema metadata")
             self._write_source_snapshot(cleaned_entries, atoms)
             self._stamp_schema()
+            progress("done", f"Indexed {len(atoms):,} memory atoms")
             return len(atoms)
 
     @contextmanager
@@ -228,7 +237,7 @@ class MemoryAgent:
             return
         if meta.get("schema_version") != str(MEMORY_SCHEMA_VERSION) or meta.get("memory_layer") != "atomic":
             raise SchemaMismatchError(
-                "this memory index predates atomic memory; run `docmancer memory sync --recreate`"
+                "this memory index predates memory atoms; run `docmancer memory sync --recreate`"
             )
 
     def _atoms_from_entries(
@@ -444,6 +453,7 @@ class MemoryAgent:
         allow_degraded: bool = True,
         project_path: str | Path | None = None,
         scope: str | None = None,
+        min_score: float | None = DEFAULT_MEMORY_RELEVANCE_THRESHOLD,
     ) -> list["RetrievedChunk"]:
         from docmancer.retrieval.dispatch import RetrievalDispatcher
 
@@ -458,9 +468,14 @@ class MemoryAgent:
             collection=self._agent._vector_collection_name(),
         )
         requested_limit = limit or self.config.query.default_limit
-        search_limit = requested_limit * 4 if project_path or scope else requested_limit
+        # Retrieve a wider pool before applying confidence and project filters.
+        # RRF orders candidates, while the final public score measures whether
+        # they are relevant enough to show at all.
+        search_limit = requested_limit * 4
         result = dispatcher.run(text, mode=mode, limit=search_limit, budget=budget, allow_degraded=allow_degraded)
         chunks = result.chunks
+        if min_score is not None:
+            chunks = [chunk for chunk in chunks if float(chunk.score or 0.0) >= min_score]
         if scope:
             chunks = [chunk for chunk in chunks if str((chunk.metadata or {}).get("scope_kind") or (chunk.metadata or {}).get("scope", "").split(":", 1)[0]) == scope]
         if project_path:
@@ -481,7 +496,9 @@ class MemoryAgent:
                 return 2 if kind == "global" else 9
 
             chunks = [chunk for chunk in chunks if bucket(chunk) < 9]
-            chunks.sort(key=bucket)
+            chunks.sort(key=lambda chunk: (bucket(chunk), -float(chunk.score or 0.0)))
+        else:
+            chunks.sort(key=lambda chunk: -float(chunk.score or 0.0))
         return chunks[:requested_limit]
 
     def _build_retrieval_backends(self):
@@ -520,7 +537,7 @@ class MemoryAgent:
         }
 
     def sources(self, *, live_preview: bool = False) -> list[dict]:
-        """Return source-file provenance rows with atomic-memory counts.
+        """Return source-file provenance rows with memory atom counts.
 
         ``live_preview=True`` re-harvests (post-privacy, no writes) to show what
         WOULD index; otherwise it reads the stored atomic index. Rows are sorted

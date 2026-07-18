@@ -8,6 +8,7 @@ SQLite-backed files.
 from __future__ import annotations
 
 import os
+import re
 import signal
 import sys
 from collections import Counter, defaultdict
@@ -27,6 +28,7 @@ from docmancer.cli.ui import (
     severity_style,
     style,
 )
+from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD
 
 
 def _emit_counts(heading: str, counts: Counter) -> None:
@@ -59,7 +61,7 @@ def _emit_sync_details(agent) -> None:
         click.echo(
             "  "
             + style(f"{total_chars:,}", fg="white", bold=True)
-            + f" characters across {info['sources']} source files, {info['atoms']} atomic memories"
+            + f" characters across {info['sources']} source files, {info['atoms']} memory atoms"
         )
     stats = agent.last_sync_stats() if hasattr(agent, "last_sync_stats") else {}
     if stats:
@@ -83,6 +85,136 @@ def _emit_sync_details(agent) -> None:
     click.echo("  " + style("Index", fg="bright_black") + f"  {display_path(info['db_path'])}")
 
 
+def _memory_health_audit(agent, entries) -> dict:
+    """Build deterministic memory-hygiene findings without changing state."""
+    import hashlib
+    import json as _json
+    from dataclasses import replace
+
+    from docmancer.memory.atomic import extract_atoms
+
+    source_rows = []
+    atoms = []
+    for entry in entries:
+        # PrivacyFilter.clean mutates the entry content. Audit must preserve the
+        # raw in-memory copy for the secret detector that runs in the same pass.
+        cleaned = agent.privacy.clean(replace(entry))
+        entry_atoms = extract_atoms(cleaned)
+        atoms.extend(entry_atoms)
+        source_rows.append(
+            {
+                "path": entry.path,
+                "display_path": display_path(entry.path),
+                "agent": entry.harness,
+                "scope": entry.scope,
+                "chars": len(entry.content or ""),
+                "atoms": len(entry_atoms),
+                "content_hash": hashlib.sha256((cleaned.content or "").encode("utf-8")).hexdigest(),
+            }
+        )
+
+    findings: list[dict] = []
+    duplicate_groups: dict[str, list] = defaultdict(list)
+    for atom in atoms:
+        key = re.sub(r"\s+", " ", atom.text).strip().casefold()
+        duplicate_groups[key].append(atom)
+    for group in duplicate_groups.values():
+        paths = sorted({atom.source_path for atom in group})
+        if len(paths) < 2:
+            continue
+        findings.append(
+            {
+                "code": "duplicate-memory",
+                "severity": "medium",
+                "summary": f"The same memory appears in {len(paths)} source files.",
+                "paths": paths,
+                "display_paths": [display_path(path) for path in paths],
+                "excerpt": group[0].text[:240],
+                "next": "Keep one authoritative copy, remove stale duplicates, then run `docmancer memory sync --recreate`.",
+            }
+        )
+
+    for row in source_rows:
+        if row["chars"] >= 10_000 and row["atoms"] == 0:
+            findings.append(
+                {
+                    "code": "low-yield-source",
+                    "severity": "medium",
+                    "summary": f"A {row['chars']:,}-character source produced no usable memory atoms.",
+                    "paths": [row["path"]],
+                    "display_paths": [row["display_path"]],
+                    "next": "Rewrite durable facts as short bullets or remove this source from memory discovery.",
+                }
+            )
+        elif row["chars"] >= 100_000:
+            findings.append(
+                {
+                    "code": "oversized-source",
+                    "severity": "low",
+                    "summary": f"Large memory source contains {row['chars']:,} characters.",
+                    "paths": [row["path"]],
+                    "display_paths": [row["display_path"]],
+                    "next": "Review whether old run detail can be consolidated or archived outside always-recalled memory.",
+                }
+            )
+
+    snapshot_path = agent._source_snapshot_path()
+    if snapshot_path.is_file():
+        try:
+            snapshot = _json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - a broken snapshot is itself reported below
+            snapshot = None
+        if not isinstance(snapshot, dict):
+            findings.append(
+                {
+                    "code": "invalid-index-snapshot",
+                    "severity": "high",
+                    "summary": "The stored source snapshot cannot be read.",
+                    "paths": [str(snapshot_path)],
+                    "display_paths": [display_path(snapshot_path)],
+                    "next": "Run `docmancer memory sync --recreate` to rebuild index provenance.",
+                }
+            )
+        else:
+            stored = {
+                str(row.get("path")): hashlib.sha256(str(row.get("content") or "").encode("utf-8")).hexdigest()
+                for row in snapshot.get("sources", [])
+                if row.get("path")
+            }
+            live = {row["path"]: row["content_hash"] for row in source_rows}
+            changed = sorted(path for path in set(stored) & set(live) if stored[path] != live[path])
+            added = sorted(set(live) - set(stored))
+            removed = sorted(set(stored) - set(live))
+            drift = changed + added + removed
+            if drift:
+                findings.append(
+                    {
+                        "code": "index-drift",
+                        "severity": "high",
+                        "summary": (
+                            f"The index is stale: {len(changed)} changed, {len(added)} new, "
+                            f"and {len(removed)} removed source file(s)."
+                        ),
+                        "paths": drift,
+                        "display_paths": [display_path(path) for path in drift],
+                        "next": "Run `docmancer memory sync` before relying on recall.",
+                    }
+                )
+
+    findings.sort(
+        key=lambda item: (
+            {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item["severity"], 9),
+            item["code"],
+            item.get("display_paths", [""])[0],
+        )
+    )
+    return {
+        "source_count": len(source_rows),
+        "atom_count": len(atoms),
+        "agents": dict(Counter(row["agent"] for row in source_rows)),
+        "scopes": dict(Counter(row["scope"] for row in source_rows)),
+        "findings": findings,
+    }
 def _agent(include=(), exclude=()):
     from docmancer.memory import MemoryAgent
 
@@ -97,7 +229,7 @@ def _agent(include=(), exclude=()):
         "docmancer memory sync",
         "docmancer memory sources --preview",
         "docmancer memory audit",
-        'docmancer memory query "why did we pick Railway"',
+        'docmancer memory query "what deployment decisions have we recorded?"',
         "docmancer memory sources",
         "docmancer memory status",
         "docmancer memory clear",
@@ -150,7 +282,7 @@ def scan(include: tuple[str, ...], exclude: tuple[str, ...]):
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
 def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple[str, ...]):
-    """Harvest, redact, extract, and index atomic memory into the local store."""
+    """Harvest, redact, extract, and index memory atoms in the local store."""
     agent = _agent(include, exclude)
     emit_brand_header("docmancer memory sync", TAGLINE)
     if dry_run:
@@ -163,7 +295,7 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
         by_kind = Counter(e.extra.get("kind", "agent-memory") for e in entries)
         by_type = Counter(atom.type for atom in atoms)
         emit_status_line(
-            f"Would index {len(atoms)} atomic memories from {len(entries)} source file(s) and {len(by_scope)} scope(s).",
+            f"Would index {len(atoms)} memory atoms from {len(entries)} source file(s) and {len(by_scope)} scope(s).",
             state="info",
         )
         _emit_counts("By kind", by_kind)
@@ -172,7 +304,16 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
         click.echo()
         emit_status_line("Secrets are redacted on index. Run without --dry-run to write.", state="info")
         return
-    n = agent.sync(recreate=recreate)
+    started = monotonic()
+    seen_stages: set[str] = set()
+
+    def on_progress(stage: str, detail: str = "") -> None:
+        if stage in seen_stages or stage == "done":
+            return
+        seen_stages.add(stage)
+        emit_status_line(f"{detail} ({monotonic() - started:.1f}s)", state="info")
+
+    n = agent.sync(recreate=recreate, progress_callback=on_progress)
     if not n:
         emit_status_line(
             "No agent memory found yet. Once your agents write memory, run: docmancer memory sync",
@@ -180,13 +321,13 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
         )
         return
     verb = "Re-indexed" if recreate else "Indexed"
-    emit_status_line(f"{verb} {n} atomic memories from your coding agents.")
+    emit_status_line(f"{verb} {n} memory atoms from your coding agents.")
     _emit_sync_details(agent)
     click.echo()
     click.echo(
         "  "
         + style("Next", fg="bright_green", bold=True)
-        + '  docmancer memory query "why did we pick Railway"'
+        + '  docmancer memory query "what deployment decisions have we recorded?"'
     )
 
 
@@ -194,23 +335,29 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
 @click.option("--agent", "agent_filter", default=None, help="Only audit one agent/harness name.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.option("--fail-on-findings", is_flag=True, help="Exit 1 when likely secrets are found.")
+@click.option("--max-findings", default=20, show_default=True, type=click.IntRange(1), help="Maximum health findings in human output; JSON always includes all findings.")
 @click.option("--include", "include", multiple=True, help="Only include entries whose path/scope match this glob.")
 @click.option("--exclude", "exclude", multiple=True, help="Exclude entries whose path/scope match this glob.")
-def audit(agent_filter, as_json, fail_on_findings, include, exclude):
-    """Find likely secrets already written into agent memory files.
+def audit(agent_filter, as_json, fail_on_findings, max_findings, include, exclude):
+    """Audit security, freshness, duplication, and source quality.
 
-    This is local and read-only. It scans harvested source files before
-    redaction, reports precise locations and masked excerpts, and never edits
-    another tool's files.
+    This is local and read-only. Secret scanning happens before redaction, but
+    output is always masked. The health pass also compares the live corpus to
+    the last sync and identifies duplicate, oversized, and low-yield sources.
     """
     import json as _json
 
     from docmancer.harness.secrets import detect_secrets
 
+    if not as_json:
+        emit_brand_header("docmancer memory audit", "Inspect security, freshness, duplication, and source quality.")
+        emit_status_line("Discovering and inspecting live memory sources...", state="info")
+
     agent = _agent(include, exclude)
     entries = agent.preview()
     if agent_filter:
         entries = [e for e in entries if e.harness.lower() == agent_filter.lower()]
+    health = _memory_health_audit(agent, entries)
 
     grouped: dict[str, list[dict]] = defaultdict(list)
     for entry in entries:
@@ -257,6 +404,14 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
                     "finding_count": sum(item["occurrence_count"] for item in findings),
                     "unique_secret_count": len(findings),
                     "findings": findings,
+                    "inventory": {
+                        "source_count": health["source_count"],
+                        "atom_count": health["atom_count"],
+                        "agents": health["agents"],
+                        "scopes": health["scopes"],
+                    },
+                    "health_finding_count": len(health["findings"]),
+                    "health_findings": health["findings"],
                 },
                 indent=2,
             )
@@ -265,26 +420,31 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
             sys.exit(1)
         return
 
-    emit_brand_header("docmancer memory audit", "Scan harvested memory for secrets left in plain text.")
-
-    if not findings:
-        emit_status_line("No likely secrets found in harvested memory sources.", state="ok")
-        return
+    emit_status_line(
+        f"Audited {health['source_count']:,} source file(s) producing {health['atom_count']:,} memory atoms.",
+        state="info",
+    )
+    _emit_counts("By harness", Counter(health["agents"]))
+    click.echo()
 
     occurrence_total = sum(item["occurrence_count"] for item in findings)
     source_total = len({occ["source_path"] for item in findings for occ in item["occurrences"]})
     by_severity = Counter(item["severity"] for item in findings)
 
-    emit_status_line(
-        f"Found {occurrence_total} likely secret occurrence(s) across {source_total} source file(s).",
-        state="warn",
-    )
-    _emit_counts("By severity", by_severity)
-    click.echo()
-    emit_status_line("Review these source files, rotate any real secrets, then remove them from agent memory.", state="info")
-    click.echo()
-    click.echo(rule())
-    click.echo()
+    if findings:
+        emit_status_line(
+            f"Found {occurrence_total} likely secret occurrence(s) across {source_total} source file(s).",
+            state="warn",
+        )
+        _emit_counts("By severity", by_severity)
+        click.echo()
+        emit_status_line("Review these source files, rotate any real secrets, then remove them from agent memory.", state="info")
+        click.echo()
+        click.echo(rule())
+        click.echo()
+    else:
+        emit_status_line("No likely secrets found in harvested memory sources.", state="ok")
+        click.echo()
 
     for index, item in enumerate(findings, start=1):
         first = item["occurrences"][0]
@@ -310,6 +470,39 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
             click.echo("    " + style("Scope:", fg="bright_black") + f" {first['scope']}")
         click.echo()
 
+    health_findings = health["findings"]
+    if health_findings:
+        click.echo(rule())
+        click.echo()
+        emit_status_line(f"Found {len(health_findings)} memory-health issue(s).", state="warn")
+        _emit_counts("By issue", Counter(item["code"] for item in health_findings))
+        click.echo()
+        for index, item in enumerate(health_findings[:max_findings], start=1):
+            color, bold = severity_style(item["severity"])
+            click.echo(
+                style(f"[H{index}]", fg="bright_black", bold=True)
+                + " "
+                + style(item["severity"].upper(), fg=color, bold=bold)
+                + "  "
+                + style(item["code"], bold=True)
+            )
+            click.echo(f"    {item['summary']}")
+            for path in item.get("display_paths", [])[:3]:
+                click.echo("    " + style(path, fg="cyan"))
+            if item.get("excerpt"):
+                click.echo("    " + style(item["excerpt"], fg="bright_black"))
+            click.echo("    " + style("Next:", fg="bright_green", bold=True) + f" {item['next']}")
+            click.echo()
+        omitted = len(health_findings) - max_findings
+        if omitted > 0:
+            emit_status_line(
+                f"{omitted} additional health finding(s) omitted. Use `--json` for the complete report.",
+                state="info",
+            )
+            click.echo()
+    else:
+        emit_status_line("Memory sources are aligned with the last sync and no hygiene issues were found.", state="ok")
+
     click.echo(rule())
     if fail_on_findings:
         sys.exit(1)
@@ -327,13 +520,37 @@ def audit(agent_filter, as_json, fail_on_findings, include, exclude):
     show_default=True,
     help="Retrieval mode.",
 )
-def query(text: str, limit: int | None, project_path: Path | None, scope: str | None, mode: str):
-    """Recall atomic memories from the local memory index."""
+@click.option(
+    "--min-score",
+    default=DEFAULT_HOOK_THRESHOLD,
+    type=click.FloatRange(0.0, 1.0),
+    show_default=True,
+    help="Minimum normalized relevance. Use 0 only for retrieval diagnostics.",
+)
+def query(
+    text: str,
+    limit: int | None,
+    project_path: Path | None,
+    scope: str | None,
+    mode: str,
+    min_score: float,
+):
+    """Recall memory atoms from the local memory index."""
     agent = _agent()
-    chunks = agent.query(text, limit=limit, mode=mode.lower(), project_path=project_path, scope=scope)
+    chunks = agent.query(
+        text,
+        limit=limit,
+        mode=mode.lower(),
+        project_path=project_path,
+        scope=scope,
+        min_score=min_score,
+    )
     if not chunks:
-        click.echo("No results found.")
+        emit_brand_header("docmancer memory query", "Recall only when the index has relevant evidence.")
+        emit_status_line(f"No relevant memory found at or above score {min_score:.2f}.", state="info")
+        click.echo("  Try a more specific query, lower `--min-score` for diagnostics, or run `docmancer memory sync`.")
         sys.exit(1)
+    emit_brand_header("docmancer memory query", f"{len(chunks)} relevant match(es), strongest first.")
     for i, chunk in enumerate(chunks, start=1):
         meta = chunk.metadata or {}
         scope = meta.get("scope", "")
@@ -369,10 +586,17 @@ def memory_add(text: str, scope_kind: str, project_path: Path | None, memory_typ
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Added {record.record_id[:12]}  {record.type}  {record.scope}")
-    click.echo(f"Stored: {display_path(record.source_path)}")
+    emit_brand_header("docmancer memory add", "Write one inspectable, source-attributed memory.")
+    emit_status_line(f"Added memory {record.record_id[:12]}")
+    click.echo(f"  Type    {style(record.type, fg='cyan', bold=True)}")
+    click.echo(f"  Scope   {record.scope}")
+    click.echo(f"  Stored  {display_path(record.source_path)}")
     if not indexed:
-        click.echo("Saved durably; another sync is active, so run `docmancer memory sync` afterward.")
+        emit_status_line("Saved durably; another sync is active. Run `docmancer memory sync` afterward.", state="warn")
+    if record.scope_kind == "team":
+        click.echo()
+        emit_status_line("The new team-memory file may be untracked, so plain `git diff` can be empty.", state="info")
+        click.echo("  Review  git status --short .docmancer/memory/")
 
 
 def _atom_dict(atom) -> dict:
@@ -394,7 +618,7 @@ def _atom_dict(atom) -> dict:
     }
 
 
-@memory_group.command("list", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List inspectable atomic memories.")
+@memory_group.command("list", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List inspectable memory atoms.")
 @click.option("--scope", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None)
 @click.option("--type", "memory_type", default=None, help="Filter by atom type.")
 @click.option("--origin", default=None, help="Filter by origin, such as manual, capture, or harvested.")
@@ -402,7 +626,7 @@ def _atom_dict(atom) -> dict:
 @click.option("--limit", default=100, show_default=True, type=int)
 @click.option("--json", "as_json", is_flag=True)
 def memory_list(scope, memory_type, origin, project_path, limit, as_json):
-    """Browse atomic memory with stable IDs and provenance."""
+    """Browse memory atoms with stable IDs and provenance."""
     import json as _json
 
     atoms = _agent().indexed_atoms()
@@ -420,27 +644,40 @@ def memory_list(scope, memory_type, origin, project_path, limit, as_json):
         click.echo(_json.dumps([_atom_dict(atom) for atom in atoms], indent=2))
         return
     if not atoms:
-        click.echo("No atomic memories match.")
+        emit_brand_header("docmancer memory list", "Browse stable memory IDs and provenance.")
+        emit_status_line("No memory atoms match these filters.", state="info")
         return
-    for atom in atoms:
+    emit_brand_header("docmancer memory list", f"{len(atoms)} inspectable memory item(s).")
+    click.echo("  " + style("ID", fg="cyan", bold=True) + " is used by `memory show`, `forget`, and `promote`.")
+    click.echo()
+    for index, atom in enumerate(atoms, start=1):
         identifier = (atom.record_id or atom.atom_id)[:12]
-        click.echo(f"{identifier}  {atom.type:<10}  {atom.scope:<30}  {atom.origin}")
-        click.echo(f"  {atom.text}")
+        click.echo(style(f"[{index}] {identifier}", fg="bright_cyan", bold=True))
+        click.echo(f"    {atom.type}  {atom.scope}  {atom.origin}")
+        click.echo(f"    {atom.text}")
+        click.echo(f"    Source: {display_path(atom.source_path)}")
+        if index != len(atoms):
+            click.echo()
 
 
-@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show one atomic memory and its provenance.")
-@click.argument("identifier")
+@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show one memory atom and its provenance.")
+@click.argument("identifier", metavar="ID")
 @click.option("--json", "as_json", is_flag=True)
 def memory_show(identifier: str, as_json: bool):
+    """Show one memory using the ID from ``docmancer memory list``.
+
+    ID may be the full stable record or atom ID, or any unique prefix.
+    """
     import json as _json
 
     atom = _agent().find_atom(identifier)
     if atom is None:
-        raise click.ClickException("memory id is missing or ambiguous")
+        raise click.ClickException("memory ID is missing or ambiguous; copy a unique ID from `docmancer memory list`")
     data = _atom_dict(atom)
     if as_json:
         click.echo(_json.dumps(data, indent=2))
         return
+    emit_brand_header("docmancer memory show", "Inspect content and provenance before changing memory.")
     click.echo(f"ID: {data['id']}")
     click.echo(f"Atom: {atom.atom_id}")
     click.echo(f"Type: {atom.type}")
@@ -453,27 +690,39 @@ def memory_show(identifier: str, as_json: bool):
     click.echo(atom.text)
 
 
-@memory_group.command("forget", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Suppress or remove one atomic memory.")
-@click.argument("identifier")
-@click.option("--dry-run", is_flag=True)
+@memory_group.command("forget", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Suppress or remove one memory atom.")
+@click.argument("identifier", metavar="ID")
+@click.option("--dry-run", is_flag=True, help="Preview the provenance-aware action without changing memory.")
 @click.option("--yes", is_flag=True)
 def memory_forget(identifier: str, dry_run: bool, yes: bool):
+    """Forget the memory identified by ID from ``memory list``.
+
+    ID is a stable record ID or harvested atom ID. A unique prefix, such as
+    the 12-character value printed by ``memory list``, is accepted.
+    """
     agent = _agent()
     atom = agent.find_atom(identifier)
     if atom is None:
-        raise click.ClickException("memory id is missing or ambiguous")
+        raise click.ClickException("memory ID is missing or ambiguous; copy a unique ID from `docmancer memory list`")
     action = "remove the Docmancer-owned record" if atom.record_id else "suppress this harvested atom without editing its source"
-    click.echo(f"Would {action}: {atom.text}")
+    emit_brand_header("docmancer memory forget", "Preview provenance-aware removal before confirming.")
+    click.echo(f"  ID      {atom.record_id or atom.atom_id}")
+    click.echo(f"  Origin  {atom.origin}")
+    click.echo(f"  Source  {display_path(atom.source_path)}")
+    click.echo(f"  Action  Would {action}.")
+    click.echo(f"  Memory  {atom.text}")
     if dry_run:
+        click.echo()
+        emit_status_line("Dry run only. Nothing was changed.", state="info")
         return
     if not yes:
         click.confirm("Forget this memory?", abort=True)
     agent.forget(identifier)
-    click.echo("Memory forgotten. Its content is absent from the tombstone.")
+    emit_status_line("Memory forgotten. Its content is absent from the tombstone.")
 
 
 @memory_group.command("promote", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Copy a reviewed memory into the Git team store.")
-@click.argument("identifier")
+@click.argument("identifier", metavar="ID")
 @click.option("--team", is_flag=True, required=True, help="Confirm the destination is team memory.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path), default=None)
 @click.option("--dry-run", is_flag=True)
@@ -481,8 +730,9 @@ def memory_promote(identifier: str, team: bool, project_path: Path | None, dry_r
     agent = _agent()
     atom = agent.find_atom(identifier)
     if atom is None:
-        raise click.ClickException("memory id is missing or ambiguous")
+        raise click.ClickException("memory ID is missing or ambiguous; copy a unique ID from `docmancer memory list`")
     project = (project_path or Path.cwd()).expanduser().resolve()
+    emit_brand_header("docmancer memory promote", "Copy reviewed memory into the repository team store.")
     click.echo(f"Team destination: {display_path(project / '.docmancer' / 'memory')}")
     click.echo(atom.text)
     if dry_run:
@@ -492,6 +742,7 @@ def memory_promote(identifier: str, team: bool, project_path: Path | None, dry_r
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"Promoted {record.record_id[:12]} to {display_path(record.source_path)}")
+    click.echo("Review: git status --short .docmancer/memory/")
     if not indexed:
         click.echo("Saved durably; run `docmancer memory sync` after the active sync finishes.")
 
@@ -517,10 +768,67 @@ def capture_hook(agent: str, debug: bool):
             click.echo(f"docmancer capture failed: {exc}", err=True)
 
 
+@memory_group.command("capture", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Preview lifecycle memory capture without writing.")
+@click.option("--agent", type=click.Choice(["claude-code", "codex"], case_sensitive=False), required=True)
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Hook payload JSON file. Reads stdin when omitted.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable preview output.")
+def capture_preview(agent: str, input_path: Path | None, as_json: bool):
+    """Preview exactly what a supported lifecycle event would retain.
+
+    The payload is redacted and evaluated locally. This command never creates
+    a record, changes the memory index, or enables capture hooks.
+    """
+    import json as _json
+
+    raw = input_path.read_text(encoding="utf-8") if input_path else sys.stdin.read()
+    try:
+        payload = _json.loads(raw or "{}")
+    except _json.JSONDecodeError as exc:
+        raise click.ClickException(f"invalid hook payload JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise click.ClickException("hook payload must be a JSON object")
+
+    from docmancer.memory.capture import capture_candidates
+
+    normalized_agent = agent.lower()
+    candidates = capture_candidates(payload, agent=normalized_agent)
+    cwd = str(payload.get("cwd") or "").strip()
+    scope = f"project:{Path(cwd).expanduser().resolve()}" if cwd else "global:docmancer"
+    report = {
+        "agent": normalized_agent,
+        "event": str(payload.get("hook_event_name") or payload.get("hookEventName") or ""),
+        "scope": scope,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "writes_performed": False,
+    }
+    if as_json:
+        click.echo(_json.dumps(report, indent=2))
+        return
+
+    emit_brand_header("docmancer memory capture", "Preview local lifecycle capture without writing.")
+    if not candidates:
+        emit_status_line("This payload produced no durable memory candidates.", state="info")
+        return
+    emit_status_line(f"Would retain {len(candidates)} memory atom(s) in {scope}.", state="info")
+    for index, candidate in enumerate(candidates, start=1):
+        click.echo(f"[{index}] {candidate['type']}  {candidate['text']}")
+    click.echo()
+    emit_status_line("Preview only. No records or index files were changed.", state="info")
+
+
 @memory_group.command("eval", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Measure recall quality against a JSONL dataset.")
 @click.option("--dataset", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
 @click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text", show_default=True)
-def memory_eval(dataset: Path, output_format: str):
+@click.option("--gate", is_flag=True, help="Fail below the checked recall-quality thresholds.")
+@click.option(
+    "--min-score",
+    default=DEFAULT_HOOK_THRESHOLD,
+    type=click.FloatRange(0.0, 1.0),
+    show_default=True,
+    help="Minimum normalized relevance used for every evaluation query.",
+)
+def memory_eval(dataset: Path, output_format: str, gate: bool, min_score: float):
     """Run deterministic top-one, hit-rate, MRR, and latency evaluation."""
     import json as _json
     import statistics
@@ -529,6 +837,7 @@ def memory_eval(dataset: Path, output_format: str):
 
     cases = []
     corpus = []
+    dataset_metadata = {}
     for number, line in enumerate(dataset.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
@@ -538,8 +847,10 @@ def memory_eval(dataset: Path, output_format: str):
             raise click.ClickException(f"invalid JSONL at line {number}: {exc}") from exc
         if case.get("kind") == "memory":
             corpus.append(case)
-        else:
+        elif case.get("kind") == "case":
             cases.append(case)
+        elif case.get("kind") == "metadata":
+            dataset_metadata.update(case)
     if not cases:
         raise click.ClickException("dataset contains no cases")
     tempdir = None
@@ -549,11 +860,16 @@ def memory_eval(dataset: Path, output_format: str):
         tempdir = tempfile.TemporaryDirectory(prefix="docmancer-memory-eval-")
         root = Path(tempdir.name)
         agent = MemoryAgent(db_path=str(root / "memory.db"), home=root)
-        for item in corpus:
+        import hashlib
+
+        for index, item in enumerate(corpus):
             if item.get("forgotten"):
                 continue
+            identity = f"{index}\n{item.get('id') or ''}\n{item['text']}"
+            identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
             agent.records.add(
                 str(item["text"]),
+                record_id=f"eval-{index:04d}-{identity_hash}",
                 scope_kind=str(item.get("scope") or "global"),
                 project_path=item.get("project_path"),
                 memory_type=item.get("type"),
@@ -578,6 +894,7 @@ def memory_eval(dataset: Path, output_format: str):
             limit=max(5, int(case.get("k") or 5)),
             project_path=case.get("project_path"),
             scope=case.get("scope"),
+            min_score=min_score,
         )
         latency = (time.perf_counter() - started) * 1000
         latencies.append(latency)
@@ -585,7 +902,9 @@ def memory_eval(dataset: Path, output_format: str):
         fragments = [str(value).lower() for value in case.get("expected_contains", [])]
         absent_fragments = [str(value).lower() for value in case.get("expected_absent", [])]
         rank = 0
-        if absent_fragments:
+        if case.get("expect_no_results"):
+            rank = 1 if not chunks else 0
+        elif absent_fragments:
             combined = "\n".join((chunk.text or "").lower() for chunk in chunks)
             rank = 1 if all(fragment not in combined for fragment in absent_fragments) else 0
         else:
@@ -597,12 +916,21 @@ def memory_eval(dataset: Path, output_format: str):
                     rank = index
                     break
         reciprocal.append(1 / rank if rank else 0.0)
-        results.append({"query": case["query"], "rank": rank or None, "latency_ms": round(latency, 2)})
+        results.append(
+            {
+                "feature": str(case.get("feature") or "unspecified"),
+                "query": case["query"],
+                "rank": rank or None,
+                "latency_ms": round(latency, 2),
+            }
+        )
     count = len(results)
     sorted_latency = sorted(latencies)
     percentile = lambda p: sorted_latency[min(len(sorted_latency) - 1, int((len(sorted_latency) - 1) * p))]
     report = {
         "cases": count,
+        "min_score": min_score,
+        "dataset_baseline": dataset_metadata.get("baseline"),
         "top_one_correct": sum(1 for item in results if item["rank"] == 1) / count,
         "hit_at_3": sum(1 for item in results if item["rank"] and item["rank"] <= 3) / count,
         "hit_at_5": sum(1 for item in results if item["rank"] and item["rank"] <= 5) / count,
@@ -612,10 +940,40 @@ def memory_eval(dataset: Path, output_format: str):
         "failed": [item for item in results if item["rank"] is None],
         "results": results,
     }
+    if gate:
+        gate_config = dataset_metadata.get("gate") if isinstance(dataset_metadata.get("gate"), dict) else {}
+        min_top_one = float(gate_config.get("min_top_one_correct", 0.85))
+        min_hit_at_3 = float(gate_config.get("min_hit_at_3", 0.95))
+        strict_features = {
+            str(feature)
+            for feature in gate_config.get(
+                "zero_failure_features",
+                ["scope-isolation", "forget", "conflict-current"],
+            )
+        }
+        failures = []
+        if report["top_one_correct"] < min_top_one:
+            failures.append(
+                f"Top-one correctness {report['top_one_correct']:.1%} is below {min_top_one:.1%}."
+            )
+        if report["hit_at_3"] < min_hit_at_3:
+            failures.append(f"Hit@3 {report['hit_at_3']:.1%} is below {min_hit_at_3:.1%}.")
+        for item in results:
+            if item["feature"] in strict_features and item["rank"] is None:
+                failures.append(f"Strict feature {item['feature']} failed: {item['query']}")
+        report["gate"] = {
+            "passed": not failures,
+            "min_top_one_correct": min_top_one,
+            "min_hit_at_3": min_hit_at_3,
+            "zero_failure_features": sorted(strict_features),
+            "failures": failures,
+        }
     if output_format == "json":
         click.echo(_json.dumps(report, indent=2))
         if tempdir is not None:
             tempdir.cleanup()
+        if gate and not report["gate"]["passed"]:
+            raise click.exceptions.Exit(1)
         return
     click.echo(f"Cases: {count}")
     click.echo(f"Top-one correct: {report['top_one_correct']:.1%}")
@@ -625,8 +983,14 @@ def memory_eval(dataset: Path, output_format: str):
         click.echo("Failed cases:")
         for item in report["failed"]:
             click.echo(f"  - {item['query']}")
+    if gate:
+        click.echo(f"Quality gate: {'PASS' if report['gate']['passed'] else 'FAIL'}")
+        for failure in report["gate"]["failures"]:
+            click.echo(f"  - {failure}")
     if tempdir is not None:
         tempdir.cleanup()
+    if gate and not report["gate"]["passed"]:
+        raise click.exceptions.Exit(1)
 
 
 @memory_group.command(
@@ -638,7 +1002,13 @@ def memory_eval(dataset: Path, output_format: str):
 @click.option("--agent", type=click.Choice(["auto", "claude-code", "codex"], case_sensitive=False), default="auto", show_default=True)
 @click.option("--limit", default=3, type=int, show_default=True, help="Maximum snippets to inject.")
 @click.option("--max-chars", default=2_000, type=int, show_default=True, help="Maximum injected context characters.")
-@click.option("--threshold", default=0.01, type=float, show_default=True, help="Minimum retrieval score required to inject.")
+@click.option(
+    "--threshold",
+    default=DEFAULT_HOOK_THRESHOLD,
+    type=click.FloatRange(0.0, 1.0),
+    show_default=True,
+    help="Minimum normalized relevance required to inject.",
+)
 @click.option("--debug", is_flag=True, help="Print diagnostic errors to stderr.")
 def hook_context(agent: str, limit: int, max_chars: int, threshold: float, debug: bool):
     """Read hook JSON on stdin and emit hook-compatible additional context.
@@ -862,11 +1232,11 @@ def _chunk_to_atom(chunk):
 
 
 def _selected_atoms(agent, *, query: str | None, limit: int | None):
-    """Return atomic memories from the index, with live preview as fallback."""
+    """Return memory atoms from the index, with live preview as fallback."""
     atoms = []
     if query:
         try:
-            chunks = agent.query(query, limit=limit or 20)
+            chunks = agent.query(query, limit=limit or 20, min_score=None)
             atoms = [_chunk_to_atom(chunk) for chunk in chunks]
         except Exception:  # noqa: BLE001 - retrieval is best-effort; fall back to all
             pass
@@ -1294,7 +1664,7 @@ def consolidate(
     agent = _agent(include, exclude)
     entries = _selected_atoms(agent, query=query, limit=limit)
     if not entries:
-        click.echo("No atomic memories to consolidate. Run: docmancer memory sync")
+        click.echo("No memory atoms to consolidate. Run: docmancer memory sync")
         sys.exit(1)
     client, active_provider = _make_provider_client_or_exit("consolidate", provider, model=model, timeout=timeout)
     provider_label = getattr(client, "provider_name", None) or provider
@@ -1398,9 +1768,9 @@ _APPLY_TARGETS = {
 def _render_atoms_for_apply(atoms, *, limit: int = 80) -> str:
     selected = list(atoms)[:limit]
     lines = [
-        "# docmancer atomic memory",
+        "# docmancer memory atoms",
         "",
-        "These entries are generated from the local docmancer atomic memory index.",
+        "These memory atoms are generated from the local Docmancer index.",
         "",
     ]
     for atom in selected:
@@ -1422,7 +1792,7 @@ def _apply_target_path(agent: str | None, output: str | None):
 
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Materialize a reviewed draft into an agent's file.")
-@click.option("--from", "from_path", default=None, help="Apply a reviewed draft markdown file instead of rendering atomic memory from the index.")
+@click.option("--from", "from_path", default=None, help="Apply a reviewed draft markdown file instead of rendering memory atoms from the index.")
 @click.option("--agent", type=click.Choice(sorted(_APPLY_TARGETS), case_sensitive=False), default=None, help="Target agent whose always-loaded file to write.")
 @click.option("--output", "output", default=None, help="Write to an arbitrary file instead of an agent target.")
 @click.option("--dry-run", is_flag=True, help="Show the diff; write nothing.")
@@ -1430,7 +1800,7 @@ def _apply_target_path(agent: str | None, output: str | None):
 @click.option("--remove", "remove", is_flag=True, help="Strip docmancer's managed block (clean uninstall).")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the confirmation prompt.")
 def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
-    """Write atomic memory into an agent's always-loaded file.
+    """Write memory atoms into an agent's always-loaded file.
 
     Local and keyless. Writes only inside a delimited managed block, after a
     timestamped backup. With no `--from`, this renders high-value atomic
@@ -1472,7 +1842,7 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
         memory_agent = _agent()
         atoms = memory_agent.indexed_atoms(limit=80)
         if not atoms:
-            click.echo("No atomic memories found. Run `docmancer memory sync` first.", err=True)
+            click.echo("No memory atoms found. Run `docmancer memory sync` first.", err=True)
             sys.exit(2)
         body = _render_atoms_for_apply(atoms)
 
@@ -1524,7 +1894,7 @@ def export(output_format, output, query, limit, include, exclude):
     agent = _agent(include, exclude)
     entries = _selected_atoms(agent, query=query, limit=limit)
     if not entries:
-        click.echo("No atomic memory to export. Run: docmancer memory sync")
+        click.echo("No memory atoms to export. Run: docmancer memory sync")
         sys.exit(1)
 
     concepts = concepts_from_memory_entries(entries)
@@ -1548,7 +1918,7 @@ def status():
     click.echo(f"Memory index: {display_path(db)}")
     click.echo(f"Exists: {db.exists()}")
     click.echo(f"Source files: {info['sources']}")
-    click.echo(f"Atomic memories: {info['atoms']}")
+    click.echo(f"Memory atoms: {info['atoms']}")
     click.echo("Sync and recall stay local. Remove the local index with: docmancer memory clear")
 
 

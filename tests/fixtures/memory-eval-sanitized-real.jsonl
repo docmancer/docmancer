@@ -1,0 +1,43 @@
+{"kind":"metadata","description":"Sanitised recall shapes derived from real Claude Code, Codex, and Cursor memory workflows. No source text or private identifiers are retained.","source_harnesses":["claude-code","codex","cursor"],"case_count":20,"baseline":{"recorded_on":"2026-07-18","min_score":0.05,"top_one_correct":0.90,"hit_at_3":1.00,"mrr":0.950},"gate":{"min_top_one_correct":0.85,"min_hit_at_3":0.95,"zero_failure_features":["conflict-current","forget","scope-isolation"]}}
+{"kind":"memory","id":"deploy","text":"Production deploys run on Railway.","type":"fact","scope":"global","tags":["exact","claude-code"]}
+{"kind":"memory","id":"database","text":"The application persists relational data in PostgreSQL.","type":"decision","scope":"global","tags":["semantic","codex"]}
+{"kind":"memory","id":"negative","text":"Never read .env files or expose their contents.","type":"constraint","scope":"global","tags":["negative","cursor"]}
+{"kind":"memory","id":"conflict-old","text":"The retired task worker used Celery.","type":"fact","scope":"global","tags":["conflict","legacy"]}
+{"kind":"memory","id":"conflict-current","text":"The current task worker uses Dramatiq, not Celery.","type":"decision","scope":"global","tags":["conflict","current"]}
+{"kind":"memory","id":"alpha","text":"The Alpha project codename is Apricot.","type":"fact","scope":"project","project_path":"/tmp/docmancer-eval/alpha","tags":["scope"]}
+{"kind":"memory","id":"beta","text":"The Beta project codename is Blueberry.","type":"fact","scope":"project","project_path":"/tmp/docmancer-eval/beta","tags":["scope"]}
+{"kind":"memory","id":"formatter","text":"Use Ruff as the formatter across all projects.","type":"preference","scope":"global","tags":["global-fallback"]}
+{"kind":"memory","id":"merge-a","text":"Run tests from the repository root before committing.","type":"workflow","scope":"global","tags":["duplicate"]}
+{"kind":"memory","id":"merge-b","text":"Before a commit, run the test suite from the repository root.","type":"workflow","scope":"global","tags":["duplicate"]}
+{"kind":"memory","id":"forgotten","text":"The obsolete staging host is retired-staging.example.","type":"fact","scope":"global","forgotten":true,"tags":["forget"]}
+{"kind":"memory","id":"capture","text":"The queue migration requires idempotent consumers.","type":"decision","scope":"project","project_path":"/tmp/docmancer-eval/alpha","origin":"capture","tags":["capture"]}
+{"kind":"memory","id":"team","text":"Every schema change needs a rollback note in the pull request.","type":"constraint","scope":"team","project_path":"/tmp/docmancer-eval/alpha","origin":"promoted","tags":["team"]}
+{"kind":"memory","id":"command","text":"Run python -m pytest tests/ -q from the package repository.","type":"command","scope":"project","project_path":"/tmp/docmancer-eval/alpha","tags":["exact-command"]}
+{"kind":"memory","id":"writing","text":"Prefer full sentences and do not use em dashes in public documentation.","type":"preference","scope":"global","tags":["preference"]}
+{"kind":"memory","id":"release","text":"The maintainer runs the patch release script manually after changelog preparation.","type":"workflow","scope":"global","tags":["workflow"]}
+{"kind":"memory","id":"warning","text":"Recreating the vector store without clearing embedding bookkeeping can leave zero indexed points.","type":"warning","scope":"global","tags":["warning"]}
+{"kind":"memory","id":"status","text":"The desktop application remains exploratory and is not the default product direction.","type":"status","scope":"global","tags":["status"]}
+{"kind":"memory","id":"provider","text":"Optional provider-backed consolidation routes through OpenRouter.","type":"fact","scope":"global","tags":["semantic-provider"]}
+{"kind":"memory","id":"alpha-database","text":"The Alpha project uses SQLite for its local job queue.","type":"decision","scope":"project","project_path":"/tmp/docmancer-eval/alpha","tags":["project-priority"]}
+{"kind":"memory","id":"global-database","text":"PostgreSQL is the default database for hosted services.","type":"decision","scope":"global","tags":["project-priority"]}
+{"kind":"memory","id":"beta-team","text":"The Beta team requires two reviewers for schema migrations.","type":"constraint","scope":"team","project_path":"/tmp/docmancer-eval/beta","tags":["scope"]}
+{"kind":"case","feature":"exact","query":"Where do production deploys run?","expected_contains":["Railway"]}
+{"kind":"case","feature":"semantic","query":"Which relational datastore backs the application?","expected_contains":["PostgreSQL"]}
+{"kind":"case","feature":"negative","query":"May an agent inspect environment secret files?","expected_contains":["Never read .env"]}
+{"kind":"case","feature":"conflict-current","query":"What does the current task worker use?","expected_contains":["Dramatiq"]}
+{"kind":"case","feature":"scope-isolation","query":"What is the Alpha project codename?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["Apricot"]}
+{"kind":"case","feature":"scope-isolation","query":"What is the Beta project codename?","project_path":"/tmp/docmancer-eval/beta","expected_contains":["Blueberry"]}
+{"kind":"case","feature":"global-fallback","query":"Which formatter should this repository use?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["Ruff"]}
+{"kind":"case","feature":"duplicate-paraphrase","query":"What must happen before committing?","expected_contains":["repository root"]}
+{"kind":"case","feature":"forget","query":"What is the obsolete staging host?","expected_absent":["retired-staging.example"]}
+{"kind":"case","feature":"capture","query":"What does the queue migration require?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["idempotent consumers"]}
+{"kind":"case","feature":"team","query":"What must accompany schema changes?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["rollback note"]}
+{"kind":"case","feature":"exact-command","query":"What command runs the package tests?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["python -m pytest"]}
+{"kind":"case","feature":"preference","query":"How should public documentation be written?","expected_contains":["full sentences"]}
+{"kind":"case","feature":"workflow","query":"Who runs the patch release script and when?","expected_contains":["maintainer"]}
+{"kind":"case","feature":"warning","query":"Why can a recreated vector store have no indexed points?","expected_contains":["embedding bookkeeping"]}
+{"kind":"case","feature":"status","query":"Is the desktop application the main product direction?","expected_contains":["exploratory"]}
+{"kind":"case","feature":"semantic-provider","query":"Which service handles optional cloud consolidation?","expected_contains":["OpenRouter"]}
+{"kind":"case","feature":"project-priority","query":"Which database does the local Alpha queue use?","project_path":"/tmp/docmancer-eval/alpha","expected_contains":["SQLite"]}
+{"kind":"case","feature":"scope-isolation","query":"How many reviewers does the Beta team require for migrations?","project_path":"/tmp/docmancer-eval/beta","expected_contains":["two reviewers"]}
+{"kind":"case","feature":"irrelevant-floor","query":"xyzzy plugh flibbertigibbet quux","expect_no_results":true}

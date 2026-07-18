@@ -98,6 +98,17 @@ Audit findings are intentionally conservative, but false positives are possible.
 - Run `docmancer memory sync --recreate` so the local index is rebuilt from cleaned sources.
 - If you need automation, run `docmancer memory audit --json --fail-on-findings`.
 
+The same command also reports memory-corpus health. Run `docmancer memory sync` for index drift, consolidate or remove exact duplicates at their source, and rewrite a large low-yield file as short durable facts. Audit is read-only and never performs these changes for you.
+
+## `docmancer memory query` returns no results
+
+Interactive memory query and recall hooks omit matches below the shared `0.05` relevance floor. This is intentional when the index has no credible evidence for the question.
+
+- Run `docmancer memory status` and `docmancer memory sources` to confirm the index is populated.
+- Run `docmancer memory sync` if sources changed after the last index build.
+- Try a more specific question that includes the decision, tool, project, or constraint you need.
+- Use `docmancer memory query "<question>" --min-score 0` only to inspect weak candidates while diagnosing retrieval. Do not treat zero-floor output as trusted recall.
+
 ## `docmancer memory consolidate` fails with OpenRouter
 
 `memory consolidate` is optional OpenRouter-backed maintenance. It is no longer the main memory-transfer path, and local hook recall does not use OpenRouter.
@@ -128,7 +139,7 @@ Tombstones match the indexed atom ID and the content hash within its scope. A ma
 
 ## Capture hooks store nothing
 
-Capture is intentionally selective and silent. Confirm it was installed separately with `docmancer install <agent> --capture-hooks`. Unsupported lifecycle events, malformed payloads, active background work, short acknowledgements, and duplicates are skipped. Capture stores extracted durable atoms, not a raw transcript, so a session with no durable outcome can correctly produce no new record.
+Capture is intentionally selective and silent. Confirm it was installed separately with `docmancer install <agent> --capture-hooks`. Unsupported lifecycle events, malformed payloads, active background work, short acknowledgements, and duplicates are skipped. Capture stores extracted durable memory atoms, not a raw transcript, so a session with no durable outcome can correctly produce no new atom.
 
 ## Team promotion is rejected
 
