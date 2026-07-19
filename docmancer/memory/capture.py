@@ -104,6 +104,7 @@ def capture_candidates(payload: dict, *, agent: str) -> list[dict]:
 
 def capture_payload(payload: dict, *, agent: str) -> tuple[int, bool]:
     from docmancer.memory import MemoryAgent, SyncInProgressError
+    from docmancer.memory.records import normalize_memory_text
 
     candidates = capture_candidates(payload, agent=agent)
     if not candidates:
@@ -111,15 +112,17 @@ def capture_payload(payload: dict, *, agent: str) -> tuple[int, bool]:
     memory = MemoryAgent()
     cwd = payload.get("cwd") or None
     project_paths = [cwd] if cwd else None
-    existing_hashes = {atom.content_hash for atom in memory.indexed_atoms()}
-    existing_hashes.update(record.content_hash for record in memory.records.records(project_paths=project_paths))
+    existing_texts = {normalize_memory_text(atom.text) for atom in memory.indexed_atoms()}
+    existing_texts.update(
+        normalize_memory_text(record.text)
+        for record in memory.records.records(project_paths=project_paths)
+    )
     created = 0
     created_records = []
     session_id = str(payload.get("session_id") or "") or None
     for candidate in candidates:
-        from docmancer.memory.records import _hash
-
-        if _hash(candidate["text"]) in existing_hashes:
+        normalized = normalize_memory_text(candidate["text"])
+        if normalized in existing_texts:
             continue
         record, _ = memory.add_record(
             candidate["text"],
@@ -132,7 +135,7 @@ def capture_payload(payload: dict, *, agent: str) -> tuple[int, bool]:
             sync_index=False,
         )
         created_records.append(record)
-        existing_hashes.add(_hash(candidate["text"]))
+        existing_texts.add(normalized)
         created += 1
     if not created:
         return 0, False

@@ -24,7 +24,7 @@ from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
-from docmancer.memory.records import MemoryRecord, MemoryRecordStore
+from docmancer.memory.records import MemoryRecord, MemoryRecordStore, normalize_memory_text
 
 if TYPE_CHECKING:
     from docmancer.core.config import DocmancerConfig
@@ -499,7 +499,19 @@ class MemoryAgent:
             chunks.sort(key=lambda chunk: (bucket(chunk), -float(chunk.score or 0.0)))
         else:
             chunks.sort(key=lambda chunk: -float(chunk.score or 0.0))
-        return chunks[:requested_limit]
+
+        # Distinct durable records stay independently addressable, but an
+        # equivalent record should not consume another recall result.
+        unique_chunks = []
+        seen_memories: set[tuple[str, str]] = set()
+        for chunk in chunks:
+            meta = chunk.metadata or {}
+            key = (str(meta.get("scope") or ""), normalize_memory_text(chunk.text))
+            if key in seen_memories:
+                continue
+            seen_memories.add(key)
+            unique_chunks.append(chunk)
+        return unique_chunks[:requested_limit]
 
     def _build_retrieval_backends(self):
         try:
@@ -657,8 +669,19 @@ class MemoryAgent:
                 raise ValueError("team memory requires an existing Git repository root")
             project_path = project
             self._extra_project_paths.add(str(project))
-        elif scope_kind == "project" and project_path:
-            self._extra_project_paths.add(str(Path(project_path).expanduser().resolve()))
+        elif scope_kind == "project":
+            project_path = Path(project_path or Path.cwd()).expanduser().resolve()
+            self._extra_project_paths.add(str(project_path))
+        existing = self.records.find_equivalent(
+            text,
+            scope_kind=scope_kind,
+            project_path=project_path,
+        )
+        if existing is not None:
+            raise ValueError(
+                "Equivalent memory already exists in this scope. "
+                f"Memory ID: {existing.record_id[:12]}"
+            )
         record = self.records.add(
             text,
             scope_kind=scope_kind,

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.16] - Unreleased
+### Changed
+
+- **Shorter memory-first README.** Reworked the primary documentation around the practical setup, recall, inspection, maintenance, hooks, MCP, docs-search, and local-data workflows while keeping the full command reference in the wiki.
+
+### Fixed
+
+- **Equivalent memories no longer multiply.** Manual writes now reject case- or whitespace-equivalent records in the same scope and return the existing Memory ID. Capture uses the same normalized comparison, while recall collapses equivalent legacy records so duplicate atoms do not consume result slots.
+- **Project writes use an explicit scope path.** Project-scoped memories without `--project` now resolve against the current working directory before duplicate checks and persistence, keeping their durable scope stable.
+
 ## [0.6.15] - 2026-07-18
 ### Added
 

@@ -110,6 +110,35 @@ def test_project_query_excludes_unrelated_project_and_keeps_global(tmp_path, mon
     assert "Blueberry" not in text
 
 
+def test_query_collapses_equivalent_legacy_records_in_the_same_scope(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    first = agent.records.add("Production deploys run on vercel")
+    second = agent.records.add("Production deploys run on Vercel")
+    agent.index_records([first, second])
+
+    chunks = agent.query("where do production deploys run?", mode="lexical", limit=10, min_score=0)
+
+    assert [chunk.text.casefold() for chunk in chunks].count("production deploys run on vercel") == 1
+
+
+def test_add_rejects_equivalent_memory_in_the_same_scope(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    first = runner.invoke(cli, ["memory", "add", "Production deploys run on vercel"])
+    duplicate = runner.invoke(cli, ["memory", "add", "Production deploys run on Vercel"])
+
+    assert first.exit_code == 0, first.output
+    assert duplicate.exit_code == 1
+    assert "Equivalent memory already exists in this scope" in duplicate.output
+    assert "Memory ID:" in duplicate.output
+    assert len(list((tmp_path / "state" / "memories").glob("*.md"))) == 1
+
+
 def test_team_memory_is_reviewable_and_promotion_never_stages(tmp_path, monkeypatch):
     _memory_env(tmp_path, monkeypatch)
     project = tmp_path / "repo"
@@ -176,7 +205,11 @@ def test_capture_supported_events_are_redacted_deduplicated_and_project_scoped(t
     created, indexed = capture_payload(payload, agent="codex")
     assert created == 1
     assert indexed is True
-    duplicate, _ = capture_payload(payload, agent="codex")
+    duplicate_payload = dict(
+        payload,
+        last_assistant_message="We decided to use SQLITE for the queue. token=supersecretvalue123",
+    )
+    duplicate, _ = capture_payload(duplicate_payload, agent="codex")
     assert duplicate == 0
     atoms = MemoryAgent().indexed_atoms()
     captured = [atom for atom in atoms if atom.origin == "capture"]

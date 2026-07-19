@@ -56,6 +56,11 @@ def _slug(text: str) -> str:
     return (value[:48].rstrip("-") or "memory")
 
 
+def normalize_memory_text(text: str) -> str:
+    """Normalize memory text for exact, case-insensitive duplicate checks."""
+    return " ".join(redact_secrets(text or "").split()).strip().casefold()
+
+
 @dataclass
 class MemoryRecord:
     record_id: str
@@ -214,6 +219,24 @@ class MemoryRecordStore:
         matches = [r for r in self.records(project_paths=project_paths) if r.record_id.startswith(identifier)]
         return matches[0] if len(matches) == 1 else None
 
+    def find_equivalent(
+        self,
+        text: str,
+        *,
+        scope_kind: str,
+        project_path: str | Path | None = None,
+    ) -> MemoryRecord | None:
+        """Find an existing record with equivalent text in the same scope."""
+        project = _clean_path(project_path)
+        roots = [project] if project else None
+        normalized = normalize_memory_text(text)
+        for record in self.records(project_paths=roots):
+            if record.scope_kind != scope_kind or record.project_path != project:
+                continue
+            if normalize_memory_text(record.text) == normalized:
+                return record
+        return None
+
     def delete_record(self, record: MemoryRecord) -> None:
         path = Path(record.source_path)
         if path.is_file():
@@ -251,4 +274,4 @@ class MemoryRecordStore:
         return False
 
 
-__all__ = ["MemoryRecord", "MemoryRecordStore", "RECORD_SCHEMA_VERSION"]
+__all__ = ["MemoryRecord", "MemoryRecordStore", "RECORD_SCHEMA_VERSION", "normalize_memory_text"]
