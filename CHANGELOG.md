@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - Unreleased
+### Changed
+
+- **File-first TUI demo.** The README and website hero now show the shorter terminal recording of memory browsing, grouped search, instructions, documentation, and masked security findings instead of the older docs-query demo.
+
+### Fixed
+
+- **Stale inspector after a memory or instructions search.** Rebuilding the result list queues highlight events for the rows it just replaced, and those arrived after the search had already inspected its first match, so the inspector kept showing a file from the previous page. Highlight events for rows that are no longer in the current result set are now ignored.
+- **Filter label on the Docs and Security tabs.** The filter dropdown kept showing "All harnesses" after switching panes, because Textual only repaints a `Select` label when its value changes and every mode reuses the `all` value. The Docs tab now shows "All sources" and the Security tab shows "All severities".
+
 ## [0.7.0] - 2026-07-19
 ### Added
 

@@ -528,8 +528,14 @@ class DocmancerTuiApp(App):
         if self._main_screen is None or not self._main_screen.is_attached:
             return
         item = getattr(event.item, "result", None)
-        if item is not None:
-            await self._inspect_result(item)
+        if item is None:
+            return
+        # Rebuilding the list queues highlight events for the rows it just replaced.
+        # Those arrive after the caller already inspected the new first result, so
+        # honouring them would put a file from the previous page in the inspector.
+        if not any(item is result for result in self.results):
+            return
+        await self._inspect_result(item)
 
     async def _inspect_result(self, item: dict) -> None:
         self._inspection_generation += 1

@@ -507,5 +507,43 @@ async def test_continuous_audit_skips_unchanged_source_contents(tmp_path):
     assert memory.preview_calls == 2
 
 
+class NarrowSearchBackend(FakeBackend):
+    """Search hits only a couple of files, so the first match is not row 0 of the browse page."""
+
+    async def search_memory_sources(self, text, *, kinds, page=1, page_size=50, **kwargs):
+        data = await super().search_memory_sources(text, kinds=kinds, page=page, page_size=page_size, **kwargs)
+        data["items"] = data["items"][40:42]
+        data["has_more"] = False
+        return data
+
+
+@pytest.mark.asyncio
+async def test_tui_search_inspects_first_match_after_a_previous_selection():
+    """Rebuilding the result list must not leave a previously listed file in the inspector."""
+    app = DocmancerTuiApp(backend=NarrowSearchBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        result_list = app.query_one("#result-list", ResultList)
+        inspector = app.query_one("#inspector", Inspector)
+
+        result_list.index = 7
+        await pilot.pause()
+        assert (inspector.document or {}).get("source_key") == "src-agent-memory-7"
+
+        app.query_one("#command-input").focus()
+        await pilot.pause()
+        for character in "Railway":
+            await pilot.press(character)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.results, "the search should return matches"
+        expected = app.results[0]["source"]["source_key"]
+        assert (inspector.document or {}).get("source_key") == expected
+        assert result_list.index == 0
+        assert result_list.selected_result is app.results[0]
+
+
 async def _confirmed():
     return True

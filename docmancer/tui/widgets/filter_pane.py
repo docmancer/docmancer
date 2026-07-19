@@ -5,6 +5,7 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.widgets import Label, Select, Static
+from textual.widgets._select import SelectCurrent
 
 
 class FilterPane(VerticalScroll):
@@ -46,15 +47,16 @@ class FilterPane(VerticalScroll):
         self.query_one("#time-filter", Select).display = not is_security
         self.query_one("#time-filter-label", Label).display = not is_security
         selector = self.query_one("#harness-filter", Select)
+        all_label = "All severities" if is_security else "All sources" if is_docs else "All harnesses"
         if is_security:
             selector.set_options(
-                [("All severities", "all"), ("Critical", "critical"), ("High", "high"), ("Medium", "medium"), ("Low", "low")]
+                [(all_label, "all"), ("Critical", "critical"), ("High", "high"), ("Medium", "medium"), ("Low", "low")]
             )
         elif is_docs:
             values = sorted(
                 {str(row.get("source") or row.get("docset") or "unknown") for row in sources}
             )
-            selector.set_options([("All sources", "all"), *[(value, value) for value in values]])
+            selector.set_options([(all_label, "all"), *[(value, value) for value in values]])
         else:
             kinds = {"agent-memory", "docmancer-memory", "team-memory"} if mode == "memory" else {"instructions", "rules"}
             counts: dict[str, int] = {}
@@ -64,9 +66,14 @@ class FilterPane(VerticalScroll):
                 harness = str(row.get("agent") or row.get("harness") or "unknown")
                 counts[harness] = counts.get(harness, 0) + 1
             selector.set_options(
-                [("All harnesses", "all"), *[(f"{name}  {counts[name]}", name) for name in sorted(counts)]]
+                [(all_label, "all"), *[(f"{name}  {counts[name]}", name) for name in sorted(counts)]]
             )
         selector.value = "all"
+        # Select repaints its collapsed label only when `value` actually changes,
+        # and every mode reuses "all", so the Security tab would otherwise keep
+        # showing the previous mode's wording ("All harnesses"). update() is what
+        # writes the visible text; assigning SelectCurrent.label alone does not.
+        selector.query_one(SelectCurrent).update(all_label)
 
     def values(self) -> dict:
         def selected(selector: str, default: str) -> str:

@@ -8,7 +8,7 @@
 
 [Install](#install) | [First run](#first-run) | [Hooks and audit](#make-cross-agent-memory-automatic) | [Work with memory](#work-with-memory) | [Wiki](./wiki/Home.md)
 
-<img src="readme-assets/demo.gif" alt="Local docs ingest and query demo" style="width: 67%; max-width: 720px; height: auto;" />
+<img src="readme-assets/tui-readme.gif" alt="Docmancer file-first terminal explorer browsing memory, instructions, documentation, and masked security findings" style="width: 92%; max-width: 1120px; height: auto;" />
 
 </div>
 
