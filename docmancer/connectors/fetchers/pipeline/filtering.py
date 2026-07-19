@@ -80,6 +80,19 @@ def normalize_url(url: str) -> str:
     return url
 
 
+def discovery_roots(url: str) -> list[str]:
+    """Return URL bases to probe for site-wide discovery files.
+
+    Users commonly pass a documentation page rather than the site root. Keep
+    the supplied URL first so path-mounted docs continue to work, then fall
+    back to the origin where ``llms.txt`` and sitemaps are normally published.
+    """
+    normalized = normalize_url(url).rstrip("/")
+    parsed = urlparse(normalized)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return list(dict.fromkeys((normalized, origin)))
+
+
 _ROOT_HINT_SEGMENTS = {"docs", "doc", "documentation", "api", "reference", "sdk", "cli"}
 
 

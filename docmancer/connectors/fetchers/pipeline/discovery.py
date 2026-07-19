@@ -24,7 +24,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 from docmancer.connectors.fetchers.pipeline.detection import Platform
-from docmancer.connectors.fetchers.pipeline.filtering import is_docs_url, normalize_url
+from docmancer.connectors.fetchers.pipeline.filtering import (
+    discovery_roots,
+    is_docs_url,
+    normalize_url,
+)
 from docmancer.connectors.fetchers.pipeline.robots import RobotsChecker
 from docmancer.connectors.fetchers.pipeline.sitemap import parse_sitemap
 from docmancer.core.html_utils import looks_like_html, extract_main_content
@@ -167,43 +171,45 @@ def _try_llms_full_txt(
     base_url: str, client: httpx.Client, platform: Platform, robots: RobotsChecker | None,
 ) -> list[DiscoveredUrl] | None:
     """Try fetching /llms-full.txt (entire docs in one file)."""
-    url = f"{base_url}/llms-full.txt"
-    try:
-        resp = client.get(url)
-    except httpx.RequestError:
-        return None
+    for root in discovery_roots(base_url):
+        url = f"{root}/llms-full.txt"
+        try:
+            resp = client.get(url)
+        except httpx.RequestError:
+            continue
 
-    if resp.status_code != 200 or not resp.text.strip():
-        return None
-    if not _is_valid_text_response(resp):
-        return None
-    if len(resp.text) < _LLMS_FULL_MIN_CHARS:
-        return None
+        if resp.status_code != 200 or not resp.text.strip():
+            continue
+        if not _is_valid_text_response(resp):
+            continue
+        if len(resp.text) < _LLMS_FULL_MIN_CHARS:
+            continue
 
-    # llms-full.txt is the content itself, not a list of URLs
-    return [DiscoveredUrl(url=url, strategy=DiscoveryStrategy.LLMS_FULL_TXT, content=resp.text)]
+        # llms-full.txt is the content itself, not a list of URLs
+        return [DiscoveredUrl(url=url, strategy=DiscoveryStrategy.LLMS_FULL_TXT, content=resp.text)]
+    return None
 
 
 def _try_llms_txt(
     base_url: str, client: httpx.Client, platform: Platform, robots: RobotsChecker | None,
 ) -> list[DiscoveredUrl] | None:
     """Try fetching /llms.txt (index of page URLs)."""
-    url = f"{base_url}/llms.txt"
-    try:
-        resp = client.get(url)
-    except httpx.RequestError:
-        return None
+    for root in discovery_roots(base_url):
+        url = f"{root}/llms.txt"
+        try:
+            resp = client.get(url)
+        except httpx.RequestError:
+            continue
 
-    if resp.status_code != 200 or not resp.text.strip():
-        return None
-    if not _is_valid_text_response(resp):
-        return None
+        if resp.status_code != 200 or not resp.text.strip():
+            continue
+        if not _is_valid_text_response(resp):
+            continue
 
-    urls = _parse_llms_txt(resp.text, base_url)
-    if not urls:
-        return None
-
-    return [DiscoveredUrl(url=u, strategy=DiscoveryStrategy.LLMS_TXT) for u in urls]
+        urls = _parse_llms_txt(resp.text, root)
+        if urls:
+            return [DiscoveredUrl(url=u, strategy=DiscoveryStrategy.LLMS_TXT) for u in urls]
+    return None
 
 
 def _parse_llms_txt(content: str, base_url: str) -> list[str]:
@@ -214,15 +220,17 @@ def _parse_llms_txt(content: str, base_url: str) -> list[str]:
     urls = []
     for line in content.splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
         # Markdown link: [Title](url)
-        match = re.search(r'\(([^)]+)\)', line)
-        if match:
-            candidate = match.group(1)
+        matches = re.findall(r'\(([^)]+)\)', line)
+        for candidate in matches:
             if candidate.startswith(("http://", "https://", "/")):
                 urls.append(_resolve(candidate, base_url))
-                continue
+        if matches:
+            continue
+        if line.startswith("#"):
+            continue
         # Bare URL
         if line.startswith(("http://", "https://")):
             urls.append(line.split()[0])

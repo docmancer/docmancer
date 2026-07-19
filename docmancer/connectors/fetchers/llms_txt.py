@@ -4,6 +4,7 @@ import logging
 import re
 import httpx
 
+from docmancer.connectors.fetchers.pipeline.filtering import discovery_roots
 from docmancer.connectors.fetchers.pipeline.redirect import RedirectTracker
 from docmancer.core.html_utils import extract_main_content, looks_like_html
 from docmancer.core.models import Document
@@ -43,22 +44,24 @@ class LlmsTxtFetcher:
             raise ValueError(f"Network error fetching {base_url!r}: {exc}") from exc
 
     def _try_llms_full_txt(self, base_url: str, client: httpx.Client) -> list[Document] | None:
-        url = f"{base_url}/llms-full.txt"
-        resp = client.get(url)
-        if resp.status_code != 200 or not resp.text.strip():
-            return None
-        if not self._is_valid_text_response(resp):
-            logger.warning("Skipped %s (response is HTML, not plain text)", url)
-            return None
-        return [Document(
-            source=url,
-            content=resp.text,
-            metadata={
-                "format": "markdown",
-                "fetch_method": "llms-full.txt",
-                "docset_root": base_url,
-            },
-        )]
+        for root in discovery_roots(base_url):
+            url = f"{root}/llms-full.txt"
+            resp = client.get(url)
+            if resp.status_code != 200 or not resp.text.strip():
+                continue
+            if not self._is_valid_text_response(resp):
+                logger.warning("Skipped %s (response is HTML, not plain text)", url)
+                continue
+            return [Document(
+                source=url,
+                content=resp.text,
+                metadata={
+                    "format": "markdown",
+                    "fetch_method": "llms-full.txt",
+                    "docset_root": root,
+                },
+            )]
+        return None
 
     @staticmethod
     def _is_valid_text_response(resp: httpx.Response) -> bool:
@@ -71,16 +74,23 @@ class LlmsTxtFetcher:
         return True
 
     def _try_llms_txt(self, base_url: str, client: httpx.Client) -> list[Document] | None:
-        url = f"{base_url}/llms.txt"
-        resp = client.get(url)
-        if resp.status_code != 200:
+        root = None
+        urls = []
+        for candidate_root in discovery_roots(base_url):
+            index_url = f"{candidate_root}/llms.txt"
+            resp = client.get(index_url)
+            if resp.status_code != 200 or not resp.text.strip():
+                continue
+            if not self._is_valid_text_response(resp):
+                logger.warning("Skipped %s (response is HTML, not plain text)", index_url)
+                continue
+            urls = self._parse_llms_txt(resp.text)
+            if urls:
+                root = candidate_root
+                break
+        if root is None:
             return None
-        if not self._is_valid_text_response(resp):
-            logger.warning("Skipped %s (response is HTML, not plain text)", url)
-            return None
-        if not resp.text.strip():
-            return None
-        urls = self._parse_llms_txt(resp.text)
+
         redirect_tracker = RedirectTracker()
         seen_final_urls: set[str] = set()
         documents = []
@@ -123,7 +133,7 @@ class LlmsTxtFetcher:
                         metadata={
                             "format": fmt,
                             "fetch_method": "llms.txt",
-                            "docset_root": base_url,
+                            "docset_root": root,
                         },
                     ))
                 else:
@@ -138,12 +148,14 @@ class LlmsTxtFetcher:
         urls = []
         for line in content.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
+            if not line:
                 continue
             # Markdown link: [Title](url)
-            match = re.search(r'\(https?://[^\)]+\)', line)
-            if match:
-                urls.append(match.group(0)[1:-1])  # strip parens
+            matches = re.findall(r'\((https?://[^\)]+)\)', line)
+            if matches:
+                urls.extend(matches)
+                continue
+            if line.startswith("#"):
                 continue
             # Bare URL
             if line.startswith("http://") or line.startswith("https://"):

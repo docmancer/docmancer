@@ -26,7 +26,16 @@ def test_setup_indexes_memory(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--index-memory"])
     assert r.exit_code == 0, r.output
-    assert "Indexed" in r.output
+    assert "Preparing the local configuration and SQLite index" in r.output
+    assert "Loading the local embedding model" in r.output
+    assert "Waiting for the local sync lock" in r.output
+    assert "Discovering memory and instruction files" in r.output
+    assert "Redacting and extracting" in r.output
+    assert "Rebuilding the local search index" in r.output
+    assert "Indexed 1 memory atoms" in r.output
+    assert "Installing integration for codex" in r.output
+    assert "Finished integration for codex" in r.output
+    assert "Setup complete" in r.output
     q = CliRunner().invoke(cli, ["memory", "query", "where do we deploy"])
     assert q.exit_code == 0, q.output
     assert "Railway" in q.output
@@ -36,7 +45,9 @@ def test_setup_dry_run_previews_only(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--dry-run"])
     assert r.exit_code == 0, r.output
-    assert "Would index" in r.output
+    assert "Discovering memory and instruction files" in r.output
+    assert "Would index 1 source file" in r.output
+    assert "Setup complete" in r.output
     assert not (tmp_path / "mem.db").exists()
 
 
@@ -45,4 +56,7 @@ def test_setup_no_index_memory_skips(tmp_path, monkeypatch):
     r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--no-index-memory"])
     assert r.exit_code == 0, r.output
     assert "Indexed" not in r.output
+    assert "Memory indexing skipped (--no-index-memory)" in r.output
+    assert "Installing integration for codex" in r.output
+    assert "Setup complete" in r.output
     assert not (tmp_path / "mem.db").exists()

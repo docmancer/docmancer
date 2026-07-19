@@ -11,11 +11,13 @@ import zipfile
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
+from time import monotonic
 
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.ui import (
+    LiveStatus,
     color_enabled,
     display_path,
     emit_brand_header,
@@ -2010,32 +2012,66 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
     Non-fatal: a machine with no agent memory is a valid, successful setup.
     """
     if not index_memory:
+        _emit_status_line("Memory indexing skipped (--no-index-memory).", state="info")
         return
 
     # Warm the default static model once so the first real query is instant.
     # model2vec only; never trigger the heavy FastEmbed path here.
     if config.embeddings.provider == "model2vec":
+        warmup_started = monotonic()
+        warmup_status = LiveStatus(started_at=warmup_started)
+        warmup_status.start("Loading the local embedding model (the first run can take a moment)...")
+        warmup_error: Exception | None = None
         try:
             from docmancer.embeddings import get_embeddings_provider
 
             get_embeddings_provider(config.embeddings).embed(["warmup"])
         except Exception as exc:  # noqa: BLE001
-            click.echo(f"Note: could not pre-warm the embedding model ({exc}).")
+            warmup_error = exc
+        finally:
+            warmup_status.stop()
+        if warmup_error is not None:
+            _emit_status_line(f"Could not pre-warm the embedding model ({warmup_error}).", state="warn")
+        else:
+            _emit_status_line(f"Local embedding model ready ({monotonic() - warmup_started:.1f}s).")
 
     try:
         from docmancer.memory import MemoryAgent
 
         agent = MemoryAgent()
         if dry_run:
-            click.echo(f"Would index {len(agent.preview())} memory entries from your agents.")
+            preview_started = monotonic()
+            preview_status = LiveStatus(started_at=preview_started)
+            preview_status.start("Discovering memory and instruction files...")
+            try:
+                source_count = len(agent.preview())
+            finally:
+                preview_status.stop()
+            _emit_status_line(
+                f"Would index {source_count:,} source file(s) from your agents "
+                f"({monotonic() - preview_started:.1f}s)."
+            )
             return
-        n = agent.sync()
+
+        sync_started = monotonic()
+        live_status = LiveStatus(started_at=sync_started)
+
+        def on_progress(stage: str, detail: str = "") -> None:
+            if stage == "done":
+                live_status.stop()
+                return
+            live_status.start(detail)
+
+        try:
+            n = agent.sync(progress_callback=on_progress)
+        finally:
+            live_status.stop()
     except Exception as exc:  # noqa: BLE001 - setup must stay non-fatal
-        click.echo(f"Note: could not index agent memory ({exc}).")
+        _emit_status_line(f"Could not index agent memory ({exc}).", state="warn")
         return
 
     if n:
-        _emit_status_line(f"Indexed {n} memory entries from your coding agents.")
+        _emit_status_line(f"Indexed {n:,} memory atoms ({monotonic() - sync_started:.1f}s).")
         click.echo('  Try: docmancer memory query "..."')
     else:
         _emit_status_line(
@@ -2074,9 +2110,15 @@ def setup_cmd(
     installs one or more agent skill/instruction files. Use `--agent` to pick
     explicit targets such as `codex`, `claude-code`, or `github-copilot`.
     """
-    config_path = _effective_config(config_path)
-    config_file = _ensure_config_and_db(config_path)
+    setup_started = monotonic()
     _emit_brand_header("docmancer setup", "Index your agents' memory, then connect your coding agents.")
+    config_status = LiveStatus(started_at=setup_started)
+    config_status.start("Preparing the local configuration and SQLite index...")
+    try:
+        config_path = _effective_config(config_path)
+        config_file = _ensure_config_and_db(config_path)
+    finally:
+        config_status.stop()
     _emit_status_line(f"Config: {display_path(config_file)}")
     config = _get_config_class().from_yaml(config_file)
     _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")
@@ -2094,17 +2136,27 @@ def setup_cmd(
             selected = ["codex"]
 
     if not selected:
+        _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
         _emit_next_step("Run `docmancer add <url-or-path>` to index documentation locally.")
         return
 
+    unique_targets = list(dict.fromkeys(selected))
+    _emit_status_line(
+        f"Connecting {len(unique_targets)} agent integration(s): {', '.join(unique_targets)}.",
+        state="info",
+    )
     global _INSTALL_QUIET
     _INSTALL_QUIET = True
     try:
         ctx = click.get_current_context()
-        for target in dict.fromkeys(selected):
+        for target in unique_targets:
+            target_started = monotonic()
+            _emit_status_line(f"Installing integration for {target}...", state="info")
             ctx.invoke(install_cmd, agent=target, project=(target == "github-copilot"), config_path=str(config_file))
+            _emit_status_line(f"Finished integration for {target} ({monotonic() - target_started:.1f}s).")
     finally:
         _INSTALL_QUIET = False
 
+    _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
     click.echo()
     _emit_next_step("Run `docmancer add <url-or-path>`, then `docmancer query \"your question\"`.")

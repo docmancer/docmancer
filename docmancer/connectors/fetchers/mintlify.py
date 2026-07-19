@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from docmancer.connectors.fetchers.llms_txt import LlmsTxtFetcher
+from docmancer.connectors.fetchers.pipeline.filtering import discovery_roots
 from docmancer.core.html_utils import extract_main_content
 from docmancer.core.models import Document
 
@@ -49,12 +50,17 @@ class MintlifyFetcher(LlmsTxtFetcher):
             raise ValueError(f"Network error fetching {base_url!r}: {exc}") from exc
 
     def _try_sitemap(self, base_url: str, client: httpx.Client) -> list[Document] | None:
-        resp = client.get(f"{base_url}/sitemap.xml")
-        if resp.status_code != 200 or not resp.text.strip():
-            return None
-
-        urls = self._parse_sitemap(resp.text)
-        if not urls:
+        root = None
+        urls = []
+        for candidate_root in discovery_roots(base_url):
+            resp = client.get(f"{candidate_root}/sitemap.xml")
+            if resp.status_code != 200 or not resp.text.strip():
+                continue
+            urls = self._parse_sitemap(resp.text)
+            if urls:
+                root = candidate_root
+                break
+        if root is None:
             return None
 
         documents = []
@@ -69,7 +75,7 @@ class MintlifyFetcher(LlmsTxtFetcher):
                         metadata={
                             "format": "markdown",
                             "fetch_method": "sitemap.xml",
-                            "docset_root": base_url,
+                            "docset_root": root,
                         },
                     ))
             else:

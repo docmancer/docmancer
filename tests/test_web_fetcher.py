@@ -81,6 +81,27 @@ class TestWebFetcherLlmsFull:
         assert docs[0].metadata["format"] == "markdown"
         assert "content_hash" in docs[0].metadata
 
+    def test_deep_page_falls_back_to_origin_llms_full_txt(self):
+        """A page URL should still find root-level site discovery files."""
+
+        def mock_get(url, **kwargs):
+            if url == "https://docs.example.com/guide/start/llms-full.txt":
+                return _mock_response("", status=404, content_type="text/plain")
+            if url == "https://docs.example.com/llms-full.txt":
+                return _mock_response(LLMS_FULL_CONTENT, content_type="text/plain")
+            if "robots.txt" in url:
+                return _mock_response("User-agent: *\nAllow: /", content_type="text/plain")
+            return _mock_response(HOMEPAGE_HTML)
+
+        mock_client = _make_mock_client(mock_get)
+
+        with patch("docmancer.connectors.fetchers.web.httpx.Client", return_value=mock_client):
+            docs = WebFetcher(max_pages=100).fetch("https://docs.example.com/guide/start")
+
+        assert len(docs) == 1
+        assert docs[0].source == "https://docs.example.com/llms-full.txt"
+        assert docs[0].metadata["docset_root"] == "https://docs.example.com"
+
 
 class TestWebFetcherDirectText:
     def test_direct_markdown_url_fetches_single_page(self):
@@ -175,6 +196,19 @@ class TestWebFetcherProtocol:
 
 
 class TestDiscovery:
+    def test_llms_txt_parses_multiple_links_on_one_line(self):
+        content = (
+            "## Docs - [One](https://docs.example.com/one.md): First. "
+            "- [Two](https://docs.example.com/two.md): Second."
+        )
+
+        from docmancer.connectors.fetchers.pipeline.discovery import _parse_llms_txt
+
+        assert _parse_llms_txt(content, "https://docs.example.com") == [
+            "https://docs.example.com/one.md",
+            "https://docs.example.com/two.md",
+        ]
+
     def test_discovery_merges_llms_sitemap_and_nav(self):
         sitemap = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

@@ -32,6 +32,7 @@ Set up the local index, then ask a question:
 
 ```bash
 docmancer setup
+docmancer memory sync
 docmancer memory query "what deployment decisions have we recorded?"
 ```
 
@@ -72,13 +73,13 @@ Team memory lives as editable Markdown under `.docmancer/memory/`. Docmancer nev
 
 These commands cover routine maintenance without changing source memory:
 
-| Command | Purpose |
-|---------|---------|
-| `docmancer memory sources` | Show harvested files, scopes, sizes, and atom counts. |
-| `docmancer memory sources --preview` | Re-harvest live sources without writing the index. |
-| `docmancer memory audit` | Find stale index state, likely secrets, duplicates, and poor-quality sources. |
-| `docmancer memory status` | Show index location and summary counts. |
-| `docmancer memory clear` | Delete the rebuildable index while preserving durable records and tombstones. |
+| Command                              | Purpose                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `docmancer memory sources`           | Show harvested files, scopes, sizes, and atom counts.                         |
+| `docmancer memory sources --preview` | Re-harvest live sources without writing the index.                            |
+| `docmancer memory audit`             | Find stale index state, likely secrets, duplicates, and poor-quality sources. |
+| `docmancer memory status`            | Show index location and summary counts.                                       |
+| `docmancer memory clear`             | Delete the rebuildable index while preserving durable records and tombstones. |
 
 For retrieval regression testing, run the checked-in sanitised corpus with `docmancer memory eval --dataset tests/fixtures/memory-eval-sanitized-real.jsonl --gate`. Query and hook recall share a benchmark-calibrated `0.05` relevance floor; use `--min-score` when deliberately testing another threshold.
 
@@ -162,13 +163,13 @@ There is no telemetry or phone-home. Every docs section is also written to `~/.d
 
 The wiki is the authoritative reference for everything else. Pick a page based on what you need:
 
-| Page | When to read it |
-|------|-----------------|
-| **[Commands](./wiki/Commands.md)** | Complete CLI and maintenance reference |
-| **[Configuration](./wiki/Configuration.md)** | All YAML keys, env vars, and the API-key reference |
-| **[Architecture](./wiki/Architecture.md)** | How the memory harness, ingest, and hybrid retrieval work |
-| **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered |
-| **[Install Targets](./wiki/Install-Targets.md)** | Where each agent's skill file lands |
-| **[Troubleshooting](./wiki/Troubleshooting.md)** | Common errors and fixes |
+| Page                                                 | When to read it                                           |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| **[Commands](./wiki/Commands.md)**                   | Complete CLI and maintenance reference                    |
+| **[Configuration](./wiki/Configuration.md)**         | All YAML keys, env vars, and the API-key reference        |
+| **[Architecture](./wiki/Architecture.md)**           | How the memory harness, ingest, and hybrid retrieval work |
+| **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered           |
+| **[Install Targets](./wiki/Install-Targets.md)**     | Where each agent's skill file lands                       |
+| **[Troubleshooting](./wiki/Troubleshooting.md)**     | Common errors and fixes                                   |
 
 [Wiki home](./wiki/Home.md) | [Changelog](./CHANGELOG.md) | [PyPI](https://pypi.org/project/docmancer/)

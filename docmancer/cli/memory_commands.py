@@ -20,6 +20,7 @@ import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.ui import (
+    LiveStatus,
     TAGLINE,
     display_path,
     emit_brand_header,
@@ -305,15 +306,18 @@ def sync(recreate: bool, dry_run: bool, include: tuple[str, ...], exclude: tuple
         emit_status_line("Secrets are redacted on index. Run without --dry-run to write.", state="info")
         return
     started = monotonic()
-    seen_stages: set[str] = set()
+    live_status = LiveStatus(started_at=started)
 
     def on_progress(stage: str, detail: str = "") -> None:
-        if stage in seen_stages or stage == "done":
+        if stage == "done":
+            live_status.stop()
             return
-        seen_stages.add(stage)
-        emit_status_line(f"{detail} ({monotonic() - started:.1f}s)", state="info")
+        live_status.start(detail)
 
-    n = agent.sync(recreate=recreate, progress_callback=on_progress)
+    try:
+        n = agent.sync(recreate=recreate, progress_callback=on_progress)
+    finally:
+        live_status.stop()
     if not n:
         emit_status_line(
             "No agent memory found yet. Once your agents write memory, run: docmancer memory sync",

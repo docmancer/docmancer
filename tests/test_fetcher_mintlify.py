@@ -48,6 +48,24 @@ class TestMintlifyFetcherLlmsFullTxt:
         assert docs[0].content == content
         assert docs[0].metadata["fetch_method"] == "llms-full.txt"
 
+    def test_deep_page_falls_back_to_origin_llms_full_txt(self):
+        content = "# Welcome\n\nThis is the full docs."
+        responses = {
+            "https://docs.example.com/v4/overview/llms-full.txt": _make_response(404),
+            "https://docs.example.com/llms-full.txt": _make_response(200, content),
+        }
+        mock_client = MagicMock()
+        mock_client.get.side_effect = lambda url: responses[url]
+        mock_client.__enter__ = lambda s: s
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            docs = MintlifyFetcher().fetch("https://docs.example.com/v4/overview")
+
+        assert len(docs) == 1
+        assert docs[0].source == "https://docs.example.com/llms-full.txt"
+        assert docs[0].metadata["docset_root"] == "https://docs.example.com"
+
 
 class TestMintlifyFetcherLlmsTxt:
     def test_fetch_falls_back_to_llms_txt(self):
@@ -166,3 +184,16 @@ class TestParseSitemap:
 
     def test_parse_sitemap_invalid_xml(self):
         assert MintlifyFetcher._parse_sitemap("not xml at all") == []
+
+
+class TestParseLlmsTxt:
+    def test_multiple_markdown_links_on_one_line(self):
+        content = (
+            "## Docs - [One](https://docs.example.com/one.md): First. "
+            "- [Two](https://docs.example.com/two.md): Second."
+        )
+
+        assert MintlifyFetcher._parse_llms_txt(content) == [
+            "https://docs.example.com/one.md",
+            "https://docs.example.com/two.md",
+        ]

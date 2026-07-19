@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.17] - Unreleased
+### Changed
+
+- **Long-running CLI work stays visibly active.** `docmancer setup` and `docmancer memory sync` now show continuously updating elapsed timers and an animated loader on interactive terminals, with stable progress lines for logs and piped output. Setup also reports configuration, model warmup, memory indexing, each agent integration, and total elapsed time.
+
+### Fixed
+
+- **Deep documentation URLs find site-wide indexes.** GitBook, Mintlify, and generic web discovery now try the supplied path first and then the site origin for `llms-full.txt`, `llms.txt`, and sitemap discovery, so adding an individual documentation page can still index the complete site.
+- **Compact `llms.txt` indexes keep every link.** Discovery now extracts multiple Markdown links from the same line instead of retaining only the first one.
+
 ## [0.6.16] - 2026-07-19
 ### Changed
 
