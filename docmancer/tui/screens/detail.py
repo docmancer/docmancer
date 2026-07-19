@@ -4,6 +4,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
+from docmancer.tui.presentation import source_display_location, source_display_title
+
 
 class DetailScreen(ModalScreen[None]):
     BINDINGS = [("escape", "dismiss", "Close")]
@@ -43,7 +45,7 @@ class SourceViewerScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="modal-card source-viewer-card"):
-            yield Static(str(self.document.get("title") or "Indexed memory file"), classes="modal-title")
+            yield Static(source_display_title(self.document, limit=100), classes="modal-title")
             yield Static("", id="source-viewer-meta")
             yield TextArea(
                 str(self.document.get("content") or ""),
@@ -59,7 +61,7 @@ class SourceViewerScreen(ModalScreen[None]):
         self._show_match()
 
     def _show_match(self) -> None:
-        label = f"Indexed copy  |  {self.document.get('path') or ''}"
+        label = f"Indexed copy  |  {source_display_location(str(self.document.get('path') or ''), limit=140)}"
         area = self.query_one("#source-viewer-text", TextArea)
         if self.matches:
             match = self.matches[self.match_index]

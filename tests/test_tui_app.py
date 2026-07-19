@@ -3,10 +3,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from textual.app import App
+from textual.widgets import OptionList, Tree
 
 from docmancer.harness.base import MemoryEntry
 from docmancer.tui.app import DocmancerTuiApp
 from docmancer.tui.backend import TuiBackend
+from docmancer.tui.presentation import source_display_location, source_display_title
 from docmancer.tui.screens.audit import AuditScreen
 from docmancer.tui.screens.cloud import ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen
 from docmancer.tui.screens.detail import DetailScreen, SourceViewerScreen
@@ -16,6 +18,17 @@ from docmancer.tui.widgets import Inspector, ResultList
 
 
 NOW = datetime.now(timezone.utc)
+
+
+def test_codex_rollout_provenance_is_human_readable():
+    path = "/Users/example/.codex/memories/rollout_summaries/2026-07-18T21-16-46-eUW9-docmancer_duplicate_memory_fix_and_readme_streamline.md"
+    source_row = {
+        "path": path,
+        "title": "rollout_summaries/2026-07-18T21-16-46-eUW9-docmancer_duplicate_memory_fix_and_readme_streamline",
+    }
+
+    assert source_display_title(source_row) == "Docmancer duplicate memory fix and README streamline"
+    assert source_display_location(path) == "Codex rollout summary · 18 Jul 2026, 21:16 UTC"
 
 
 def source(index: int, *, kind: str = "agent-memory", harness: str | None = None, scope: str | None = None, content: str | None = None) -> dict:
@@ -61,7 +74,24 @@ DOC_RESULT = {
     "source": "https://docs.pytest.org/fixtures.html",
     "chunk_index": 2,
     "score": 0.88,
-    "metadata": {"title": "Fixtures", "heading": "How fixtures work"},
+    "metadata": {"title": "Fixtures", "heading": "How fixtures work", "ingested_at": NOW.isoformat()},
+}
+
+DOC_SOURCE_DETAIL = {
+    "source": "https://docs.pytest.org",
+    "pages": [
+        {
+            "source": "https://docs.pytest.org/fixtures.html",
+            "title": "Fixtures",
+            "format": "markdown",
+            "ingested_at": NOW.isoformat(),
+            "content": "# Fixtures\n\nUse fixtures to provide reusable test state.\n\n## Scope\n\nFixtures can be scoped.",
+            "sections": [
+                {"chunk_index": 0, "title": "Fixtures", "level": 1, "text": "Use fixtures to provide reusable test state."},
+                {"chunk_index": 1, "title": "Scope", "level": 2, "text": "Fixtures can be scoped."},
+            ],
+        }
+    ],
 }
 
 
@@ -138,11 +168,14 @@ class FakeBackend:
         return next((dict(item) for item in ALL_SOURCES if item["source_key"] == source_key), None)
 
     async def docs_sources(self):
-        return [{"source": "https://docs.pytest.org", "pages": 10, "sections": 40}]
+        return [{"source": "https://docs.pytest.org", "pages": 10, "sections": 40, "ingested_at": NOW.isoformat(), "formats": ["markdown"]}]
 
     async def query_docs(self, text, **kwargs):
         self.last_latency = 0.02
         return [DOC_RESULT] if "fixture" in text else []
+
+    async def get_docs_source(self, source_root):
+        return DOC_SOURCE_DETAIL if source_root == "https://docs.pytest.org" else None
 
     async def status(self):
         return {"project": self.project_path, "memory": {"atoms": 112, "sources": 56, "db_path": "/tmp/memory.db"}, "docs": {"sections_count": 1}, "last_sync": {}}
@@ -188,11 +221,50 @@ class FakeBackend:
         return None
 
 
+class SecurityBackend(FakeBackend):
+    def __init__(self):
+        super().__init__()
+        self.audit_calls = 0
+
+    async def audit(self):
+        self.audit_calls += 1
+        occurrence = {
+            "type": "github-token",
+            "severity": "high",
+            "line": 12,
+            "source_path": "/tmp/memory.md",
+            "agent": "codex",
+            "scope": "global:codex",
+            "title": "memory",
+            "masked_excerpt": "ghp_…abcd",
+            "fingerprint": "masked-fingerprint",
+        }
+        finding = {
+            "fingerprint": "masked-fingerprint",
+            "type": "github-token",
+            "severity": "high",
+            "occurrences": [occurrence],
+            "occurrence_count": 1,
+        }
+        return {
+            "unique_secret_count": 1,
+            "finding_count": 1,
+            "findings": [finding],
+            "by_severity": {"critical": [], "high": [finding], "medium": [], "low": []},
+        }
+
+
 @pytest.mark.asyncio
 async def test_tui_browses_paginated_files_and_click_does_not_open_modal():
     app = DocmancerTuiApp(backend=FakeBackend())
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
+        tabs = app.query_one("#mode-tabs")
+        memory_tab = app.query_one("#memory")
+        docs_tab = app.query_one("#docs")
+        assert tabs.active == "memory"
+        assert memory_tab.has_class("-active")
+        assert memory_tab.styles.background != docs_tab.styles.background
         assert len(app.results) == 50
         assert app.total_pages == 2
         assert len(app.query_one("#source-text").text) == len(MEMORY_SOURCES[0]["content"])
@@ -225,6 +297,82 @@ async def test_tui_pagination_tabs_and_filters_cover_the_full_file_corpus():
         await pilot.pause(0.2)
         assert app.results
         assert all(item["harness"] == "codex" for item in app.results)
+
+
+@pytest.mark.asyncio
+async def test_slash_opens_all_commands_and_wide_layout_uses_20_30_50_columns():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(200, 45)) as pilot:
+        await pilot.pause()
+        command_input = app.query_one("#command-input")
+        command_input.value = "/"
+        await pilot.pause()
+
+        menu = app.query_one("#command-menu", OptionList)
+        assert menu.has_class("visible")
+        assert menu.option_count == len(app.registry.commands)
+
+        filter_width = app.query_one("#filter-pane").size.width
+        results_width = app.query_one("#results-pane").size.width
+        inspector_width = app.query_one("#inspector").size.width
+        total = filter_width + results_width + inspector_width
+        assert filter_width / total == pytest.approx(0.20, abs=0.02)
+        assert results_width / total == pytest.approx(0.30, abs=0.02)
+        assert inspector_width / total == pytest.approx(0.50, abs=0.02)
+
+
+@pytest.mark.asyncio
+async def test_updated_filter_and_docs_tab_browse_without_a_query():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#time-filter").value = "day"
+        await pilot.pause(0.2)
+        assert app.results
+        assert all(datetime.fromisoformat(item["updated_at"]) >= datetime.now(timezone.utc) - timedelta(days=1) for item in app.results)
+
+        await app.switch_mode("docs")
+        await pilot.pause()
+        assert len(app.results) == 1
+        assert app.results[0]["view_kind"] == "docs-source"
+        assert str(app.query_one("#inspector-title").render()) == "DOCUMENTATION SOURCE"
+        tree = app.query_one("#docs-outline", Tree)
+        assert tree.display
+        assert len(tree.root.children) == 1
+        assert len(tree.root.children[0].children) == 2
+        assert app.query_one("#source-text").text.startswith("# Fixtures")
+
+        section = tree.root.children[0].children[1]
+        tree.post_message(Tree.NodeSelected(section))
+        await pilot.pause()
+        assert app.query_one("#source-text").text == "Fixtures can be scoped."
+
+        await app.run_query("fixture")
+        assert app.results[0]["source"].startswith("https://docs.pytest.org")
+
+
+@pytest.mark.asyncio
+async def test_security_tab_runs_audit_automatically_and_filters_masked_findings():
+    backend = SecurityBackend()
+    app = DocmancerTuiApp(backend=backend)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        assert backend.audit_calls == 1
+        assert "Security 1" in str(app.query_one("#security").label)
+
+        await app.switch_mode("security")
+        await pilot.pause()
+        assert app.results[0]["view_kind"] == "security-finding"
+        assert app.results[0]["occurrences"][0]["masked_excerpt"] == "ghp_…abcd"
+        assert str(app.query_one("#inspector-title").render()) == "SECURITY AUDIT"
+
+        app.query_one("#harness-filter").value = "critical"
+        await pilot.pause(0.2)
+        assert app.results == []
+
+        app.query_one("#harness-filter").value = "high"
+        await pilot.pause(0.2)
+        assert len(app.results) == 1
 
 
 @pytest.mark.asyncio

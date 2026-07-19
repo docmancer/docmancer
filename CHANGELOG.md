@@ -7,11 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.7.0] - Unreleased
 ### Added
 
-- **Interactive local terminal explorer.** Running bare `docmancer` in a supported interactive terminal now opens a Textual-based three-pane explorer with separate Memory, Instructions & Rules, and Docs modes, plain-text search, source filters, responsive layouts, and an explicit `docmancer tui` alias. Redirected and headless invocation continues to print normal CLI help without starting Textual.
+- **Interactive local terminal explorer.** Running bare `docmancer` in a supported interactive terminal now opens a Textual-based explorer with separate Memory, Instructions & Rules, Docs, and Security modes, plain-text search, source filters, responsive layouts, and an explicit `docmancer tui` alias. Redirected and headless invocation continues to print normal CLI help without starting Textual.
 - **File-first memory browsing.** The TUI paginates complete indexed source files, shows their full privacy-cleaned text in a lazy line-numbered viewer, groups search matches by file, jumps to matching passages, and keeps atom IDs out of the normal human browse flow.
 - **In-process memory operations.** The TUI exposes local slash commands for search, sync progress, sources, status, masked secret audit, add, show, edit, forget, promote, retrieval mode, project scope, doctor checks, clear, and help. Destructive actions require confirmation, and no command shells out to the Docmancer CLI.
 - **Writable record editing.** `MemoryAgent.edit_record` rewrites user-owned Markdown records while preserving their stable identity and rebuilds the local index so retrieval reflects the new text. Harvested memory remains read-only.
 - **Shared audit results.** The CLI and TUI now use the same presentation-free secret-audit helper, which returns masked findings grouped by severity and fingerprint.
+- **Automatic Security tab.** The TUI runs the local masked audit during startup, shows its current risk count in a dedicated tab, and provides severity filtering, finding search, pagination, and masked per-source evidence. Sync and `/audit` refresh the same report.
+- **Expandable documentation inspection.** Selecting a documentation source now opens a page-and-section tree in the inspector. Page nodes show the complete cleaned indexed page, while section nodes provide focused passage inspection without mislabelling documentation chunks as memory atoms.
 - **Encrypted cloud protocol client.** Added Protocol v1 canonical record revisions, portable project IDs, content-free deletion revisions, PyNaCl envelope encryption and signatures, OS-keyring secret storage, a durable ciphertext outbox, replay-safe cursors, explicit conflicts, recovery wrapping, snapshots, rotation helpers, entitlement caching, and privacy-preserving audit metadata.
 - **Optional cloud surfaces.** Added `docmancer cloud` account, sync, status, device, recovery, conflict, export, and remote-deletion commands; explicit MCP status, sync, and conflict tools; Git team import and export; and TUI cloud status, conflict, device, recovery, audit, and promotion-review surfaces. All local memory features continue to work without cloud configuration or entitlement.
 
@@ -26,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **Empty TUI searches are recoverable.** Pressing Enter in an empty search box or running `/reset` now restores the full memory-file browse list and resets scope, harness, and time filters. Empty result states explain whether the search or filters excluded indexed files.
 - **TUI filters cover the complete corpus.** Harness, scope, project, source kind, and date restrictions now apply before ranking and pagination instead of filtering a fixed 30-result slice. The stale atom cache is invalidated so scope metadata is rebuilt correctly.
+- **Codex provenance stays readable and in sync.** Generated rollout filenames now render as human titles with compact dates instead of long machine paths, home-directory provenance is shortened without changing the Open Original target, and stale asynchronous inspections can no longer overwrite the currently highlighted file.
 
 ## [0.6.17] - 2026-07-19
 ### Changed

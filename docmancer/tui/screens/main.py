@@ -2,7 +2,7 @@
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Input, Select, Static, Tab, Tabs
+from textual.widgets import Button, Input, OptionList, Select, Static, Tab, Tabs
 
 from docmancer.tui.widgets import FilterPane, Inspector, ResultList, StatusBar
 
@@ -15,6 +15,7 @@ class MainScreen(Screen):
                     Tab("Memory 0", id="memory"),
                     Tab("Instructions & Rules 0", id="instructions"),
                     Tab("Docs 0", id="docs"),
+                    Tab("Security …", id="security"),
                     active="memory",
                     id="mode-tabs",
                 )
@@ -29,5 +30,6 @@ class MainScreen(Screen):
                         yield Static("Page 1 of 1", id="page-label")
                         yield Button("Next", id="next-page")
                 yield Inspector(id="inspector")
+            yield OptionList(id="command-menu")
             yield Input(placeholder="Search memory or type / for commands...", id="command-input")
             yield StatusBar(id="status-bar")

@@ -875,6 +875,64 @@ class SQLiteStore:
                     """
                 )
             ]
+
+    def get_grouped_source_documents(self, source_root: str) -> dict | None:
+        """Return complete indexed pages and their section outline for a docset."""
+        with self._connect() as conn:
+            source_rows = conn.execute(
+                """
+                SELECT id, source, content, metadata_json, ingested_at
+                FROM sources
+                WHERE COALESCE(NULLIF(docset_root, ''), source) = ?
+                ORDER BY source
+                """,
+                (source_root,),
+            ).fetchall()
+            if not source_rows:
+                return None
+            source_ids = [int(row["id"]) for row in source_rows]
+            placeholders = ",".join("?" for _ in source_ids)
+            section_rows = conn.execute(
+                f"""
+                SELECT source_id, chunk_index, title, level, text, anchor, format
+                FROM sections
+                WHERE source_id IN ({placeholders})
+                ORDER BY source_id, chunk_index
+                """,
+                source_ids,
+            ).fetchall()
+
+        sections_by_source: dict[int, list[dict]] = {source_id: [] for source_id in source_ids}
+        for row in section_rows:
+            sections_by_source[int(row["source_id"])].append(
+                {
+                    "chunk_index": int(row["chunk_index"]),
+                    "title": str(row["title"] or "Section"),
+                    "level": int(row["level"] or 0),
+                    "text": str(row["text"] or ""),
+                    "anchor": str(row["anchor"] or ""),
+                    "format": str(row["format"] or ""),
+                }
+            )
+
+        pages = []
+        for row in source_rows:
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (json.JSONDecodeError, ValueError):
+                metadata = {}
+            pages.append(
+                {
+                    "source": str(row["source"]),
+                    "title": str(metadata.get("title") or Path(str(row["source"])).name or row["source"]),
+                    "format": str(metadata.get("format") or "unknown"),
+                    "ingested_at": str(row["ingested_at"] or ""),
+                    "content": str(row["content"] or ""),
+                    "sections": sections_by_source[int(row["id"])],
+                }
+            )
+        return {"source": source_root, "pages": pages}
+
     def list_sources(self) -> list[str]:
         return [entry["source"] for entry in self.list_sources_with_dates()]
 

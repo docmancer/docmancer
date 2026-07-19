@@ -10,7 +10,8 @@ from time import monotonic
 from textual import events
 from textual.app import App
 from textual.binding import Binding
-from textual.widgets import Button, Input, ListView, Select, Static, Tab, Tabs
+from textual.widgets import Button, Input, ListView, OptionList, Select, Static, Tab, Tabs
+from textual.widgets.option_list import Option
 
 from docmancer.memory import SyncInProgressError
 from docmancer.tui.backend import TuiBackend
@@ -66,7 +67,8 @@ class DocmancerTuiApp(App):
         self.project_path = self.backend.project_path
         self.results: list[dict] = []
         self.all_results: list[dict] = []
-        self.source_rows: dict[str, list[dict]] = {"memory": [], "instructions": [], "docs": []}
+        self.source_rows: dict[str, list[dict]] = {"memory": [], "instructions": [], "docs": [], "security": []}
+        self.security_report: dict | None = None
         self.last_query = ""
         self.current_page = 1
         self.page_size = 50
@@ -77,6 +79,7 @@ class DocmancerTuiApp(App):
         self._pending_query: tuple[str, str | None, str | None] | None = None
         self.cloud_label = "off"
         self.cloud_risk_count = 0
+        self._inspection_generation = 0
 
     async def on_mount(self) -> None:
         await self.push_screen("main")
@@ -116,6 +119,7 @@ class DocmancerTuiApp(App):
             project_selector.value = "all"
             self.query_one("#command-input", Input).focus()
             await self._load_source_page()
+            await self._refresh_security_report()
             if self._pending_query is not None:
                 query, mode, expand = self._pending_query
                 self._pending_query = None
@@ -135,19 +139,20 @@ class DocmancerTuiApp(App):
         self.query_one("#filter-pane", FilterPane).reset()
         if self.mode in {"memory", "instructions"}:
             await self._load_source_page()
+        elif self.mode == "security":
+            self.last_query = ""
+            await self._load_security_page()
         else:
-            self.all_results = []
-            self.results = []
-            self.query_one("#result-list", ResultList).set_results([])
-            self.query_one("#inspector", Inspector).clear("docs")
+            await self._load_docs_page()
         self.query_one("#command-input", Input).clear()
+        self._hide_command_menu()
 
     async def _refresh_sources(self) -> None:
         memory_rows, docs_rows = await asyncio.gather(
             self.backend.memory_sources(live_preview=False),
             self.backend.docs_sources(),
         )
-        self.source_rows = {"memory": memory_rows, "instructions": memory_rows, "docs": docs_rows}
+        self.source_rows = {"memory": memory_rows, "instructions": memory_rows, "docs": docs_rows, "security": []}
         self.query_one("#filter-pane", FilterPane).set_mode(self.mode, self.source_rows[self.mode])
 
     def _set_counts(self, counts: dict) -> None:
@@ -208,6 +213,96 @@ class DocmancerTuiApp(App):
             message = "No matching files. Reset the filters or run `/reset`." if self.last_query else "No indexed files match these filters."
             inspector.clear(self.mode, message)
 
+    async def _load_docs_page(self) -> None:
+        """Browse documentation roots when there is no section query."""
+        filters = self.query_one("#filter-pane", FilterPane).values()
+        rows = list(self.source_rows["docs"])
+        if filters["harness"] != "all":
+            rows = [row for row in rows if str(row.get("source") or "") == filters["harness"]]
+        if filters["time"] != "any":
+            cutoff = datetime.now(timezone.utc) - timedelta(days={"day": 1, "week": 7, "month": 30}[filters["time"]])
+            rows = [row for row in rows if self._timestamp(row) is not None and self._timestamp(row) >= cutoff]
+        total = len(rows)
+        self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
+        self.current_page = min(self.current_page, self.total_pages)
+        start_index = (self.current_page - 1) * self.page_size
+        page_rows = rows[start_index : start_index + self.page_size]
+        self.has_more = self.current_page < self.total_pages
+        self.results = [dict(row, view_kind="docs-source") for row in page_rows]
+        self.all_results = list(self.results)
+        self.query_one("#result-list", ResultList).set_results(self.results)
+        start = 0 if not total else start_index + 1
+        end = min(total, start_index + self.page_size)
+        self.query_one("#results-title", Static).update(f"DOCUMENTATION SOURCES  {start}-{end} of {total:,}")
+        self._update_pagination()
+        inspector = self.query_one("#inspector", Inspector)
+        if self.results:
+            await self._inspect_result(self.results[0])
+        else:
+            inspector.clear(
+                "docs",
+                "# No documentation indexed\n\nIndex local documentation with `docmancer ingest ./docs`.\n\nAdd a documentation website with `docmancer add https://docs.example.com`.",
+            )
+
+    async def _refresh_security_report(self) -> None:
+        """Run the local masked audit and update the persistent Security tab."""
+        try:
+            self.security_report = await self.backend.audit()
+        except Exception as exc:  # noqa: BLE001 - audit failure must not break browsing
+            self.security_report = {"error": str(exc), "findings": [], "unique_secret_count": 0, "finding_count": 0}
+        tab = self.query_one("#mode-tabs", Tabs).query_one("#security", Tab)
+        error = self.security_report.get("error")
+        count = int(self.security_report.get("unique_secret_count") or 0)
+        tab.label = "Security !" if error else f"Security {count:,}" if count else "Security ✓"
+        tab.set_class(bool(count or error), "risk")
+        if self.mode == "security":
+            await self._load_security_page()
+
+    async def _load_security_page(self) -> None:
+        report = self.security_report or {"findings": [], "unique_secret_count": 0, "finding_count": 0}
+        findings = list(report.get("findings") or [])
+        severity = self.query_one("#filter-pane", FilterPane).values()["harness"]
+        if severity != "all":
+            findings = [item for item in findings if item.get("severity") == severity]
+        if self.last_query:
+            query = self.last_query.casefold()
+            findings = [
+                item
+                for item in findings
+                if query
+                in " ".join(
+                    [
+                        str(item.get("type") or ""),
+                        str(item.get("severity") or ""),
+                        *[
+                            " ".join(
+                                str(occurrence.get(key) or "")
+                                for key in ("source_path", "agent", "scope", "title", "masked_excerpt")
+                            )
+                            for occurrence in (item.get("occurrences") or [])
+                        ],
+                    ]
+                ).casefold()
+            ]
+        total = len(findings)
+        self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
+        self.current_page = min(self.current_page, self.total_pages)
+        start_index = (self.current_page - 1) * self.page_size
+        page_rows = findings[start_index : start_index + self.page_size]
+        self.has_more = self.current_page < self.total_pages
+        self.results = [dict(item, view_kind="security-finding") for item in page_rows]
+        self.all_results = list(self.results)
+        self.query_one("#result-list", ResultList).set_results(self.results)
+        start = 0 if not total else start_index + 1
+        end = min(total, start_index + self.page_size)
+        self.query_one("#results-title", Static).update(f"SECURITY FINDINGS  {start}-{end} of {total:,}")
+        self._update_pagination()
+        inspector = self.query_one("#inspector", Inspector)
+        if self.results:
+            inspector.show_security_finding(self.results[0])
+        else:
+            inspector.show_security_summary(report)
+
     def _update_pagination(self) -> None:
         self.query_one("#previous-page", Button).disabled = self.current_page <= 1
         self.query_one("#next-page", Button).disabled = not self.has_more
@@ -262,6 +357,7 @@ class DocmancerTuiApp(App):
             self.notify("Search and filters reset.")
             return
         event.input.clear()
+        self._hide_command_menu()
         if line.startswith("/"):
             await self.registry.dispatch(self, line)
         else:
@@ -280,13 +376,45 @@ class DocmancerTuiApp(App):
         try:
             if self.mode in {"memory", "instructions"}:
                 await self._load_source_page()
-            else:
+            elif self.mode == "docs":
                 self.all_results = await self.backend.query_docs(query, expand=expand)
                 self._apply_docs_filters()
+            else:
+                await self._load_security_page()
             self._update_status()
         except Exception as exc:  # noqa: BLE001
             self.notify(str(exc), severity="error", timeout=8)
             self.query_one("#results-title", Static).update("MEMORY FILES" if self.mode == "memory" else "MATCHING SECTIONS")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-input":
+            return
+        value = event.value
+        if not value.startswith("/") or any(character.isspace() for character in value):
+            self._hide_command_menu()
+            return
+        prefix = value[1:].casefold()
+        specs = [spec for spec in self.registry.commands if spec.name.startswith(prefix)]
+        menu = self.query_one("#command-menu", OptionList)
+        menu.set_options(
+            [Option(f"{spec.usage}  [dim]{spec.description}[/dim]", id=spec.name) for spec in specs]
+        )
+        menu.set_class(bool(specs), "visible")
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "command-menu" or not event.option.id:
+            return
+        spec = next((item for item in self.registry.commands if item.name == event.option.id), None)
+        if spec is None:
+            return
+        input_widget = self.query_one("#command-input", Input)
+        input_widget.value = f"/{spec.name}" + (" " if spec.usage != f"/{spec.name}" else "")
+        input_widget.focus()
+        input_widget.cursor_position = len(input_widget.value)
+        self._hide_command_menu()
+
+    def _hide_command_menu(self) -> None:
+        self.query_one("#command-menu", OptionList).remove_class("visible")
 
     def _apply_docs_filters(self) -> None:
         filters = self.query_one("#filter-pane", FilterPane).values()
@@ -296,7 +424,7 @@ class DocmancerTuiApp(App):
         if filters["time"] != "any":
             days = {"day": 1, "week": 7, "month": 30}[filters["time"]]
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            results = [item for item in results if self._timestamp(item) is None or self._timestamp(item) >= cutoff]
+            results = [item for item in results if self._timestamp(item) is not None and self._timestamp(item) >= cutoff]
         self.results = results
         self.query_one("#result-list", ResultList).set_results(results)
         title = "MATCHING SECTIONS"
@@ -310,7 +438,10 @@ class DocmancerTuiApp(App):
     @staticmethod
     def _timestamp(item: dict) -> datetime | None:
         raw = (
-            (item.get("metadata") or {}).get("timestamp")
+            item.get("updated_at")
+            or item.get("timestamp")
+            or item.get("ingested_at")
+            or (item.get("metadata") or {}).get("timestamp")
             or (item.get("metadata") or {}).get("updated_at")
             or (item.get("metadata") or {}).get("ingested_at")
         )
@@ -336,30 +467,39 @@ class DocmancerTuiApp(App):
         self.has_more = False
         self.query_one("#filter-pane", FilterPane).set_mode(mode, self.source_rows[mode])
         self.query_one("#result-list", ResultList).set_results([])
-        titles = {"memory": "MEMORY FILES", "instructions": "INSTRUCTION & RULE FILES", "docs": "MATCHING SECTIONS"}
+        titles = {
+            "memory": "MEMORY FILES",
+            "instructions": "INSTRUCTION & RULE FILES",
+            "docs": "DOCUMENTATION SOURCES",
+            "security": "SECURITY FINDINGS",
+        }
         self.query_one("#results-title", Static).update(titles[mode])
         input_widget = self.query_one("#command-input", Input)
-        noun = {"memory": "memory files", "instructions": "instructions and rules", "docs": "indexed documentation"}[mode]
+        noun = {
+            "memory": "memory files",
+            "instructions": "instructions and rules",
+            "docs": "indexed documentation",
+            "security": "masked security findings",
+        }[mode]
         input_widget.placeholder = f"Search {noun} or type / for commands..."
-        if mode == "docs" and not self.source_rows["docs"]:
-            self.query_one("#inspector", Inspector).clear("docs",
-                "# No documentation indexed\n\nIndex local documentation with `docmancer ingest ./docs`.\n\nAdd a documentation website with `docmancer add https://docs.example.com`."
-            )
-        elif mode in {"memory", "instructions"}:
+        if mode in {"memory", "instructions"}:
             await self._load_source_page()
+        elif mode == "docs":
+            await self._load_docs_page()
         else:
-            self.query_one("#inspector", Inspector).clear(mode)
-        self._update_pagination()
+            await self._load_security_page()
 
     async def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if self._main_screen is None or not self._main_screen.is_attached:
             return
         if event.tab.id != self.query_one("#mode-tabs", Tabs).active:
             return
-        if event.tab.id in {"memory", "instructions", "docs"}:
+        if event.tab.id in {"memory", "instructions", "docs", "security"}:
             await self.switch_mode(event.tab.id)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
+        if self._main_screen is None or not self._main_screen.is_attached:
+            return
         if event.select.id != "project-selector" or event.value == "loading":
             return
         if event.value == "all":
@@ -372,11 +512,17 @@ class DocmancerTuiApp(App):
             await self._load_source_page()
 
     async def on_filter_pane_changed(self) -> None:
+        if self._main_screen is None or not self._main_screen.is_attached:
+            return
         self.current_page = 1
         if self.mode in {"memory", "instructions"}:
             await self._load_source_page()
-        elif self.all_results:
+        elif self.mode == "security":
+            await self._load_security_page()
+        elif self.last_query:
             self._apply_docs_filters()
+        else:
+            await self._load_docs_page()
 
     async def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if self._main_screen is None or not self._main_screen.is_attached:
@@ -386,12 +532,30 @@ class DocmancerTuiApp(App):
             await self._inspect_result(item)
 
     async def _inspect_result(self, item: dict) -> None:
+        self._inspection_generation += 1
+        generation = self._inspection_generation
         inspector = self.query_one("#inspector", Inspector)
         if self.mode == "docs":
-            inspector.show_docs_result(item)
+            if item.get("view_kind") in {"source", "source-match"}:
+                return
+            if item.get("view_kind") == "docs-source":
+                document = await self.backend.get_docs_source(str(item.get("source") or ""))
+                if generation != self._inspection_generation:
+                    return
+                inspector.show_docs_source(item, document)
+            else:
+                inspector.show_docs_result(item)
+            return
+        if self.mode == "security":
+            if item.get("view_kind") == "security-finding":
+                inspector.show_security_finding(item)
+            return
+        if item.get("view_kind") in {"docs-source", "security-finding"}:
             return
         source = item.get("source") if item.get("view_kind") == "source-match" else item
         document = await self.backend.get_memory_source(str(source.get("source_key") or ""))
+        if generation != self._inspection_generation:
+            return
         if document is None:
             inspector.clear(self.mode, "The indexed source snapshot is unavailable. Run `/sync` to rebuild it.")
             return
@@ -452,6 +616,11 @@ class DocmancerTuiApp(App):
             return
         await self.run_query(" ".join(args), mode="docs")
 
+    async def command_security(self, args: list[str]) -> None:
+        await self.switch_mode("security")
+        if args:
+            await self.run_query(" ".join(args), mode="security")
+
     async def command_sync(self, _args: list[str]) -> None:
         screen = SyncScreen()
         await self.push_screen(screen)
@@ -468,6 +637,7 @@ class DocmancerTuiApp(App):
             counts = await self.backend.counts()
             self._set_counts(counts)
             await self._refresh_sources()
+            await self._refresh_security_report()
             if self.mode in {"memory", "instructions"}:
                 await self._load_source_page()
         except SyncInProgressError as exc:
@@ -478,8 +648,8 @@ class DocmancerTuiApp(App):
             self.notify(str(exc), severity="error")
 
     async def command_sources(self, _args: list[str]) -> None:
-        rows = await (self.backend.memory_sources(live_preview=True) if self.mode in {"memory", "instructions"} else self.backend.docs_sources())
-        await self.push_screen(SourcesScreen(rows, mode=self.mode))
+        rows = await (self.backend.docs_sources() if self.mode == "docs" else self.backend.memory_sources(live_preview=True))
+        await self.push_screen(SourcesScreen(rows, mode="docs" if self.mode == "docs" else "memory"))
 
     async def command_status(self, _args: list[str]) -> None:
         status = await self.backend.status()
@@ -492,7 +662,8 @@ class DocmancerTuiApp(App):
         await self.push_screen(DetailScreen("Status", body))
 
     async def command_audit(self, _args: list[str]) -> None:
-        await self.push_screen(AuditScreen(await self.backend.audit()))
+        await self._refresh_security_report()
+        await self.push_screen(AuditScreen(self.security_report or {}))
 
     async def command_cloud(self, args: list[str]) -> None:
         action = args[0].lower() if args else "status"
@@ -723,14 +894,24 @@ class DocmancerTuiApp(App):
             await self.run_query(self.last_query)
 
     async def action_previous_page(self) -> None:
-        if self.mode in {"memory", "instructions"} and self.current_page > 1:
+        if self.current_page > 1:
             self.current_page -= 1
-            await self._load_source_page()
+            if self.mode in {"memory", "instructions"}:
+                await self._load_source_page()
+            elif self.mode == "security":
+                await self._load_security_page()
+            elif not self.last_query:
+                await self._load_docs_page()
 
     async def action_next_page(self) -> None:
-        if self.mode in {"memory", "instructions"} and self.has_more:
+        if self.has_more:
             self.current_page += 1
-            await self._load_source_page()
+            if self.mode in {"memory", "instructions"}:
+                await self._load_source_page()
+            elif self.mode == "security":
+                await self._load_security_page()
+            elif not self.last_query:
+                await self._load_docs_page()
 
     async def action_view_selected(self) -> None:
         if not self._main_action_allowed():
@@ -742,6 +923,8 @@ class DocmancerTuiApp(App):
             return
         if self.mode == "docs":
             await self.push_screen(DetailScreen("Document detail", render_result(result)))
+        elif self.mode == "security":
+            self.query_one("#inspector", Inspector).show_security_finding(result)
         else:
             await self._open_source_viewer(result)
 

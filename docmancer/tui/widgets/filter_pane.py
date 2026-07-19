@@ -26,7 +26,7 @@ class FilterPane(VerticalScroll):
         )
         yield Label("Harness", classes="filter-label", id="harness-filter-label")
         yield Select([("All harnesses", "all")], value="all", allow_blank=False, id="harness-filter")
-        yield Label("Updated", classes="filter-label")
+        yield Label("Updated", classes="filter-label", id="time-filter-label")
         yield Select(
             [("Any time", "any"), ("Past day", "day"), ("Past week", "week"), ("Past month", "month")],
             value="any",
@@ -37,12 +37,20 @@ class FilterPane(VerticalScroll):
     def set_mode(self, mode: str, sources: list[dict]) -> None:
         self.mode = mode
         is_docs = mode == "docs"
-        self.query_one(".pane-title", Static).update("DOC FILTERS" if is_docs else "FILTERS")
-        self.query_one("#scope-filter", Select).display = not is_docs
-        self.query_one("#scope-filter-label", Label).display = not is_docs
-        self.query_one("#harness-filter-label", Label).update("Source" if is_docs else "Harness")
+        is_security = mode == "security"
+        title = "SECURITY FILTERS" if is_security else "DOC FILTERS" if is_docs else "FILTERS"
+        self.query_one(".pane-title", Static).update(title)
+        self.query_one("#scope-filter", Select).display = not (is_docs or is_security)
+        self.query_one("#scope-filter-label", Label).display = not (is_docs or is_security)
+        self.query_one("#harness-filter-label", Label).update("Severity" if is_security else "Source" if is_docs else "Harness")
+        self.query_one("#time-filter", Select).display = not is_security
+        self.query_one("#time-filter-label", Label).display = not is_security
         selector = self.query_one("#harness-filter", Select)
-        if is_docs:
+        if is_security:
+            selector.set_options(
+                [("All severities", "all"), ("Critical", "critical"), ("High", "high"), ("Medium", "medium"), ("Low", "low")]
+            )
+        elif is_docs:
             values = sorted(
                 {str(row.get("source") or row.get("docset") or "unknown") for row in sources}
             )

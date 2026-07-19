@@ -81,6 +81,27 @@ def test_browse_filters_before_exact_pagination_and_returns_full_text(tmp_path):
     assert document.content.startswith("Complete source")
 
 
+def test_codex_rollout_uses_filename_timestamp_instead_of_regeneration_mtime(tmp_path):
+    rollouts = tmp_path / "rollout_summaries"
+    rollouts.mkdir()
+    row = _source(
+        rollouts / "2026-06-09T16-30-05-Yq6q-old-session.md",
+        updated="2026-07-19T17:06:39+00:00",
+    )
+    agent = _agent_with_snapshot(tmp_path, [row])
+
+    page = agent.browse_sources(
+        MemorySourceFilters(
+            kinds=("agent-memory",),
+            updated_after=datetime(2026, 7, 12, tzinfo=timezone.utc),
+        )
+    )
+    document = agent._indexed_source_documents()[0]
+
+    assert page.total == 0
+    assert document.updated_at == "2026-06-09T16:30:05+00:00"
+
+
 def test_project_filter_keeps_globals_and_matching_project_sources(tmp_path):
     selected = tmp_path / "repo" / "subdir"
     selected.mkdir(parents=True)

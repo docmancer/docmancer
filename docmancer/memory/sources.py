@@ -3,8 +3,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+_CODEX_ROLLOUT_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(?:-|\.)")
+
+
+def source_updated_at(path: str, fallback: str | None = None) -> str | None:
+    """Return a source's logical update time when its filename preserves it.
+
+    Codex regenerates its rollout-summary directory, which can give every old
+    summary the same recent filesystem mtime. The timestamp in each generated
+    filename is the useful source date for browsing and date filters.
+    """
+    candidate = Path(path)
+    if candidate.parent.name == "rollout_summaries":
+        match = _CODEX_ROLLOUT_TIMESTAMP.match(candidate.name)
+        if match:
+            try:
+                value = datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%S")
+                return value.replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                pass
+    return fallback
 
 
 def memory_source_key(*, harness: str, scope: str, kind: str, path: str) -> str:
@@ -100,4 +124,5 @@ __all__ = [
     "MemorySourcePage",
     "MemorySourceSummary",
     "memory_source_key",
+    "source_updated_at",
 ]

@@ -8,13 +8,20 @@ Screen {
 }
 
 #mode-header {
-    height: 3;
+    height: 4;
+    padding-top: 1;
     background: $panel;
     border-bottom: solid $accent;
 }
 
 #mode-tabs {
     width: 1fr;
+}
+
+#mode-tabs Tab.-active {
+    background: $primary;
+    color: $text;
+    text-style: bold;
 }
 
 #project-selector {
@@ -27,19 +34,19 @@ Screen {
 }
 
 #filter-pane {
-    width: 25%;
+    width: 20%;
     min-width: 24;
     border-right: solid $primary-background;
     padding: 0 1;
 }
 
 #results-pane {
-    width: 38%;
+    width: 30%;
     border-right: solid $primary-background;
 }
 
 #inspector {
-    width: 37%;
+    width: 50%;
     padding: 0 1;
 }
 
@@ -60,9 +67,21 @@ Screen {
 }
 
 #result-list ListItem {
-    padding: 0 1;
+    padding: 1 1 0 1;
     height: auto;
     border-bottom: solid $primary-background;
+}
+
+#command-menu {
+    display: none;
+    height: auto;
+    max-height: 16;
+    border: solid $accent;
+    background: $panel;
+}
+
+#command-menu.visible {
+    display: block;
 }
 
 #pagination {
@@ -89,6 +108,15 @@ Screen {
 #source-text {
     height: 1fr;
     border: none;
+}
+
+#docs-outline {
+    display: none;
+    height: 35%;
+    min-height: 6;
+    max-height: 18;
+    border-bottom: solid $primary-background;
+    margin-bottom: 1;
 }
 
 #inspector-markdown {
@@ -194,4 +222,9 @@ ModalScreen {
 
 Tab.empty {
     color: $text-disabled;
+}
+
+Tab.risk {
+    color: $warning;
+    text-style: bold;
 }

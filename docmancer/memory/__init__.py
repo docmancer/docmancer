@@ -35,6 +35,7 @@ from docmancer.memory.sources import (
     MemorySourcePage,
     MemorySourceSummary,
     memory_source_key,
+    source_updated_at,
 )
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 _MEMORY_COLLECTION = "docmancer_memory"
 
 # Bump when extraction logic changes so stale cached atoms are not reused.
-_ATOM_CACHE_VERSION = 3
+_ATOM_CACHE_VERSION = 4
 MEMORY_SCHEMA_VERSION = 2
 _SOURCE_SNAPSHOT_VERSION = 2
 _SCHEMA_META_TABLE = "docmancer_memory_meta"
@@ -777,7 +778,10 @@ class MemoryAgent:
             identity = (harness, scope, kind, path)
             meta = atom_meta.get(identity, {})
             content = str(raw.get("content") or "")
-            updated_at = str(raw.get("updated_at") or meta.get("updated_at") or "") or None
+            updated_at = source_updated_at(
+                path,
+                str(raw.get("updated_at") or meta.get("updated_at") or "") or None,
+            )
             source_hash = str(raw.get("source_hash") or meta.get("source_hash") or "")
             record_ids = sorted(meta.get("record_ids") or [])
             origins = set(meta.get("origins") or [])

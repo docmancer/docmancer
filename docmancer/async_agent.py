@@ -137,6 +137,10 @@ class AsyncDocmancerAgent:
         """Return documentation roots grouped with page and date metadata."""
         return await asyncio.to_thread(self._sync.list_grouped_sources_with_dates)
 
+    async def get_grouped_source_documents(self, source_root: str) -> dict | None:
+        """Return complete indexed pages and their section outline for one root."""
+        return await asyncio.to_thread(self._sync.get_grouped_source_documents, source_root)
+
     async def remove_source(self, source: str) -> tuple[bool, str]:
         """Remove a source from the index."""
         return await asyncio.to_thread(self._sync.remove_source, source)

@@ -507,3 +507,7 @@ class DocmancerAgent:
 
     def list_grouped_sources_with_dates(self) -> list[dict]:
         return self.store.list_grouped_sources_with_dates()
+
+    def get_grouped_source_documents(self, source_root: str) -> dict | None:
+        """Return full indexed pages and section boundaries for one docset."""
+        return self.store.get_grouped_source_documents(source_root)

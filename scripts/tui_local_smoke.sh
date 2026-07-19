@@ -55,6 +55,9 @@ printf '# Claude project memory\n\nThe demo project uses model2vec and sqlite-ve
   > "$tui_smoke_root/harness/.claude/projects/-tmp-docmancer-demo/memory/project.md"
 printf '# Global Claude instructions\n\nPrefer complete source context over isolated fragments.\n' \
   > "$tui_smoke_root/harness/.claude/CLAUDE.md"
+printf '# Security audit demo\n\nThis synthetic fixture contains token=%s and is removed after the smoke test.\n' \
+  'smoke-only-credential-value-123' \
+  > "$tui_smoke_root/harness/.codex/memories/security-demo.md"
 
 "$docmancer_bin" memory sync >/dev/null
 
@@ -67,7 +70,8 @@ echo "  4. Clicking a file updates the right pane without a popup; Enter opens f
 echo "  5. Open large-memory and confirm the full text remains scrollable."
 echo "  6. Search FULL_FILE_END_MARKER and confirm the viewer jumps to the final passage."
 echo "  7. Search Railway and use [ and ] to navigate grouped passage matches."
-echo "Try /status, /sources, /audit, /memory Railway, and /instructions release."
+echo "  8. Open Security and confirm the synthetic finding is masked and marked medium severity."
+echo "Try /status, /sources, /audit, /security, /memory Railway, and /instructions release."
 echo "Press Ctrl+C twice to quit. The temporary data is removed afterward."
 if [[ "${DOCMANCER_TUI_SMOKE_NO_LAUNCH:-0}" == "1" ]]; then
   "$docmancer_bin" memory status

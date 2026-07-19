@@ -34,6 +34,7 @@ class TuiBackend:
         self.ready = False
         self.last_latency = 0.0
         self._docs_source_rows: list[dict] = []
+        self._docs_document_cache: dict[str, dict] = {}
         self._audit_source_state: tuple[tuple[str, int, int, int], ...] | None = None
         self._audit_report: dict | None = None
         self.model_label = "local"
@@ -217,6 +218,17 @@ class TuiBackend:
         sources = await docs.list_sources()
         self._docs_source_rows = [{"source": source, "pages": 0, "sections": 0} for source in sources]
         return self._docs_source_rows
+
+    async def get_docs_source(self, source_root: str) -> dict | None:
+        if source_root in self._docs_document_cache:
+            return self._docs_document_cache[source_root]
+        method = getattr(self._require_docs(), "get_grouped_source_documents", None)
+        if method is None:
+            return None
+        document = await method(source_root)
+        if document is not None:
+            self._docs_document_cache[source_root] = document
+        return document
 
     async def status(self) -> dict:
         memory = self._require_memory()

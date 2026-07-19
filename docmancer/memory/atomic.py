@@ -491,11 +491,15 @@ def _hash(text: str) -> str:
 
 
 def _mtime(path: str) -> str | None:
+    from docmancer.memory.sources import source_updated_at
+
     try:
         ts = Path(path).stat().st_mtime
     except OSError:
-        return None
-    return datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0).isoformat()
+        fallback = None
+    else:
+        fallback = datetime.fromtimestamp(ts, tz=timezone.utc).replace(microsecond=0).isoformat()
+    return source_updated_at(path, fallback)
 
 
 __all__ = ["AtomicMemoryEntry", "classify_memory", "extract_atoms", "merge_atoms"]

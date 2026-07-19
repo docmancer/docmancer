@@ -59,3 +59,33 @@ def test_lexical_query_filters_by_source_path_before_ranking(tmp_path: Path):
 
     assert len(results) == 1
     assert results[0].metadata["source_path"] == "/b.md"
+
+
+def test_grouped_doc_source_returns_full_pages_and_expandable_sections(tmp_path: Path):
+    store = SQLiteStore(str(tmp_path / "docs.db"))
+    root = "https://docs.example.com"
+    store.add_documents(
+        [
+            Document(
+                source=f"{root}/guide",
+                content="# Guide\n\nComplete guide content.\n\n## Install\n\nRun pip install.",
+                metadata={"docset_root": root, "title": "Guide", "format": "markdown"},
+            ),
+            Document(
+                source=f"{root}/api",
+                content="# API\n\nComplete API content.",
+                metadata={"docset_root": root, "title": "API", "format": "markdown"},
+            ),
+        ]
+    )
+
+    result = store.get_grouped_source_documents(root)
+
+    assert result is not None
+    assert result["source"] == root
+    assert len(result["pages"]) == 2
+    assert {page["title"] for page in result["pages"]} == {"API", "Guide"}
+    guide = next(page for page in result["pages"] if page["title"] == "Guide")
+    assert guide["content"].startswith("# Guide")
+    assert guide["sections"]
+    assert any(section["title"] == "Install" for section in guide["sections"])

@@ -59,6 +59,7 @@ def default_registry() -> CommandRegistry:
         ("reset", "command_reset", "/reset", "Clear the search and restore all browse filters."),
         ("scope", "command_scope", "/scope <project path>", "Set the project scope."),
         ("rules", "command_instructions", "/rules <query>", "Alias for instruction and rule search."),
+        ("security", "command_security", "/security <query>", "Inspect masked local audit findings."),
         ("show", "command_show", "/show <id>", "Open one indexed passage."),
         ("sources", "command_sources", "/sources", "Show live source provenance."),
         ("status", "command_status", "/status", "Show memory and docs status."),
