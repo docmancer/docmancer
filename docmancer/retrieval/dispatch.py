@@ -99,7 +99,7 @@ class RetrievalDispatcher:
         )
 
         if effective_mode == "lexical" or self.vector_store is None or self.provider is None:
-            chunks = self.store.query(query, limit=limit, budget=budget, expand=retrieval_expand)
+            chunks = self.store.query(query, limit=limit, budget=budget, expand=retrieval_expand, filters=merged_filters)
             return DispatchResult(
                 chunks=chunks,
                 contributions={c.metadata.get("section_id"): {"lexical": idx + 1} for idx, c in enumerate(chunks) if c.metadata.get("section_id") is not None},
@@ -137,7 +137,7 @@ class RetrievalDispatcher:
             if ready_failure and allow_degraded:
                 raw_counts.update({source: 0 for source in ready_failure})
                 failures.update(ready_failure)
-            chunks = self.store.query(query, limit=limit, budget=budget, expand=retrieval_expand)
+            chunks = self.store.query(query, limit=limit, budget=budget, expand=retrieval_expand, filters=merged_filters)
             return DispatchResult(
                 chunks=chunks,
                 mode_used="lexical-fallback",
@@ -258,7 +258,7 @@ class RetrievalDispatcher:
         if stage1_failures and mode != "lexical" and not allow_degraded:
             raise HybridRetrievalError(stage1_failures)
         if not stage1_candidates:
-            chunks = self.store.query(query, limit=limit, budget=budget, expand=expand)
+            chunks = self.store.query(query, limit=limit, budget=budget, expand=expand, filters=filters)
             return DispatchResult(
                 chunks=chunks,
                 mode_used="lexical-fallback",
@@ -495,7 +495,12 @@ class RetrievalDispatcher:
         with ThreadPoolExecutor(max_workers=3) as ex:
             if mode == "hybrid":
                 tasks["lexical"] = ex.submit(
-                    lexical_search, self.store, query, limit=per_source_limit, budget=10_000
+                    lexical_search,
+                    self.store,
+                    query,
+                    limit=per_source_limit,
+                    budget=10_000,
+                    filters=filters,
                 )
                 tasks["dense"] = ex.submit(
                     dense_search,

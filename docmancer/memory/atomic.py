@@ -80,6 +80,10 @@ class AtomicMemoryEntry:
     origin: str = "harvested"
     scope_kind: str = "unknown"
     project_path: str | None = None
+    project_id: str | None = None
+    revision_id: str | None = None
+    parent_revision_ids: list[str] = field(default_factory=list)
+    deleted: bool = False
 
     @property
     def title(self) -> str:
@@ -108,6 +112,10 @@ class AtomicMemoryEntry:
             "origin": self.origin,
             "scope_kind": self.scope_kind,
             "project_path": self.project_path,
+            "project_id": self.project_id,
+            "revision_id": self.revision_id,
+            "parent_revision_ids": list(self.parent_revision_ids),
+            "deleted": self.deleted,
         }
 
     def to_document(self) -> "Document":
@@ -137,6 +145,10 @@ class AtomicMemoryEntry:
             "origin": self.origin,
             "scope_kind": self.scope_kind,
             "project_path": self.project_path,
+            "project_id": self.project_id,
+            "revision_id": self.revision_id,
+            "parent_revision_ids": list(self.parent_revision_ids),
+            "deleted": self.deleted,
             "format": "memory-atomic",
             "chunking_strategy": "single",
             "anchor": f"{self.source_title}:{self.line_start}",

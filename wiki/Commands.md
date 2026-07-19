@@ -2,6 +2,10 @@
 
 Reference for the docmancer CLI. The primary product surface is the local memory harness; docs retrieval runs on the same engine as a secondary capability. For configuration, see [Configuration](./Configuration.md). For internals, see [Architecture](./Architecture.md).
 
+## Interactive terminal explorer
+
+Run bare `docmancer`, or `docmancer tui`, in an interactive terminal. The Memory and Instructions & Rules tabs browse complete indexed source files with 50-file pagination, scope, harness, project, and date filters. Selecting a file shows its complete indexed copy in the right pane. Search stays atom-powered internally but groups matching passages by file and jumps to their source lines. Use `/memory <query>`, `/instructions <query>`, or `/rules <query>` to search a specific file class.
+
 ## Primary memory loop
 
 | Command | Description |
@@ -15,6 +19,8 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | `docmancer memory show <id>` | Inspect one memory atom, including its record ID, atom ID, provenance, scope, tags, and merge sources. |
 | `docmancer memory forget <id>` | Preview, then remove an owned record or suppress a harvested memory atom. Use `--yes` only after review. Tombstones contain no memory text. |
 | `docmancer memory promote <id> --team --project <repo>` | Copy a reviewed personal or captured memory atom into `<repo>/.docmancer/memory/` without staging or committing it. |
+| `docmancer memory team import --from-git <repo>` | Index reviewable team records from a Git repository while preserving their record and revision identity. |
+| `docmancer memory team export --to-git <repo> --dry-run` | Preview reviewable team Markdown without staging or committing it. Use `--yes` to perform the write. |
 | `docmancer memory sources` | Show indexed provenance by agent, type, scope, title, short path, and character count. Use `--preview` for a live re-harvest without writing. |
 | `docmancer memory audit` | Run a local, read-only corpus health report covering masked secret findings, index drift, exact cross-source duplicates, oversized sources, and large sources that produce no usable atoms. Human output shows up to `--max-findings`; JSON includes every finding. Use `--fail-on-findings` for automation. |
 | `docmancer install claude-code --hooks` | Install Claude Code hook recall so relevant local memories are injected automatically. |
@@ -25,6 +31,29 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 | `docmancer remove <agent> --capture-hooks` | Remove only capture hooks while leaving recall hooks intact. |
 | `docmancer memory status` | Show memory index location and source/section counts. |
 | `docmancer memory clear` | Delete the local memory index files. Use `--dry-run` first when checking scope. |
+
+## Optional encrypted cloud sync
+
+The commands below require a compatible cloud service. They never gate local recall, capture, search, MCP, audit, or Git team memory. See [Cloud Sync](./Cloud-Sync.md) for the privacy boundary and onboarding order.
+
+| Command | Description |
+|---------|-------------|
+| `docmancer cloud login` | Store service-issued session state and device keys. The token uses a masked prompt and the operating-system credential store. |
+| `docmancer cloud recovery create` | Display a 256-bit recovery key once and create a workspace-key wrapper. |
+| `docmancer cloud recovery verify` | Re-enter the recovery key before another device enrols. |
+| `docmancer cloud enable` | Enable local encrypted-envelope queueing and explicit remote sync. |
+| `docmancer cloud disable` | Pause remote transfer without changing local memory. |
+| `docmancer cloud sync` | Explicitly drain encrypted revisions and apply verified remote revisions. |
+| `docmancer cloud status` | Read local account, device, cursor, outbox, conflict, and entitlement state. |
+| `docmancer cloud link <path> [--project-id <id>]` | Map a portable project ID to a local checkout on this device. |
+| `docmancer cloud devices` | List registered devices through the service. |
+| `docmancer cloud device approve <id>` | Approve a device only after confirming its fingerprint out of band. |
+| `docmancer cloud device revoke <id>` | Revoke a device and require workspace-key rotation. |
+| `docmancer cloud conflicts` | List local unresolved sync conflicts. |
+| `docmancer cloud resolve <id> --strategy <strategy>` | Record an explicit keep-left, keep-right, keep-both, or manual conflict decision. |
+| `docmancer cloud export <directory>` | Export the full local durable record store without contacting the service. |
+| `docmancer cloud delete-remote --confirm DELETE` | Request deletion of server-held ciphertext while retaining local records. |
+| `docmancer cloud logout` | Clear the local session and pause transfer without deleting local memory. |
 
 ## Advanced memory maintenance
 

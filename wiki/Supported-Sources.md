@@ -20,11 +20,13 @@ Secrets are redacted before indexing. Scope the harvest with `--include` / `--ex
 |--------|----------|---------|
 | GitBook sites | `/llms-full.txt`, then `/llms.txt` | `docmancer add <url> --provider gitbook` |
 | Mintlify sites | `/llms-full.txt`, then `/llms.txt`, then `/sitemap.xml` | `docmancer add <url> --provider mintlify` |
-| Generic web docs | Sitemap, nav crawl, filters, readability extraction | `docmancer add <url> --provider web` |
+| Generic web docs | `llms-full.txt`, linked documentation roots, sitemap, nav crawl, filters, readability extraction | `docmancer add <url> --provider web` |
 | GitHub repositories and blobs | README and docs Markdown paths | `docmancer add <github-url> --provider github` |
 | Crawl4AI-backed sites | Browser-style extraction for difficult docs sites | `docmancer add <url> --provider crawl4ai` |
 
 `--provider auto` is the default and chooses the best available path from response headers and content.
+
+If a product landing page or its `llms-full.txt` explicitly links to the real documentation on a same-company `docs.*` subdomain or a known hosted-docs domain, the generic web provider indexes the landing content and the linked documentation corpus together. It does not follow unrelated external links, and `--max-pages` still bounds page discovery across the complete add operation.
 
 ## Local file formats
 

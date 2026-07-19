@@ -129,6 +129,14 @@ class AsyncDocmancerAgent:
         """Return all indexed source URLs/paths."""
         return await asyncio.to_thread(self._sync.list_sources)
 
+    async def list_sources_with_dates(self) -> list[dict]:
+        """Return indexed sources with stored freshness metadata."""
+        return await asyncio.to_thread(self._sync.list_sources_with_dates)
+
+    async def list_grouped_sources_with_dates(self) -> list[dict]:
+        """Return documentation roots grouped with page and date metadata."""
+        return await asyncio.to_thread(self._sync.list_grouped_sources_with_dates)
+
     async def remove_source(self, source: str) -> tuple[bool, str]:
         """Remove a source from the index."""
         return await asyncio.to_thread(self._sync.remove_source, source)

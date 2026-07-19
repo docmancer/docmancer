@@ -351,7 +351,7 @@ def audit(agent_filter, as_json, fail_on_findings, max_findings, include, exclud
     """
     import json as _json
 
-    from docmancer.harness.secrets import detect_secrets
+    from docmancer.memory.audit import audit_secrets
 
     if not as_json:
         emit_brand_header("docmancer memory audit", "Inspect security, freshness, duplication, and source quality.")
@@ -363,43 +363,17 @@ def audit(agent_filter, as_json, fail_on_findings, max_findings, include, exclud
         entries = [e for e in entries if e.harness.lower() == agent_filter.lower()]
     health = _memory_health_audit(agent, entries)
 
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    for entry in entries:
-        for finding in detect_secrets(entry.content or ""):
-            grouped[finding.fingerprint].append(
-                {
-                    "type": finding.type,
-                    "severity": finding.severity,
-                    "line": finding.line,
-                    "source_path": entry.path,
-                    "display_path": display_path(entry.path),
-                    "agent": entry.harness,
-                    "scope": entry.scope,
-                    "title": entry.title,
-                    "masked_excerpt": finding.masked_excerpt,
-                    "fingerprint": finding.fingerprint,
-                }
-            )
-
-    findings = []
-    for fingerprint, occurrences in sorted(
-        grouped.items(),
+    findings = audit_secrets(entries)["findings"]
+    for finding in findings:
+        for occurrence in finding["occurrences"]:
+            occurrence["display_path"] = display_path(occurrence["source_path"])
+    findings.sort(
         key=lambda item: (
-            {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item[1][0]["severity"], 9),
-            item[1][0]["display_path"],
-            item[1][0]["line"],
-        ),
-    ):
-        first = occurrences[0]
-        findings.append(
-            {
-                "fingerprint": fingerprint,
-                "type": first["type"],
-                "severity": first["severity"],
-                "occurrences": occurrences,
-                "occurrence_count": len(occurrences),
-            }
+            {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(item["severity"], 9),
+            item["occurrences"][0]["display_path"],
+            item["occurrences"][0]["line"],
         )
+    )
 
     if as_json:
         click.echo(
@@ -614,6 +588,10 @@ def _atom_dict(atom) -> dict:
         "scope": atom.scope,
         "scope_kind": atom.scope_kind,
         "project_path": atom.project_path,
+        "project_id": atom.project_id,
+        "revision_id": atom.revision_id,
+        "parent_revision_ids": atom.parent_revision_ids,
+        "deleted": atom.deleted,
         "tags": atom.tags,
         "source_path": atom.source_path,
         "source_count": atom.source_count,
@@ -749,6 +727,39 @@ def memory_promote(identifier: str, team: bool, project_path: Path | None, dry_r
     click.echo("Review: git status --short .docmancer/memory/")
     if not indexed:
         click.echo("Saved durably; run `docmancer memory sync` after the active sync finishes.")
+
+
+@memory_group.group("team", cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import or export Git team memory.")
+def memory_team() -> None:
+    """Move reviewable team memory through Git without staging or committing."""
+
+
+@memory_team.command("import", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@click.option("--from-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
+def memory_team_import(project: Path) -> None:
+    import json as _json
+    from docmancer.cloud.team import import_from_git
+
+    try:
+        click.echo(_json.dumps(import_from_git(project), indent=2))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@memory_team.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@click.option("--to-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--dry-run", is_flag=True, help="Preview files without writing them.")
+@click.option("--yes", is_flag=True, help="Confirm writing reviewable Markdown files.")
+def memory_team_export(project: Path, dry_run: bool, yes: bool) -> None:
+    import json as _json
+    from docmancer.cloud.team import export_to_git
+
+    if not dry_run and not yes:
+        click.confirm("Write team memory files without staging or committing them?", abort=True)
+    try:
+        click.echo(_json.dumps(export_to_git(project, dry_run=dry_run), indent=2))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @memory_group.command("capture-hook", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, hidden=True)

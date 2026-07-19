@@ -63,6 +63,27 @@ def test_upsert_and_search_returns_nearest(tmp_path):
     assert hits[0].payload == {"title": "A"}
 
 
+def test_search_filters_candidates_by_payload_metadata(tmp_path):
+    store = _store(tmp_path)
+    store.ensure_collection("docs", DIM)
+    store.upsert(
+        "docs",
+        [
+            VectorPoint(id="a", vector=_normalize([1.0, 0.0, 0.0, 0.0]), payload={"source_path": "/a.md"}),
+            VectorPoint(id="b", vector=_normalize([0.99, 0.01, 0.0, 0.0]), payload={"source_path": "/b.md"}),
+        ],
+    )
+
+    hits = store.search(
+        "docs",
+        _normalize([1.0, 0.0, 0.0, 0.0]),
+        limit=2,
+        filters={"source_path": {"in": ["/b.md"]}},
+    )
+
+    assert [hit.id for hit in hits] == ["b"]
+
+
 def test_upsert_replaces_existing(tmp_path):
     store = _store(tmp_path)
     store.ensure_collection("docs", DIM)

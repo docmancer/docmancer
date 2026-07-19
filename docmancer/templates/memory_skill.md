@@ -43,6 +43,8 @@ docmancer memory list --scope project --project "$PWD"
 docmancer memory show <id>
 docmancer memory forget <id> --dry-run
 docmancer memory promote <id> --team --project "$PWD" --dry-run
+docmancer memory team import --from-git "$PWD"
+docmancer memory team export --to-git "$PWD" --dry-run
 docmancer memory sources
 docmancer memory sources --preview
 docmancer memory audit
@@ -52,6 +54,8 @@ docmancer memory clear
 ```
 
 `memory add --scope team` and `memory promote --team` write reviewable files under `.docmancer/memory/`, but they never stage or commit them. New files are untracked, so check them with `git status --short .docmancer/memory/`; plain `git diff` only shows later changes after a file is tracked. Use either command only when the user has explicitly chosen team scope. Capture hooks never promote directly to team memory.
+
+Optional encrypted sync is controlled separately through `docmancer cloud`. Do not enable it, log in, link a project, approve or revoke a device, create or verify recovery, resolve a conflict, export, or delete remote state unless the user explicitly asks. Local recall, capture, MCP, audit, and Git team memory do not require cloud sync. Read-only `cloud status` and `cloud conflicts` are safe diagnostics; `cloud sync` performs an explicit network transfer of client-encrypted envelopes.
 
 ## Automatic Hook Recall
 

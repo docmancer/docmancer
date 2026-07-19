@@ -35,6 +35,7 @@ from docmancer.connectors.fetchers.pipeline.filtering import (
     ContentDeduplicator,
     infer_docset_root,
     is_docs_url,
+    linked_documentation_roots,
     normalize_url,
 )
 from docmancer.connectors.fetchers.pipeline.rate_limit import RateLimiter
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_USER_AGENT = "docmancer/1.0 (+https://github.com/docmancer/docmancer)"
 _DIRECT_TEXT_SUFFIXES = {".md", ".txt"}
+_MAX_LINKED_DOC_ROOTS = 5
 
 
 @dataclass(slots=True)
@@ -159,7 +161,30 @@ class WebFetcher:
                 and discovered[0].strategy == DiscoveryStrategy.LLMS_FULL_TXT
                 and discovered[0].content
             ):
-                return self._build_llms_full_documents(discovered[0], platform)
+                documents = self._build_llms_full_documents(discovered[0], platform)
+                if self._strategy is None:
+                    linked_roots = linked_documentation_roots(
+                        root_html + "\n" + (discovered[0].content or ""),
+                        base_url,
+                        max_roots=_MAX_LINKED_DOC_ROOTS,
+                    )
+                    remaining = max(0, self._max_pages - len(documents))
+                    for linked_root in linked_roots:
+                        if remaining <= 0:
+                            break
+                        logger.info("Discovery: following linked documentation root %s", linked_root)
+                        try:
+                            linked_documents = self._fetch_linked_documentation_root(
+                                linked_root,
+                                client,
+                                max_pages=remaining,
+                            )
+                        except ValueError as exc:
+                            logger.warning("Linked documentation root %s failed: %s", linked_root, exc)
+                            continue
+                        documents.extend(linked_documents)
+                        remaining = max(0, self._max_pages - len(documents))
+                return self._deduplicate_documents(documents)
 
             # Step 5: Fetch and extract each page
             return self._fetch_pages(discovered, base_url, client, platform, robots)
@@ -246,6 +271,46 @@ class WebFetcher:
                 },
             )
         ]
+
+    def _fetch_linked_documentation_root(
+        self,
+        root_url: str,
+        client: httpx.Client,
+        *,
+        max_pages: int,
+    ) -> list[Document]:
+        """Fetch one explicitly linked docs root without recursive expansion."""
+        platform, _root_html, _root_headers = self._fetch_and_detect(root_url, client)
+        robots = RobotsChecker(client) if self._respect_robots else None
+        discovered = discover_urls(
+            base_url=root_url,
+            client=client,
+            platform=platform,
+            robots=robots,
+            max_pages=max_pages,
+        )
+        if not discovered:
+            raise ValueError("no documentation pages were discovered")
+        if (
+            len(discovered) == 1
+            and discovered[0].strategy == DiscoveryStrategy.LLMS_FULL_TXT
+            and discovered[0].content
+        ):
+            return self._build_llms_full_documents(discovered[0], platform)
+        return self._fetch_pages(discovered, root_url, client, platform, robots)
+
+    @staticmethod
+    def _deduplicate_documents(documents: list[Document]) -> list[Document]:
+        """Keep unique sources and content while preserving discovery order."""
+        deduplicator = ContentDeduplicator()
+        unique: list[Document] = []
+        for document in documents:
+            if deduplicator.is_url_duplicate(document.source):
+                continue
+            if deduplicator.is_content_duplicate(document.content):
+                continue
+            unique.append(document)
+        return unique
 
     def _fetch_pages(
         self,

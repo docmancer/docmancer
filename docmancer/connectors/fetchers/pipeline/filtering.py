@@ -94,6 +94,75 @@ def discovery_roots(url: str) -> list[str]:
 
 
 _ROOT_HINT_SEGMENTS = {"docs", "doc", "documentation", "api", "reference", "sdk", "cli"}
+_DOC_HOST_PREFIXES = {"api", "developer", "developers", "doc", "docs", "documentation", "help", "reference"}
+_HOSTED_DOC_SUFFIXES = (
+    ".gitbook.io",
+    ".mintlify.app",
+    ".readme.io",
+    ".readthedocs.io",
+    ".readthedocs.org",
+)
+
+
+def linked_documentation_roots(content: str, base_url: str, *, max_roots: int = 5) -> list[str]:
+    """Extract bounded documentation roots explicitly linked by a site.
+
+    Product landing pages sometimes publish a small ``llms-full.txt`` that
+    points at the real documentation on ``docs.<domain>``. Treating that short
+    file as the entire corpus silently misses the useful docs. This helper
+    follows only same-site documentation paths, same-company documentation
+    subdomains, and known hosted-docs domains that the source explicitly links.
+    """
+    if not content or max_roots <= 0:
+        return []
+
+    raw_targets = re.findall(r"\]\(([^)]+)\)", content)
+    raw_targets.extend(re.findall(r'''href\s*=\s*["']([^"']+)["']''', content, re.IGNORECASE))
+
+    parsed_base = urlparse(normalize_url(base_url))
+    base_host = parsed_base.netloc.lower()
+    family_host = base_host.removeprefix("www.")
+    base_origin = f"{parsed_base.scheme}://{base_host}"
+    base_normalized = normalize_url(base_url)
+    roots: list[str] = []
+
+    for raw_target in raw_targets:
+        target = raw_target.strip().strip("<>")
+        if not target or target.startswith(("#", "mailto:", "javascript:")):
+            continue
+        absolute = normalize_url(urljoin(base_origin + "/", target))
+        parsed = urlparse(absolute)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+
+        candidate_host = parsed.netloc.lower()
+        candidate_origin = f"{parsed.scheme}://{candidate_host}"
+        path_parts = [part for part in parsed.path.split("/") if part]
+
+        if candidate_host == base_host:
+            hint_index = next(
+                (index for index, part in enumerate(path_parts) if part.lower() in _ROOT_HINT_SEGMENTS),
+                None,
+            )
+            if hint_index is None:
+                continue
+            root = candidate_origin + "/" + "/".join(path_parts[: hint_index + 1])
+        else:
+            same_company = candidate_host.endswith("." + family_host)
+            host_prefix = candidate_host.split(".", 1)[0]
+            hosted_docs = candidate_host.endswith(_HOSTED_DOC_SUFFIXES)
+            if not ((same_company and host_prefix in _DOC_HOST_PREFIXES) or hosted_docs):
+                continue
+            root = candidate_origin
+
+        root = normalize_url(root).rstrip("/")
+        if root == base_normalized or root in roots:
+            continue
+        roots.append(root)
+        if len(roots) >= max_roots:
+            break
+
+    return roots
 
 
 def infer_docset_root(url: str) -> str | None:

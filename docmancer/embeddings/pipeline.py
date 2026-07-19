@@ -47,7 +47,7 @@ def _embedding_hash(vector: list[float]) -> str:
 
 
 def _payload_for_section(section: dict, *, docset_root: str | None = None) -> dict:
-    return {
+    payload = {
         "section_id": int(section["section_id"]),
         "source": section["source"],
         "chunk_index": int(section["chunk_index"]),
@@ -65,6 +65,24 @@ def _payload_for_section(section: dict, *, docset_root: str | None = None) -> di
         "token_estimate": section.get("token_estimate", 0),
         "docset_root": docset_root or "",
     }
+    metadata = section.get("metadata") or {}
+    for key in (
+        "harness",
+        "kind",
+        "scope",
+        "scope_kind",
+        "memory_type",
+        "status",
+        "timestamp",
+        "project_path",
+        "origin",
+        "atom_id",
+        "record_id",
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            payload[key] = value
+    return payload
 
 
 def sync_vector_store(

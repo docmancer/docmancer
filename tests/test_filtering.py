@@ -7,6 +7,7 @@ from docmancer.connectors.fetchers.pipeline.filtering import (
     _infer_scope_path,
     infer_docset_root,
     is_docs_url,
+    linked_documentation_roots,
     normalize_url,
     resolve_url,
 )
@@ -59,6 +60,30 @@ class TestInferDocsetRoot:
 
     def test_non_url_returns_none(self):
         assert infer_docset_root("./docs/intro.md") is None
+
+
+class TestLinkedDocumentationRoots:
+    def test_follows_same_company_docs_subdomain(self):
+        content = "[API Documentation](https://docs.supermemory.ai/api-reference)"
+        assert linked_documentation_roots(content, "https://supermemory.ai") == [
+            "https://docs.supermemory.ai"
+        ]
+
+    def test_collapses_same_host_docs_page_to_docs_root(self):
+        content = '<a href="/product/docs/getting-started">Documentation</a>'
+        assert linked_documentation_roots(content, "https://example.com") == [
+            "https://example.com/product/docs"
+        ]
+
+    def test_rejects_unrelated_external_links(self):
+        content = "[Vendor docs](https://docs.unrelated.example/reference)"
+        assert linked_documentation_roots(content, "https://example.com") == []
+
+    def test_accepts_explicitly_linked_hosted_docs(self):
+        content = "[Documentation](https://acme.mintlify.app/getting-started)"
+        assert linked_documentation_roots(content, "https://acme.example") == [
+            "https://acme.mintlify.app"
+        ]
 
 
 # ---------------------------------------------------------------------------

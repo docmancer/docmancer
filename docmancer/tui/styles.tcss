@@ -1,0 +1,197 @@
+Screen {
+    background: $surface;
+    color: $text;
+}
+
+#shell {
+    height: 100%;
+}
+
+#mode-header {
+    height: 3;
+    background: $panel;
+    border-bottom: solid $accent;
+}
+
+#mode-tabs {
+    width: 1fr;
+}
+
+#project-selector {
+    width: 34;
+    border: none;
+}
+
+#explorer {
+    height: 1fr;
+}
+
+#filter-pane {
+    width: 25%;
+    min-width: 24;
+    border-right: solid $primary-background;
+    padding: 0 1;
+}
+
+#results-pane {
+    width: 38%;
+    border-right: solid $primary-background;
+}
+
+#inspector {
+    width: 37%;
+    padding: 0 1;
+}
+
+.pane-title {
+    height: 2;
+    padding: 0 1;
+    color: $accent;
+    text-style: bold;
+}
+
+.filter-label {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+#result-list {
+    height: 1fr;
+}
+
+#result-list ListItem {
+    padding: 0 1;
+    height: auto;
+    border-bottom: solid $primary-background;
+}
+
+#pagination {
+    height: 3;
+    align-horizontal: center;
+}
+
+#pagination Button {
+    min-width: 12;
+}
+
+#page-label {
+    width: 1fr;
+    content-align: center middle;
+}
+
+#source-meta {
+    height: auto;
+    min-height: 3;
+    color: $text-muted;
+    padding: 0 1 1 1;
+}
+
+#source-text {
+    height: 1fr;
+    border: none;
+}
+
+#inspector-markdown {
+    height: 1fr;
+}
+
+#command-input {
+    height: 3;
+    border-top: solid $accent;
+}
+
+#status-bar {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+.compact #filter-pane {
+    display: none;
+}
+
+.compact #results-pane {
+    width: 50%;
+}
+
+.compact #inspector {
+    width: 50%;
+}
+
+.narrow #inspector {
+    display: none;
+}
+
+.narrow #results-pane {
+    width: 100%;
+}
+
+ModalScreen {
+    align: center middle;
+    background: $background 70%;
+}
+
+.modal-card {
+    width: 80%;
+    height: 80%;
+    max-width: 110;
+    padding: 1 2;
+    background: $surface;
+    border: round $accent;
+}
+
+.confirm-card {
+    width: 64;
+    height: auto;
+    max-height: 18;
+}
+
+.edit-card {
+    width: 80%;
+    height: 70%;
+}
+
+.source-viewer-card {
+    width: 94%;
+    height: 94%;
+    max-width: 180;
+}
+
+#source-viewer-meta {
+    height: auto;
+    min-height: 2;
+    color: $text-muted;
+}
+
+#source-viewer-text {
+    height: 1fr;
+}
+
+.modal-title {
+    height: 2;
+    color: $accent;
+    text-style: bold;
+}
+
+.modal-actions {
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+.modal-actions Button {
+    margin-left: 1;
+}
+
+#record-editor {
+    height: 1fr;
+}
+
+#sources-table {
+    height: 1fr;
+}
+
+Tab.empty {
+    color: $text-disabled;
+}

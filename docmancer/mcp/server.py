@@ -82,6 +82,18 @@ def build_server():
     def docmancer_memory_promote(identifier: str, project_path: str, confirm: bool = False) -> dict:
         return tools.memory_promote(identifier, project_path=project_path, confirm=confirm)
 
+    @server.tool(name="cloud_status", description="Read optional encrypted cloud sync state from this device. No network request.")
+    def cloud_status_tool() -> dict:
+        return tools.cloud_status()
+
+    @server.tool(name="cloud_conflicts", description="List unresolved local cloud conflicts. No network request.")
+    def cloud_conflicts_tool() -> list[dict]:
+        return tools.cloud_conflicts()
+
+    @server.tool(name="cloud_sync", description="Explicitly run one encrypted cloud push and pull. Local memory remains available if sync fails.")
+    def cloud_sync_tool() -> dict:
+        return tools.cloud_sync()
+
     from docmancer.ai.openrouter_client import openrouter_api_key
 
     if openrouter_api_key():

@@ -102,6 +102,60 @@ class TestWebFetcherLlmsFull:
         assert docs[0].source == "https://docs.example.com/llms-full.txt"
         assert docs[0].metadata["docset_root"] == "https://docs.example.com"
 
+    def test_short_marketing_llms_full_also_indexes_linked_docs_host(self):
+        marketing_content = (
+            "# Example\n\n"
+            "[API Documentation](https://docs.example.com)\n\n"
+            + ("Product overview content. " * 100)
+        )
+        docs_content = "# Complete Documentation\n\n" + ("Provider reference content. " * 100)
+
+        def mock_get(url, **kwargs):
+            if url == "https://example.com":
+                return _mock_response("<main>Product home</main>")
+            if url == "https://example.com/llms-full.txt":
+                return _mock_response(marketing_content, content_type="text/plain")
+            if url == "https://docs.example.com":
+                return _mock_response("<main>Documentation home</main>")
+            if url == "https://docs.example.com/llms-full.txt":
+                return _mock_response(docs_content, content_type="text/plain")
+            if "robots.txt" in url:
+                return _mock_response("User-agent: *\nAllow: /", content_type="text/plain")
+            return _mock_response("", status=404, content_type="text/plain")
+
+        mock_client = _make_mock_client(mock_get)
+        with patch("docmancer.connectors.fetchers.web.httpx.Client", return_value=mock_client):
+            docs = WebFetcher(max_pages=100).fetch("https://example.com")
+
+        assert {doc.source for doc in docs} == {
+            "https://example.com/llms-full.txt",
+            "https://docs.example.com/llms-full.txt",
+        }
+        assert {doc.metadata["docset_root"] for doc in docs} == {
+            "https://example.com",
+            "https://docs.example.com",
+        }
+
+    def test_linked_docs_expansion_respects_max_pages(self):
+        marketing_content = (
+            "# Example\n\n"
+            "[API Documentation](https://docs.example.com)\n\n"
+            + ("Product overview content. " * 100)
+        )
+
+        def mock_get(url, **kwargs):
+            if url == "https://example.com":
+                return _mock_response("<main>Product home</main>")
+            if url == "https://example.com/llms-full.txt":
+                return _mock_response(marketing_content, content_type="text/plain")
+            raise AssertionError(f"page cap should prevent linked fetch: {url}")
+
+        mock_client = _make_mock_client(mock_get)
+        with patch("docmancer.connectors.fetchers.web.httpx.Client", return_value=mock_client):
+            docs = WebFetcher(max_pages=1).fetch("https://example.com")
+
+        assert [doc.source for doc in docs] == ["https://example.com/llms-full.txt"]
+
 
 class TestWebFetcherDirectText:
     def test_direct_markdown_url_fetches_single_page(self):

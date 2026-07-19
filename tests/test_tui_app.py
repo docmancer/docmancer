@@ -1,0 +1,363 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from textual.app import App
+
+from docmancer.harness.base import MemoryEntry
+from docmancer.tui.app import DocmancerTuiApp
+from docmancer.tui.backend import TuiBackend
+from docmancer.tui.screens.audit import AuditScreen
+from docmancer.tui.screens.cloud import ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen
+from docmancer.tui.screens.detail import DetailScreen, SourceViewerScreen
+from docmancer.tui.screens.sources import SourcesScreen
+from docmancer.tui.screens.sync import SyncScreen
+from docmancer.tui.widgets import Inspector, ResultList
+
+
+NOW = datetime.now(timezone.utc)
+
+
+def source(index: int, *, kind: str = "agent-memory", harness: str | None = None, scope: str | None = None, content: str | None = None) -> dict:
+    harness = harness or ("codex" if index % 2 == 0 else "claude-code")
+    scope = scope or ("global:codex" if index % 3 else "/tmp/project")
+    if not scope.startswith(("global:", "project:", "team:")):
+        scope = f"project:{scope}"
+    text = content or f"Memory source {index}. Production deploys run on Railway."
+    return {
+        "source_key": f"src-{kind}-{index}",
+        "harness": harness,
+        "scope": scope,
+        "scope_kind": scope.split(":", 1)[0],
+        "kind": kind,
+        "title": f"memory-{index}",
+        "path": f"/tmp/memory-{index}.md",
+        "chars": len(text),
+        "atom_count": 2,
+        "updated_at": (NOW - timedelta(hours=index)).isoformat(),
+        "indexed_at": NOW.isoformat(),
+        "source_hash": f"hash-{index}",
+        "record_id": "record-123" if index == 0 else None,
+        "origin": "manual" if index == 0 else "harvested",
+        "changed_since_sync": index == 1,
+        "source_missing": False,
+        "content": text,
+    }
+
+
+MEMORY_SOURCES = [source(index) for index in range(55)]
+INSTRUCTION_SOURCE = source(
+    100,
+    kind="instructions",
+    harness="instructions",
+    scope="project:/tmp/project",
+    content="# Instructions\n\nRun tests before release.\n",
+)
+ALL_SOURCES = [*MEMORY_SOURCES, INSTRUCTION_SOURCE]
+
+DOC_RESULT = {
+    "id": "docs:0",
+    "text": "Use fixtures to provide reusable test state.",
+    "source": "https://docs.pytest.org/fixtures.html",
+    "chunk_index": 2,
+    "score": 0.88,
+    "metadata": {"title": "Fixtures", "heading": "How fixtures work"},
+}
+
+
+class FakeBackend:
+    def __init__(self):
+        self.project_path = "/tmp/project"
+        self.ready = False
+        self.last_latency = 0.0
+        self.model_label = "model2vec"
+        self.forgotten = []
+        self.promoted = []
+        self.edited = []
+        self.cleared = False
+        self.cloud_audit_reports = 0
+
+    async def initialize(self):
+        self.ready = True
+        return {"memory": 55, "instructions": 1, "atoms": 112, "docs": 1}
+
+    async def counts(self):
+        return {"memory": 55, "instructions": 1, "atoms": 112, "docs": 1}
+
+    async def memory_sources(self, live_preview=True):
+        return [
+            {"agent": item["harness"], "scope": item["scope"], "type": item["kind"], "atoms": item["atom_count"], "path": item["path"]}
+            for item in ALL_SOURCES
+        ]
+
+    async def browse_memory_sources(self, *, kinds, harness=None, scope_kind=None, project_path=None, updated_after=None, page=1, page_size=50):
+        rows = [item for item in ALL_SOURCES if item["kind"] in kinds]
+        if harness:
+            rows = [item for item in rows if item["harness"] == harness]
+        if scope_kind:
+            rows = [item for item in rows if item["scope_kind"] == scope_kind]
+        if project_path:
+            rows = [item for item in rows if item["scope_kind"] == "global" or item["scope"].split(":", 1)[1] == project_path]
+        if updated_after:
+            rows = [item for item in rows if datetime.fromisoformat(item["updated_at"]) >= updated_after]
+        total = len(rows)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        summaries = [{key: value for key, value in item.items() if key != "content"} for item in rows[start : start + page_size]]
+        return {"items": summaries, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+
+    async def search_memory_sources(self, text, *, kinds, page=1, page_size=50, **kwargs):
+        rows = [item for item in ALL_SOURCES if item["kind"] in kinds and text.lower() in item["content"].lower()]
+        groups = []
+        for item in rows:
+            summary = {key: value for key, value in item.items() if key != "content"}
+            identifier = "record-123" if item["source_key"] == "src-agent-memory-0" else f"atom-{item['source_key']}"
+            groups.append(
+                {
+                    "source": summary,
+                    "matches": [
+                        {
+                            "identifier": identifier,
+                            "text": "Production deploys run on Railway.",
+                            "score": 0.91,
+                            "line_start": 1,
+                            "line_end": 1,
+                            "memory_type": "decision",
+                            "record_id": "record-123" if identifier == "record-123" else None,
+                            "atom_id": None if identifier == "record-123" else identifier,
+                            "origin": item["origin"],
+                        }
+                    ],
+                }
+            )
+        start = (page - 1) * page_size
+        return {"items": groups[start : start + page_size], "page": page, "page_size": page_size, "has_more": start + page_size < len(groups)}
+
+    async def get_memory_source(self, source_key):
+        return next((dict(item) for item in ALL_SOURCES if item["source_key"] == source_key), None)
+
+    async def docs_sources(self):
+        return [{"source": "https://docs.pytest.org", "pages": 10, "sections": 40}]
+
+    async def query_docs(self, text, **kwargs):
+        self.last_latency = 0.02
+        return [DOC_RESULT] if "fixture" in text else []
+
+    async def status(self):
+        return {"project": self.project_path, "memory": {"atoms": 112, "sources": 56, "db_path": "/tmp/memory.db"}, "docs": {"sections_count": 1}, "last_sync": {}}
+
+    async def sync(self, progress):
+        for stage in ("lock", "harvest", "redact", "merge", "index", "finalize", "done"):
+            progress(stage, f"{stage} detail")
+        return 112
+
+    async def audit(self):
+        return {"unique_secret_count": 0, "finding_count": 0, "findings": [], "by_severity": {}}
+
+    async def add(self, text, **kwargs):
+        return type("Record", (), {"record_id": "new-record"})(), True
+
+    async def find_atom(self, identifier):
+        if identifier not in {"record-123", "atom-src-agent-memory-1"}:
+            return None
+        return type("Atom", (), {"record_id": "record-123" if identifier == "record-123" else None, "atom_id": identifier, "text": MEMORY_SOURCES[0]["content"], "type": "decision", "source_path": "/tmp/memory-0.md", "origin": "manual" if identifier == "record-123" else "harvested"})()
+
+    async def edit(self, identifier, text):
+        self.edited.append((identifier, text))
+
+    async def forget(self, identifier):
+        self.forgotten.append(identifier)
+
+    async def promote(self, identifier):
+        self.promoted.append(identifier)
+        return type("Record", (), {"record_id": "team-record"})(), True
+
+    async def clear_memory(self):
+        self.cleared = True
+        return []
+
+    async def doctor(self):
+        return {"python": "3.13", "config_exists": True}
+
+    async def cloud_status(self):
+        return {"configured": False}
+
+    async def cloud_report_audit(self):
+        self.cloud_audit_reports += 1
+        return None
+
+
+@pytest.mark.asyncio
+async def test_tui_browses_paginated_files_and_click_does_not_open_modal():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        assert len(app.results) == 50
+        assert app.total_pages == 2
+        assert len(app.query_one("#source-text").text) == len(MEMORY_SOURCES[0]["content"])
+
+        await pilot.click("#result-list > ResultItem")
+        await pilot.pause()
+        assert app.screen is app._main_screen
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, SourceViewerScreen)
+
+
+@pytest.mark.asyncio
+async def test_tui_pagination_tabs_and_filters_cover_the_full_file_corpus():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        await app.action_next_page()
+        assert app.current_page == 2
+        assert len(app.results) == 5
+
+        await app.switch_mode("instructions")
+        assert len(app.results) == 1
+        assert app.results[0]["kind"] == "instructions"
+
+        await app.switch_mode("memory")
+        await pilot.pause()
+        app.query_one("#harness-filter").value = "codex"
+        await pilot.pause(0.2)
+        assert app.results
+        assert all(item["harness"] == "codex" for item in app.results)
+
+
+@pytest.mark.asyncio
+async def test_tui_groups_search_matches_and_uses_passage_actions(monkeypatch):
+    backend = FakeBackend()
+    app = DocmancerTuiApp(backend=backend)
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        await app.run_query("Railway")
+        await pilot.pause()
+        selected = app.query_one("#result-list", ResultList).selected_result
+        assert selected["view_kind"] == "source-match"
+        assert selected["matches"][0]["line_start"] == 1
+        assert app.query_one("#source-text").selection.start == (0, 0)
+
+        monkeypatch.setattr(app, "_show_modal_wait", lambda screen: _confirmed())
+        await app.command_promote([])
+        await app.command_forget([])
+        assert backend.promoted == ["record-123"]
+        assert backend.forgotten == ["record-123"]
+
+
+@pytest.mark.asyncio
+async def test_tui_queries_docs_and_opens_operational_overlays():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        await app.run_query("fixture", mode="docs")
+        assert app.mode == "docs"
+        assert app.results[0]["source"].startswith("https://docs.pytest.org")
+
+        await app.command_status([])
+        assert isinstance(app.screen, DetailScreen)
+        app.pop_screen()
+        await app.command_sources([])
+        assert isinstance(app.screen, SourcesScreen)
+        app.pop_screen()
+        await app.command_audit([])
+        assert isinstance(app.screen, AuditScreen)
+        app.pop_screen()
+        await app.command_sync([])
+        assert isinstance(app.screen, SyncScreen)
+        assert app.screen.finished is True
+
+
+@pytest.mark.asyncio
+async def test_tui_edit_uses_real_modal_result():
+    backend = FakeBackend()
+    app = DocmancerTuiApp(backend=backend)
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        task = asyncio.create_task(app.command_edit(["record-123"]))
+        await pilot.pause()
+        app.screen.query_one("#record-editor").text = "Production deploys run on Fly.io."
+        await pilot.click("#save")
+        await task
+        assert backend.edited == [("record-123", "Production deploys run on Fly.io.")]
+
+
+@pytest.mark.asyncio
+async def test_tui_large_source_is_not_truncated():
+    large = "first line\n" + ("memory detail\n" * 40_000) + "last line"
+    original = MEMORY_SOURCES[0]["content"]
+    MEMORY_SOURCES[0]["content"] = large
+    MEMORY_SOURCES[0]["chars"] = len(large)
+    try:
+        app = DocmancerTuiApp(backend=FakeBackend())
+        async with app.run_test(size=(130, 40)) as pilot:
+            await pilot.pause()
+            assert app.query_one("#source-text").text.endswith("last line")
+            assert len(app.query_one("#source-text").text) > 500_000
+    finally:
+        MEMORY_SOURCES[0]["content"] = original
+        MEMORY_SOURCES[0]["chars"] = len(original)
+
+
+@pytest.mark.asyncio
+async def test_tui_narrow_layout_and_cloud_overlays_mount():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        assert app._main_screen.has_class("compact")
+        assert app._main_screen.has_class("narrow")
+
+    shell = App()
+    async with shell.run_test(size=(100, 35)) as pilot:
+        await shell.push_screen(ConflictResolutionScreen([{"conflict_id": 1, "reason": "diverged_heads", "local_revision_id": "left", "remote_revision_id": "right"}]))
+        await pilot.pause()
+        assert shell.screen.query_one("#conflict-table")
+        shell.pop_screen()
+        await shell.push_screen(DeviceApprovalScreen({"device_id": "dev", "fingerprint": "AAAA:BBBB"}))
+        await pilot.pause()
+        assert shell.screen.query_one("#device-fingerprint")
+        shell.pop_screen()
+        await shell.push_screen(PromotionReviewScreen([{"proposal_id": "p1", "author": "member", "text": "Reviewed memory"}]))
+        await pilot.pause()
+        assert shell.screen.query_one("#promotion-table")
+
+
+@pytest.mark.asyncio
+async def test_continuous_audit_skips_unchanged_source_contents(tmp_path):
+    source_path = tmp_path / "memory.md"
+    source_path.write_text("No secrets here.", encoding="utf-8")
+
+    class FakeMemory:
+        home = tmp_path
+        config = None
+
+        def __init__(self):
+            self.preview_calls = 0
+
+        def preview(self):
+            self.preview_calls += 1
+            return [MemoryEntry("fake", "global:fake", "Memory", source_path.read_text(encoding="utf-8"), str(source_path))]
+
+        def sources(self, *, live_preview=False):
+            assert live_preview is False
+            return [{"path": str(source_path)}]
+
+    memory = FakeMemory()
+    backend = TuiBackend(memory_factory=lambda: memory)
+    backend.memory = memory
+    backend.ready = True
+    first = await backend.audit_if_changed()
+    second = await backend.audit_if_changed()
+    source_path.write_text("Still no secrets, but changed.", encoding="utf-8")
+    third = await backend.audit_if_changed()
+
+    assert first is not None
+    assert second is None
+    assert third is not None
+    assert memory.preview_calls == 2
+
+
+async def _confirmed():
+    return True

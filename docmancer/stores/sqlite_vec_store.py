@@ -205,15 +205,30 @@ class SqliteVecStore(VectorStore):
         vec_table = f"{collection}_vec"
         payload_table = f"{collection}_payload"
         blob = _floats_to_blob(query_vector)
+        filter_sql = ""
+        filter_params: list = []
+        for key, value in (filters or {}).items():
+            key = str(key)
+            if not key.replace("_", "").isalnum():
+                continue
+            values = value.get("in") if isinstance(value, dict) and "in" in value else [value]
+            values = [item for item in values if item is not None]
+            if not values:
+                filter_sql += " AND 0"
+                continue
+            placeholders = ",".join("?" for _ in values)
+            filter_sql += f" AND json_extract(p.payload, ?) IN ({placeholders})"
+            filter_params.extend([f"$.{key}", *values])
         cur = self._conn.execute(
             f"""
             SELECT v.rowid, v.distance, p.id, p.payload
             FROM {vec_table} v
             JOIN {payload_table} p ON p.rowid = v.rowid
             WHERE v.embedding MATCH ? AND k = ?
+            {filter_sql}
             ORDER BY v.distance
             """,
-            (blob, int(limit)),
+            (blob, int(limit), *filter_params),
         )
         hits: list[VectorHit] = []
         for _rowid, distance, point_id, payload_json in cur.fetchall():

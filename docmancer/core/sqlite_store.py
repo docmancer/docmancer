@@ -445,9 +445,10 @@ class SQLiteStore:
         limit: int,
         budget: int,
         expand: str | None = None,
+        filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         expand_mode = expand or "none"
-        rows = [dict(r) for r in self._search_rows(text, max(limit * 4, limit))]
+        rows = [dict(r) for r in self._search_rows(text, max(limit * 4, limit), filters=filters)]
         term_weights = self._query_term_weights(text)
 
         # --- Re-ranking passes (BM25 rank is negative, lower = better) ---
@@ -671,22 +672,42 @@ class SQLiteStore:
                 weights[term] = weight
         return weights
 
-    def _search_rows(self, query: str, limit: int) -> list[sqlite3.Row]:
+    def _search_rows(self, query: str, limit: int, *, filters: dict | None = None) -> list[sqlite3.Row]:
         cleaned = self._strip_stopwords(query)
         terms = [token for token in re.findall(r"\w+", cleaned) if token]
+        filter_sql = ""
+        filter_params: list = []
+        allowed_columns = {
+            "source": "sections.source",
+            "source_path": "sections.source_path",
+            "format": "sections.format",
+        }
+        for key, value in (filters or {}).items():
+            column = allowed_columns.get(str(key))
+            if column is None:
+                continue
+            values = value.get("in") if isinstance(value, dict) and "in" in value else [value]
+            values = [item for item in values if item is not None]
+            if not values:
+                filter_sql += " AND 0"
+                continue
+            placeholders = ",".join("?" for _ in values)
+            filter_sql += f" AND {column} IN ({placeholders})"
+            filter_params.extend(values)
         with self._connect() as conn:
             try:
                 rows = list(
                     conn.execute(
-                        """
+                        f"""
                         SELECT sections.*, bm25(sections_fts) AS rank
                         FROM sections_fts
                         JOIN sections ON sections.id = sections_fts.rowid
                         WHERE sections_fts MATCH ?
+                        {filter_sql}
                         ORDER BY rank
                         LIMIT ?
                         """,
-                        (cleaned, limit),
+                        (cleaned, *filter_params, limit),
                     )
                 )
                 if rows or len(terms) <= 1:
@@ -699,15 +720,16 @@ class SQLiteStore:
                 return []
             return list(
                 conn.execute(
-                    """
+                    f"""
                     SELECT sections.*, bm25(sections_fts) AS rank
                     FROM sections_fts
                     JOIN sections ON sections.id = sections_fts.rowid
                     WHERE sections_fts MATCH ?
+                    {filter_sql}
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (fallback_query, limit),
+                    (fallback_query, *filter_params, limit),
                 )
             )
 
@@ -832,12 +854,23 @@ class SQLiteStore:
     def list_grouped_sources_with_dates(self) -> list[dict]:
         with self._connect() as conn:
             return [
-                {"source": row["source"], "ingested_at": row["ingested_at"]}
+                {
+                    "source": row["source"],
+                    "ingested_at": row["ingested_at"],
+                    "pages": int(row["pages"] or 0),
+                    "sections": int(row["sections"] or 0),
+                    "formats": [value for value in str(row["formats"] or "").split(",") if value],
+                }
                 for row in conn.execute(
                     """
-                    SELECT COALESCE(NULLIF(docset_root, ''), source) AS source, MAX(ingested_at) AS ingested_at
-                    FROM sources
-                    GROUP BY COALESCE(NULLIF(docset_root, ''), source)
+                    SELECT COALESCE(NULLIF(s.docset_root, ''), s.source) AS source,
+                           MAX(s.ingested_at) AS ingested_at,
+                           COUNT(DISTINCT s.id) AS pages,
+                           COUNT(sec.id) AS sections,
+                           GROUP_CONCAT(DISTINCT COALESCE(NULLIF(sec.format, ''), 'unknown')) AS formats
+                    FROM sources AS s
+                    LEFT JOIN sections AS sec ON sec.source_id = s.id
+                    GROUP BY COALESCE(NULLIF(s.docset_root, ''), s.source)
                     ORDER BY ingested_at DESC, source
                     """
                 )
@@ -1058,13 +1091,19 @@ class SQLiteStore:
             rows = conn.execute(
                 """
                 SELECT id, source, chunk_index, title, level, text, token_estimate,
-                       source_path, document_title, format, anchor, content_hash
+                       source_path, document_title, format, anchor, content_hash,
+                       metadata_json
                 FROM sections
                 ORDER BY source, chunk_index
                 """
             )
-            return [
-                {
+            output = []
+            for row in rows:
+                try:
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    metadata = {}
+                output.append({
                     "section_id": int(row["id"]),
                     "source": str(row["source"]),
                     "chunk_index": int(row["chunk_index"]),
@@ -1077,9 +1116,9 @@ class SQLiteStore:
                     "format": str(row["format"] or ""),
                     "anchor": str(row["anchor"] or ""),
                     "content_hash": str(row["content_hash"] or ""),
-                }
-                for row in rows
-            ]
+                    "metadata": metadata,
+                })
+            return output
 
     def get_document_content(self, source: str) -> str | None:
         with self._connect() as conn:

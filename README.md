@@ -14,7 +14,7 @@
 
 ---
 
-Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and other coding agents already write memory, instructions, and rules across your machine. Docmancer turns that scattered context into small, source-attributed **memory atoms** that can be recalled, inspected, forgotten, or shared independently.
+Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and other coding agents already write memory, instructions, and rules across your machine. Docmancer indexes those complete source files for browsing and extracts small, source-attributed **memory atoms** for recall and passage-level curation.
 
 The default path is local and keyless. SQLite FTS5 handles lexical search, the packaged `potion-base-8M` model creates embeddings without a download, and `sqlite-vec` stores dense vectors in the same local index. The same engine can also index documentation from local files, docs sites, and GitHub.
 
@@ -28,15 +28,28 @@ If `pipx` picks an unsupported interpreter, pin one: `pipx install docmancer --p
 
 ## First run
 
-Set up the local index, then ask a question:
+Set up the local index, then open the interactive explorer:
 
 ```bash
 docmancer setup
-docmancer memory sync
-docmancer memory query "what deployment decisions have we recorded?"
+docmancer
 ```
 
-`setup` creates `~/.docmancer/`, discovers memory and instructions from supported agents and repositories, builds the SQLite index, and installs skill files for detected agents. Run `docmancer memory sync` whenever the source memory changes.
+`setup` creates `~/.docmancer/`, discovers memory and instructions from supported agents and repositories, builds the SQLite index, and installs skill files for detected agents. Bare `docmancer` is the recommended human interface. It opens a local three-pane terminal explorer with separate Memory, Instructions & Rules, and Docs tabs. The tab counts describe complete indexed source files, while memory atoms remain the retrieval unit underneath search, recall, and passage-level actions.
+
+The deterministic CLI remains available for coding agents, scripts, CI, and advanced workflows:
+
+```bash
+docmancer memory sync
+docmancer memory query "what deployment decisions have we recorded?"
+docmancer tui  # explicit alias for the interactive explorer
+```
+
+When developing from this repository, run `scripts/tui_local_smoke.sh` for an isolated hands-on demo. It creates more than 60 temporary source files across multiple harnesses, includes instruction files and one source larger than 500 KB, launches the TUI against a temporary index, and removes that temporary data when the TUI exits.
+
+The TUI browses the complete indexed snapshot, sorted by most recently updated and paginated at 50 files per page. Each row shows the filename, harness, scope, age, size, and atom count. Scope, harness, updated-time, and project filters are applied before pagination, and the project selector includes matching project or team sources plus global sources.
+
+Selecting a file shows its complete privacy-cleaned indexed text in the right pane without opening a popup. Press Enter or `V` for the full-screen viewer. Plain-text search remains passage-powered, but results are grouped by source file and jump to the best matching line range; `[` and `]` move between matches. Use `/memory <query>` to search agent-memory files and `/instructions <query>` or `/rules <query>` to search instruction and rule files. Passage exclusion and promotion are available from search results. After a search or narrow filter produces no matches, press Enter in the empty search box or run `/reset` to restore the full file list and broad filters.
 
 ## Work with memory
 
@@ -67,7 +80,14 @@ docmancer memory promote 68309626f1ac --team --project "$PWD"
 git status --short .docmancer/memory/
 ```
 
-Team memory lives as editable Markdown under `.docmancer/memory/`. Docmancer never stages or commits it, so new files appear in `git status` before they appear in `git diff`.
+Team memory lives as editable Markdown under `.docmancer/memory/`. Docmancer never stages or commits it, so new files appear in `git status` before they appear in `git diff`. Review a repository import or export with:
+
+```bash
+docmancer memory team import --from-git "$PWD"
+docmancer memory team export --to-git "$PWD" --dry-run
+```
+
+The export command never stages or commits files.
 
 ## Inspect and maintain the index
 
@@ -117,30 +137,7 @@ docmancer add https://docs.pytest.org
 docmancer query "How do I parametrize a fixture?"
 ```
 
-Local ingestion supports Markdown, PDF, DOCX, RTF, and HTML. URL ingestion supports GitBook, Mintlify, generic documentation sites, and GitHub.
-
-## Optional consolidation
-
-Consolidation is optional maintenance, not the main memory-transfer path. `docmancer memory consolidate` sends selected, privacy-redacted memory atoms to OpenRouter and returns a review-only draft: deduplicated, grouped into compact sections, with conflicts surfaced as warnings instead of silently resolved.
-
-```bash
-export OPENROUTER_API_KEY=...
-docmancer memory consolidate \
-  --provider openrouter \
-  --model openai/gpt-4.1-nano \
-  --query "deployment and infra decisions" \
-  --output master-memory-draft.md \
-  --yes
-```
-
-Apply selected atoms to an agent's always-loaded file only when you want a compact stable summary:
-
-```bash
-docmancer memory apply --agent codex --dry-run
-docmancer memory apply --agent codex
-```
-
-`apply` is local and keyless. It writes inside a delimited managed block, creates a timestamped backup, and leaves surrounding content untouched. `--remove` removes the managed block. Provider-backed consolidation prints a notice before sending redacted text and uses a finite 180-second timeout by default. See [Configuration](./wiki/Configuration.md) for provider and timeout options.
+Local ingestion supports Markdown, PDF, DOCX, RTF, and HTML. URL ingestion supports GitBook, Mintlify, generic documentation sites, and GitHub. When a product site publishes a short `llms-full.txt` that links to its real documentation on a same-company docs subdomain or a known hosted-docs site, `add` indexes both roots. Page discovery remains bounded by `--max-pages`.
 
 ## How retrieval works
 
@@ -155,7 +152,6 @@ Docmancer keeps durable records separate from its rebuildable index:
 - `<repo>/.docmancer/memory/*.md` contains free, MIT-licensed team memory intended for Git review.
 - `~/.docmancer/memory-tombstones.json` contains content-free suppression identifiers and hashes.
 - Extraction and hook dedupe caches live under `~/.docmancer/`; neither is a transcript archive.
-- OpenRouter receives privacy-redacted selected memory only when you explicitly run optional consolidation. Local sync, CRUD, MCP, hooks, capture, and evaluation do not call it.
 
 There is no telemetry or phone-home. Every docs section is also written to `~/.docmancer/extracted/` as Markdown and JSON. Use `docmancer inspect` for docs-index statistics and `docmancer query --explain` to see which retrieval signals placed each result.
 

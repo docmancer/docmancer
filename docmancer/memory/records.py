@@ -23,7 +23,7 @@ from docmancer.harness.secrets import redact_secrets
 from docmancer.memory.atomic import AtomicMemoryEntry, classify_memory
 
 
-RECORD_SCHEMA_VERSION = 1
+RECORD_SCHEMA_VERSION = 2
 _FRONTMATTER = re.compile(
     r"\A---\s*\n(?P<meta>.*?)\n---\s*\n?(?P<body>[\s\S]*)\Z",
     re.DOTALL,
@@ -77,6 +77,10 @@ class MemoryRecord:
     schema_version: int = RECORD_SCHEMA_VERSION
     session_id: str | None = None
     promoted_from: str | None = None
+    revision_id: str = ""
+    parent_revision_ids: list[str] = field(default_factory=list)
+    deleted: bool = False
+    project_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.scope_kind not in _VALID_SCOPES:
@@ -88,6 +92,11 @@ class MemoryRecord:
         if self.scope_kind in {"project", "team"} and not self.project_path:
             raise ValueError(f"{self.scope_kind} memory requires a project path")
         self.tags = sorted({str(tag).strip() for tag in self.tags if str(tag).strip()})
+        self.parent_revision_ids = [str(value) for value in self.parent_revision_ids if str(value)]
+        if self.scope_kind == "global":
+            self.project_id = None
+        if not self.revision_id:
+            self.revision_id = self.to_revision_payload()["revision_id"]
 
     @property
     def scope(self) -> str:
@@ -120,6 +129,30 @@ class MemoryRecord:
             origin=self.origin,
             scope_kind=self.scope_kind,
             project_path=self.project_path,
+            project_id=self.project_id,
+            revision_id=self.revision_id,
+            parent_revision_ids=list(self.parent_revision_ids),
+            deleted=self.deleted,
+        )
+
+    def to_revision_payload(self, *, deleted: bool | None = None, updated_at: str | None = None) -> dict:
+        from docmancer.cloud.serialize import build_record_payload
+
+        is_deleted = self.deleted if deleted is None else deleted
+        return build_record_payload(
+            record_id=self.record_id,
+            text=self.text,
+            memory_type=self.type,
+            tags=self.tags,
+            origin_kind=self.origin,
+            origin_harness=self.harness,
+            scope_kind=self.scope_kind,
+            project_id=self.project_id,
+            created_at=self.created_at,
+            updated_at=updated_at or self.updated_at,
+            parent_revision_ids=self.parent_revision_ids,
+            deleted=is_deleted,
+            revision=self.revision_id if deleted is None and self.revision_id else None,
         )
 
 
@@ -131,6 +164,10 @@ class MemoryRecordStore:
         self.root = Path(root).expanduser()
         self.personal_dir = self.root / "memories"
         self.tombstone_path = self.root / "memory-tombstones.json"
+        from docmancer.cloud.config import CloudConfig
+
+        self.cloud = CloudConfig(self.root)
+        self._revision_ids: dict[str, set[str]] = {}
 
     def add(
         self,
@@ -151,6 +188,7 @@ class MemoryRecordStore:
         project = _clean_path(project_path)
         if scope_kind in {"project", "team"} and not project:
             project = _clean_path(Path.cwd())
+        project_id = self.cloud.ensure_project(project) if scope_kind in {"project", "team"} and project else None
         record = MemoryRecord(
             record_id=record_id or uuid.uuid4().hex,
             text=cleaned,
@@ -161,10 +199,12 @@ class MemoryRecordStore:
             project_path=project,
             session_id=session_id,
             promoted_from=promoted_from,
+            project_id=project_id,
         )
         path = self._record_path(record)
         record.source_path = str(path)
         self._write_record(path, record)
+        self.append_revision(record.to_revision_payload())
         return record
 
     def _record_path(self, record: MemoryRecord) -> Path:
@@ -192,7 +232,8 @@ class MemoryRecordStore:
                 return None
             meta["text"] = match.group("body").strip()
             meta["source_path"] = str(path)
-            return MemoryRecord(**meta)
+            record = MemoryRecord(**meta)
+            return record
         except (OSError, TypeError, ValueError, yaml.YAMLError):
             return None
 
@@ -241,6 +282,124 @@ class MemoryRecordStore:
         path = Path(record.source_path)
         if path.is_file():
             path.unlink()
+
+    def update_record(self, record: MemoryRecord, text: str) -> MemoryRecord:
+        """Rewrite a durable record while preserving its stable identity."""
+        cleaned = " ".join(redact_secrets(text or "").split()).strip()
+        if not cleaned:
+            raise ValueError("memory text cannot be empty")
+        path = Path(record.source_path)
+        if not path.is_file():
+            raise ValueError("memory record file no longer exists")
+        previous = record.revision_id
+        record.text = cleaned
+        record.updated_at = _now()
+        record.parent_revision_ids = [previous] if previous else []
+        record.revision_id = ""
+        record.revision_id = record.to_revision_payload()["revision_id"]
+        record.schema_version = RECORD_SCHEMA_VERSION
+        self._write_record(path, record)
+        self.append_revision(record.to_revision_payload())
+        return record
+
+    def revision_log_path(self, record_id: str) -> Path:
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(record_id))
+        return self.personal_dir / ".revisions" / f"{safe_id}.jsonl"
+
+    def revisions(self, record_id: str) -> list[dict]:
+        path = self.revision_log_path(record_id)
+        if not path.is_file():
+            return []
+        out: list[dict] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    out.append(value)
+        except (OSError, json.JSONDecodeError):
+            return []
+        return out
+
+    def append_revision(self, payload: dict) -> bool:
+        """Append one immutable revision to the local lineage log."""
+        from docmancer.cloud.serialize import canonicalize, validate_record_payload
+
+        validated = validate_record_payload(payload)
+        path = self.revision_log_path(validated["record_id"])
+        record_id = validated["record_id"]
+        seen = self._revision_ids.get(record_id)
+        if seen is None:
+            seen = {
+                str(row["revision_id"])
+                for row in self.revisions(record_id)
+                if row.get("revision_id")
+            }
+            self._revision_ids[record_id] = seen
+        if validated["revision_id"] in seen:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as handle:
+            handle.write(canonicalize(validated) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        seen.add(validated["revision_id"])
+        return True
+
+    def append_tombstone_revision(self, record: MemoryRecord) -> dict:
+        """Append a content-free deletion revision that names the live head."""
+        previous = record.revision_id
+        timestamp = _now()
+        record.parent_revision_ids = [previous] if previous else []
+        record.updated_at = timestamp
+        record.deleted = True
+        record.revision_id = ""
+        payload = record.to_revision_payload(deleted=True, updated_at=timestamp)
+        record.revision_id = payload["revision_id"]
+        self.append_revision(payload)
+        return payload
+
+    def apply_revision(
+        self,
+        payload: dict,
+        *,
+        project_path: str | Path | None = None,
+        existing: MemoryRecord | None = None,
+    ) -> MemoryRecord | None:
+        """Durably apply a validated remote revision without changing scope."""
+        from docmancer.cloud.serialize import validate_record_payload
+
+        value = validate_record_payload(payload)
+        if value["scope_kind"] in {"project", "team"} and project_path is None:
+            raise ValueError(
+                f"{value['scope_kind']} memory requires a linked local project path"
+            )
+        self.append_revision(value)
+        if value["deleted"]:
+            if existing is not None:
+                self.delete_record(existing)
+            return None
+        origin = value["origin"]
+        record = MemoryRecord(
+            record_id=value["record_id"],
+            text=value["text"],
+            type=value["memory_type"],
+            tags=list(value["tags"]),
+            origin=str(origin["kind"]),
+            harness=str(origin["harness"]),
+            scope_kind=value["scope_kind"],
+            project_path=project_path,
+            project_id=value["project_id"],
+            created_at=value["created_at"],
+            updated_at=value["updated_at"],
+            revision_id=value["revision_id"],
+            parent_revision_ids=list(value["parent_revision_ids"]),
+        )
+        path = Path(existing.source_path) if existing is not None else self._record_path(record)
+        record.source_path = str(path)
+        self._write_record(path, record)
+        return record
 
     def tombstones(self) -> list[dict]:
         if not self.tombstone_path.is_file():

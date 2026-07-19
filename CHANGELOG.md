@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - Unreleased
+### Added
+
+- **Interactive local terminal explorer.** Running bare `docmancer` in a supported interactive terminal now opens a Textual-based three-pane explorer with separate Memory, Instructions & Rules, and Docs modes, plain-text search, source filters, responsive layouts, and an explicit `docmancer tui` alias. Redirected and headless invocation continues to print normal CLI help without starting Textual.
+- **File-first memory browsing.** The TUI paginates complete indexed source files, shows their full privacy-cleaned text in a lazy line-numbered viewer, groups search matches by file, jumps to matching passages, and keeps atom IDs out of the normal human browse flow.
+- **In-process memory operations.** The TUI exposes local slash commands for search, sync progress, sources, status, masked secret audit, add, show, edit, forget, promote, retrieval mode, project scope, doctor checks, clear, and help. Destructive actions require confirmation, and no command shells out to the Docmancer CLI.
+- **Writable record editing.** `MemoryAgent.edit_record` rewrites user-owned Markdown records while preserving their stable identity and rebuilds the local index so retrieval reflects the new text. Harvested memory remains read-only.
+- **Shared audit results.** The CLI and TUI now use the same presentation-free secret-audit helper, which returns masked findings grouped by severity and fingerprint.
+- **Encrypted cloud protocol client.** Added Protocol v1 canonical record revisions, portable project IDs, content-free deletion revisions, PyNaCl envelope encryption and signatures, OS-keyring secret storage, a durable ciphertext outbox, replay-safe cursors, explicit conflicts, recovery wrapping, snapshots, rotation helpers, entitlement caching, and privacy-preserving audit metadata.
+- **Optional cloud surfaces.** Added `docmancer cloud` account, sync, status, device, recovery, conflict, export, and remote-deletion commands; explicit MCP status, sync, and conflict tools; Git team import and export; and TUI cloud status, conflict, device, recovery, audit, and promotion-review surfaces. All local memory features continue to work without cloud configuration or entitlement.
+
+### Changed
+
+- **Textual ships with Docmancer.** Textual 8 is now a core dependency so `pipx install docmancer` includes the interactive human interface without a separate extra.
+- **Setup points humans at the explorer.** Setup output and the README now recommend bare `docmancer` for interactive use while keeping the plain CLI and MCP surfaces as the automation and agent interfaces.
+- **Durable edits now preserve lineage.** Record edits append immutable revisions whose parent is the prior head. Forgetting an owned record appends an encrypted-ready, content-free deletion revision before removing the Markdown body.
+- **Source snapshots are browser-ready.** Versioned memory source snapshots now retain full indexed text, stable composite source keys, hashes, timestamps, sizes, kinds, and atom counts. Memory retrieval can constrain lexical and vector candidates by source metadata before ranking.
+
+### Fixed
+
+- **Empty TUI searches are recoverable.** Pressing Enter in an empty search box or running `/reset` now restores the full memory-file browse list and resets scope, harness, and time filters. Empty result states explain whether the search or filters excluded indexed files.
+- **TUI filters cover the complete corpus.** Harness, scope, project, source kind, and date restrictions now apply before ranking and pagination instead of filtering a fixed 30-result slice. The stale atom cache is invalidated so scope metadata is rebuilt correctly.
+
 ## [0.6.17] - 2026-07-19
 ### Changed
 

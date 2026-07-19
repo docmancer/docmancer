@@ -2137,7 +2137,7 @@ def setup_cmd(
 
     if not selected:
         _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
-        _emit_next_step("Run `docmancer add <url-or-path>` to index documentation locally.")
+        _emit_next_step("Run `docmancer` to explore memory and documentation interactively.")
         return
 
     unique_targets = list(dict.fromkeys(selected))
@@ -2159,4 +2159,4 @@ def setup_cmd(
 
     _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
     click.echo()
-    _emit_next_step("Run `docmancer add <url-or-path>`, then `docmancer query \"your question\"`.")
+    _emit_next_step("Run `docmancer` to explore memory and documentation interactively.")

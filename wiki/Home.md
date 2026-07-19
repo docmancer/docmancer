@@ -9,6 +9,7 @@ Docmancer turns the memory your coding agents already wrote (Claude Code, Codex,
 | Page | What's there |
 |------|--------------|
 | **[Commands](./Commands.md)** | The memory loop, audit, docs commands, and advanced maintenance |
+| **[Cloud sync](./Cloud-Sync.md)** | Optional encrypted sync, privacy boundaries, recovery, devices, and conflicts |
 | **[Configuration](./Configuration.md)** | `docmancer.yaml` reference, common env vars, API keys, and advanced backends |
 | **[Architecture](./Architecture.md)** | The memory harness, audit, indexing, hybrid retrieval, and agent skill installs |
 | **[Supported Sources](./Supported-Sources.md)** | Memory sources plus doc file formats and URL providers |
@@ -20,6 +21,8 @@ Docmancer turns the memory your coding agents already wrote (Claude Code, Codex,
 - `~/.docmancer/docmancer.yaml`: global config.
 - `~/.docmancer/memory.db`: rebuildable memory SQLite FTS5 index, with co-located sqlite-vec state.
 - `~/.docmancer/memories/`: editable personal and project memory records.
+- `~/.docmancer/memories/.revisions/`: append-only canonical record lineage.
+- `~/.docmancer/cloud/`: optional non-secret cloud metadata, ciphertext outbox, cursors, project mappings, and conflict state. Tokens and keys stay in the operating-system credential store.
 - `<repo>/.docmancer/memory/`: reviewable Git team memory records.
 - `~/.docmancer/memory-tombstones.json`: content-free suppression records for forgotten memory.
 - `~/.docmancer/docmancer.db`: default docs SQLite FTS5 index.

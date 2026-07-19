@@ -228,6 +228,39 @@ def memory_promote(identifier: str, *, project_path: str, confirm: bool = False)
     return {"promoted": True, "record_id": record.record_id, "source_path": record.source_path, "indexed": indexed}
 
 
+def cloud_status() -> dict:
+    """Read optional cloud state without contacting the service."""
+    from docmancer.cli.cloud_commands import cloud_status as read_status
+
+    return read_status()
+
+
+def cloud_conflicts() -> list[dict]:
+    """Read unresolved decrypted conflict metadata from local state."""
+    from pathlib import Path
+    from docmancer.cloud.config import CloudConfig
+    from docmancer.cloud.outbox import CloudState
+    from docmancer.memory import default_memory_db
+
+    root = Path(default_memory_db()).parent
+    return CloudState(CloudConfig(root).paths.sync_state).conflicts()
+
+
+def cloud_sync() -> dict:
+    """Run one explicit encrypted push/pull cycle."""
+    from docmancer.cli.cloud_commands import _client
+    from docmancer.cloud.sync import sync_once
+
+    try:
+        client, root, _config, _account, keys = _client()
+        try:
+            return sync_once(client, root=root, keystore=keys)
+        finally:
+            client.close()
+    except Exception as exc:  # noqa: BLE001 - MCP gets a structured, non-destructive error
+        return {"error": str(exc)}
+
+
 # --- Optional cloud-backed tools (require OPENROUTER_API_KEY) ----------------
 
 
@@ -274,4 +307,7 @@ __all__ = [
     "memory_status",
     "sources_list",
     "memory_consolidate_draft",
+    "cloud_status",
+    "cloud_conflicts",
+    "cloud_sync",
 ]

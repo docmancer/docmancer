@@ -38,3 +38,24 @@ def test_list_sections_for_embedding_matches_fts_sections(tmp_path: Path):
 
     fts_count = store.collection_stats()["sections_count"]
     assert len(sections) == fts_count
+
+
+def test_lexical_query_filters_by_source_path_before_ranking(tmp_path: Path):
+    store = SQLiteStore(str(tmp_path / "filtered.db"))
+    store.add_documents(
+        [
+            Document(source="memory://a", content="Production deploys run on Railway.", metadata={"source_path": "/a.md"}),
+            Document(source="memory://b", content="Production deploys run on Railway.", metadata={"source_path": "/b.md"}),
+        ],
+        recreate=True,
+    )
+
+    results = store.query(
+        "Railway",
+        limit=10,
+        budget=10_000,
+        filters={"source_path": {"in": ["/b.md"]}},
+    )
+
+    assert len(results) == 1
+    assert results[0].metadata["source_path"] == "/b.md"

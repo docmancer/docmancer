@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
@@ -234,6 +235,40 @@ def test_incremental_record_indexing_does_not_harvest_sources(tmp_path, monkeypa
 
     assert indexed is True
     assert agent.find_atom(record.record_id) is not None
+
+
+def test_edit_owned_record_rewrites_markdown_and_refreshes_retrieval(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    record, _ = agent.add_record("Production deploys run on Railway.", memory_type="decision")
+
+    updated = agent.edit_record(record.record_id, "Production deploys run on Fly.io.")
+
+    assert updated.record_id == record.record_id
+    assert "Fly.io" in Path(updated.source_path).read_text()
+    assert "Railway" not in Path(updated.source_path).read_text()
+    chunks = agent.query("where do production deploys run?", mode="lexical", min_score=0)
+    assert any("Fly.io" in chunk.text for chunk in chunks)
+    assert all("Railway" not in chunk.text for chunk in chunks)
+
+
+def test_edit_rejects_harvested_memory_without_changing_its_source(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    source = tmp_path / "harness-home" / ".claude" / "projects" / "-tmp-app" / "memory" / "note.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("We deploy this service on Railway.\n")
+    (source.parent.parent / "session.jsonl").write_text(json.dumps({"cwd": str(tmp_path / "app")}) + "\n")
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    agent.sync()
+    atom = agent.indexed_atoms()[0]
+
+    with pytest.raises(ValueError, match="user-owned"):
+        agent.edit_record(atom.atom_id, "We deploy this service on Fly.io.")
+    assert source.read_text() == "We deploy this service on Railway.\n"
 
 
 def test_capture_skips_unknown_events_background_work_and_malformed_transcripts(tmp_path, monkeypatch):

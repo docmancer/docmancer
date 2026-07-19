@@ -17,6 +17,7 @@ import hashlib
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,16 @@ from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
 from docmancer.memory.records import MemoryRecord, MemoryRecordStore, normalize_memory_text
+from docmancer.memory.sources import (
+    MemorySourceDocument,
+    MemorySourceFilters,
+    MemorySourceMatch,
+    MemorySourceMatchGroup,
+    MemorySourceMatchPage,
+    MemorySourcePage,
+    MemorySourceSummary,
+    memory_source_key,
+)
 
 if TYPE_CHECKING:
     from docmancer.core.config import DocmancerConfig
@@ -36,8 +47,9 @@ logger = logging.getLogger(__name__)
 _MEMORY_COLLECTION = "docmancer_memory"
 
 # Bump when extraction logic changes so stale cached atoms are not reused.
-_ATOM_CACHE_VERSION = 2
+_ATOM_CACHE_VERSION = 3
 MEMORY_SCHEMA_VERSION = 2
+_SOURCE_SNAPSHOT_VERSION = 2
 _SCHEMA_META_TABLE = "docmancer_memory_meta"
 _DEFAULT_SYNC_LOCK_TIMEOUT = 10.0
 
@@ -176,10 +188,8 @@ class MemoryAgent:
             progress("redact", f"Redacting and extracting {len(entries):,} source file(s)")
             cleaned_entries = [self.privacy.clean(e) for e in entries]
             atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate, merge=False)
-            atoms.extend(
-                record.to_atom()
-                for record in self.records.records(project_paths=self._project_paths(cleaned_entries))
-            )
+            records = self.records.records(project_paths=self._project_paths(cleaned_entries))
+            atoms.extend(record.to_atom() for record in records)
             atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
             progress("merge", f"Deduplicating {len(atoms):,} extracted memory atoms")
             atoms = self._merge_all(atoms)
@@ -196,7 +206,25 @@ class MemoryAgent:
                 docs = [atom.to_document() for atom in atoms]
                 self._agent.ingest_documents(docs, recreate=True, with_vectors=True)
             progress("finalize", "Writing provenance and schema metadata")
-            self._write_source_snapshot(cleaned_entries, atoms)
+            from docmancer.harness.base import MemoryEntry
+
+            record_entries = []
+            for record in records:
+                try:
+                    content = Path(record.source_path).read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    content = record.text
+                record_entries.append(
+                    MemoryEntry(
+                        harness=record.harness,
+                        scope=record.scope,
+                        title=f"{record.origin.title()} memory",
+                        content=content,
+                        path=record.source_path,
+                        extra={"kind": "team-memory" if record.scope_kind == "team" else "docmancer-memory"},
+                    )
+                )
+            self._write_source_snapshot([*cleaned_entries, *record_entries], atoms)
             self._stamp_schema()
             progress("done", f"Indexed {len(atoms):,} memory atoms")
             return len(atoms)
@@ -453,6 +481,7 @@ class MemoryAgent:
         allow_degraded: bool = True,
         project_path: str | Path | None = None,
         scope: str | None = None,
+        source_paths: list[str] | tuple[str, ...] | None = None,
         min_score: float | None = DEFAULT_MEMORY_RELEVANCE_THRESHOLD,
     ) -> list["RetrievedChunk"]:
         from docmancer.retrieval.dispatch import RetrievalDispatcher
@@ -472,7 +501,17 @@ class MemoryAgent:
         # RRF orders candidates, while the final public score measures whether
         # they are relevant enough to show at all.
         search_limit = requested_limit * 4
-        result = dispatcher.run(text, mode=mode, limit=search_limit, budget=budget, allow_degraded=allow_degraded)
+        retrieval_filters = None
+        if source_paths:
+            retrieval_filters = {"source_path": {"in": sorted({str(path) for path in source_paths})}}
+        result = dispatcher.run(
+            text,
+            mode=mode,
+            limit=search_limit,
+            budget=budget,
+            filters=retrieval_filters,
+            allow_degraded=allow_degraded,
+        )
         chunks = result.chunks
         if min_score is not None:
             chunks = [chunk for chunk in chunks if float(chunk.score or 0.0) >= min_score]
@@ -597,6 +636,238 @@ class MemoryAgent:
         rows.sort(key=lambda r: (r["agent"], r["scope"], r["path"]))
         return rows
 
+    def browse_sources(
+        self,
+        filters: MemorySourceFilters | None = None,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> MemorySourcePage:
+        """Browse complete indexed source files with filters before pagination."""
+        filters = filters or MemorySourceFilters()
+        page = max(1, int(page))
+        page_size = max(1, min(200, int(page_size)))
+        rows = [row for row in self._indexed_source_documents() if self._source_matches(row, filters)]
+        rows.sort(key=self._source_sort_key)
+        total = len(rows)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        summaries = [self._source_summary(row) for row in rows[start : start + page_size]]
+        return MemorySourcePage(summaries, total, page, page_size, total_pages)
+
+    def get_indexed_source(self, source_key: str) -> MemorySourceDocument | None:
+        """Return the complete privacy-cleaned text used by the current index."""
+        for row in self._indexed_source_documents():
+            if row.source_key == source_key:
+                return row
+        return None
+
+    def search_sources(
+        self,
+        text: str,
+        filters: MemorySourceFilters | None = None,
+        *,
+        mode: str = "hybrid",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> MemorySourceMatchPage:
+        """Search atomic passages, grouped into human-facing source files."""
+        filters = filters or MemorySourceFilters()
+        page = max(1, int(page))
+        page_size = max(1, min(200, int(page_size)))
+        documents = [row for row in self._indexed_source_documents() if self._source_matches(row, filters)]
+        lookup = {row.source_key: row for row in documents}
+        if not lookup or not text.strip():
+            return MemorySourceMatchPage([], page, page_size, False)
+
+        atom_count = max(1, sum(row.atom_count for row in documents))
+        requested = min(atom_count, 340)
+        chunks = self.query(
+            text,
+            limit=requested,
+            budget=max(50_000, requested * 2_000),
+            mode=mode,
+            project_path=None,
+            scope=None,
+            source_paths=sorted({row.path for row in documents}),
+        )
+        groups: dict[str, list[MemorySourceMatch]] = {}
+        for chunk in chunks:
+            meta = chunk.metadata or {}
+            key = memory_source_key(
+                harness=str(meta.get("harness") or ""),
+                scope=str(meta.get("scope") or ""),
+                kind=str(meta.get("kind") or "agent-memory"),
+                path=str(meta.get("source_path") or ""),
+            )
+            if key not in lookup:
+                continue
+            atom_id = str(meta.get("atom_id") or "") or None
+            record_id = str(meta.get("record_id") or "") or None
+            groups.setdefault(key, []).append(
+                MemorySourceMatch(
+                    identifier=record_id or atom_id or str(chunk.source),
+                    text=str(chunk.text or ""),
+                    score=float(chunk.score or 0.0),
+                    line_start=max(1, int(meta.get("line_start") or 1)),
+                    line_end=max(1, int(meta.get("line_end") or meta.get("line_start") or 1)),
+                    memory_type=str(meta.get("memory_type") or "fact"),
+                    record_id=record_id,
+                    atom_id=atom_id,
+                    origin=str(meta.get("origin") or "harvested"),
+                )
+            )
+
+        ranked: list[MemorySourceMatchGroup] = []
+        for key, matches in groups.items():
+            matches.sort(key=lambda match: (-match.score, match.line_start, match.text))
+            ranked.append(MemorySourceMatchGroup(self._source_summary(lookup[key]), matches))
+        ranked.sort(
+            key=lambda group: (
+                -float(group.matches[0].score if group.matches else 0.0),
+                self._source_sort_key(lookup[group.source.source_key]),
+            )
+        )
+        start = (page - 1) * page_size
+        items = ranked[start : start + page_size]
+        return MemorySourceMatchPage(items, page, page_size, start + page_size < len(ranked))
+
+    def _read_source_snapshot(self) -> dict:
+        path = self._source_snapshot_path()
+        if not path.is_file():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _indexed_source_documents(self) -> list[MemorySourceDocument]:
+        snapshot = self._read_source_snapshot()
+        raw_sources = snapshot.get("sources") if isinstance(snapshot.get("sources"), list) else []
+        indexed_at = str(snapshot.get("indexed_at") or "") or None
+
+        atom_meta: dict[tuple[str, str, str, str], dict] = {}
+        for atom in self.indexed_atoms():
+            identity = (atom.harness, atom.scope, atom.kind, atom.source_path)
+            row = atom_meta.setdefault(
+                identity,
+                {
+                    "updated_at": atom.timestamp,
+                    "source_hash": atom.source_hash,
+                    "record_ids": set(),
+                    "origins": set(),
+                },
+            )
+            if atom.timestamp and (not row["updated_at"] or str(atom.timestamp) > str(row["updated_at"])):
+                row["updated_at"] = atom.timestamp
+            if atom.record_id:
+                row["record_ids"].add(atom.record_id)
+            row["origins"].add(atom.origin)
+
+        documents: list[MemorySourceDocument] = []
+        for raw in raw_sources:
+            if not isinstance(raw, dict):
+                continue
+            harness = str(raw.get("harness") or raw.get("agent") or "unknown")
+            scope = str(raw.get("scope") or "unknown")
+            kind = str(raw.get("kind") or raw.get("type") or "agent-memory")
+            path = str(raw.get("path") or "")
+            identity = (harness, scope, kind, path)
+            meta = atom_meta.get(identity, {})
+            content = str(raw.get("content") or "")
+            updated_at = str(raw.get("updated_at") or meta.get("updated_at") or "") or None
+            source_hash = str(raw.get("source_hash") or meta.get("source_hash") or "")
+            record_ids = sorted(meta.get("record_ids") or [])
+            origins = set(meta.get("origins") or [])
+            source_missing = False
+            changed = False
+            try:
+                stat = Path(path).expanduser().stat()
+                indexed_size = int(raw.get("source_size") or raw.get("chars") or len(content))
+                indexed_mtime = raw.get("source_mtime_ns")
+                if indexed_mtime is not None:
+                    changed = stat.st_size != indexed_size or stat.st_mtime_ns != int(indexed_mtime)
+            except OSError:
+                source_missing = True
+            documents.append(
+                MemorySourceDocument(
+                    source_key=memory_source_key(harness=harness, scope=scope, kind=kind, path=path),
+                    harness=harness,
+                    scope=scope,
+                    scope_kind=str(raw.get("scope_kind") or scope.split(":", 1)[0] or "unknown"),
+                    kind=kind,
+                    title=str(raw.get("title") or Path(path).name or "Memory source"),
+                    path=path,
+                    chars=int(raw.get("chars") or len(content)),
+                    atom_count=int(raw.get("atoms") or 0),
+                    updated_at=updated_at,
+                    indexed_at=str(raw.get("indexed_at") or indexed_at or "") or None,
+                    source_hash=source_hash,
+                    record_id=record_ids[0] if len(record_ids) == 1 else None,
+                    origin="manual" if origins and origins <= {"manual", "capture", "promoted"} else "harvested",
+                    changed_since_sync=changed,
+                    source_missing=source_missing,
+                    content=content,
+                )
+            )
+        return documents
+
+    @staticmethod
+    def _source_summary(document: MemorySourceDocument) -> MemorySourceSummary:
+        values = asdict(document)
+        values.pop("content", None)
+        return MemorySourceSummary(**values)
+
+    @staticmethod
+    def _source_sort_key(document: MemorySourceDocument):
+        raw = document.updated_at or ""
+        try:
+            updated = datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except (ValueError, OSError):
+            updated = 0.0
+        return (-updated, document.title.casefold(), document.path.casefold(), document.source_key)
+
+    @staticmethod
+    def _source_matches(document: MemorySourceDocument, filters: MemorySourceFilters) -> bool:
+        if filters.kinds and document.kind not in filters.kinds:
+            return False
+        if filters.harness and document.harness != filters.harness:
+            return False
+        if filters.scope_kind and document.scope_kind != filters.scope_kind:
+            return False
+        if filters.updated_after:
+            if not document.updated_at:
+                return False
+            try:
+                updated = datetime.fromisoformat(document.updated_at.replace("Z", "+00:00"))
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return False
+            cutoff = filters.updated_after
+            if cutoff.tzinfo is None:
+                cutoff = cutoff.replace(tzinfo=timezone.utc)
+            if updated < cutoff:
+                return False
+        if filters.project_path:
+            if document.scope_kind == "global":
+                return True
+            if document.scope_kind not in {"project", "team"}:
+                return False
+            raw_project = document.scope.split(":", 1)[1] if ":" in document.scope else ""
+            if not raw_project:
+                return False
+            try:
+                selected = Path(filters.project_path).expanduser().resolve()
+                source_project = Path(raw_project).expanduser().resolve()
+            except OSError:
+                return False
+            if selected != source_project and source_project not in selected.parents:
+                return False
+        return True
+
     def indexed_atoms(self, *, limit: int | None = None) -> list[AtomicMemoryEntry]:
         """Read atomic records from the stored index."""
         if not Path(self.db_path).exists():
@@ -644,6 +915,10 @@ class MemoryAgent:
             origin=str(meta.get("origin") or "harvested"),
             scope_kind=str(meta.get("scope_kind") or str(meta.get("scope") or "unknown").split(":", 1)[0]),
             project_path=meta.get("project_path"),
+            project_id=meta.get("project_id"),
+            revision_id=meta.get("revision_id"),
+            parent_revision_ids=[str(value) for value in meta.get("parent_revision_ids", []) if value],
+            deleted=bool(meta.get("deleted", False)),
         )
 
     # ------------------------------------------------------------------
@@ -692,6 +967,7 @@ class MemoryAgent:
             session_id=session_id,
             promoted_from=promoted_from,
         )
+        self._enqueue_cloud_revision(record.to_revision_payload())
         indexed = False
         if sync_index:
             try:
@@ -709,6 +985,41 @@ class MemoryAgent:
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def edit_record(self, identifier: str, text: str) -> MemoryRecord:
+        """Edit a user-owned durable record and rebuild the memory index.
+
+        Harvested atoms are intentionally read-only because their source files
+        belong to another agent or to the user. Only records created or
+        promoted through Docmancer have a stable ``record_id`` and writable
+        Markdown source.
+        """
+        atom = self.find_atom(identifier)
+        if atom is None:
+            raise ValueError("memory id is missing or ambiguous")
+        if not atom.record_id or atom.origin == "harvested":
+            raise ValueError("only user-owned Docmancer records can be edited")
+        roots = self._project_paths()
+        if atom.project_path:
+            roots.append(atom.project_path)
+            self._extra_project_paths.add(str(Path(atom.project_path).expanduser().resolve()))
+        record = self.records.find_record(atom.record_id, project_paths=roots)
+        if record is None:
+            raise ValueError("memory record file no longer exists")
+        equivalent = self.records.find_equivalent(
+            text,
+            scope_kind=record.scope_kind,
+            project_path=record.project_path,
+        )
+        if equivalent is not None and equivalent.record_id != record.record_id:
+            raise ValueError(
+                "Equivalent memory already exists in this scope. "
+                f"Memory ID: {equivalent.record_id[:12]}"
+            )
+        updated = self.records.update_record(record, text)
+        self._enqueue_cloud_revision(updated.to_revision_payload())
+        self.sync()
+        return updated
+
     def forget(self, identifier: str) -> AtomicMemoryEntry:
         atom = self.find_atom(identifier)
         if atom is None:
@@ -721,9 +1032,21 @@ class MemoryAgent:
                 self._extra_project_paths.add(str(Path(atom.project_path).expanduser().resolve()))
             record = self.records.find_record(atom.record_id, project_paths=roots)
             if record is not None:
+                self.records.append_tombstone_revision(record)
+                self._enqueue_cloud_revision(self.records.revisions(record.record_id)[-1])
                 self.records.delete_record(record)
         self.sync()
         return atom
+
+    def _enqueue_cloud_revision(self, payload: dict) -> bool:
+        """Best-effort local queueing that never performs network I/O."""
+        try:
+            from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
+
+            return enqueue_revision_if_enabled(payload, root=Path(self.db_path).parent)
+        except Exception as exc:  # noqa: BLE001 - cloud queueing cannot break local memory
+            logger.debug("cloud revision queueing skipped: %s", exc)
+            return False
 
     def promote(self, identifier: str, *, project_path: str | Path | None = None) -> tuple[MemoryRecord, bool]:
         atom = self.find_atom(identifier)
@@ -782,22 +1105,53 @@ class MemoryAgent:
         atoms: list[AtomicMemoryEntry],
     ) -> None:
         counts: dict[str, int] = {}
+        atom_state: dict[str, dict[str, str | None]] = {}
         for atom in atoms:
             counts[atom.source_path] = counts.get(atom.source_path, 0) + 1
-        payload = {
-            "sources": [
+            state = atom_state.setdefault(atom.source_path, {"updated_at": None, "source_hash": ""})
+            if atom.timestamp and (not state["updated_at"] or str(atom.timestamp) > str(state["updated_at"])):
+                state["updated_at"] = atom.timestamp
+            if atom.source_hash:
+                state["source_hash"] = atom.source_hash
+        indexed_at = datetime.now(timezone.utc).isoformat()
+        sources = []
+        for entry in entries:
+            try:
+                stat = Path(entry.path).expanduser().stat()
+                source_size = stat.st_size
+                source_mtime_ns = stat.st_mtime_ns
+            except OSError:
+                source_size = len((entry.content or "").encode("utf-8"))
+                source_mtime_ns = None
+            state = atom_state.get(entry.path, {})
+            sources.append(
                 {
+                    "source_key": memory_source_key(
+                        harness=entry.harness,
+                        scope=entry.scope,
+                        kind=entry.extra.get("kind", "agent-memory"),
+                        path=entry.path,
+                    ),
                     "harness": entry.harness,
                     "scope": entry.scope,
+                    "scope_kind": str(entry.scope or "unknown").split(":", 1)[0],
                     "title": entry.title,
                     "path": entry.path,
                     "kind": entry.extra.get("kind", "agent-memory"),
                     "content": entry.content,
                     "chars": len(entry.content or ""),
+                    "source_size": source_size,
+                    "source_mtime_ns": source_mtime_ns,
+                    "source_hash": state.get("source_hash") or hashlib.sha256((entry.content or "").encode("utf-8")).hexdigest(),
+                    "updated_at": state.get("updated_at"),
+                    "indexed_at": indexed_at,
                     "atoms": counts.get(entry.path, 0),
                 }
-                for entry in entries
-            ],
+            )
+        payload = {
+            "version": _SOURCE_SNAPSHOT_VERSION,
+            "indexed_at": indexed_at,
+            "sources": sources,
             "atom_count": len(atoms),
         }
         path = self._source_snapshot_path()
@@ -821,6 +1175,13 @@ def _atom_sort_key(atom: AtomicMemoryEntry):
 
 __all__ = [
     "MemoryAgent",
+    "MemorySourceDocument",
+    "MemorySourceFilters",
+    "MemorySourceMatch",
+    "MemorySourceMatchGroup",
+    "MemorySourceMatchPage",
+    "MemorySourcePage",
+    "MemorySourceSummary",
     "default_memory_db",
     "MEMORY_SCHEMA_VERSION",
     "SchemaMismatchError",
