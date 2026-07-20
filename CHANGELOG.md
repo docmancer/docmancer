@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - Unreleased
+### Fixed
+
+- **Cloud trial sync.** The CLI now accepts the server's `status: trialing` and `can_push: true` entitlement response, while expired accounts still pull remote ciphertext without uploading queued revisions.
+- **Resilient cloud connection.** A transient local queue error no longer discards an otherwise successful account, workspace, and device connection. The CLI keeps the connection and tells the user to retry with `docmancer cloud sync`.
+
 ## [0.7.4] - 2026-07-20
 ### Added
 

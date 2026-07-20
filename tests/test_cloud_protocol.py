@@ -12,6 +12,7 @@ from docmancer.cloud.client import CloudClient, ProtocolError, ProtocolTooOldErr
 from docmancer.cloud.config import CloudConfig
 from docmancer.cloud.crypto import b64decode, b64encode, box_keypair, random_key, signing_keypair, unwrap_key, wrap_key
 from docmancer.cloud.envelope import build_envelope, open_envelope
+from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allowed
 from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
 from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
 from docmancer.cloud.migrate import migrate_records
@@ -179,6 +180,34 @@ def test_outbox_is_idempotent_and_cursor_is_explicit(tmp_path):
     assert state.status()["pending"] == 0
 
 
+def test_server_trial_entitlement_allows_push_and_normalizes_cache(tmp_path):
+    entitlement = cache_entitlement(
+        {
+            "status": "trialing",
+            "can_push": True,
+            "can_pull": True,
+            "can_export": True,
+        },
+        root=tmp_path,
+    )
+    assert entitlement["state"] == "trial"
+    assert remote_transfer_allowed(entitlement)
+
+
+def test_expired_entitlement_blocks_push_without_blocking_pull(tmp_path):
+    entitlement = cache_entitlement(
+        {
+            "status": "past_due",
+            "can_push": False,
+            "can_pull": True,
+            "can_export": True,
+        },
+        root=tmp_path,
+    )
+    assert entitlement["state"] == "past_due"
+    assert not remote_transfer_allowed(entitlement)
+
+
 def test_lifecycle_queue_is_local_ciphertext_only(tmp_path):
     config = CloudConfig(tmp_path)
     config.save_account(enabled=True, account_id="acct", workspace_id="ws", device_id="dev")
@@ -321,7 +350,12 @@ def test_sync_refreshes_peer_keys_and_rotated_workspace_key(tmp_path):
             return {"wrapped_key": b64encode(wrap_key(rotated_key, local_keys["box_public"]))}
 
         def entitlement(self, _workspace_id):
-            return {"state": "active"}
+            return {
+                "status": "trialing",
+                "can_push": True,
+                "can_pull": True,
+                "can_export": True,
+            }
 
         def latest_snapshot(self, _workspace_id):
             raise RuntimeError("no snapshot")

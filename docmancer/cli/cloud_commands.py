@@ -231,7 +231,7 @@ def login(
             f"Registered pending device {device_id}. Approve this fingerprint from an existing device: {fingerprint}"
         )
     else:
-        _enqueue_current_project(root, keys)
+        _enqueue_current_project_or_warn(root, keys)
         click.echo(f"Connected device {device_id}. Encrypted sync is enabled.")
     if create_recovery:
         _create_recovery()
@@ -309,7 +309,7 @@ def _run_sync_command() -> None:
             keys.set_workspace_key(str(account["account_id"]), workspace_id, workspace_key, key_version=key_version)
             config.set_workspace(workspace_id, key_version=key_version)
             config.save_account(enabled=True)
-            _enqueue_current_project(root, keys)
+            _enqueue_current_project_or_warn(root, keys)
         click.echo(json.dumps(sync_once(client, root=root, keystore=keys), indent=2, sort_keys=True))
     finally:
         client.close()
@@ -325,6 +325,18 @@ def _enqueue_current_project(root: Path, keys: KeyStore) -> None:
     for record in store.records(project_paths=[Path.cwd()]):
         for revision in store.revisions(record.record_id):
             enqueue_revision_if_enabled(revision, root=root, keystore=keys)
+
+
+def _enqueue_current_project_or_warn(root: Path, keys: KeyStore) -> bool:
+    try:
+        _enqueue_current_project(root, keys)
+    except Exception as exc:  # noqa: BLE001 - connection remains valid when local queueing fails
+        click.echo(
+            f"Connected, but existing memory could not be queued: {exc}. Run `docmancer cloud sync` to retry.",
+            err=True,
+        )
+        return False
+    return True
 
 
 @cloud_group.command(cls=DocmancerCommand, short_help="Map a portable project ID to a local path.", hidden=True)

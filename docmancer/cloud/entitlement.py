@@ -10,6 +10,12 @@ from docmancer.cloud.config import CloudConfig
 
 def cache_entitlement(value: dict, *, root: str | Path) -> dict:
     payload = dict(value)
+    status = str(payload.get("status") or payload.get("state") or "unknown")
+    payload["state"] = {
+        "trialing": "trial",
+        "active": "active",
+        "past_due": "grace" if payload.get("can_push") is True else "past_due",
+    }.get(status, status)
     payload["cached_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     path = CloudConfig(root).paths.entitlement_cache
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,6 +33,8 @@ def read_entitlement(*, root: str | Path) -> dict:
 
 
 def remote_transfer_allowed(value: dict) -> bool:
+    if "can_push" in value:
+        return value.get("can_push") is True
     return value.get("state") in {"active", "trial", "grace"}
 
 

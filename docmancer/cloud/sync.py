@@ -78,11 +78,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
         raise ValueError("workspace key is unavailable on this device")
     state = CloudState(config.paths.sync_state)
     entitlement = cache_entitlement(client.entitlement(workspace_id), root=root)
-    if not remote_transfer_allowed(entitlement):
-        return {
-            "pushed": 0, "applied": 0, "duplicate": 0,
-            "conflict": 0, "deferred": 0, "paused": True, **state.status(),
-        }
+    can_push = remote_transfer_allowed(entitlement)
     if metadata.get("policy_enabled"):
         from docmancer.cloud.policy import apply_policy
 
@@ -98,7 +94,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
             pass
     pending = state.pending()
     pushed = 0
-    if pending:
+    if pending and can_push:
         batches: dict[int, list[dict]] = {}
         for envelope in pending:
             batches.setdefault(int(envelope.get("protocol_version") or 1), []).append(envelope)
@@ -137,7 +133,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
         list(response.get("envelopes") or []), root=root, workspace_key=key_versions,
         device_public_keys=public_keys, cursor=response.get("cursor"),
     )
-    return {"pushed": pushed, **applied, **state.status()}
+    return {"pushed": pushed, "paused": not can_push, **applied, **state.status()}
 
 
 __all__ = ["sync_once"]
