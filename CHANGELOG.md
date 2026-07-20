@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.4] - Unreleased
+## [0.7.4] - 2026-07-20
 ### Added
 
 - **Canonical context packs.** Added revisioned Personal defaults, Current project, Team standards, and Team project manifests above the raw memory corpus, with provenance-complete deterministic distillation, review proposals, direct Markdown reconciliation, content-free tombstones, and explicit project overrides.
