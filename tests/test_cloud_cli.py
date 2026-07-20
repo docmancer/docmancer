@@ -23,6 +23,107 @@ def test_cloud_disable_does_not_remove_local_memory(tmp_path, monkeypatch):
     assert memory.read_text(encoding="utf-8") == "keep"
 
 
+def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id="00000000-0000-4000-8000-000000000001",
+        workspace_id="00000000-0000-4000-8000-000000000002",
+        device_id="00000000-0000-4000-8000-000000000003",
+        base_url="https://cloud.invalid",
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.set_token("00000000-0000-4000-8000-000000000001", "token")
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def devices(self, _workspace_id):
+            return {
+                "devices": [
+                    {
+                        "device_id": "00000000-0000-4000-8000-000000000003",
+                        "state": "approved",
+                    }
+                ]
+            }
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cloud_commands,
+        "_context",
+        lambda: (tmp_path, config, config.account(), keys),
+    )
+    monkeypatch.setattr(cloud_commands, "CloudClient", Client)
+
+    result = CliRunner().invoke(
+        cli,
+        ["cloud", "connect", "--base-url", "https://cloud.invalid"],
+    )
+
+    assert result.exit_code == 0
+    assert "already connected" in result.output
+    assert "Open " not in result.output
+    assert config.account()["device_id"] == "00000000-0000-4000-8000-000000000003"
+
+
+def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    account_id = "00000000-0000-4000-8000-000000000001"
+    workspace_id = "00000000-0000-4000-8000-000000000002"
+    device_id = "00000000-0000-4000-8000-000000000003"
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=False,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        device_id=device_id,
+        base_url="https://cloud.invalid",
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.set_token(account_id, "token")
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def devices(self, _workspace_id):
+            return {
+                "devices": [
+                    {
+                        "device_id": device_id,
+                        "state": "pending",
+                        "fingerprint": "docmancer-existing",
+                    }
+                ]
+            }
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cloud_commands,
+        "_context",
+        lambda: (tmp_path, config, config.account(), keys),
+    )
+    monkeypatch.setattr(cloud_commands, "CloudClient", Client)
+
+    result = CliRunner().invoke(
+        cli,
+        ["cloud", "connect", "--base-url", "https://cloud.invalid"],
+    )
+
+    assert result.exit_code == 0
+    assert "already pending approval" in result.output
+    assert "docmancer-existing" in result.output
+    assert config.account()["device_id"] == device_id
+
+
 def test_team_subcommands_are_registered():
     result = CliRunner().invoke(cli, ["memory", "team", "--help"])
     assert result.exit_code == 0

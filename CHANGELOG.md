@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - Unreleased
+### Fixed
+
+- **Idempotent cloud connection.** Repeating `docmancer cloud connect` now resumes the configured approved or pending device instead of generating another identity. Reauthentication preserves the existing device ID and keypair, while missing, revoked, mismatched, or incomplete identities stop before local keys can be replaced.
+
 ## [0.7.5] - 2026-07-20
 ### Fixed
 
