@@ -212,6 +212,45 @@ class Inspector(Vertical):
             lines.append(f"Showing 50 of {len(occurrences):,} occurrences. Use `docmancer memory audit --json` for the complete report.")
         self._show_security_markdown("\n".join(lines))
 
+    def show_intelligence(self, item: dict) -> None:
+        kind = str(item.get("intelligence_kind") or "relation")
+        if kind == "recap":
+            counts = item.get("counts") or {}
+            lines = [
+                "# Seven-day memory recap",
+                "",
+                f"- **New or revised memories:** {int(counts.get('memories') or 0)}",
+                f"- **Conflicts:** {int(counts.get('conflicts') or 0)}",
+                f"- **Superseded:** {int(counts.get('superseded') or 0)}",
+            ]
+        elif kind == "orphan":
+            lines = [
+                "# Orphan memory",
+                "",
+                str(item.get("text") or ""),
+                "",
+                f"- **ID:** `{item.get('atom_id')}`",
+                f"- **Type:** {item.get('memory_type')}",
+                f"- **Scope:** {item.get('scope')}",
+            ]
+        else:
+            lines = [
+                f"# {kind.title()}",
+                "",
+                f"**A:** {item.get('source_text') or ''}",
+                "",
+                f"**B:** {item.get('target_text') or ''}",
+                "",
+                f"- **Relation:** {item.get('relation_type')}",
+                f"- **State:** {item.get('resolution_state')}",
+                f"- **Confidence:** {float(item.get('confidence') or 0):.2f}",
+                f"- **Relation ID:** `{item.get('relation_id')}`",
+            ]
+            if kind == "conflict" and item.get("resolution_state") == "suggested":
+                lines.extend(["", "Use `/resolve <relation-id> choose|keep-both|dismiss [winner-id]` to review this suggestion."])
+        self._show_security_markdown("\n".join(lines))
+        self.query_one("#inspector-title", Static).update("MEMORY INTELLIGENCE")
+
     def _show_security_markdown(self, body: str) -> None:
         self.document = None
         self.matches = []

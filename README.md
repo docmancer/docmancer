@@ -58,6 +58,8 @@ The deterministic CLI remains available for coding agents, scripts, CI, and adva
 ```bash
 docmancer memory sync
 docmancer memory query "what deployment decisions have we recorded?"
+docmancer memory conflicts
+docmancer memory recap --since 7d
 docmancer tui  # explicit alias for the interactive explorer
 ```
 
@@ -120,6 +122,10 @@ These commands cover routine maintenance without changing source memory:
 | `docmancer memory sources --preview` | Re-harvest live sources without writing the index.                            |
 | `docmancer memory audit`             | Find stale index state, likely secrets, duplicates, and poor-quality sources. |
 | `docmancer memory status`            | Show index location and summary counts.                                       |
+| `docmancer memory conflicts`         | Review conservative contradiction suggestions and prior resolutions.           |
+| `docmancer memory relations [id]`    | Inspect revision, duplicate, and contradiction edges.                          |
+| `docmancer memory recap --since 7d`  | Summarize new memories, conflicts, and superseded decisions.                    |
+| `docmancer memory orphans`           | Find current memories with no graph relationships.                              |
 | `docmancer memory clear`             | Delete the rebuildable index while preserving durable records and tombstones. |
 
 For retrieval regression testing, run the checked-in sanitised corpus with `docmancer memory eval --dataset tests/fixtures/memory-eval-sanitized-real.jsonl --gate`. Query and hook recall share a benchmark-calibrated `0.05` relevance floor; use `--min-score` when deliberately testing another threshold.

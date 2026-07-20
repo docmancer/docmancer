@@ -14,6 +14,7 @@ class MainScreen(Screen):
                 yield Tabs(
                     Tab("Memory 0", id="memory"),
                     Tab("Instructions & Rules 0", id="instructions"),
+                    Tab("Intelligence 0", id="intelligence"),
                     Tab("Docs 0", id="docs"),
                     Tab("Security …", id="security"),
                     active="memory",

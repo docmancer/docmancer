@@ -1,8 +1,8 @@
 {
   "name": "protocol-v1-python-ts-vector",
-  "workspace_key_b64": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
-  "signing_private_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-  "signing_public_key_b64": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "workspace_key_b64": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "signing_private_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "signing_public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
   "payload": {
     "schema_version": 1,
     "record_id": "record-0001",
@@ -21,14 +21,19 @@
   "canonical_utf8": "{\"created_at\":\"2026-07-19T12:00:00+00:00\",\"deleted\":false,\"memory_type\":\"decision\",\"origin\":{\"harness\":\"docmancer\",\"kind\":\"manual\"},\"parent_revision_ids\":[],\"project_id\":\"prj_0001\",\"record_id\":\"record-0001\",\"revision_id\":\"rev_vu5t5bdu5vapnylqvdj5ryy4wobwj2g3gltnhet4rrps5htuodoq\",\"schema_version\":1,\"scope_kind\":\"project\",\"tags\":[\"deployment\",\"production\"],\"text\":\"Production deploys run on Railway.\",\"updated_at\":\"2026-07-19T12:00:00+00:00\"}",
   "revision_id": "rev_vu5t5bdu5vapnylqvdj5ryy4wobwj2g3gltnhet4rrps5htuodoq",
   "envelope": {
-    "protocol_version": "1",
-    "workspace_id": "ws_0001",
-    "device_id": "dev_0001",
+    "protocol_version": 1,
+    "workspace_id": "00000000-0000-4000-8000-000000000001",
+    "envelope_id": "00000000-0000-4000-8000-000000000003",
+    "record_ref": "54RWGWkTv8EwhvoseEH4iTx3a439pdnYYOGMw+M/aMA=",
+    "revision_ref": "ex+zvm6KA1sE+WD2xnkCRVGVFFNnVnlHjw7GNpHrDAo=",
+    "parent_refs": [],
+    "kind": "record_revision",
     "key_version": 1,
-    "record_ref": "rec_anMsfNYN3zDFCGB8rSwvUPRgKLPZirU5j9ctWokiKyU",
-    "revision_ref": "rev_zkLojNqpmrfFkFoX5qndYAoSnCMk7KNH8qEZ3uvdxwg",
+    "algorithm": "xchacha20poly1305-ietf",
     "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
-    "ciphertext": "zCvng1BZczxzsSpJcWkZzCgtK0bo2WqmtVrDUE65NsqI10QQvVsryYqRFsVCQ4lxbj0DLCYiO1JAuAcMa5nkpUBWlC0R9m8epKTtH47l8I5Kc4g-VLcJzQuUvk5Y8jXmDsqMmWbRowXWc0mrgVsj2i872nR1jrKJFm_PPmRVo9wlYiH_OXorQy1BDuwtI5X85NEWGShVOB6rE0Ac-hcFPjZ2lk-U-UuCc_oLQGBiXL0VOhSEHcmWjnDjJBoQh87q3adDSmwSZzTrQEsv75nwBG9nROxH2QOKD7TuFyO5moZ0qpChbk_GNj-N4Z1ZMaLdHqYX7sn9dK_6HQGJMX7iujt0uACDCuBH84kL_UzAQ55AO5Eb167iwW_KYjQK1ZSBO2gIGUDH4ixBm0WH6MxUSOPV1uTH3vmboPIOqAcORfoWEx9wjQFwznLq11IYm1jEsPK7jYfQraTDUdFAeQRHREoAGTx_AhBJ0niw8-wibo0UdkX47u3mcfN2CU6ZLHjLrCST5DEa18osSJjyzwzyJ7dBh9CtX6azlWDjs0BkS8fhmJH6i6kvF22ze-dR2x9Tg4o4vadFTcIbsnyWEk_FpuW-_9JBM_Xx_o8",
-    "signature": "ew6VcouuvgZd_G-S6N2o7xqbRSKJRqAbv4JTtbAx4rAJIbFWQQ4AxX6VlAPnjVOScGgLQ6w9L3Hk1MaU9bp0AA"
+    "ciphertext": "zCvng1BZczxzsSpJcWkZzCgtK0bo2WqmtVrDUE65NsqI10QQvVsryYqRFsVCQ4lxbj0DLCYiO1JAuAcMa5nkpUBWlC0R9m8epKTtH47l8I5Kc4g+VLcJzQuUvk5Y8jXmDsqMmWbRowXWc0mrgVsj2i872nR1jrKJFm/PPmRVo9wlYiH/OXorQy1BDuwtI5X85NEWGShVOB6rE0Ac+hcFPjZ2lk+U+UuCc/oLQGBiXL0VOhSEHcmWjnDjJBoQh87q3adDSmwSZzTrQEsv75nwBG9nROxH2QOKD7TuFyO5moZ0qpChbk/GNj+N4Z1ZMaLdHqYX7sn9dK/6HQGJMX7iujt0uACDCuBH84kL/UzAQ55AO5Eb167iwW/KYjQK1ZSBO2gIGUDH4ixBm0WH6MxUSOPV1uTH3vmboPIOqAcORfoWEx9wjQFwznLq11IYm1jEsPK7jYfQraTDUdFAeQRHREoAGTx/AhBJ0niw8+wibo0UdkX47u3mcfN2CU6ZLHjLrCST5DEa18osSJjyzwzyJ7dBh9CtX6azlWDjs0BkS8fhmJH6i6kvF22ze+dR2x9Tg4o4vadFTcIbsoiujmtx8aW83/jein4EmMg=",
+    "created_by_device_id": "00000000-0000-4000-8000-000000000002",
+    "signature": "RfYg/EVDL9/Lv9KIcutHzWxuunwCnlL8VDKE/JaViOfuTdzFpb8kQvvlHD47nB4oYbLuOGXJymWmkOj7Ngs1Cw==",
+    "client_created_at": "2026-07-20T12:00:00.000Z"
   }
 }

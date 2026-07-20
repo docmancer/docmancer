@@ -69,7 +69,9 @@ class DocmancerTuiApp(App):
         self.project_path = self.backend.project_path
         self.results: list[dict] = []
         self.all_results: list[dict] = []
-        self.source_rows: dict[str, list[dict]] = {"memory": [], "instructions": [], "docs": [], "security": []}
+        self.source_rows: dict[str, list[dict]] = {
+            "memory": [], "instructions": [], "intelligence": [], "docs": [], "security": []
+        }
         self.security_report: dict | None = None
         self.last_query = ""
         self.current_page = 1
@@ -139,6 +141,8 @@ class DocmancerTuiApp(App):
         self.query_one("#filter-pane", FilterPane).reset()
         if self.mode in {"memory", "instructions"}:
             await self._load_source_page()
+        elif self.mode == "intelligence":
+            await self._load_intelligence_page()
         elif self.mode == "security":
             self.last_query = ""
             await self._load_security_page()
@@ -152,13 +156,20 @@ class DocmancerTuiApp(App):
             self.backend.memory_sources(live_preview=False),
             self.backend.docs_sources(),
         )
-        self.source_rows = {"memory": memory_rows, "instructions": memory_rows, "docs": docs_rows, "security": []}
+        self.source_rows = {
+            "memory": memory_rows,
+            "instructions": memory_rows,
+            "intelligence": [],
+            "docs": docs_rows,
+            "security": [],
+        }
         self.query_one("#filter-pane", FilterPane).set_mode(self.mode, self.source_rows[self.mode])
 
     def _set_counts(self, counts: dict) -> None:
         tabs = self.query_one("#mode-tabs", Tabs)
         tabs.query_one("#memory", Tab).label = f"Memory {counts['memory']:,}"
         tabs.query_one("#instructions", Tab).label = f"Instructions & Rules {counts.get('instructions', 0):,}"
+        tabs.query_one("#intelligence", Tab).label = f"Intelligence {counts.get('intelligence', 0):,}"
         tabs.query_one("#docs", Tab).label = f"Docs {counts['docs']:,}"
         tabs.query_one("#docs", Tab).add_class("empty") if not counts["docs"] else tabs.query_one("#docs", Tab).remove_class("empty")
 
@@ -303,6 +314,29 @@ class DocmancerTuiApp(App):
         else:
             inspector.show_security_summary(report)
 
+    async def _load_intelligence_page(self) -> None:
+        rows = await self.backend.memory_intelligence()
+        if self.last_query:
+            needle = self.last_query.casefold()
+            rows = [row for row in rows if needle in " ".join(str(value) for value in row.values()).casefold()]
+        total = len(rows)
+        self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
+        self.current_page = min(self.current_page, self.total_pages)
+        start_index = (self.current_page - 1) * self.page_size
+        self.results = rows[start_index : start_index + self.page_size]
+        self.all_results = list(rows)
+        self.has_more = self.current_page < self.total_pages
+        self.query_one("#result-list", ResultList).set_results(self.results)
+        start = 0 if not total else start_index + 1
+        end = min(total, start_index + self.page_size)
+        self.query_one("#results-title", Static).update(f"MEMORY INTELLIGENCE  {start}-{end} of {total:,}")
+        self._update_pagination()
+        inspector = self.query_one("#inspector", Inspector)
+        if self.results:
+            inspector.show_intelligence(self.results[0])
+        else:
+            inspector.clear("intelligence", "No conflicts, timeline changes, recap events, or orphan memories found.")
+
     def _update_pagination(self) -> None:
         self.query_one("#previous-page", Button).disabled = self.current_page <= 1
         self.query_one("#next-page", Button).disabled = not self.has_more
@@ -383,6 +417,8 @@ class DocmancerTuiApp(App):
             elif self.mode == "docs":
                 self.all_results = await self.backend.query_docs(query, expand=expand)
                 self._apply_docs_filters()
+            elif self.mode == "intelligence":
+                await self._load_intelligence_page()
             else:
                 await self._load_security_page()
             self._update_status()
@@ -474,6 +510,7 @@ class DocmancerTuiApp(App):
         titles = {
             "memory": "MEMORY FILES",
             "instructions": "INSTRUCTION & RULE FILES",
+            "intelligence": "MEMORY INTELLIGENCE",
             "docs": "DOCUMENTATION SOURCES",
             "security": "SECURITY FINDINGS",
         }
@@ -482,12 +519,15 @@ class DocmancerTuiApp(App):
         noun = {
             "memory": "memory files",
             "instructions": "instructions and rules",
+            "intelligence": "conflicts, history, recap, and orphans",
             "docs": "indexed documentation",
             "security": "masked security findings",
         }[mode]
         input_widget.placeholder = f"Search {noun} or type / for commands..."
         if mode in {"memory", "instructions"}:
             await self._load_source_page()
+        elif mode == "intelligence":
+            await self._load_intelligence_page()
         elif mode == "docs":
             await self._load_docs_page()
         else:
@@ -498,7 +538,7 @@ class DocmancerTuiApp(App):
             return
         if event.tab.id != self.query_one("#mode-tabs", Tabs).active:
             return
-        if event.tab.id in {"memory", "instructions", "docs", "security"}:
+        if event.tab.id in {"memory", "instructions", "intelligence", "docs", "security"}:
             await self.switch_mode(event.tab.id)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
@@ -521,6 +561,8 @@ class DocmancerTuiApp(App):
         self.current_page = 1
         if self.mode in {"memory", "instructions"}:
             await self._load_source_page()
+        elif self.mode == "intelligence":
+            await self._load_intelligence_page()
         elif self.mode == "security":
             await self._load_security_page()
         elif self.last_query:
@@ -560,6 +602,9 @@ class DocmancerTuiApp(App):
             if item.get("view_kind") == "security-finding":
                 inspector.show_security_finding(item)
             return
+        if self.mode == "intelligence":
+            inspector.show_intelligence(item)
+            return
         if item.get("view_kind") in {"docs-source", "security-finding"}:
             return
         source = item.get("source") if item.get("view_kind") == "source-match" else item
@@ -579,6 +624,8 @@ class DocmancerTuiApp(App):
     async def on_result_list_open_requested(self, event: ResultList.OpenRequested) -> None:
         if self.mode == "docs":
             await self.push_screen(DetailScreen("Document detail", render_result(event.result)))
+        elif self.mode == "intelligence":
+            self.query_one("#inspector", Inspector).show_intelligence(event.result)
         else:
             await self._open_source_viewer(event.result)
 
@@ -638,6 +685,38 @@ class DocmancerTuiApp(App):
 
     async def command_security(self, args: list[str]) -> None:
         await self.switch_mode("security")
+
+    async def command_intelligence(self, args: list[str]) -> None:
+        await self.switch_mode("intelligence")
+        if args:
+            self.last_query = " ".join(args)
+            await self._load_intelligence_page()
+
+    async def command_resolve(self, args: list[str]) -> None:
+        if len(args) < 2 or args[1] not in {"choose", "keep-both", "dismiss"}:
+            self.notify("Usage: /resolve <relation-id> choose|keep-both|dismiss [winner-id]", severity="warning")
+            return
+        relation_id, resolution = args[0], args[1]
+        winner = args[2] if len(args) > 2 else None
+        if resolution == "choose" and not winner:
+            self.notify("A winner memory ID is required with choose.", severity="warning")
+            return
+        confirmed = await self._show_modal_wait(
+            ConfirmScreen(
+                "Resolve memory conflict",
+                f"Apply {resolution} to {relation_id}? This review decision persists across syncs.",
+                confirm_label="Resolve",
+            )
+        )
+        if not confirmed:
+            return
+        try:
+            await self.backend.resolve_memory_conflict(relation_id, resolution, winner=winner)
+            await self.switch_mode("intelligence")
+            await self._load_intelligence_page()
+            self.notify(f"Resolved conflict {relation_id}.")
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
         if args:
             await self.run_query(" ".join(args), mode="security")
 
@@ -1063,6 +1142,8 @@ class DocmancerTuiApp(App):
             self.current_page -= 1
             if self.mode in {"memory", "instructions"}:
                 await self._load_source_page()
+            elif self.mode == "intelligence":
+                await self._load_intelligence_page()
             elif self.mode == "security":
                 await self._load_security_page()
             elif not self.last_query:
@@ -1073,6 +1154,8 @@ class DocmancerTuiApp(App):
             self.current_page += 1
             if self.mode in {"memory", "instructions"}:
                 await self._load_source_page()
+            elif self.mode == "intelligence":
+                await self._load_intelligence_page()
             elif self.mode == "security":
                 await self._load_security_page()
             elif not self.last_query:
@@ -1090,6 +1173,8 @@ class DocmancerTuiApp(App):
             await self.push_screen(DetailScreen("Document detail", render_result(result)))
         elif self.mode == "security":
             self.query_one("#inspector", Inspector).show_security_finding(result)
+        elif self.mode == "intelligence":
+            self.query_one("#inspector", Inspector).show_intelligence(result)
         else:
             await self._open_source_viewer(result)
 

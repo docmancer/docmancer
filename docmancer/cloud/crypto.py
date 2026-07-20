@@ -20,11 +20,17 @@ from nacl.signing import SigningKey, VerifyKey
 
 
 def b64encode(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+    """Encode protocol bytes using padded RFC 4648 base64."""
+    return base64.b64encode(value).decode("ascii")
 
 
 def b64decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    """Decode current padded base64 and legacy URL-safe unpadded values."""
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        return base64.b64decode(padded, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return base64.urlsafe_b64decode(padded)
 
 
 def random_key() -> bytes:
@@ -81,10 +87,21 @@ def hkdf(secret: bytes, *, salt: bytes, info: bytes, length: int = 32) -> bytes:
     return output[:length]
 
 
-def opaque_ref(identifier: str, workspace_key: bytes, *, kind: str) -> str:
-    key = hkdf(workspace_key, salt=b"docmancer-protocol-v1", info=kind.encode("utf-8"))
-    digest = hmac.new(key, identifier.encode("utf-8"), hashlib.sha256).digest()
-    return f"{kind}_{b64encode(digest)}"
+def opaque_ref(
+    identifier: str,
+    workspace_key: bytes,
+    *,
+    workspace_id: str,
+    kind: str,
+) -> str:
+    """Return the Protocol v1 workspace-scoped opaque reference."""
+    key = hkdf(
+        workspace_key,
+        salt=workspace_id.encode("utf-8"),
+        info=b"docmancer-cloud/v1/opaque-refs",
+    )
+    message = kind.encode("ascii") + b"\0" + identifier.encode("utf-8")
+    return b64encode(hmac.new(key, message, hashlib.sha256).digest())
 
 
 __all__ = [

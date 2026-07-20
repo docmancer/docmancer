@@ -505,6 +505,8 @@ def audit(agent_filter, as_json, fail_on_findings, max_findings, include, exclud
     show_default=True,
     help="Minimum normalized relevance. Use 0 only for retrieval diagnostics.",
 )
+@click.option("--include-history", is_flag=True, help="Include superseded and expired memories.")
+@click.option("--expand-relations", is_flag=True, help="Append directly related memories to each match.")
 def query(
     text: str,
     limit: int | None,
@@ -512,6 +514,8 @@ def query(
     scope: str | None,
     mode: str,
     min_score: float,
+    include_history: bool,
+    expand_relations: bool,
 ):
     """Recall memory atoms from the local memory index."""
     agent = _agent()
@@ -522,6 +526,8 @@ def query(
         project_path=project_path,
         scope=scope,
         min_score=min_score,
+        include_history=include_history,
+        expand_relations=expand_relations,
     )
     if not chunks:
         emit_brand_header("docmancer memory query", "Recall only when the index has relevant evidence.")
@@ -534,7 +540,9 @@ def query(
         scope = meta.get("scope", "")
         kind = meta.get("kind", "")
         memory_type = meta.get("memory_type", "memory")
-        click.echo(f"[{i}] score={chunk.score:.2f}  {memory_type}  {kind}  {scope}")
+        state = meta.get("lifecycle_state", "current")
+        relation = f"  {meta['relation_type']}" if meta.get("relation_type") else ""
+        click.echo(f"[{i}] score={chunk.score:.2f}  {memory_type}  {kind}  {scope}  {state}{relation}")
         if meta.get("title"):
             click.echo(f"    {meta['title']}")
         if meta.get("source_path"):
@@ -543,6 +551,156 @@ def query(
             click.echo(f"    Source: {display_path(meta['source_path'])}{suffix}")
         click.echo(chunk.text)
         click.echo("---")
+
+
+def _emit_json(value) -> None:
+    import json
+
+    click.echo(json.dumps(value, indent=2, ensure_ascii=False, default=str))
+
+
+def _emit_relation_rows(rows: list[dict]) -> None:
+    if not rows:
+        emit_status_line("No matching memory relationships found.", state="info")
+        return
+    for index, row in enumerate(rows, start=1):
+        click.echo(
+            f"[{index}] {row['relation_id']}  {row['relation_type']}  "
+            f"{row['resolution_state']}  confidence={float(row['confidence']):.2f}"
+        )
+        click.echo(f"    A: {row.get('source_text', '')}")
+        click.echo(f"    B: {row.get('target_text', '')}")
+        if row.get("winner_node_id"):
+            click.echo(f"    Winner: {row['winner_node_id']}")
+
+
+@memory_group.group(
+    "conflicts",
+    cls=DocmancerGroup,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    invoke_without_command=True,
+    short_help="Review and resolve contradictory memories.",
+)
+@click.option("--all", "include_resolved", is_flag=True, help="Include confirmed and dismissed conflicts.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_context
+def conflicts_group(ctx: click.Context, include_resolved: bool, as_json: bool):
+    """List unresolved conflicts, or resolve one with the subcommand."""
+    if ctx.invoked_subcommand is not None:
+        return
+    rows = _agent().conflicts(unresolved_only=not include_resolved)
+    if as_json:
+        _emit_json(rows)
+    else:
+        emit_brand_header("docmancer memory conflicts", "Review suggestions before changing memory state.")
+        _emit_relation_rows(rows)
+
+
+@conflicts_group.command("resolve", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@click.argument("relation_id")
+@click.option(
+    "--resolution",
+    required=True,
+    type=click.Choice(["choose", "keep-both", "dismiss"], case_sensitive=False),
+    help="Choose one memory, keep both as a confirmed conflict, or dismiss the suggestion.",
+)
+@click.option("--winner", default=None, help="Memory ID or unique prefix, required with --resolution choose.")
+@click.option("--yes", is_flag=True, help="Apply without an interactive confirmation.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def conflicts_resolve(relation_id: str, resolution: str, winner: str | None, yes: bool, as_json: bool):
+    """Resolve one suggested contradiction and persist the reviewed choice."""
+    resolution = resolution.lower()
+    if resolution == "choose" and not winner:
+        raise click.UsageError("--winner is required with --resolution choose")
+    if not yes and not click.confirm(f"Apply {resolution} to conflict {relation_id}?", default=False):
+        raise click.Abort()
+    try:
+        row = _agent().resolve_relation(relation_id, resolution, winner=winner)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _emit_json(row)
+    else:
+        emit_status_line(f"Resolved {relation_id} as {resolution}.", state="ok")
+
+
+@memory_group.command("relations", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Inspect the graph around a memory.")
+@click.argument("memory_id", required=False)
+@click.option("--type", "relation_type", type=click.Choice(["relates_to", "derived_from", "supersedes", "contradicts"]), default=None)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def memory_relations(memory_id: str | None, relation_type: str | None, as_json: bool):
+    """List relationships for one memory ID, or for the whole local graph."""
+    try:
+        rows = _agent().relations(memory_id, relation_type=relation_type)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _emit_json(rows)
+    else:
+        emit_brand_header("docmancer memory relations", "Inspect why memories belong together.")
+        _emit_relation_rows(rows)
+
+
+@memory_group.command("orphans", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Find current memories with no graph edges.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def memory_orphans(as_json: bool):
+    """List current memory atoms that have no detected relationships."""
+    rows = _agent().orphans()
+    if as_json:
+        _emit_json(rows)
+        return
+    emit_brand_header("docmancer memory orphans", "Find isolated context worth linking or consolidating.")
+    if not rows:
+        emit_status_line("No current orphan memories found.", state="ok")
+        return
+    for index, row in enumerate(rows, start=1):
+        click.echo(f"[{index}] {row['atom_id']}  {row['memory_type']}  {row['scope']}")
+        click.echo(f"    {row['text']}")
+
+
+def _parse_recap_time(value: str, *, now=None):
+    from datetime import datetime, timedelta, timezone
+
+    moment = now or datetime.now(timezone.utc)
+    lowered = value.strip().casefold()
+    if lowered == "yesterday":
+        return moment - timedelta(days=1)
+    relative = re.fullmatch(r"(?P<count>\d+)(?P<unit>[hdw])", lowered)
+    if relative:
+        count = int(relative.group("count"))
+        delta = {"h": timedelta(hours=count), "d": timedelta(days=count), "w": timedelta(weeks=count)}[relative.group("unit")]
+        return moment - delta
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise click.BadParameter("use ISO-8601, yesterday, or a relative value such as 24h, 7d, or 2w") from exc
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+@memory_group.command("recap", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Summarize memory changes over a time window.")
+@click.option("--since", default="7d", show_default=True, help="ISO-8601, yesterday, or a relative value such as 24h or 2w.")
+@click.option("--until", default=None, help="Optional ISO-8601 end time.")
+@click.option("--project-id", default=None, help="Restrict changed memories to one stable project ID.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def memory_recap(since: str, until: str | None, project_id: str | None, as_json: bool):
+    """Show memories and graph relationships introduced in a time window."""
+    start = _parse_recap_time(since)
+    end = _parse_recap_time(until) if until else None
+    if end and end < start:
+        raise click.UsageError("--until must be later than --since")
+    recap = _agent().recap(start, until=end, project_id=project_id)
+    if as_json:
+        _emit_json(recap)
+        return
+    emit_brand_header("docmancer memory recap", "See what changed in local memory and its graph.")
+    counts = recap["counts"]
+    emit_status_line(
+        f"{counts['memories']} new or revised memories, {counts['conflicts']} conflicts, "
+        f"and {counts['superseded']} superseded memories.",
+        state="info",
+    )
+    for row in recap["memories"]:
+        click.echo(f"  {row['atom_id']}  {row['memory_type']}  {row['text']}")
 
 
 @memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a durable local memory.")

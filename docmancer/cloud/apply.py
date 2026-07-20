@@ -16,6 +16,10 @@ def apply_payload(
     state: CloudState | None = None,
     store: MemoryRecordStore | None = None,
 ) -> str:
+    if int(payload.get("schema_version") or 1) == 2:
+        from docmancer.memory.graph import MemoryGraphStore
+
+        return MemoryGraphStore(Path(root) / "memory.db").apply_cloud_object(payload)
     config = CloudConfig(root)
     sync_state = state or CloudState(config.paths.sync_state)
     record_store = store or MemoryRecordStore(root)
@@ -59,9 +63,10 @@ def apply_envelopes(
         if state.is_applied(revision_ref):
             counts["duplicate"] += 1
             continue
-        public_key = device_public_keys.get(str(envelope["device_id"]))
+        device_id = str(envelope.get("created_by_device_id") or envelope.get("device_id") or "")
+        public_key = device_public_keys.get(device_id)
         if public_key is None:
-            raise ValueError(f"unknown cloud device: {envelope['device_id']}")
+            raise ValueError(f"unknown cloud device: {device_id}")
         key = workspace_key.get(int(envelope.get("key_version") or 1)) if isinstance(workspace_key, dict) else workspace_key
         if key is None:
             raise ValueError(f"workspace key version {envelope.get('key_version')} is unavailable")

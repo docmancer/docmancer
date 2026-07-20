@@ -41,6 +41,11 @@ def test_build_server_registers_local_tools(monkeypatch):
         "docmancer_memory_show",
         "docmancer_memory_forget",
         "docmancer_memory_promote",
+        "docmancer_memory_conflicts",
+        "docmancer_memory_resolve_conflict",
+        "docmancer_memory_relations",
+        "docmancer_memory_orphans",
+        "docmancer_memory_recap",
     } <= names
     # Cloud tools absent without a key.
     assert "docmancer_memory_extract" not in names

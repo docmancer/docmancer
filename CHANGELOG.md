@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - Unreleased
+### Added
+
+- **First-class memory graph.** Memory atoms, relations, and durable review overrides now live in local SQLite tables. Sync detects exact revision lineage, exact derivation, and conservative contradiction suggestions without using a hosted model.
+- **Memory intelligence commands.** Added `memory conflicts`, `conflicts resolve`, `relations`, `orphans`, and `recap`, plus `query --include-history` and `--expand-relations`. Matching MCP tools expose the same local operations, with explicit confirmation before conflict resolution.
+- **Intelligence TUI.** The terminal explorer now has an Intelligence tab for unresolved and reviewed conflicts, revision history, seven-day recap, and orphan memories. The `/resolve` command persists reviewed conflict choices across normal index rebuilds.
+- **Encrypted graph sync.** Protocol v2 can queue and apply encrypted atom, relation, and override objects alongside Protocol v1 record revisions. Imported project atoms use portable project mappings, and outbound graph payloads remove absolute paths.
+
+### Changed
+
+- **Lifecycle-aware recall.** Status memories use a 14-day relevance half-life and become hidden by default after 90 days. Repeated preferences receive a bounded boost, while decisions and constraints retain their original relevance.
+- **Graph-aware installed guidance.** The memory skill and README now teach conflict review, relationship expansion, history queries, recap, and orphan inspection.
+
+### Fixed
+
+- **Python and TypeScript cloud interoperability.** Protocol v1 now uses the same padded Base64 representation, workspace-scoped opaque references, envelope fields, authenticated data, signing domain, push routes, and pull cursor shape in both implementations.
+- **Cloud outbox acknowledgement.** Successful and idempotently replayed envelope IDs now remove their matching revision references from the local outbox, and Protocol v1 and v2 envelopes are pushed in separate batches.
+
 ## [0.7.2] - 2026-07-20
 ### Added
 

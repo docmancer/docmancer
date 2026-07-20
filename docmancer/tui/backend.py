@@ -5,7 +5,7 @@ import asyncio
 import os
 import platform
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
@@ -94,7 +94,38 @@ class TuiBackend:
             "instructions": int(instructions_page.total),
             "atoms": int(memory_status.get("atoms") or 0),
             "docs": int(docs_status.get("sources_count") or 0),
+            "intelligence": int(memory_status.get("conflicts") or 0),
         }
+
+    async def memory_intelligence(self) -> list[dict]:
+        """Return conflicts, revision history, recap, and orphans as TUI rows."""
+        memory = self._require_memory()
+        conflicts, relations, orphans, recap = await asyncio.gather(
+            asyncio.to_thread(memory.conflicts, unresolved_only=False),
+            asyncio.to_thread(memory.relations, None, relation_type="supersedes"),
+            asyncio.to_thread(memory.orphans),
+            asyncio.to_thread(memory.recap, datetime.now(timezone.utc) - timedelta(days=7)),
+        )
+        rows = [dict(row, view_kind="intelligence", intelligence_kind="conflict") for row in conflicts]
+        rows.extend(dict(row, view_kind="intelligence", intelligence_kind="timeline") for row in relations)
+        rows.extend(dict(row, view_kind="intelligence", intelligence_kind="orphan") for row in orphans)
+        if recap["counts"]["memories"] or recap["counts"]["conflicts"] or recap["counts"]["superseded"]:
+            rows.insert(0, dict(recap, view_kind="intelligence", intelligence_kind="recap"))
+        return rows
+
+    async def resolve_memory_conflict(
+        self,
+        relation_id: str,
+        resolution: str,
+        *,
+        winner: str | None = None,
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._require_memory().resolve_relation,
+            relation_id,
+            resolution,
+            winner=winner,
+        )
 
     async def browse_memory_sources(
         self,

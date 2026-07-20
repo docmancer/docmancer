@@ -78,9 +78,30 @@ class CloudClient:
             raise ProtocolError("cloud response must be an object")
         return value
 
-    def push(self, workspace_id: str, envelopes: list[dict], *, idempotency_key: str | None = None) -> dict:
+    def push(
+        self,
+        workspace_id: str,
+        envelopes: list[dict],
+        *,
+        idempotency_key: str | None = None,
+        cursor: int = 0,
+        protocol_version: int | None = None,
+    ) -> dict:
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/push", json={"envelopes": envelopes}, headers=headers)
+        version = protocol_version or int(envelopes[0].get("protocol_version") if envelopes else PROTOCOL_VERSION)
+        if any(int(envelope.get("protocol_version") or version) != version for envelope in envelopes):
+            raise ProtocolError("a cloud push batch cannot mix protocol versions")
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/sync/push",
+            json={
+                "protocol_version": version,
+                "base_cursor": cursor,
+                "device_ack_cursor": cursor,
+                "envelopes": envelopes,
+            },
+            headers=headers,
+        )
 
     def start_device_login(self, payload: dict) -> dict:
         return self._request("POST", "/v1/auth/device/start", json=payload)
@@ -100,10 +121,17 @@ class CloudClient:
         return value
 
     def pull(self, workspace_id: str, *, cursor: str | None = None, limit: int = 250) -> dict:
-        params: dict[str, Any] = {"limit": limit}
-        if cursor:
-            params["cursor"] = cursor
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/pull", params=params)
+        params: dict[str, Any] = {"limit": limit, "after": int(cursor or 0)}
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/sync/pull", params=params)
+        envelopes = [
+            row.get("envelope", row) if isinstance(row, dict) else row
+            for row in list(value.get("envelopes") or [])
+        ]
+        return {
+            **value,
+            "envelopes": envelopes,
+            "cursor": str(value.get("next_cursor", cursor or 0)),
+        }
 
     def status(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/status")

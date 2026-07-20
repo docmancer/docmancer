@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from docmancer.cloud.apply import apply_envelopes, apply_payload, resolve_conflict
-from docmancer.cloud.client import CloudClient, ProtocolTooOldError, RateLimitedError
+from docmancer.cloud.client import CloudClient, ProtocolError, ProtocolTooOldError, RateLimitedError
 from docmancer.cloud.config import CloudConfig
 from docmancer.cloud.crypto import b64decode, b64encode, box_keypair, random_key, signing_keypair, unwrap_key, wrap_key
 from docmancer.cloud.envelope import build_envelope, open_envelope
@@ -16,7 +16,7 @@ from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
 from docmancer.cloud.migrate import migrate_records
 from docmancer.cloud.outbox import CloudState
 from docmancer.cloud.recovery import create_recovery, verify_recovery
-from docmancer.cloud.serialize import build_record_payload, canonicalize, revision_id
+from docmancer.cloud.serialize import build_graph_payload, build_record_payload, canonicalize, revision_id
 from docmancer.cloud.snapshot import build_snapshot, open_snapshot
 from docmancer.cloud.sync import sync_once
 from docmancer.memory.records import MemoryRecordStore
@@ -47,10 +47,13 @@ def test_checked_cross_language_protocol_vector():
     assert canonicalize(vector["payload"]).decode("utf-8") == vector["canonical_utf8"]
     assert revision_id(vector["payload"]) == vector["revision_id"]
     rebuilt = build_envelope(
-        vector["payload"], workspace_id="ws_0001", device_id="dev_0001",
+        vector["payload"], workspace_id=vector["envelope"]["workspace_id"],
+        device_id=vector["envelope"]["created_by_device_id"],
         workspace_key=b64decode(vector["workspace_key_b64"]),
         signing_private_key=b64decode(vector["signing_private_key_b64"]),
         _nonce=b64decode(vector["envelope"]["nonce"]),
+        _envelope_id=vector["envelope"]["envelope_id"],
+        _client_created_at=vector["envelope"]["client_created_at"],
     )
     assert rebuilt == vector["envelope"]
     assert open_envelope(
@@ -68,6 +71,45 @@ def test_envelope_round_trip_and_tamper_detection():
     envelope["ciphertext"] = envelope["ciphertext"][:-1] + ("A" if envelope["ciphertext"][-1] != "A" else "B")
     with pytest.raises(Exception):
         open_envelope(envelope, workspace_key=workspace_key, signing_public_key=signing_public)
+
+
+def test_protocol_v2_graph_envelope_round_trip_and_local_projection(tmp_path):
+    graph_payload = build_graph_payload(
+        object_kind="relation",
+        object_id="rel_123",
+        data={
+            "relation_id": "rel_123",
+            "relation_type": "contradicts",
+            "source_node_id": "node:a",
+            "target_node_id": "node:b",
+            "resolution_state": "suggested",
+        },
+        updated_at="2026-07-20T10:00:00+00:00",
+    )
+    signing_private, signing_public = signing_keypair()
+    workspace_key = random_key()
+    envelope = build_envelope(
+        graph_payload,
+        workspace_id="00000000-0000-4000-8000-000000000001",
+        device_id="00000000-0000-4000-8000-000000000002",
+        workspace_key=workspace_key,
+        signing_private_key=signing_private,
+    )
+
+    assert envelope["protocol_version"] == 2
+    assert envelope["kind"] == "relation_revision"
+    assert open_envelope(
+        envelope, workspace_key=workspace_key, signing_public_key=signing_public
+    ) == graph_payload
+    assert apply_payload(graph_payload, root=tmp_path) == "applied"
+    assert apply_payload(graph_payload, root=tmp_path) == "duplicate"
+
+
+def test_client_rejects_mixed_protocol_push_batches():
+    client = CloudClient("https://cloud.invalid", token="token", device_id="dev")
+    with pytest.raises(ProtocolError, match="cannot mix protocol versions"):
+        client.push("workspace", [{"protocol_version": 1}, {"protocol_version": 2}])
+    client.close()
 
 
 def test_key_store_and_sealed_box_use_no_plaintext_file():

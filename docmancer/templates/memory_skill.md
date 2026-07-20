@@ -30,6 +30,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 4. Otherwise, run `docmancer memory query "question" --project "$PWD"` and use the recalled memory atoms as grounding.
 5. When the user explicitly asks to remember something durable, run `docmancer memory add`. Use project scope for repository-specific facts and global scope only for truly cross-project preferences.
 6. Inspect with `memory list` or `memory show` before promotion or deletion. Never forget a memory without explicit user confirmation. Never write or promote team memory automatically.
+7. When recall surfaces conflicting claims, inspect `memory conflicts` and `memory relations`. Treat suggested conflicts as review candidates, not facts. Resolve one only after the user chooses an outcome.
 
 ## Core Commands
 
@@ -38,6 +39,12 @@ docmancer memory sync
 docmancer memory sync --dry-run
 docmancer memory query "what deployment decisions have we recorded?"
 docmancer memory query "what is the deploy command" --project "$PWD"
+docmancer memory query "what changed in deployment?" --include-history --expand-relations
+docmancer memory conflicts
+docmancer memory conflicts resolve <relation-id> --resolution choose --winner <memory-id> --yes
+docmancer memory relations <memory-id>
+docmancer memory recap --since 7d
+docmancer memory orphans
 docmancer memory add "Production deploys run on Railway" --type decision --scope project --project "$PWD"
 docmancer memory list --scope project --project "$PWD"
 docmancer memory show <id>
@@ -54,6 +61,8 @@ docmancer memory clear
 ```
 
 `memory add --scope team` and `memory promote --team` write reviewable files under `.docmancer/memory/`, but they never stage or commit them. New files are untracked, so check them with `git status --short .docmancer/memory/`; plain `git diff` only shows later changes after a file is tracked. Use either command only when the user has explicitly chosen team scope. Capture hooks never promote directly to team memory.
+
+The local graph detects exact revision lineage, duplicates, and conservative contradiction suggestions. Status memories decay in recall with a 14-day half-life and become hidden after 90 days by default. Repeated preferences receive a bounded boost, while decisions and constraints do not decay. Suggested contradictions never change memory lifecycle until a person confirms a resolution.
 
 Optional encrypted sync is controlled separately through `docmancer cloud`. Do not enable it, log in, link a project, approve or revoke a device, create or verify recovery, resolve a conflict, export, or delete remote state unless the user explicitly asks. Local recall, capture, MCP, audit, and Git team memory do not require cloud sync. Read-only `cloud status` and `cloud conflicts` are safe diagnostics; `cloud sync` performs an explicit network transfer of client-encrypted envelopes.
 

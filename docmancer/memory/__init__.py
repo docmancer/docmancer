@@ -26,6 +26,7 @@ from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
+from docmancer.memory.graph import MemoryGraphStore, node_id, temporal_multiplier
 from docmancer.memory.records import MemoryRecord, MemoryRecordStore, normalize_memory_text
 from docmancer.memory.sources import (
     MemorySourceDocument,
@@ -50,7 +51,7 @@ _MEMORY_COLLECTION = "docmancer_memory"
 
 # Bump when extraction logic changes so stale cached atoms are not reused.
 _ATOM_CACHE_VERSION = 4
-MEMORY_SCHEMA_VERSION = 2
+MEMORY_SCHEMA_VERSION = 3
 _SOURCE_SNAPSHOT_VERSION = 2
 _SCHEMA_META_TABLE = "docmancer_memory_meta"
 _DEFAULT_SYNC_LOCK_TIMEOUT = 10.0
@@ -116,6 +117,7 @@ class MemoryAgent:
         self.config = config or self._build_config()
         record_root = Path(self.db_path).parent
         self.records = MemoryRecordStore(record_root)
+        self.graph = MemoryGraphStore(self.db_path)
         self._extra_project_paths: set[str] = set()
         from docmancer.agent import DocmancerAgent
 
@@ -193,10 +195,30 @@ class MemoryAgent:
             atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate, merge=False)
             records = self.records.records(project_paths=self._project_paths(cleaned_entries))
             atoms.extend(record.to_atom() for record in records)
+            imported = self.graph.imported_atoms()
+            if imported:
+                try:
+                    from docmancer.cloud.config import CloudConfig
+
+                    cloud_config = CloudConfig(Path(self.db_path).parent)
+                    for atom in imported:
+                        if atom.project_id:
+                            linked = cloud_config.path_for_project(atom.project_id)
+                            atom.project_path = str(linked) if linked else None
+                except Exception as exc:  # noqa: BLE001 - a missing link keeps the atom unscoped locally
+                    logger.debug("could not map imported cloud graph projects: %s", exc)
+            atoms.extend(imported)
             atoms = [atom for atom in atoms if not self.records.is_forgotten(atom)]
             progress("merge", f"Deduplicating {len(atoms):,} extracted memory atoms")
             atoms = self._merge_all(atoms)
             self._last_sync_stats["atoms_after_merge"] = len(atoms)
+            progress("graph", f"Reconciling relationships across {len(atoms):,} memory atoms")
+            graph_stats = self.graph.rebuild(atoms)
+            self._last_sync_stats.update({f"graph_{key}": value for key, value in graph_stats.items()})
+            states = self.graph.current_state(atom.atom_id for atom in atoms)
+            for atom in atoms:
+                atom.status = states.get(atom.atom_id, atom.status)
+            self._enqueue_cloud_graph_projection()
             # Memory is a dedicated index, so every sync rebuilds the atom projection
             # from harvested sources. This prevents stale atom records after source
             # files are edited or removed.
@@ -256,6 +278,7 @@ class MemoryAgent:
             {
                 "schema_version": str(MEMORY_SCHEMA_VERSION),
                 "memory_layer": "atomic",
+                "graph_schema_version": "1",
                 "embeddings_provider": str(emb.provider or ""),
                 "embeddings_model": str(emb.model or ""),
                 "embeddings_dim": str(emb.dimensions or 0),
@@ -419,6 +442,7 @@ class MemoryAgent:
                 with_vectors=True,
             )
             self._stamp_schema()
+            self.graph.rebuild(self.indexed_atoms())
         return len(atoms)
 
     def _project_paths(self, entries: list["MemoryEntry"] | None = None) -> list[str]:
@@ -486,6 +510,8 @@ class MemoryAgent:
         scope: str | None = None,
         source_paths: list[str] | tuple[str, ...] | None = None,
         min_score: float | None = DEFAULT_MEMORY_RELEVANCE_THRESHOLD,
+        include_history: bool = False,
+        expand_relations: bool = False,
     ) -> list["RetrievedChunk"]:
         from docmancer.retrieval.dispatch import RetrievalDispatcher
 
@@ -516,6 +542,21 @@ class MemoryAgent:
             allow_degraded=allow_degraded,
         )
         chunks = result.chunks
+        states = self.graph.current_state(
+            str((chunk.metadata or {}).get("atom_id") or "") for chunk in chunks
+        )
+        if not include_history:
+            chunks = [
+                chunk
+                for chunk in chunks
+                if states.get(str((chunk.metadata or {}).get("atom_id") or ""), "current") == "current"
+            ]
+        atom_lookup = {atom.atom_id: atom for atom in self.indexed_atoms()}
+        for chunk in chunks:
+            atom = atom_lookup.get(str((chunk.metadata or {}).get("atom_id") or ""))
+            if atom is not None:
+                chunk.score = min(1.0, float(chunk.score or 0.0) * temporal_multiplier(atom))
+                chunk.metadata["lifecycle_state"] = states.get(atom.atom_id, "current")
         if min_score is not None:
             chunks = [chunk for chunk in chunks if float(chunk.score or 0.0) >= min_score]
         if scope:
@@ -542,6 +583,54 @@ class MemoryAgent:
         else:
             chunks.sort(key=lambda chunk: -float(chunk.score or 0.0))
 
+        if include_history:
+            from docmancer.core.models import RetrievedChunk
+
+            existing_nodes: set[str] = set()
+            for chunk in chunks:
+                atom_id = str((chunk.metadata or {}).get("atom_id") or "")
+                if atom_id in atom_lookup:
+                    existing_nodes.add(node_id(atom_lookup[atom_id]))
+            for row in self.graph.search_history(text, limit=search_limit):
+                if row["node_id"] in existing_nodes:
+                    continue
+                if scope and row["scope_kind"] != scope:
+                    continue
+                if project_path and row["scope_kind"] in {"project", "team"}:
+                    try:
+                        memory_project = Path(str(row.get("project_path") or "")).expanduser().resolve()
+                        project = Path(project_path).expanduser().resolve()
+                    except OSError:
+                        continue
+                    if project != memory_project and memory_project not in project.parents:
+                        continue
+                score = float(row["score"])
+                if min_score is not None and score < min_score:
+                    continue
+                chunks.append(
+                    RetrievedChunk(
+                        source=f"memory://history/{row['node_id']}",
+                        chunk_index=0,
+                        text=str(row["text"]),
+                        score=score,
+                        metadata={
+                            "atom_id": row["atom_id"],
+                            "record_id": row.get("record_id"),
+                            "memory_type": row["memory_type"],
+                            "kind": row["kind"],
+                            "scope": row["scope"],
+                            "scope_kind": row["scope_kind"],
+                            "project_path": row.get("project_path"),
+                            "source_path": row["source_path"],
+                            "title": row["source_title"],
+                            "line_start": row["line_start"],
+                            "lifecycle_state": row["lifecycle_state"],
+                            "historical": True,
+                        },
+                    )
+                )
+            chunks.sort(key=lambda chunk: -float(chunk.score or 0.0))
+
         # Distinct durable records stay independently addressable, but an
         # equivalent record should not consume another recall result.
         unique_chunks = []
@@ -553,7 +642,41 @@ class MemoryAgent:
                 continue
             seen_memories.add(key)
             unique_chunks.append(chunk)
-        return unique_chunks[:requested_limit]
+        selected = unique_chunks[:requested_limit]
+        if expand_relations:
+            selected = self._expand_relation_chunks(selected, atom_lookup, requested_limit)
+        return selected
+
+    def _expand_relation_chunks(self, chunks, atom_lookup, limit: int):
+        """Append directly related memories after their retrieved seed."""
+        from docmancer.core.models import RetrievedChunk
+
+        node_lookup = {node_id(atom): atom for atom in atom_lookup.values()}
+        seen = {str((chunk.metadata or {}).get("atom_id") or "") for chunk in chunks}
+        expanded = list(chunks)
+        for chunk in list(chunks):
+            atom = atom_lookup.get(str((chunk.metadata or {}).get("atom_id") or ""))
+            if atom is None:
+                continue
+            identity = node_id(atom)
+            for relation in self.graph.relations(identity):
+                other_id = relation["target_node_id"] if relation["source_node_id"] == identity else relation["source_node_id"]
+                other = node_lookup.get(other_id)
+                if other is None or other.atom_id in seen:
+                    continue
+                seen.add(other.atom_id)
+                metadata = other.to_document().metadata
+                metadata["relation_type"] = relation["relation_type"]
+                metadata["relation_id"] = relation["relation_id"]
+                expanded.append(
+                    RetrievedChunk(
+                        source=f"memory://atom/{other.atom_id}", chunk_index=0,
+                        text=other.text, score=float(chunk.score) * 0.9, metadata=metadata,
+                    )
+                )
+                if len(expanded) >= limit:
+                    return expanded
+        return expanded
 
     def _build_retrieval_backends(self):
         try:
@@ -583,11 +706,17 @@ class MemoryAgent:
         except Exception:  # noqa: BLE001
             stats = {}
         rows = self.sources()
+        relations = self.graph.relations()
         return {
             "db_path": self.db_path,
             "sources": len(rows),
             "atoms": stats.get("sections_count", 0),
             "sections": stats.get("sections_count", 0),
+            "relations": len(relations),
+            "conflicts": sum(
+                1 for row in relations
+                if row["relation_type"] == "contradicts" and row["resolution_state"] == "suggested"
+            ),
         }
 
     def sources(self, *, live_preview: bool = False) -> list[dict]:
@@ -1161,6 +1290,22 @@ class MemoryAgent:
             logger.debug("cloud revision queueing skipped: %s", exc)
             return False
 
+    def _enqueue_cloud_graph_projection(self) -> int:
+        """Best-effort queue of deterministic Protocol v2 graph objects."""
+        try:
+            from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
+            from docmancer.cloud.serialize import build_graph_payload
+
+            queued = 0
+            root = Path(self.db_path).parent
+            for item in self.graph.cloud_objects():
+                payload = build_graph_payload(**item)
+                queued += int(enqueue_revision_if_enabled(payload, root=root))
+            return queued
+        except Exception as exc:  # noqa: BLE001 - optional sync cannot break local indexing
+            logger.debug("cloud graph projection queueing skipped: %s", exc)
+            return 0
+
     def promote(self, identifier: str, *, project_path: str | Path | None = None) -> tuple[MemoryRecord, bool]:
         atom = self.find_atom(identifier)
         if atom is None:
@@ -1207,6 +1352,56 @@ class MemoryAgent:
                 close()
             except Exception:  # noqa: BLE001
                 pass
+
+    # ------------------------------------------------------------------
+    # Memory intelligence
+    # ------------------------------------------------------------------
+
+    def conflicts(self, *, unresolved_only: bool = True) -> list[dict]:
+        return self.graph.conflicts(unresolved_only=unresolved_only)
+
+    def relations(
+        self,
+        identifier: str | None = None,
+        *,
+        relation_type: str | None = None,
+    ) -> list[dict]:
+        identity = None
+        if identifier:
+            atom = self.find_atom(identifier)
+            if atom is None:
+                raise ValueError("memory ID is missing or ambiguous")
+            identity = node_id(atom)
+        return self.graph.relations(identity, relation_type=relation_type)
+
+    def resolve_relation(
+        self,
+        relation_id: str,
+        resolution: str,
+        *,
+        winner: str | None = None,
+    ) -> dict:
+        winner_node = None
+        if winner:
+            atom = self.find_atom(winner)
+            if atom is None:
+                raise ValueError("winner memory ID is missing or ambiguous")
+            winner_node = node_id(atom)
+        result = self.graph.resolve(relation_id, resolution, winner_node_id=winner_node)
+        self.sync(recreate=False)
+        return result
+
+    def orphans(self) -> list[dict]:
+        return self.graph.orphans()
+
+    def recap(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        project_id: str | None = None,
+    ) -> dict:
+        return self.graph.recap(since, until=until, project_id=project_id)
 
     def _source_snapshot_path(self) -> Path:
         db = Path(self.db_path)

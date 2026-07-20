@@ -108,6 +108,33 @@ def _security_card(result: dict) -> Text:
     return card
 
 
+def _intelligence_card(result: dict) -> Text:
+    kind = str(result.get("intelligence_kind") or "relation")
+    card = Text()
+    if kind == "recap":
+        counts = result.get("counts") or {}
+        card.append("7-DAY RECAP", style="bold cyan")
+        card.append("\n")
+        card.append(
+            f"{int(counts.get('memories') or 0)} memories  ·  "
+            f"{int(counts.get('conflicts') or 0)} conflicts  ·  "
+            f"{int(counts.get('superseded') or 0)} superseded",
+            style="dim",
+        )
+    elif kind == "orphan":
+        card.append("ORPHAN", style="bold yellow")
+        card.append(f"  {result.get('memory_type') or 'memory'}", style="dim")
+        card.append("\n" + _shorten(str(result.get("text") or ""), 150))
+    else:
+        state = str(result.get("resolution_state") or "confirmed")
+        card.append(kind.upper(), style="bold red" if kind == "conflict" and state == "suggested" else "bold magenta")
+        card.append(f"  {state}", style="dim")
+        card.append("\n" + _shorten(str(result.get("source_text") or ""), 72))
+        card.append("  ↔  ", style="dim")
+        card.append(_shorten(str(result.get("target_text") or ""), 72))
+    return card
+
+
 class ResultItem(ListItem):
     def __init__(self, result: dict) -> None:
         self.result = result
@@ -124,6 +151,10 @@ class ResultItem(ListItem):
 
         if view_kind == "security-finding":
             super().__init__(Label(_security_card(result)))
+            return
+
+        if view_kind == "intelligence":
+            super().__init__(Label(_intelligence_card(result)))
             return
 
         meta = result.get("metadata") or {}

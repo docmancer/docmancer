@@ -99,11 +99,30 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     pending = state.pending()
     pushed = 0
     if pending:
-        response = client.push(workspace_id, pending, idempotency_key=state.idempotency_key("push"))
-        accepted = [str(value) for value in response.get("accepted", [])]
-        state.acknowledge(accepted)
-        state.clear_idempotency_key("push")
-        pushed = len(accepted)
+        batches: dict[int, list[dict]] = {}
+        for envelope in pending:
+            batches.setdefault(int(envelope.get("protocol_version") or 1), []).append(envelope)
+        cursor = int(state.get_meta("cursor") or 0)
+        for version, batch in sorted(batches.items()):
+            operation = f"push:v{version}"
+            response = client.push(
+                workspace_id,
+                batch,
+                idempotency_key=state.idempotency_key(operation),
+                cursor=cursor,
+                protocol_version=version,
+            )
+            newly_accepted = {str(value) for value in response.get("accepted", [])}
+            accepted_ids = set(newly_accepted)
+            accepted_ids.update(str(value) for value in response.get("already_present", []))
+            acknowledged_refs = [
+                str(envelope["revision_ref"])
+                for envelope in batch
+                if str(envelope.get("envelope_id")) in accepted_ids
+            ]
+            state.acknowledge(acknowledged_refs)
+            state.clear_idempotency_key(operation)
+            pushed += len(newly_accepted)
     response = client.pull(workspace_id, cursor=state.get_meta("cursor"))
     public_keys = {
         str(device_id): __import__("docmancer.cloud.crypto", fromlist=["b64decode"]).b64decode(value)

@@ -10,6 +10,8 @@ import rfc8785
 
 
 PAYLOAD_SCHEMA_VERSION = 1
+GRAPH_PAYLOAD_SCHEMA_VERSION = 2
+GRAPH_OBJECT_KINDS = {"atom", "relation", "override"}
 PAYLOAD_FIELDS = (
     "schema_version",
     "record_id",
@@ -110,11 +112,57 @@ def validate_record_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return dict(payload)
 
 
+def build_graph_payload(
+    *,
+    object_kind: str,
+    object_id: str,
+    data: Mapping[str, Any],
+    updated_at: str,
+    parent_revision_ids: list[str] | tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Build one canonical Protocol v2 encrypted graph object."""
+    if object_kind not in GRAPH_OBJECT_KINDS:
+        raise ValueError("invalid graph object_kind")
+    payload: dict[str, Any] = {
+        "schema_version": GRAPH_PAYLOAD_SCHEMA_VERSION,
+        "object_kind": object_kind,
+        "object_id": str(object_id),
+        "revision_id": "",
+        "parent_revision_ids": [str(value) for value in parent_revision_ids],
+        "data": dict(data),
+        "updated_at": str(updated_at),
+    }
+    payload["revision_id"] = revision_id(payload)
+    return payload
+
+
+def validate_graph_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    expected = {
+        "schema_version", "object_kind", "object_id", "revision_id",
+        "parent_revision_ids", "data", "updated_at",
+    }
+    if set(payload) != expected:
+        raise ValueError("invalid graph payload fields")
+    if int(payload["schema_version"]) != GRAPH_PAYLOAD_SCHEMA_VERSION:
+        raise ValueError("unsupported graph payload schema_version")
+    if payload["object_kind"] not in GRAPH_OBJECT_KINDS:
+        raise ValueError("invalid graph object_kind")
+    if not isinstance(payload["data"], dict) or not isinstance(payload["parent_revision_ids"], list):
+        raise ValueError("invalid graph payload data")
+    if payload["revision_id"] != revision_id(payload):
+        raise ValueError("graph revision_id does not match its canonical payload")
+    return dict(payload)
+
+
 __all__ = [
     "PAYLOAD_FIELDS",
     "PAYLOAD_SCHEMA_VERSION",
+    "GRAPH_PAYLOAD_SCHEMA_VERSION",
+    "GRAPH_OBJECT_KINDS",
+    "build_graph_payload",
     "build_record_payload",
     "canonicalize",
     "revision_id",
     "validate_record_payload",
+    "validate_graph_payload",
 ]

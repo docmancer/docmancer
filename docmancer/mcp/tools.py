@@ -20,13 +20,24 @@ def _truncate(text: str, budget: int = _CHAR_BUDGET) -> str:
     return text[:budget] + "\n... [truncated]"
 
 
-def memory_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
+def memory_search(
+    query: str,
+    limit: int = _DEFAULT_LIMIT,
+    *,
+    include_history: bool = False,
+    expand_relations: bool = False,
+) -> list[dict]:
     """Search the local memory index. Returns source-attributed excerpts."""
     from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
 
     agent = MemoryAgent()
-    chunks = agent.query(query, limit=limit)
+    chunks = agent.query(
+        query,
+        limit=limit,
+        include_history=include_history,
+        expand_relations=expand_relations,
+    )
     out = []
     for c in chunks:
         meta = c.metadata or {}
@@ -39,6 +50,9 @@ def memory_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
                 "source_path": meta.get("source_path", ""),
                 "display_path": display_path(meta.get("source_path", "")),
                 "excerpt": _truncate(c.text, 1200),
+                "lifecycle_state": meta.get("lifecycle_state", "current"),
+                "relation_type": meta.get("relation_type"),
+                "relation_id": meta.get("relation_id"),
             }
         )
     return out
@@ -89,6 +103,69 @@ def memory_status() -> dict:
     status = MemoryAgent().status()
     status["display_path"] = display_path(status.get("db_path", ""))
     return status
+
+
+def memory_conflicts(*, include_resolved: bool = False) -> list[dict]:
+    """List deterministic contradiction suggestions and reviewed outcomes."""
+    from docmancer.memory import MemoryAgent
+
+    return MemoryAgent().conflicts(unresolved_only=not include_resolved)
+
+
+def memory_resolve_conflict(
+    relation_id: str,
+    resolution: str,
+    *,
+    winner: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Preview or apply one durable human review decision."""
+    from docmancer.memory import MemoryAgent
+
+    agent = MemoryAgent()
+    rows = [row for row in agent.conflicts(unresolved_only=False) if row["relation_id"] == relation_id]
+    if not rows:
+        return {"error": "conflict relation is missing"}
+    if not confirm:
+        return {
+            "requires_confirmation": True,
+            "resolution": resolution,
+            "winner": winner,
+            "conflict": rows[0],
+        }
+    try:
+        return agent.resolve_relation(relation_id, resolution, winner=winner)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def memory_relations(identifier: str | None = None, relation_type: str | None = None) -> list[dict] | dict:
+    """Inspect the local graph around one memory or across the corpus."""
+    from docmancer.memory import MemoryAgent
+
+    try:
+        return MemoryAgent().relations(identifier, relation_type=relation_type)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def memory_orphans() -> list[dict]:
+    """List current memories that have no detected graph edges."""
+    from docmancer.memory import MemoryAgent
+
+    return MemoryAgent().orphans()
+
+
+def memory_recap(since: str = "7d", until: str | None = None, project_id: str | None = None) -> dict:
+    """Summarize new memories and relationships over a time window."""
+    from docmancer.cli.memory_commands import _parse_recap_time
+    from docmancer.memory import MemoryAgent
+
+    start = _parse_recap_time(since)
+    end = _parse_recap_time(until) if until else None
+    if end and end < start:
+        return {"error": "until must be later than since"}
+    return MemoryAgent().recap(start, until=end, project_id=project_id)
 
 
 def sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
@@ -303,6 +380,11 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
 
 __all__ = [
     "memory_search",
+    "memory_conflicts",
+    "memory_resolve_conflict",
+    "memory_relations",
+    "memory_orphans",
+    "memory_recap",
     "docs_search",
     "memory_status",
     "sources_list",

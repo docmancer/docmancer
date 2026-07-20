@@ -30,8 +30,18 @@ def build_server():
     server = FastMCP("docmancer")
 
     @server.tool(description="Search the local docmancer memory index (agent memory, instructions, rules). Local only.")
-    def docmancer_memory_search(query: str, limit: int = 8) -> list[dict]:
-        return tools.memory_search(query, limit=limit)
+    def docmancer_memory_search(
+        query: str,
+        limit: int = 8,
+        include_history: bool = False,
+        expand_relations: bool = False,
+    ) -> list[dict]:
+        return tools.memory_search(
+            query,
+            limit=limit,
+            include_history=include_history,
+            expand_relations=expand_relations,
+        )
 
     @server.tool(description="Search the local docmancer docs index. Local only.")
     def docmancer_docs_search(query: str, limit: int = 8) -> list[dict]:
@@ -40,6 +50,43 @@ def build_server():
     @server.tool(description="Report docmancer memory index status (path, source/section counts). Local only.")
     def docmancer_memory_status() -> dict:
         return tools.memory_status()
+
+    @server.tool(description="List local deterministic contradiction suggestions and reviewed outcomes.")
+    def docmancer_memory_conflicts(include_resolved: bool = False) -> list[dict]:
+        return tools.memory_conflicts(include_resolved=include_resolved)
+
+    @server.tool(description="Preview or resolve one memory conflict. Call with confirm=false first, then confirm=true after review.")
+    def docmancer_memory_resolve_conflict(
+        relation_id: str,
+        resolution: str,
+        winner: str | None = None,
+        confirm: bool = False,
+    ) -> dict:
+        return tools.memory_resolve_conflict(
+            relation_id,
+            resolution,
+            winner=winner,
+            confirm=confirm,
+        )
+
+    @server.tool(description="Inspect local memory graph relationships for one memory ID or the whole corpus.")
+    def docmancer_memory_relations(
+        identifier: str | None = None,
+        relation_type: str | None = None,
+    ) -> list[dict] | dict:
+        return tools.memory_relations(identifier, relation_type=relation_type)
+
+    @server.tool(description="List current local memories that have no detected graph relationships.")
+    def docmancer_memory_orphans() -> list[dict]:
+        return tools.memory_orphans()
+
+    @server.tool(description="Summarize memory and graph changes over a local time window.")
+    def docmancer_memory_recap(
+        since: str = "7d",
+        until: str | None = None,
+        project_id: str | None = None,
+    ) -> dict:
+        return tools.memory_recap(since=since, until=until, project_id=project_id)
 
     @server.tool(description="List indexed memory sources with provenance (agent, type, scope, title, path). Local only.")
     def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:

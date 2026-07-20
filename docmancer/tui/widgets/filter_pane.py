@@ -39,16 +39,21 @@ class FilterPane(VerticalScroll):
         self.mode = mode
         is_docs = mode == "docs"
         is_security = mode == "security"
-        title = "SECURITY FILTERS" if is_security else "DOC FILTERS" if is_docs else "FILTERS"
+        is_intelligence = mode == "intelligence"
+        title = "SECURITY FILTERS" if is_security else "DOC FILTERS" if is_docs else "INTELLIGENCE" if is_intelligence else "FILTERS"
         self.query_one(".pane-title", Static).update(title)
-        self.query_one("#scope-filter", Select).display = not (is_docs or is_security)
-        self.query_one("#scope-filter-label", Label).display = not (is_docs or is_security)
+        self.query_one("#scope-filter", Select).display = not (is_docs or is_security or is_intelligence)
+        self.query_one("#scope-filter-label", Label).display = not (is_docs or is_security or is_intelligence)
+        self.query_one("#harness-filter-label", Label).display = not is_intelligence
         self.query_one("#harness-filter-label", Label).update("Severity" if is_security else "Source" if is_docs else "Harness")
-        self.query_one("#time-filter", Select).display = not is_security
-        self.query_one("#time-filter-label", Label).display = not is_security
+        self.query_one("#harness-filter", Select).display = not is_intelligence
+        self.query_one("#time-filter", Select).display = not (is_security or is_intelligence)
+        self.query_one("#time-filter-label", Label).display = not (is_security or is_intelligence)
         selector = self.query_one("#harness-filter", Select)
         all_label = "All severities" if is_security else "All sources" if is_docs else "All harnesses"
-        if is_security:
+        if is_intelligence:
+            selector.set_options([("All", "all")])
+        elif is_security:
             selector.set_options(
                 [(all_label, "all"), ("Critical", "critical"), ("High", "high"), ("Medium", "medium"), ("Low", "low")]
             )
