@@ -52,15 +52,15 @@ class FakeDocmancerConfig:
 
 
 PUBLIC_COMMAND_HELP_CASES = [
-    ("setup", ["docmancer setup --all"]),
-    ("add", ["docmancer add https://docs.example.com"]),
-    ("ingest", ["docmancer ingest ./docs", "--format"]),
-    ("query", ["docmancer query", "--expand", "--format json"]),
-    ("list", ["docmancer list"]),
-    ("install", ["docmancer install claude-code", "--project"]),
-    ("inspect", ["docmancer inspect --config ./docmancer.yaml"]),
-    ("doctor", ["docmancer doctor --config ./docmancer.yaml"]),
-    ("remove", ["docmancer remove"]),
+    (["setup"], ["docmancer setup"]),
+    (["sync"], ["--local-only"]),
+    (["query"], ["approved context", "--history"]),
+    (["memory"], ["distill", "review", "share"]),
+    (["docs"], ["add", "query", "sync"]),
+    (["status"], ["--check"]),
+    (["cloud"], ["connect", "disconnect"]),
+    (["agent"], ["install", "refresh"]),
+    (["mcp"], ["serve", "install"]),
 ]
 
 
@@ -68,7 +68,7 @@ def test_cli_help():
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "recall the memory your coding agents already wrote" in result.output
-    assert "add" in result.output
+    assert "docs" in result.output
     assert "setup" in result.output
     # The memory/docs MCP server group is a real command now (not the old
     # API-pack compiler, which stays gone).
@@ -89,7 +89,7 @@ def test_version_flag_outputs_compact_version():
 def test_public_commands_have_examples_in_help():
     runner = CliRunner()
     for command, expected_fragments in PUBLIC_COMMAND_HELP_CASES:
-        result = runner.invoke(cli, [command, "--help"])
+        result = runner.invoke(cli, [*command, "--help"])
         assert result.exit_code == 0, result.output
         for fragment in expected_fragments:
             assert fragment in result.output
@@ -98,7 +98,7 @@ def test_public_commands_have_examples_in_help():
 def test_ingest_url_points_to_add():
     result = CliRunner().invoke(cli, ["ingest", "https://docs.example.com"])
     assert result.exit_code != 0
-    assert "Use `docmancer add` for URLs." in result.output
+    assert "Use `docmancer docs add` for URLs." in result.output
 
 
 def test_cli_init_creates_project_sqlite_config(tmp_path):
@@ -164,22 +164,30 @@ def test_add_shows_total_and_calls_agent(tmp_path):
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._get_agent_class") as mock_agent_cls:
         mock_agent = MagicMock()
-        mock_agent.add.return_value = 42
+        mock_agent.ingest.return_value = 42
         mock_agent.collection_stats.return_value = {
             "db_path": str(db_path),
             "extracted_dir": str(extracted_dir),
         }
         mock_agent_cls.return_value = lambda config: mock_agent
 
-        result = runner.invoke(cli, ["add", str(tmp_path)])
+        result = runner.invoke(cli, ["docs", "add", str(tmp_path)])
 
     assert result.exit_code == 0
     assert "Total: 42 sections indexed" in result.output
     assert "Storage: 3.0 KB on disk" in result.output
     assert f"Index: {display_path(db_path)} (2.0 KB)" in result.output
     assert f"Extracted docs: {display_path(extracted_dir)} (1.0 KB)" in result.output
-    mock_agent.add.assert_called_once_with(str(tmp_path), recreate=False)
-    assert "local paths now belong to `docmancer ingest`" in result.output
+    mock_agent.ingest.assert_called_once_with(
+        str(tmp_path),
+        recreate=False,
+        include=(),
+        exclude=(),
+        formats=(),
+        recursive=True,
+        skip_known=False,
+        with_vectors=True,
+    )
 
 
 def test_ingest_shows_total_and_calls_agent(tmp_path):
@@ -234,13 +242,13 @@ def test_default_query_falls_back_after_no_vectors_ingest(tmp_path, monkeypatch)
     runner = CliRunner()
     ingest = runner.invoke(
         cli,
-        ["ingest", str(docs), "--recreate", "--no-vectors", "--config", str(config)],
+        ["docs", "add", str(docs), "--recreate", "--no-vectors", "--config", str(config)],
     )
     assert ingest.exit_code == 0, ingest.output
 
     query = runner.invoke(
         cli,
-        ["query", "Railway deployments", "--config", str(config)],
+        ["docs", "query", "Railway deployments", "--config", str(config)],
     )
     assert query.exit_code == 0, query.output
     assert "Railway" in query.output
@@ -256,7 +264,7 @@ def test_add_url_applies_fetch_worker_override():
         mock_agent.add.return_value = 42
         mock_agent_cls.return_value = lambda config: mock_agent
 
-        result = runner.invoke(cli, ["add", "https://docs.example.com", "--fetch-workers", "12"])
+        result = runner.invoke(cli, ["docs", "add", "https://docs.example.com", "--fetch-workers", "12"])
 
     assert result.exit_code == 0
     assert fake_config.web_fetch.workers == 12
@@ -285,7 +293,7 @@ def test_query_outputs_savings_by_default():
     ]
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
-        result = runner.invoke(cli, ["query", "auth"])
+        result = runner.invoke(cli, ["docs", "query", "auth"])
 
     assert result.exit_code == 0
     assert "80.0% less docs overhead" in result.output
@@ -313,7 +321,7 @@ def test_query_accepts_expand_page():
     ]
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
-        result = CliRunner().invoke(cli, ["query", "auth", "--expand", "page"])
+        result = CliRunner().invoke(cli, ["docs", "query", "auth", "--expand", "page"])
 
     assert result.exit_code == 0
     fake_agent.query.assert_called_once_with("auth", limit=None, budget=None, expand="page")
@@ -331,7 +339,7 @@ def test_query_json_output():
     ]
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
-        result = CliRunner().invoke(cli, ["query", "auth", "--format", "json"])
+        result = CliRunner().invoke(cli, ["docs", "query", "auth", "--format", "json"])
 
     assert result.exit_code == 0
     assert '"savings_percent": 80' in result.output
@@ -362,24 +370,17 @@ def test_doctor_runs():
     assert "Local loaders" in result.output
 
 
-def test_inspect_shows_sections_by_format():
+def test_docs_list_shows_indexed_sources():
     fake_config = MagicMock()
     fake_config.index.db_path = "/tmp/docmancer.db"
     fake_agent = MagicMock()
-    fake_agent.collection_stats.return_value = {
-        "collection_exists": True,
-        "sources_count": 2,
-        "sections_count": 3,
-        "sources_by_format": {"markdown": 1, "pdf": 1},
-        "sections_by_format": {"markdown": 1, "pdf": 2},
-        "extracted_dir": "/tmp/extracted",
-    }
+    fake_agent.list_grouped_sources_with_dates.return_value = [
+        {"ingested_at": "2026-07-20", "source": "/tmp/docs"},
+    ]
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
          patch("docmancer.cli.commands._create_agent_or_raise_lock_error", return_value=fake_agent):
-        result = CliRunner().invoke(cli, ["inspect"])
+        result = CliRunner().invoke(cli, ["docs", "list"])
 
     assert result.exit_code == 0
-    assert "Sources by format:" in result.output
-    assert "Sections by format:" in result.output
-    assert "markdown: 1" in result.output
-    assert "pdf: 2" in result.output
+    assert "2026-07-20" in result.output
+    assert "/tmp/docs" in result.output

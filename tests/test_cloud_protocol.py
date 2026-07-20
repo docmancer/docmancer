@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import httpx
@@ -46,6 +47,11 @@ def test_checked_cross_language_protocol_vector():
     vector = json.loads((Path(__file__).parent / "fixtures/cloud/protocol-v1-python-ts.json").read_text(encoding="utf-8"))
     assert canonicalize(vector["payload"]).decode("utf-8") == vector["canonical_utf8"]
     assert revision_id(vector["payload"]) == vector["revision_id"]
+    associated = {key: vector["envelope"][key] for key in ("algorithm", "key_version", "kind", "protocol_version", "record_ref", "revision_ref", "workspace_id")}
+    aad = canonicalize(associated)
+    assert b64encode(aad) == vector["associated_data_b64"]
+    signature_input = b"docmancer-envelope-v1\0" + aad + b"\0" + b64decode(vector["envelope"]["nonce"]) + b64decode(vector["envelope"]["ciphertext"])
+    assert hashlib.sha256(signature_input).hexdigest() == vector["signature_input_sha256"]
     rebuilt = build_envelope(
         vector["payload"], workspace_id=vector["envelope"]["workspace_id"],
         device_id=vector["envelope"]["created_by_device_id"],
@@ -105,8 +111,43 @@ def test_protocol_v2_graph_envelope_round_trip_and_local_projection(tmp_path):
     assert apply_payload(graph_payload, root=tmp_path) == "duplicate"
 
 
+def test_protocol_v2_pack_envelope_contains_no_context_plaintext(tmp_path):
+    pack_payload = build_graph_payload(
+        object_kind="pack",
+        object_id="personal-defaults",
+        data={
+            "pack_id": "personal-defaults",
+            "name": "Personal defaults",
+            "audience_kind": "personal",
+            "applicability_kind": "global",
+            "status": "active",
+            "record_ids": ["record-typescript"],
+            "created_at": "2026-07-20T10:00:00+00:00",
+            "updated_at": "2026-07-20T10:00:00+00:00",
+            "revision_id": "pack_local",
+            "parent_revision_ids": [],
+            "schema_version": 1,
+        },
+        updated_at="2026-07-20T10:00:00+00:00",
+    )
+    private, public = signing_keypair()
+    key = random_key()
+    envelope = build_envelope(
+        pack_payload,
+        workspace_id="00000000-0000-4000-8000-000000000001",
+        device_id="00000000-0000-4000-8000-000000000002",
+        workspace_key=key,
+        signing_private_key=private,
+    )
+    encoded = json.dumps(envelope)
+    assert envelope["kind"] == "pack_revision"
+    assert "Personal defaults" not in encoded
+    assert "record-typescript" not in encoded
+    assert open_envelope(envelope, workspace_key=key, signing_public_key=public) == pack_payload
+
+
 def test_client_rejects_mixed_protocol_push_batches():
-    client = CloudClient("https://cloud.invalid", token="token", device_id="dev")
+    client = CloudClient("https://cloud.invalid", token="token", device_id="00000000-0000-4000-8000-000000000002")
     with pytest.raises(ProtocolError, match="cannot mix protocol versions"):
         client.push("workspace", [{"protocol_version": 1}, {"protocol_version": 2}])
     client.close()
@@ -279,7 +320,7 @@ def test_sync_refreshes_peer_keys_and_rotated_workspace_key(tmp_path):
         def key_wrapper(self, _workspace_id, _device_id, _key_version):
             return {"wrapped_key": b64encode(wrap_key(rotated_key, local_keys["box_public"]))}
 
-        def entitlement(self):
+        def entitlement(self, _workspace_id):
             return {"state": "active"}
 
         def latest_snapshot(self, _workspace_id):
@@ -333,24 +374,54 @@ def test_client_headers_and_typed_non_destructive_errors():
         seen.update(request.headers)
         return httpx.Response(429, json={"code": "RATE_LIMITED"})
 
-    client = CloudClient("https://cloud.invalid", token="token", device_id="dev", transport=httpx.MockTransport(handler))
+    device_id = "00000000-0000-4000-8000-000000000002"
+    workspace_id = "00000000-0000-4000-8000-000000000001"
+    client = CloudClient("https://cloud.invalid", token="token", device_id=device_id, transport=httpx.MockTransport(handler))
     with pytest.raises(RateLimitedError):
-        client.push("ws", [])
+        client.push(workspace_id, [])
     assert seen["x-docmancer-protocol"] == "1"
-    assert seen["x-docmancer-device-id"] == "dev"
+    assert seen["x-docmancer-device-id"] == device_id
     assert seen["x-docmancer-client-version"]
 
     client = CloudClient(
-        "https://cloud.invalid", token="token", device_id="dev",
+        "https://cloud.invalid", token="token", device_id=device_id,
         transport=httpx.MockTransport(lambda _request: httpx.Response(400, json={"code": "PROTOCOL_TOO_OLD"})),
     )
     with pytest.raises(ProtocolTooOldError):
-        client.pull("ws")
+        client.pull(workspace_id)
+
+    with pytest.raises(ProtocolError, match="canonical UUID"):
+        CloudClient("https://cloud.invalid", token="token", device_id="dev_legacy")
 
 
 def test_device_login_pending_response_is_typed_without_failure():
     client = CloudClient(
-        "https://cloud.invalid", token="", device_id="dev",
+        "https://cloud.invalid", token="", device_id="00000000-0000-4000-8000-000000000002",
         transport=httpx.MockTransport(lambda _request: httpx.Response(400, json={"code": "AUTHORIZATION_PENDING"})),
     )
     assert client.poll_device_login("code")["code"] == "AUTHORIZATION_PENDING"
+
+
+def test_python_cloud_routes_are_declared_by_sibling_openapi():
+    """Catch transport drift when the client and cloud repos are checked out together."""
+    import re
+
+    client_path = Path(__file__).parents[1] / "docmancer" / "cloud" / "client.py"
+    openapi_path = Path(__file__).parents[2] / "docmancer-cloud" / "packages" / "protocol" / "openapi.yaml"
+    if not openapi_path.exists():
+        pytest.skip("docmancer-cloud sibling checkout is unavailable")
+    client_source = client_path.read_text(encoding="utf-8")
+    openapi_source = openapi_path.read_text(encoding="utf-8")
+    declared = set(re.findall(r"^  (/v1/[^:]+):$", openapi_source, re.MULTILINE))
+    called = set(re.findall(r'[f]?"(/v1/[^"?]+)', client_source))
+    replacements = {
+        "{workspace_id}": "{workspaceId}",
+        "{device_id}": "{deviceId}",
+        "{proposal_id}": "{proposalId}",
+    }
+    normalized = set()
+    for path in called:
+        for source, target in replacements.items():
+            path = path.replace(source, target)
+        normalized.add(path)
+    assert normalized <= declared, f"Python cloud routes missing from OpenAPI: {sorted(normalized - declared)}"

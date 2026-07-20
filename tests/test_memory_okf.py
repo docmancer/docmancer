@@ -1,4 +1,4 @@
-"""`docmancer memory export --format okf` and `docmancer okf doctor`."""
+"""Canonical Markdown export and legacy OKF compatibility."""
 
 from __future__ import annotations
 
@@ -29,57 +29,36 @@ def _env(monkeypatch, tmp_path, *, secret=False):
     monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
 
 
-def test_export_writes_conformant_okf_bundle(tmp_path, monkeypatch):
+def test_export_writes_canonical_markdown_pack(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
-    CliRunner().invoke(cli, ["memory", "sync"])
-    out = tmp_path / "memory.okf"
-    r = CliRunner().invoke(cli, ["memory", "export", "--output", str(out)])
+    added = CliRunner().invoke(cli, ["memory", "add", "We deploy on Railway and use pnpm."])
+    assert added.exit_code == 0, added.output
+    out = tmp_path / "personal-defaults.md"
+    r = CliRunner().invoke(cli, ["memory", "export", "personal-defaults", "--output", str(out)])
     assert r.exit_code == 0, r.output
-
-    index = out / "index.md"
-    assert index.exists()
-    fields, _ = parse_frontmatter(index.read_text())
-    assert fields.get("okf_version") == OKF_VERSION
-
-    # At least one concept file with a non-empty type was written.
-    concept_files = [p for p in out.rglob("*.md") if p.name not in RESERVED_FILENAMES]
-    assert concept_files
-    cfields, cbody = parse_frontmatter(concept_files[0].read_text())
-    assert cfields.get("type")
-    assert "Railway" in cbody
-
-    # The bundle is conformant.
-    errors = [i for i in validate_bundle(out) if i.level == "error"]
-    assert errors == []
+    body = out.read_text()
+    assert "Personal defaults" in body
+    assert "Railway" in body
 
 
 def test_export_redacts_secrets(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path, secret=True)
-    CliRunner().invoke(cli, ["memory", "sync"])
-    out = tmp_path / "memory.okf"
-    CliRunner().invoke(cli, ["memory", "export", "--output", str(out)])
-    blob = "\n".join(p.read_text() for p in out.rglob("*.md"))
-    assert "supersecretvalue123456" not in blob
+    added = CliRunner().invoke(cli, ["memory", "add", "api_key=supersecretvalue123456"])
+    assert added.exit_code == 0, added.output
+    out = tmp_path / "personal-defaults.md"
+    exported = CliRunner().invoke(cli, ["memory", "export", "personal-defaults", "--output", str(out)])
+    assert exported.exit_code == 0, exported.output
+    assert "supersecretvalue123456" not in out.read_text()
 
 
 def test_export_is_keyless(tmp_path, monkeypatch):
     # Export never calls a provider, so it must work with no API key set.
     _env(monkeypatch, tmp_path)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    CliRunner().invoke(cli, ["memory", "sync"])
-    out = tmp_path / "memory.okf"
-    r = CliRunner().invoke(cli, ["memory", "export", "--output", str(out)])
+    CliRunner().invoke(cli, ["memory", "add", "We use pnpm."])
+    out = tmp_path / "personal-defaults.md"
+    r = CliRunner().invoke(cli, ["memory", "export", "personal-defaults", "--output", str(out)])
     assert r.exit_code == 0, r.output
-
-
-def test_okf_doctor_reports_clean_bundle(tmp_path, monkeypatch):
-    _env(monkeypatch, tmp_path)
-    CliRunner().invoke(cli, ["memory", "sync"])
-    out = tmp_path / "memory.okf"
-    CliRunner().invoke(cli, ["memory", "export", "--output", str(out)])
-    r = CliRunner().invoke(cli, ["okf", "doctor", str(out)])
-    assert r.exit_code == 0, r.output
-    assert "conformant" in r.output.lower() or "no errors" in r.output.lower()
 
 
 def test_okf_doctor_flags_bad_bundle(tmp_path):

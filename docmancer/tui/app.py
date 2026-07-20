@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import webbrowser
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
@@ -18,13 +19,16 @@ from docmancer.tui.backend import TuiBackend
 from docmancer.tui.commands import default_registry
 from docmancer.tui.screens.audit import AuditScreen
 from docmancer.tui.screens.cloud import CloudListScreen, ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen, RecoveryKeyScreen
+from docmancer.tui.screens.consolidate import ConsolidateScreen
 from docmancer.tui.screens.detail import ConfirmScreen, CreateSourceScreen, DetailScreen, EditScreen, SourceViewerScreen
 from docmancer.tui.screens.help import HelpScreen
-from docmancer.tui.screens.main import MainScreen
+from docmancer.tui.screens.main import MainScreen, StartupScreen
 from docmancer.tui.screens.sources import SourcesScreen
 from docmancer.tui.screens.sync import SyncScreen
+from docmancer.tui.screens.settings import SettingsScreen
 from docmancer.tui.widgets import FilterPane, Inspector, ResultList, StatusBar
 from docmancer.tui.widgets.inspector import render_result
+from docmancer.tui.presentation import context_display_name, context_scope_label
 
 
 class DocmancerTuiApp(App):
@@ -64,18 +68,19 @@ class DocmancerTuiApp(App):
         super().__init__()
         self.backend = backend or TuiBackend(config_path=config_path)
         self.registry = default_registry()
-        self.mode = "memory"
+        self.mode = "context"
         self.retrieval_mode = "hybrid"
         self.project_path = self.backend.project_path
         self.results: list[dict] = []
         self.all_results: list[dict] = []
         self.source_rows: dict[str, list[dict]] = {
-            "memory": [], "instructions": [], "intelligence": [], "docs": [], "security": []
+            "context": [], "sources": [], "audit": [], "docs": []
         }
         self.security_report: dict | None = None
+        self.hook_rows: list[dict] = []
         self.last_query = ""
         self.current_page = 1
-        self.page_size = 50
+        self.page_size = 10
         self.total_pages = 1
         self.has_more = False
         self._quit_deadline = 0.0
@@ -84,12 +89,15 @@ class DocmancerTuiApp(App):
         self.cloud_label = "off"
         self.cloud_risk_count = 0
         self._inspection_generation = 0
+        self.pending_consolidation_draft: str | None = None
+        self._button_loading_tasks: set[asyncio.Task] = set()
 
     async def on_mount(self) -> None:
         await self.push_screen("main")
         self._main_screen = self.screen
         self._update_responsive(self.size.width)
-        self.call_after_refresh(self._load_backend)
+        await self.push_screen(StartupScreen())
+        self.run_worker(self._load_backend(), group="startup", exit_on_error=False)
 
     def query_one(self, selector, expect_type=None):
         """Query the active TUI screen rather than the empty App root screen."""
@@ -120,7 +128,7 @@ class DocmancerTuiApp(App):
             self.project_path = None
             project_selector.value = "all"
             self.query_one("#command-input", Input).focus()
-            await self._load_source_page()
+            await self._load_context_page()
             await self._refresh_security_report()
             if self._pending_query is not None:
                 query, mode, expand = self._pending_query
@@ -133,18 +141,20 @@ class DocmancerTuiApp(App):
         except Exception as exc:  # noqa: BLE001 - keep the shell usable and show the local error
             self.notify(f"Backend failed to load: {exc}", severity="error", timeout=8)
             self._update_status()
+        finally:
+            if isinstance(self.screen, StartupScreen):
+                await self.pop_screen()
 
     async def reset_browse(self) -> None:
         """Clear transient search state and restore source-file browsing."""
         self.last_query = ""
         self.current_page = 1
         self.query_one("#filter-pane", FilterPane).reset()
-        if self.mode in {"memory", "instructions"}:
+        if self.mode == "sources":
             await self._load_source_page()
-        elif self.mode == "intelligence":
-            await self._load_intelligence_page()
-        elif self.mode == "security":
-            self.last_query = ""
+        elif self.mode == "context":
+            await self._load_context_page()
+        elif self.mode == "audit":
             await self._load_security_page()
         else:
             await self._load_docs_page()
@@ -156,25 +166,20 @@ class DocmancerTuiApp(App):
             self.backend.memory_sources(live_preview=False),
             self.backend.docs_sources(),
         )
-        self.source_rows = {
-            "memory": memory_rows,
-            "instructions": memory_rows,
-            "intelligence": [],
-            "docs": docs_rows,
-            "security": [],
-        }
+        context_rows = await self.backend.context() if hasattr(self.backend, "context") else []
+        self.source_rows = {"context": context_rows, "sources": memory_rows, "audit": [], "docs": docs_rows}
         self.query_one("#filter-pane", FilterPane).set_mode(self.mode, self.source_rows[self.mode])
 
     def _set_counts(self, counts: dict) -> None:
         tabs = self.query_one("#mode-tabs", Tabs)
-        tabs.query_one("#memory", Tab).label = f"Memory {counts['memory']:,}"
-        tabs.query_one("#instructions", Tab).label = f"Instructions & Rules {counts.get('instructions', 0):,}"
-        tabs.query_one("#intelligence", Tab).label = f"Intelligence {counts.get('intelligence', 0):,}"
+        tabs.query_one("#context", Tab).label = f"Context {counts.get('context', 0):,}"
+        tabs.query_one("#sources", Tab).label = f"Sources {counts.get('sources', counts.get('memory', 0) + counts.get('instructions', 0)):,}"
+        tabs.query_one("#audit", Tab).label = f"Audit {counts.get('audit', 0):,}"
         tabs.query_one("#docs", Tab).label = f"Docs {counts['docs']:,}"
         tabs.query_one("#docs", Tab).add_class("empty") if not counts["docs"] else tabs.query_one("#docs", Tab).remove_class("empty")
 
     def _source_kinds(self) -> tuple[str, ...]:
-        return ("agent-memory", "docmancer-memory", "team-memory") if self.mode == "memory" else ("instructions", "rules")
+        return ("agent-memory", "docmancer-memory", "team-memory", "instructions", "rules")
 
     def _source_filter_args(self) -> dict:
         values = self.query_one("#filter-pane", FilterPane).values()
@@ -192,9 +197,9 @@ class DocmancerTuiApp(App):
         }
 
     async def _load_source_page(self) -> None:
-        if not self.backend.ready or self.mode not in {"memory", "instructions"}:
+        if not self.backend.ready or self.mode != "sources":
             return
-        title = "MEMORY FILES" if self.mode == "memory" else "INSTRUCTION & RULE FILES"
+        title = "SOURCES"
         self.query_one("#results-title", Static).update("SEARCHING..." if self.last_query else "LOADING...")
         args = self._source_filter_args()
         if self.last_query:
@@ -203,7 +208,7 @@ class DocmancerTuiApp(App):
             self.total_pages = self.current_page + (1 if data.get("has_more") else 0)
             self.has_more = bool(data.get("has_more"))
             count = f"page {self.current_page}" + ("  more" if self.has_more else "")
-            title = "MATCHING MEMORY FILES" if self.mode == "memory" else "MATCHING INSTRUCTION FILES"
+            title = "MATCHING SOURCES"
         else:
             data = await self.backend.browse_memory_sources(**args)
             self.current_page = int(data["page"])
@@ -213,6 +218,19 @@ class DocmancerTuiApp(App):
             start = 0 if not data["total"] else (self.current_page - 1) * self.page_size + 1
             end = min(int(data["total"]), self.current_page * self.page_size)
             count = f"{start}-{end} of {int(data['total']):,}"
+        security_by_path = {
+            str(row.get("path") or ""): row
+            for row in self.source_rows.get("sources", [])
+            if row.get("security_findings")
+        }
+        for result in self.results:
+            source = result.get("source") if result.get("view_kind") == "source-match" else result
+            warning = security_by_path.get(str(source.get("path") or ""))
+            if warning:
+                source["security_findings"] = warning["security_findings"]
+                source["security_severity"] = warning.get("security_severity")
+        display_start = (self.current_page - 1) * self.page_size
+        self.results = [dict(row, display_number=display_start + offset + 1) for offset, row in enumerate(self.results)]
         self.all_results = list(self.results)
         self.query_one("#result-list", ResultList).set_results(self.results)
         self.query_one("#results-title", Static).update(f"{title}  {count}")
@@ -223,6 +241,50 @@ class DocmancerTuiApp(App):
         else:
             message = "No matching files. Reset the filters or run `/reset`." if self.last_query else "No indexed files match these filters."
             inspector.clear(self.mode, message)
+
+    async def _load_context_page(self) -> None:
+        if not self.backend.ready:
+            return
+        rows = await self.backend.context() if hasattr(self.backend, "context") else []
+        self.source_rows["context"] = rows
+        self.query_one("#filter-pane", FilterPane).set_context_counts(rows)
+        selected = self.query_one("#filter-pane", FilterPane).values()["harness"]
+        if selected == "pending":
+            rows = [row for row in rows if row.get("view_kind") == "context-proposal"]
+        elif selected == "personal":
+            rows = [
+                row for row in rows
+                if row.get("audience_kind") == "personal"
+                or str(row.get("pack_id") or "").startswith("personal-")
+            ]
+        elif selected != "all":
+            rows = [row for row in rows if str(row.get("pack_id") or "").startswith(selected)]
+        if self.last_query:
+            needle = self.last_query.casefold()
+            rows = [row for row in rows if needle in str(row.get("text") or "").casefold()]
+        order = {"context-proposal": 0, "context-pack": 1, "context-record": 2}
+        rows.sort(key=lambda row: (order.get(str(row.get("view_kind") or ""), 9), str(row.get("pack_id") or "")))
+        total = len(rows)
+        self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
+        self.current_page = min(self.current_page, self.total_pages)
+        start_index = (self.current_page - 1) * self.page_size
+        page_rows = rows[start_index : start_index + self.page_size]
+        self.has_more = self.current_page < self.total_pages
+        self.results = [
+            dict(row, display_number=start_index + index)
+            for index, row in enumerate(page_rows, start=1)
+        ]
+        self.all_results = list(self.results)
+        self.query_one("#result-list", ResultList).set_results(self.results)
+        start = 0 if not total else start_index + 1
+        end = min(total, start_index + len(page_rows))
+        self.query_one("#results-title", Static).update(f"CONTEXT  {start}-{end} of {total:,}")
+        self._update_pagination()
+        inspector = self.query_one("#inspector", Inspector)
+        if self.results:
+            await self._inspect_result(self.results[0])
+        else:
+            inspector.clear("context", "# No matching context\n\nRun `/distill` to propose approved context from current evidence.")
 
     async def _load_docs_page(self) -> None:
         """Browse documentation roots when there is no section query."""
@@ -252,28 +314,44 @@ class DocmancerTuiApp(App):
         else:
             inspector.clear(
                 "docs",
-                "# No documentation indexed\n\nIndex local documentation with `docmancer ingest ./docs`.\n\nAdd a documentation website with `docmancer add https://docs.example.com`.",
+                "# No documentation indexed\n\nIndex local documentation with `docmancer docs add ./docs`.\n\nAdd a documentation website with `docmancer docs add https://docs.example.com`.",
             )
 
     async def _refresh_security_report(self) -> None:
-        """Run the local masked audit and update the persistent Security tab."""
+        """Run the local masked audit and update the Sources status badge."""
         try:
             self.security_report = await self.backend.audit()
         except Exception as exc:  # noqa: BLE001 - audit failure must not break browsing
             self.security_report = {"error": str(exc), "findings": [], "unique_secret_count": 0, "finding_count": 0}
-        tab = self.query_one("#mode-tabs", Tabs).query_one("#security", Tab)
+        tabs = self.query_one("#mode-tabs", Tabs)
+        source_tab = tabs.query_one("#sources", Tab)
+        audit_tab = tabs.query_one("#audit", Tab)
         error = self.security_report.get("error")
         count = int(self.security_report.get("unique_secret_count") or 0)
-        tab.label = "Security !" if error else f"Security {count:,}" if count else "Security ✓"
-        tab.set_class(bool(count or error), "risk")
-        if self.mode == "security":
-            await self._load_security_page()
+        findings_by_path: dict[str, list[dict]] = {}
+        for finding in self.security_report.get("findings") or []:
+            for occurrence in finding.get("occurrences") or []:
+                findings_by_path.setdefault(str(occurrence.get("source_path") or ""), []).append(finding)
+        for source in self.source_rows.get("sources", []):
+            findings = findings_by_path.get(str(source.get("path") or ""), [])
+            source["security_findings"] = len(findings)
+            source["security_severity"] = (findings[0].get("severity") if findings else None)
+        base_count = len(self.source_rows.get("sources", []))
+        source_tab.label = f"Sources {base_count:,} !" if error or count else f"Sources {base_count:,} ✓"
+        source_tab.set_class(bool(count or error), "risk")
+        audit_tab.label = f"Audit {count:,} !" if error or count else "Audit 0 ✓"
+        audit_tab.set_class(bool(count or error), "risk")
 
     async def _load_security_page(self) -> None:
         report = self.security_report or {"findings": [], "unique_secret_count": 0, "finding_count": 0}
         findings = list(report.get("findings") or [])
-        severity = self.query_one("#filter-pane", FilterPane).values()["harness"]
-        if severity != "all":
+        raw_hooks = await self.backend.hook_status() if hasattr(self.backend, "hook_status") else []
+        hooks = self._effective_hook_rows(raw_hooks)
+        self.hook_rows = hooks
+        self.query_one("#filter-pane", FilterPane).set_audit_hooks(hooks)
+        selected_view = self.query_one("#filter-pane", FilterPane).values()["harness"]
+        if selected_view != "all":
+            severity = selected_view
             findings = [item for item in findings if item.get("severity") == severity]
         if self.last_query:
             query = self.last_query.casefold()
@@ -295,13 +373,14 @@ class DocmancerTuiApp(App):
                     ]
                 ).casefold()
             ]
-        total = len(findings)
+        combined = [dict(item, view_kind="security-finding") for item in findings]
+        total = len(combined)
         self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
         self.current_page = min(self.current_page, self.total_pages)
         start_index = (self.current_page - 1) * self.page_size
-        page_rows = findings[start_index : start_index + self.page_size]
+        page_rows = combined[start_index : start_index + self.page_size]
         self.has_more = self.current_page < self.total_pages
-        self.results = [dict(item, view_kind="security-finding") for item in page_rows]
+        self.results = page_rows
         self.all_results = list(self.results)
         self.query_one("#result-list", ResultList).set_results(self.results)
         start = 0 if not total else start_index + 1
@@ -310,32 +389,118 @@ class DocmancerTuiApp(App):
         self._update_pagination()
         inspector = self.query_one("#inspector", Inspector)
         if self.results:
-            inspector.show_security_finding(self.results[0])
+            await self._inspect_result(self.results[0])
         else:
             inspector.show_security_summary(report)
 
+    @staticmethod
+    def _effective_hook_rows(rows: list[dict]) -> list[dict]:
+        """Collapse hook scopes into one understandable coverage row per agent."""
+        grouped: dict[str, list[dict]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("agent") or "agent"), []).append(row)
+
+        summaries = []
+        for agent in sorted(grouped, key=lambda value: (value != "claude-code", value != "codex", value)):
+            agent_rows = grouped[agent]
+            user = next((row for row in agent_rows if row.get("scope") == "user"), None)
+            project = next((row for row in agent_rows if row.get("scope") == "project"), None)
+            user_context = bool(user and user.get("recall"))
+            project_context = bool(project and project.get("recall"))
+            user_capture = bool(user and user.get("capture"))
+            project_capture = bool(project and project.get("capture"))
+            context_coverage = "all projects" if user_context else "this project" if project_context else "off"
+            capture_coverage = "all projects" if user_capture else "this project" if project_capture else "off"
+            context_row = user if user_context else project if project_context else user or project or {}
+            configured_rows = [
+                row for row in agent_rows
+                if row.get("recall") or row.get("capture") or row.get("exists") or row.get("error")
+            ]
+            summaries.append(
+                {
+                    "agent": agent,
+                    "scope": context_coverage,
+                    "context_coverage": context_coverage,
+                    "capture_coverage": capture_coverage,
+                    "recall": user_context or project_context,
+                    "capture": user_capture or project_capture,
+                    "events": sorted(
+                        {
+                            str(event)
+                            for row in configured_rows
+                            for event in (row.get("events") or [])
+                        }
+                    ),
+                    "path": str(context_row.get("path") or ""),
+                    "paths": [str(row.get("path")) for row in configured_rows if row.get("path")],
+                    "project_override": project_context and user_context,
+                    "error": "; ".join(str(row.get("error")) for row in agent_rows if row.get("error")),
+                }
+            )
+        return summaries
+
     async def _load_intelligence_page(self) -> None:
-        rows = await self.backend.memory_intelligence()
-        if self.last_query:
-            needle = self.last_query.casefold()
-            rows = [row for row in rows if needle in " ".join(str(value) for value in row.values()).casefold()]
-        total = len(rows)
-        self.total_pages = max(1, (total + self.page_size - 1) // self.page_size)
-        self.current_page = min(self.current_page, self.total_pages)
+        view = self.query_one("#filter-pane", FilterPane).values()["harness"]
+        if view not in {"review", "recent", "maintenance", "history"}:
+            view = "review"
+        try:
+            data = await self.backend.memory_intelligence(
+                view=view,
+                project_path=self.project_path,
+                query=self.last_query or None,
+                page=self.current_page,
+                page_size=self.page_size,
+            )
+        except sqlite3.OperationalError as exc:
+            detail = str(exc).casefold()
+            if "locked" in detail or "busy" in detail:
+                message = (
+                    "Memory intelligence is temporarily unavailable while another Docmancer "
+                    "process updates the index. Wait for sync to finish, then reopen this tab."
+                )
+            else:
+                message = f"Memory intelligence is temporarily unavailable: {exc}"
+            self.results = []
+            self.all_results = []
+            self.current_page = 1
+            self.total_pages = 1
+            self.has_more = False
+            self.query_one("#result-list", ResultList).set_results([])
+            self.query_one("#results-title", Static).update("MEMORY INTELLIGENCE  temporarily unavailable")
+            self._update_pagination()
+            self.query_one("#inspector", Inspector).clear("intelligence", message)
+            self.notify(message, severity="warning", timeout=8)
+            return
+        rows = list(data["items"])
+        total = int(data["total"])
+        self.current_page = int(data["page"])
+        self.total_pages = int(data["total_pages"])
         start_index = (self.current_page - 1) * self.page_size
-        self.results = rows[start_index : start_index + self.page_size]
-        self.all_results = list(rows)
-        self.has_more = self.current_page < self.total_pages
+        self.results = [dict(row, display_number=start_index + offset + 1) for offset, row in enumerate(rows)]
+        self.all_results = list(self.results)
+        self.has_more = bool(data["has_more"])
         self.query_one("#result-list", ResultList).set_results(self.results)
         start = 0 if not total else start_index + 1
-        end = min(total, start_index + self.page_size)
-        self.query_one("#results-title", Static).update(f"MEMORY INTELLIGENCE  {start}-{end} of {total:,}")
+        end = min(total, start_index + len(self.results))
+        titles = {
+            "review": "NEEDS REVIEW",
+            "recent": "RECENT CHANGES",
+            "maintenance": "MEMORY MAINTENANCE",
+            "history": "REVIEW HISTORY",
+        }
+        self.query_one("#results-title", Static).update(f"{titles[view]}  {start}-{end} of {total:,}")
         self._update_pagination()
         inspector = self.query_one("#inspector", Inspector)
         if self.results:
             inspector.show_intelligence(self.results[0])
         else:
-            inspector.clear("intelligence", "No conflicts, timeline changes, recap events, or orphan memories found.")
+            empty = {
+                "review": "Nothing needs review. Docmancer found no precise conflicting claims.",
+                "recent": "No memory changes were recorded in the past seven days.",
+                "maintenance": "No durable unconnected memories need maintenance.",
+                "history": "No reviewed conflicts or deterministic revisions are recorded.",
+            }
+            inspector.clear("intelligence", empty[view])
 
     def _update_pagination(self) -> None:
         self.query_one("#previous-page", Button).disabled = self.current_page <= 1
@@ -412,19 +577,19 @@ class DocmancerTuiApp(App):
         self.current_page = 1
         self.query_one("#results-title", Static).update("SEARCHING...")
         try:
-            if self.mode in {"memory", "instructions"}:
+            if self.mode == "sources":
                 await self._load_source_page()
+            elif self.mode == "audit":
+                await self._load_security_page()
             elif self.mode == "docs":
                 self.all_results = await self.backend.query_docs(query, expand=expand)
                 self._apply_docs_filters()
-            elif self.mode == "intelligence":
-                await self._load_intelligence_page()
             else:
-                await self._load_security_page()
+                await self._load_context_page()
             self._update_status()
         except Exception as exc:  # noqa: BLE001
             self.notify(str(exc), severity="error", timeout=8)
-            self.query_one("#results-title", Static).update("MEMORY FILES" if self.mode == "memory" else "MATCHING SECTIONS")
+            self.query_one("#results-title", Static).update("SOURCES" if self.mode == "sources" else "MATCHING SECTIONS")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "command-input":
@@ -507,38 +672,31 @@ class DocmancerTuiApp(App):
         self.has_more = False
         self.query_one("#filter-pane", FilterPane).set_mode(mode, self.source_rows[mode])
         self.query_one("#result-list", ResultList).set_results([])
-        titles = {
-            "memory": "MEMORY FILES",
-            "instructions": "INSTRUCTION & RULE FILES",
-            "intelligence": "MEMORY INTELLIGENCE",
-            "docs": "DOCUMENTATION SOURCES",
-            "security": "SECURITY FINDINGS",
-        }
+        titles = {"context": "CONTEXT", "sources": "SOURCES", "audit": "AUDIT", "docs": "DOCUMENTATION SOURCES"}
         self.query_one("#results-title", Static).update(titles[mode])
         input_widget = self.query_one("#command-input", Input)
         noun = {
-            "memory": "memory files",
-            "instructions": "instructions and rules",
-            "intelligence": "conflicts, history, recap, and orphans",
+            "context": "context and pending review",
+            "sources": "agent memory, instructions, rules, and provenance",
+            "audit": "security findings and automatic context coverage",
             "docs": "indexed documentation",
-            "security": "masked security findings",
         }[mode]
         input_widget.placeholder = f"Search {noun} or type / for commands..."
-        if mode in {"memory", "instructions"}:
+        if mode == "sources":
             await self._load_source_page()
-        elif mode == "intelligence":
-            await self._load_intelligence_page()
+        elif mode == "audit":
+            await self._load_security_page()
         elif mode == "docs":
             await self._load_docs_page()
         else:
-            await self._load_security_page()
+            await self._load_context_page()
 
     async def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if self._main_screen is None or not self._main_screen.is_attached:
             return
         if event.tab.id != self.query_one("#mode-tabs", Tabs).active:
             return
-        if event.tab.id in {"memory", "instructions", "intelligence", "docs", "security"}:
+        if event.tab.id in {"context", "sources", "audit", "docs"}:
             await self.switch_mode(event.tab.id)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
@@ -551,19 +709,23 @@ class DocmancerTuiApp(App):
         elif isinstance(event.value, str):
             self.project_path = event.value
         self.backend.project_path = self.project_path or str(Path.cwd().resolve())
-        if self.mode in {"memory", "instructions"}:
+        if self.mode == "sources":
             self.current_page = 1
             await self._load_source_page()
+        elif self.mode == "context":
+            await self._load_context_page()
+        elif self.mode == "audit":
+            await self._load_security_page()
 
     async def on_filter_pane_changed(self) -> None:
         if self._main_screen is None or not self._main_screen.is_attached:
             return
         self.current_page = 1
-        if self.mode in {"memory", "instructions"}:
+        if self.mode == "sources":
             await self._load_source_page()
-        elif self.mode == "intelligence":
-            await self._load_intelligence_page()
-        elif self.mode == "security":
+        elif self.mode == "context":
+            await self._load_context_page()
+        elif self.mode == "audit":
             await self._load_security_page()
         elif self.last_query:
             self._apply_docs_filters()
@@ -598,14 +760,16 @@ class DocmancerTuiApp(App):
             else:
                 inspector.show_docs_result(item)
             return
-        if self.mode == "security":
-            if item.get("view_kind") == "security-finding":
-                inspector.show_security_finding(item)
+        if self.mode == "context":
+            inspector.show_context(item, self._context_detail(item))
             return
-        if self.mode == "intelligence":
-            inspector.show_intelligence(item)
+        if item.get("view_kind") == "security-finding":
+            inspector.show_security_finding(item)
             return
-        if item.get("view_kind") in {"docs-source", "security-finding"}:
+        if item.get("view_kind") == "hook-status":
+            inspector.show_hook_status(item)
+            return
+        if item.get("view_kind") == "docs-source":
             return
         source = item.get("source") if item.get("view_kind") == "source-match" else item
         document = await self.backend.get_memory_source(str(source.get("source_key") or ""))
@@ -614,7 +778,8 @@ class DocmancerTuiApp(App):
         if document is None:
             inspector.clear(self.mode, "The indexed source snapshot is unavailable. Run `/sync` to rebuild it.")
             return
-        inspector.show_source(document, item.get("matches") or [])
+        matches = item.get("matches") if item.get("view_kind") == "source-match" else None
+        inspector.show_source(document, matches)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         item = getattr(event.item, "result", None)
@@ -624,33 +789,320 @@ class DocmancerTuiApp(App):
     async def on_result_list_open_requested(self, event: ResultList.OpenRequested) -> None:
         if self.mode == "docs":
             await self.push_screen(DetailScreen("Document detail", render_result(event.result)))
-        elif self.mode == "intelligence":
-            self.query_one("#inspector", Inspector).show_intelligence(event.result)
+        elif self.mode == "context":
+            inspector = self.query_one("#inspector", Inspector)
+            inspector.show_context(event.result, self._context_detail(event.result))
+            inspector.query_one("#inspector-markdown").focus()
+        elif self.mode == "audit":
+            await self._inspect_result(event.result)
         else:
             await self._open_source_viewer(event.result)
+
+    @staticmethod
+    def _context_detail(item: dict) -> str:
+        if item.get("view_kind") == "context-record":
+            return "\n".join(
+                [
+                    f"# {str(item.get('memory_type') or 'Context').title()}",
+                    "",
+                    str(item.get("text") or ""),
+                    "",
+                    f"- **Context:** {context_display_name(item.get('pack_id'), item.get('pack_name'))}",
+                    f"- **Record:** `{item.get('record_id')}`",
+                    f"- **Updated:** {item.get('updated_at') or 'unknown'}",
+                    f"- **Origin:** {item.get('origin') or 'unknown'}",
+                    f"- **Source:** `{item.get('source_path') or 'unknown'}`",
+                ]
+            )
+        if item.get("view_kind") != "context-proposal":
+            count = int(item.get("records") or 0)
+            pending = int(item.get("pending") or 0)
+            return "\n".join(
+                [
+                    f"# {context_display_name(item.get('pack_id'), item.get('name'))}",
+                    "",
+                    f"**{count:,} approved statement{'s' if count != 1 else ''}**"
+                    + (f" and **{pending} pending proposal{'s' if pending != 1 else ''}**" if pending else ""),
+                    "",
+                    f"**{context_scope_label(item.get('audience_kind'), item.get('applicability_kind'))}**",
+                    "",
+                    (
+                        "Approved statements are listed in the middle pane. Select one to read, edit, or remove it."
+                        if count
+                        else "There is no approved context here yet. Use Add or Distill to create it."
+                    ),
+                ]
+            )
+        if item.get("proposal_kind") == "cloud-conflict":
+            return "\n".join(
+                [
+                    "# Cloud conflict",
+                    "",
+                    str(item.get("text") or "Encrypted sync revisions need review."),
+                    "",
+                    "Choose **APPROVE** to keep the remote revision or **REJECT** to keep the local revision.",
+                ]
+            )
+
+        lines = [
+            "# Pending review",
+            "",
+            f"- **Context:** {context_display_name(item.get('pack_id'), item.get('context_name'))}",
+            f"- **Proposal:** `{item.get('proposal_id') or item.get('id') or 'unknown'}`",
+        ]
+        operations = list(item.get("operations") or [])
+        for index, operation in enumerate(operations, start=1):
+            action = str(operation.get("action") or "change").upper()
+            lines.extend(["", f"## {index}. {action}", "", str(operation.get("text") or "No statement text.")])
+            reason = str(operation.get("reason") or "").strip()
+            if reason:
+                lines.extend(["", f"**Why:** {reason}"])
+            confidence = operation.get("confidence")
+            if confidence is not None:
+                lines.append(f"**Confidence:** {float(confidence):.0%}")
+            source_paths = [str(path) for path in operation.get("source_paths") or [] if path]
+            if source_paths:
+                lines.extend(["", "**Sources:**", *[f"- `{path}`" for path in source_paths]])
+        if not operations:
+            lines.extend(["", str(item.get("text") or "No structured operations are available.")])
+        lines.extend(["", "Choose **APPROVE** to activate these changes or **REJECT** to discard them."])
+        return "\n".join(lines)
 
     async def _open_source_viewer(self, item: dict) -> None:
         source = item.get("source") if item.get("view_kind") == "source-match" else item
         document = await self.backend.get_memory_source(str(source.get("source_key") or ""))
         if document is not None:
             inspector = self.query_one("#inspector", Inspector)
-            await self.push_screen(SourceViewerScreen(document, item.get("matches") or [], inspector.match_index))
+            matches = item.get("matches") if item.get("view_kind") == "source-match" else document.get("atoms")
+            await self.push_screen(SourceViewerScreen(document, matches or [], inspector.match_index))
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Show immediate feedback and prevent duplicate button actions."""
+        button = event.button
+        if not button.is_attached or button.screen is not self._main_screen:
+            return
+        if button.loading:
+            return
+        button.loading = True
+        worker = self.run_worker(
+            self._handle_button_pressed(event),
+            group="button-action",
+            exit_on_error=False,
+        )
+        self._track_button_worker(button, worker)
+
+    async def _handle_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "context-how-it-works":
+            await self.push_screen(DetailScreen("How context works", self._canonical_context_help()))
+            return
+        if event.button.id in {"context-reset-personal", "context-reset-team"}:
+            audience = "personal" if event.button.id.endswith("personal") else "team"
+            message = (
+                "Remove all approved personal defaults and current-project context? "
+                "Docmancer will write tombstones, reject pending personal proposals, and keep the raw source corpus."
+                if audience == "personal"
+                else "Create review proposals to remove all approved team standards and team-project context? "
+                "Team context is not deleted until those proposals are approved."
+            )
+            confirmed = await self._show_modal_wait(
+                ConfirmScreen(
+                    f"Reset {audience} context",
+                    message,
+                    confirm_label="Reset personal" if audience == "personal" else "Create proposals",
+                )
+            )
+            if confirmed:
+                await self._reset_context(audience)
+            return
+        if event.button.id == "audit-how-it-works":
+            await self.push_screen(DetailScreen("How automatic context works", self._automatic_context_help()))
+            return
+        if event.button.id in {"audit-hook-claude-code", "audit-hook-codex"}:
+            agent = str(event.button.id).removeprefix("audit-hook-")
+            hook = next((row for row in self.hook_rows if row.get("agent") == agent), None)
+            if hook is not None:
+                self.query_one("#inspector", Inspector).show_hook_status(hook)
+            return
+        if self.mode == "context" and event.button.id in {"source-new", "source-edit", "source-delete", "source-forget", "source-promote"}:
+            if event.button.id == "source-new":
+                selected = self.selected_result or {}
+                pack_id = str(selected.get("pack_id") or "personal-defaults")
+                audience = str(selected.get("audience_kind") or "personal")
+                title = (
+                    "Propose team context"
+                    if audience == "team"
+                    else "Add project context"
+                    if pack_id.startswith("personal-project")
+                    else "Add personal context"
+                )
+                text = await self._show_modal_wait(EditScreen("new-context", "", title=title))
+                if text and text.strip():
+                    await self.command_add([text.strip()], pack_id=pack_id)
+                return
+            selected = self.selected_result or {}
+            proposal_id = str(selected.get("proposal_id") or "")
+            if selected.get("view_kind") == "context-record" and event.button.id in {"source-edit", "source-delete"}:
+                if event.button.id == "source-edit":
+                    await self._edit_context_record(selected)
+                else:
+                    await self._remove_context_record(selected)
+                return
+            if event.button.id in {"source-edit", "source-delete"}:
+                if not proposal_id:
+                    self.notify("Select a pending proposal first.", severity="warning")
+                    return
+                decision = "approve" if event.button.id == "source-edit" else "reject"
+                await self.command_review([proposal_id, decision])
+                return
+            if event.button.id == "source-forget":
+                await self.command_review([])
+                return
+            await self.command_share([str(selected.get("pack_id") or "personal-defaults")])
+            return
         if event.button.id == "previous-page":
             await self.action_previous_page()
         elif event.button.id == "next-page":
             await self.action_next_page()
         elif event.button.id == "source-new":
-            self.run_worker(self.command_new([]), group="modal-command", exit_on_error=False)
+            await self.command_new([])
         elif event.button.id == "source-edit":
-            self.run_worker(self.command_edit([]), group="modal-command", exit_on_error=False)
+            await self.command_edit([])
         elif event.button.id == "source-delete":
-            self.run_worker(self.command_delete([]), group="modal-command", exit_on_error=False)
+            await self.command_delete([])
         elif event.button.id == "source-forget":
-            self.run_worker(self.command_forget([]), group="modal-command", exit_on_error=False)
+            await self.command_forget([])
         elif event.button.id == "source-promote":
             await self.command_promote([])
+
+    def _track_button_worker(self, button: Button, worker) -> None:
+        """Keep a button busy until a background command worker finishes."""
+
+        async def wait_and_clear() -> None:
+            try:
+                await worker.wait()
+            except Exception:  # The command worker reports its own errors.
+                pass
+            finally:
+                if button.is_attached:
+                    button.loading = False
+
+        task = asyncio.create_task(wait_and_clear())
+        self._button_loading_tasks.add(task)
+        task.add_done_callback(self._button_loading_tasks.discard)
+
+    @staticmethod
+    def _automatic_context_help() -> str:
+        return """## The short version
+
+Docmancer keeps a smaller set of approved context above the raw source corpus. Automatic context lets Claude Code or Codex receive the relevant parts when a session starts or when you submit a prompt.
+
+## What the status means
+
+- **All projects** means a user-level integration is installed and covers every project for that agent.
+- **This project** means only the currently selected project has an integration.
+- **Not connected** means automatic delivery is off. Manual `docmancer query` commands still work.
+
+## What gets delivered
+
+Docmancer sends task-relevant approved context, not the complete raw memory corpus. Project context overrides global defaults, and team context overrides personal context at the same level.
+
+## New-memory capture
+
+Capture is optional and separate from delivery. When enabled, completed sessions can propose new memories for review. Turning capture off does not stop approved context from reaching the agent.
+
+## Privacy
+
+Automatic context runs through local agent hooks. Managed projections and hook output are delivery mechanisms, not sources of truth."""
+
+    @staticmethod
+    def _canonical_context_help() -> str:
+        return """## Sources versus context
+
+Sources are the full evidence corpus harvested from agents, instructions, and rules. Approved context is the smaller set of statements that Docmancer delivers automatically.
+
+## Your four context areas
+
+- **Personal defaults** contains durable preferences that apply across projects.
+- **Current project** contains project decisions and explicit exceptions.
+- **Team standards** contains approved defaults shared by the team.
+- **Team project** contains shared project context and exceptions.
+
+## Distill
+
+Distill proposes durable defaults and recurring evidence that are not already represented. It should not paginate through raw task history or re-propose an approved source atom. Nothing becomes active until you approve the proposal.
+
+## Manage records
+
+Select an individual statement in the middle pane to edit or remove it. Personal changes apply immediately. Team changes create review proposals.
+
+## Reset
+
+Reset Personal removes approved personal records, rejects pending personal proposals, and writes tombstones. Reset Team creates removal proposals because every team change requires approval. Raw sources remain untouched, so you can distill again later."""
+
+    async def _reset_context(self, audience: str) -> None:
+        await self._start_context_work(f"Resetting {audience} context...")
+        try:
+            result = await self.backend.reset_context(audience)
+            proposals = list(result.get("proposals") or [])
+            if proposals:
+                self.notify(f"Created {len(proposals)} team reset proposal(s). Review them to finish the reset.")
+            else:
+                self.notify(
+                    f"Removed {int(result.get('removed') or 0)} personal context record(s)"
+                    f" and rejected {int(result.get('rejected_proposals') or 0)} pending proposal(s)."
+                )
+            await self._load_context_page()
+            self._set_counts(await self.backend.counts())
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    async def _edit_context_record(self, record: dict) -> None:
+        replacement = await self._show_modal_wait(
+            EditScreen(
+                str(record.get("record_id") or "context"),
+                str(record.get("text") or ""),
+                title="Edit canonical context",
+            )
+        )
+        if replacement is None or not replacement.strip():
+            return
+        await self._start_context_work("Updating context...")
+        try:
+            result = await self.backend.edit_context(str(record.get("record_id") or ""), replacement.strip())
+            if result.get("proposal"):
+                self.notify("Created a team edit proposal for review.")
+            else:
+                self.notify("Updated personal context.")
+            await self._load_context_page()
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    async def _remove_context_record(self, record: dict) -> None:
+        confirmed = await self._show_modal_wait(
+            ConfirmScreen(
+                "Remove canonical context",
+                "Remove this approved statement? Personal context is tombstoned immediately. Team context creates a review proposal.",
+                confirm_label="Remove",
+            )
+        )
+        if not confirmed:
+            return
+        await self._start_context_work("Removing context...")
+        try:
+            result = await self.backend.remove_context(str(record.get("record_id") or ""))
+            if result.get("proposal"):
+                self.notify("Created a team removal proposal for review.")
+            else:
+                self.notify("Removed context and wrote a tombstone.")
+            await self._load_context_page()
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
 
     def on_resize(self, event: events.Resize) -> None:
         self._update_responsive(event.size.width)
@@ -684,7 +1136,9 @@ class DocmancerTuiApp(App):
         await self.run_query(" ".join(args), mode="docs")
 
     async def command_security(self, args: list[str]) -> None:
-        await self.switch_mode("security")
+        await self.switch_mode("audit")
+        if args:
+            await self.run_query(" ".join(args), mode="audit")
 
     async def command_intelligence(self, args: list[str]) -> None:
         await self.switch_mode("intelligence")
@@ -692,12 +1146,120 @@ class DocmancerTuiApp(App):
             self.last_query = " ".join(args)
             await self._load_intelligence_page()
 
-    async def command_resolve(self, args: list[str]) -> None:
-        if len(args) < 2 or args[1] not in {"choose", "keep-both", "dismiss"}:
-            self.notify("Usage: /resolve <relation-id> choose|keep-both|dismiss [winner-id]", severity="warning")
+    async def command_recent(self, args: list[str]) -> None:
+        from docmancer.cli.memory_commands import _parse_recap_time
+
+        try:
+            since = _parse_recap_time(args[0] if args else "7d")
+            rows = await self.backend.memory_recent(since)
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error")
             return
-        relation_id, resolution = args[0], args[1]
-        winner = args[2] if len(args) > 2 else None
+        lines = ["# Recent memory activity", ""]
+        for row in rows:
+            reference = f"docmancer://record/{row['record_id']}" if row.get("record_id") else row.get("atom_id")
+            lines.append(f"- **{str(row['activity_at'])[:16]}** `{row['harness']}` `{reference}`")
+            lines.append(f"  {row['text']}")
+        if not rows:
+            lines.append("No memory activity matched this time window.")
+        await self.push_screen(DetailScreen("Recent memory", "\n".join(lines)))
+
+    async def command_consolidate(self, args: list[str]) -> None:
+        confirmed = await self._show_modal_wait(
+            ConfirmScreen(
+                "Consolidate memory",
+                "This sends privacy-redacted memory text to the configured OpenRouter model. The result is review-only until you apply it.",
+                confirm_label="Send and consolidate",
+            )
+        )
+        if not confirmed:
+            return
+        screen = ConsolidateScreen()
+        await self.push_screen(screen)
+
+        def progress(name: str, data: dict) -> None:
+            try:
+                self.call_from_thread(screen.update_event, name, data)
+            except RuntimeError:
+                screen.update_event(name, data)
+
+        try:
+            self.pending_consolidation_draft = await self.backend.consolidate(" ".join(args) or None, progress)
+            screen.finish("Draft complete. Close this window, review it, then run /apply <agent>.")
+            await self.push_screen(DetailScreen("Consolidated draft", self.pending_consolidation_draft))
+        except Exception as exc:  # noqa: BLE001
+            screen.finish(f"Consolidation failed: {exc}")
+            self.notify(str(exc), severity="error", timeout=8)
+
+    async def command_apply(self, args: list[str]) -> None:
+        agent = args[0].lower() if args else "codex"
+        confirmed = await self._show_modal_wait(
+            ConfirmScreen(
+                "Apply reviewed memory",
+                f"Write Docmancer's managed memory block to the {agent} always-loaded file? Existing content outside the block is preserved.",
+                confirm_label="Apply",
+            )
+        )
+        if not confirmed:
+            return
+        try:
+            target = await self.backend.apply_memory(agent, self.pending_consolidation_draft)
+            self.notify(f"Applied reviewed memory to {target}.")
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+
+    async def command_settings(self, _args: list[str]) -> None:
+        enabled = await self.backend.capture_settings()
+        value = await self._show_modal_wait(SettingsScreen(enabled))
+        if value is None:
+            return
+        try:
+            path = await self.backend.save_capture_settings(value)
+            self.notify(f"Saved capture settings to {path}.")
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error")
+
+    async def command_ingest(self, args: list[str]) -> None:
+        if not args:
+            self.notify("Usage: /ingest <path-or-url>", severity="warning")
+            return
+        screen = ConsolidateScreen("Documentation ingest")
+        await self.push_screen(screen)
+
+        def progress(name: str, data: dict) -> None:
+            screen.update_event(name, data)
+
+        try:
+            total = await self.backend.ingest_docs(args[0], progress)
+            await self._refresh_sources()
+            self._set_counts(await self.backend.counts())
+            screen.finish(f"Indexed {total} document section(s).")
+            await self.switch_mode("docs")
+        except Exception as exc:  # noqa: BLE001
+            screen.finish(f"Ingest failed: {exc}")
+            self.notify(str(exc), severity="error", timeout=8)
+
+    async def command_resolve(self, args: list[str]) -> None:
+        selected = self.selected_result
+        selected_group = selected if selected and selected.get("intelligence_kind") == "conflict-group" else None
+        group_syntax = bool(selected_group and args and args[0] in {"choose", "keep-both", "dismiss"})
+        if group_syntax:
+            relation_ids = list(selected_group.get("relation_ids") or [])
+            relation_id = str(selected_group.get("group_id") or "selected claim")
+            resolution = args[0]
+            winner = args[1] if len(args) > 1 else None
+        else:
+            if len(args) < 2 or args[1] not in {"choose", "keep-both", "dismiss"}:
+                usage = (
+                    "Select a claim, then use /resolve choose <memory-id>, /resolve keep-both, or /resolve dismiss."
+                    if selected_group
+                    else "Usage: /resolve <relation-id> choose|keep-both|dismiss [winner-id]"
+                )
+                self.notify(usage, severity="warning")
+                return
+            relation_id, resolution = args[0], args[1]
+            relation_ids = []
+            winner = args[2] if len(args) > 2 else None
         if resolution == "choose" and not winner:
             self.notify("A winner memory ID is required with choose.", severity="warning")
             return
@@ -711,14 +1273,18 @@ class DocmancerTuiApp(App):
         if not confirmed:
             return
         try:
-            await self.backend.resolve_memory_conflict(relation_id, resolution, winner=winner)
+            if group_syntax:
+                await self.backend.resolve_memory_conflict_group(relation_ids, resolution, winner=winner)
+            else:
+                await self.backend.resolve_memory_conflict(relation_id, resolution, winner=winner)
+            self._set_counts(await self.backend.counts())
             await self.switch_mode("intelligence")
             await self._load_intelligence_page()
-            self.notify(f"Resolved conflict {relation_id}.")
+            self.notify(f"Resolved {relation_id}.")
         except Exception as exc:  # noqa: BLE001
             self.notify(str(exc), severity="error", timeout=8)
         if args:
-            await self.run_query(" ".join(args), mode="security")
+            await self.run_query(" ".join(args), mode="audit")
 
     async def command_sync(self, _args: list[str]) -> None:
         screen = SyncScreen()
@@ -737,8 +1303,10 @@ class DocmancerTuiApp(App):
             self._set_counts(counts)
             await self._refresh_sources()
             await self._refresh_security_report()
-            if self.mode in {"memory", "instructions"}:
+            if self.mode == "sources":
                 await self._load_source_page()
+            elif self.mode == "context":
+                await self._load_context_page()
         except SyncInProgressError as exc:
             screen.finish_with_error(str(exc))
             self.notify(str(exc), severity="warning")
@@ -754,8 +1322,9 @@ class DocmancerTuiApp(App):
         status = await self.backend.status()
         body = (
             f"# Local status\n\n**Project:** `{status['project']}`\n\n"
-            f"**Memory index:** {status['memory'].get('atoms', 0)} passages across {status['memory'].get('sources', 0)} source files\n\n"
+            f"**Memory index:** {status['memory'].get('atoms', 0)} atoms across {status['memory'].get('sources', 0)} source files\n\n"
             f"**Docs:** {status['docs'].get('sections_count', 0)} sections\n\n"
+            f"**Context:** {status.get('context', {}).get('packs', 0)} areas with {status.get('context', {}).get('pending_reviews', 0)} pending review\n\n"
             f"**Memory DB:** `{status['memory'].get('db_path')}`"
         )
         await self.push_screen(DetailScreen("Status", body))
@@ -818,43 +1387,124 @@ class DocmancerTuiApp(App):
                     self.notify(str(exc), severity="error", timeout=8)
         elif action == "audit":
             await self.push_screen(AuditScreen(await self.backend.audit()))
-        elif action == "promotions":
-            try:
-                rows = await self.backend.cloud_promotions()
-                if not rows:
-                    self.notify("No promotion proposals are awaiting review.")
-                else:
-                    review = await self._show_modal_wait(PromotionReviewScreen(rows))
-                    if review:
-                        proposal_id, decision = review
-                        replacement = None
-                        if decision == "edit":
-                            row = next(item for item in rows if str(item.get("proposal_id")) == proposal_id)
-                            replacement = await self._show_modal_wait(EditScreen(proposal_id, str(row.get("text") or "")))
-                            if replacement is None:
-                                return
-                            decision = "approve"
-                        await self.backend.cloud_review_promotion(proposal_id, decision, text=replacement)
-                        self.notify(f"Promotion proposal {proposal_id} marked {decision}.")
-            except Exception as exc:  # noqa: BLE001
-                self.notify(str(exc), severity="error", timeout=8)
         else:
-            self.notify("Usage: /cloud status|sync|conflicts|devices|recovery|audit|promotions", severity="warning")
+            self.notify("Usage: /cloud status|sync|conflicts|devices|recovery|audit", severity="warning")
 
-    async def command_add(self, args: list[str]) -> None:
+    async def _start_context_work(self, label: str) -> None:
+        if self.mode == "context":
+            self.query_one("#inspector", Inspector).set_context_busy(label)
+            self.notify(label.capitalize())
+            await asyncio.sleep(0)
+
+    def _finish_context_work(self) -> None:
+        if self.mode == "context" and self._main_screen is not None and self._main_screen.is_attached:
+            self.query_one("#inspector", Inspector).set_context_busy(None)
+
+    async def command_add(self, args: list[str], *, pack_id: str | None = None) -> None:
         if not args:
             self.notify("Usage: /add <text>", severity="warning")
             return
+        await self._start_context_work("Adding context...")
         try:
-            record, indexed = await self.backend.add(" ".join(args))
-            self.notify(f"Added memory {record.record_id[:12]}" + ("" if indexed else "; run /sync to index it"))
+            if hasattr(self.backend, "add_context"):
+                result = await self.backend.add_context(" ".join(args), pack_id or "personal-defaults")
+                if result.get("proposal"):
+                    self.notify(f"Created team proposal {result['proposal'].proposal_id}")
+                else:
+                    self.notify(f"Added context {result['record'].record_id[:12]}")
+                await self.switch_mode("context")
+                await self._load_context_page()
+            else:
+                record, indexed = await self.backend.add(" ".join(args))
+                self.notify(f"Added memory {record.record_id[:12]}" + ("" if indexed else "; run /sync to index it"))
             self._set_counts(await self.backend.counts())
         except Exception as exc:  # noqa: BLE001
             self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    async def command_distill(self, args: list[str]) -> None:
+        pack_id = args[0] if args else self._selected_context_id()
+        await self._start_context_work("Distilling context...")
+        try:
+            proposal = await self.backend.distill_context(pack_id)
+            if proposal is None:
+                self.notify("No update proposed. Approved context already matches the evidence.")
+            else:
+                self.notify(f"Created proposal {proposal.proposal_id} with {len(proposal.operations)} operation(s).")
+            await self.switch_mode("context")
+            await self._load_context_page()
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    async def command_review(self, args: list[str]) -> None:
+        if not args:
+            await self.switch_mode("context")
+            selector = self.query_one("#filter-pane", FilterPane).query_one("#harness-filter", Select)
+            selector.value = "pending"
+            await self._load_context_page()
+            return
+        decision = args[1] if len(args) > 1 else ""
+        if decision not in {"approve", "reject", "keep-left", "keep-right", "keep-both"}:
+            self.notify("Usage: /review <proposal> approve|reject|keep-left|keep-right|keep-both", severity="warning")
+            return
+        progress = (
+            "Approving proposal..."
+            if decision == "approve"
+            else "Rejecting proposal..."
+            if decision == "reject"
+            else "Resolving proposal..."
+        )
+        await self._start_context_work(progress)
+        try:
+            await self.backend.review_context(args[0], decision)
+            state = (
+                "approved"
+                if decision == "approve"
+                else "rejected"
+                if decision == "reject"
+                else "resolved"
+            )
+            self.notify(f"Proposal {args[0]} is {state}.")
+            await self.switch_mode("context")
+            await self._load_context_page()
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    async def command_share(self, args: list[str]) -> None:
+        pack_id = args[0] if args else self._selected_context_id(personal_only=True)
+        await self._start_context_work("Preparing team proposal...")
+        try:
+            proposal = await self.backend.share_context(pack_id)
+            self.notify(
+                f"Created team proposal {proposal.proposal_id}."
+                if proposal is not None
+                else "No new context needs team review."
+            )
+            await self.switch_mode("context")
+            await self._load_context_page()
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+        finally:
+            self._finish_context_work()
+
+    def _selected_context_id(self, *, personal_only: bool = False) -> str:
+        """Use the visible context selection without exposing its internal ID."""
+        selected = self.selected_result or {}
+        identifier = str(selected.get("pack_id") or "") if self.mode == "context" else ""
+        if identifier == "cloud-transport":
+            identifier = ""
+        if personal_only and not identifier.startswith("personal-"):
+            identifier = ""
+        return identifier or "personal-defaults"
 
     def _selected_source(self) -> dict | None:
         result = self.selected_result
-        if not result or self.mode not in {"memory", "instructions"}:
+        if not result or self.mode != "sources":
             return None
         return result.get("source") if result.get("view_kind") == "source-match" else result
 
@@ -863,12 +1513,12 @@ class DocmancerTuiApp(App):
         self._set_counts(counts)
         await self._refresh_sources()
         await self._refresh_security_report()
-        if self.mode in {"memory", "instructions"}:
+        if self.mode == "sources":
             await self._load_source_page()
 
     async def command_new(self, args: list[str]) -> None:
-        if self.mode not in {"memory", "instructions"}:
-            self.notify("New source files are available in Memory and Instructions & Rules.", severity="warning")
+        if self.mode != "sources":
+            self.notify("New source files are available in Sources.", severity="warning")
             return
         source = self._selected_source()
         owned_record = bool(
@@ -876,7 +1526,7 @@ class DocmancerTuiApp(App):
             and source.get("record_id")
             and source.get("origin") != "harvested"
         )
-        if self.mode == "memory" and (source is None or owned_record):
+        if source is None or owned_record:
             text = await self._show_modal_wait(
                 EditScreen(
                     "new-memory",
@@ -897,7 +1547,7 @@ class DocmancerTuiApp(App):
             except Exception as exc:  # noqa: BLE001
                 self.notify(str(exc), severity="error", timeout=8)
             return
-        kind = str((source or {}).get("kind") or ("agent-memory" if self.mode == "memory" else "instructions"))
+        kind = str((source or {}).get("kind") or "agent-memory")
         path = Path(str((source or {}).get("path") or Path.cwd())).expanduser()
         directory = path.parent if path.suffix else path
         stem = {"agent-memory": "new-memory", "rules": "new-rule"}.get(kind, "new-instructions")
@@ -1040,7 +1690,7 @@ class DocmancerTuiApp(App):
             try:
                 await self.backend.forget(identifier)
                 self.notify(f"Excluded passage {identifier[:12]} from recall")
-                if self.mode in {"memory", "instructions"}:
+                if self.mode == "sources":
                     await self._load_source_page()
             except Exception as exc:  # noqa: BLE001
                 self.notify(str(exc), severity="error", timeout=8)
@@ -1066,7 +1716,7 @@ class DocmancerTuiApp(App):
             return
         self.retrieval_mode = args[0]
         self._update_status()
-        if self.last_query and self.mode in {"memory", "instructions"}:
+        if self.last_query and self.mode == "sources":
             await self.run_query(self.last_query)
 
     async def command_scope(self, args: list[str]) -> None:
@@ -1078,7 +1728,7 @@ class DocmancerTuiApp(App):
         selector = self.query_one("#project-selector", Select)
         selector.set_options([(f"Project: {Path(self.project_path).name}", self.project_path), ("All projects", "all")])
         selector.value = self.project_path
-        if self.mode in {"memory", "instructions"}:
+        if self.mode == "sources":
             await self._load_source_page()
 
     async def command_doctor(self, _args: list[str]) -> None:
@@ -1112,7 +1762,7 @@ class DocmancerTuiApp(App):
             index = self.query_one("#inspector", Inspector).match_index
             return str(matches[min(index, len(matches) - 1)].get("identifier") or "") or None
         if result.get("view_kind") == "source":
-            return str(result.get("record_id") or "") or None
+            return self.query_one("#inspector", Inspector).selected_memory_identifier or str(result.get("record_id") or "") or None
         meta = result.get("metadata") or {}
         return str(meta.get("record_id") or meta.get("atom_id") or result.get("id") or "") or None
 
@@ -1120,7 +1770,7 @@ class DocmancerTuiApp(App):
         """Return whether a single-key action may operate on the main pane."""
         if self._main_screen is None or self.screen is not self._main_screen:
             return False
-        if mode == "memory" and self.mode not in {"memory", "instructions"}:
+        if mode == "memory" and self.mode != "sources":
             return False
         if mode is not None and mode != "memory" and self.mode != mode:
             return False
@@ -1140,11 +1790,11 @@ class DocmancerTuiApp(App):
     async def action_previous_page(self) -> None:
         if self.current_page > 1:
             self.current_page -= 1
-            if self.mode in {"memory", "instructions"}:
+            if self.mode == "sources":
                 await self._load_source_page()
-            elif self.mode == "intelligence":
-                await self._load_intelligence_page()
-            elif self.mode == "security":
+            elif self.mode == "context":
+                await self._load_context_page()
+            elif self.mode == "audit":
                 await self._load_security_page()
             elif not self.last_query:
                 await self._load_docs_page()
@@ -1152,11 +1802,11 @@ class DocmancerTuiApp(App):
     async def action_next_page(self) -> None:
         if self.has_more:
             self.current_page += 1
-            if self.mode in {"memory", "instructions"}:
+            if self.mode == "sources":
                 await self._load_source_page()
-            elif self.mode == "intelligence":
-                await self._load_intelligence_page()
-            elif self.mode == "security":
+            elif self.mode == "context":
+                await self._load_context_page()
+            elif self.mode == "audit":
                 await self._load_security_page()
             elif not self.last_query:
                 await self._load_docs_page()
@@ -1171,10 +1821,10 @@ class DocmancerTuiApp(App):
             return
         if self.mode == "docs":
             await self.push_screen(DetailScreen("Document detail", render_result(result)))
-        elif self.mode == "security":
-            self.query_one("#inspector", Inspector).show_security_finding(result)
-        elif self.mode == "intelligence":
-            self.query_one("#inspector", Inspector).show_intelligence(result)
+        elif self.mode == "context":
+            inspector = self.query_one("#inspector", Inspector)
+            inspector.show_context(result, self._context_detail(result))
+            inspector.query_one("#inspector-markdown").focus()
         else:
             await self._open_source_viewer(result)
 
@@ -1211,7 +1861,7 @@ class DocmancerTuiApp(App):
             return
         result = self.selected_result
         if result:
-            if self.mode in {"memory", "instructions"}:
+            if self.mode == "sources":
                 text = str((self.query_one("#inspector", Inspector).document or {}).get("content") or "")
             else:
                 text = str(result.get("text") or "")
@@ -1227,7 +1877,7 @@ class DocmancerTuiApp(App):
         if self.mode == "docs" and result.get("source"):
             webbrowser.open(str(result["source"]))
             self.notify("Opened the source in your browser.")
-        elif self.mode in {"memory", "instructions"}:
+        elif self.mode == "sources":
             document = self.query_one("#inspector", Inspector).document or {}
             path = Path(str(document.get("path") or "")).expanduser()
             if path.exists():

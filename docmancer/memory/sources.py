@@ -77,6 +77,7 @@ class MemorySourceDocument(MemorySourceSummary):
     """A full privacy-cleaned source snapshot."""
 
     content: str = ""
+    atoms: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

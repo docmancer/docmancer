@@ -1,15 +1,17 @@
 import asyncio
 import hashlib
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from textual.app import App
-from textual.widgets import OptionList, Tree
+from textual.widgets import Button, OptionList, Tree
 
 from docmancer.harness.base import MemoryEntry
 from docmancer.tui.app import DocmancerTuiApp
 from docmancer.tui.backend import TuiBackend
 from docmancer.tui.presentation import source_display_location, source_display_title
+from docmancer.tui.screens import sync as sync_screen_module
 from docmancer.tui.screens.audit import AuditScreen
 from docmancer.tui.screens.cloud import ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen
 from docmancer.tui.screens.detail import CreateSourceScreen, DetailScreen, SourceViewerScreen
@@ -207,12 +209,48 @@ class FakeBackend:
         return {"project": self.project_path, "memory": {"atoms": 112, "sources": 56, "db_path": "/tmp/memory.db"}, "docs": {"sections_count": 1}, "last_sync": {}}
 
     async def sync(self, progress):
-        for stage in ("lock", "harvest", "redact", "merge", "index", "finalize", "done"):
+        for stage in ("lock", "harvest", "redact", "merge", "graph", "index", "finalize", "done"):
             progress(stage, f"{stage} detail")
         return 112
 
+    async def memory_intelligence(self, *, view="review", page=1, page_size=10, **kwargs):
+        rows = []
+        return {
+            "items": rows,
+            "total": 0,
+            "page": 1,
+            "page_size": page_size,
+            "total_pages": 1,
+            "has_more": False,
+            "view": view,
+        }
+
     async def audit(self):
         return {"unique_secret_count": 0, "finding_count": 0, "findings": [], "by_severity": {}}
+
+    async def hook_status(self):
+        return [
+            {
+                "agent": "claude-code",
+                "scope": "user",
+                "path": "/tmp/.claude/settings.json",
+                "exists": True,
+                "recall": True,
+                "capture": False,
+                "events": ["SessionStart", "UserPromptSubmit"],
+                "error": None,
+            },
+            {
+                "agent": "codex",
+                "scope": "user",
+                "path": "/tmp/.codex/hooks.json",
+                "exists": False,
+                "recall": False,
+                "capture": False,
+                "events": [],
+                "error": None,
+            },
+        ]
 
     async def add(self, text, **kwargs):
         return type("Record", (), {"record_id": "new-record"})(), True
@@ -258,7 +296,7 @@ class SecurityBackend(FakeBackend):
             "type": "github-token",
             "severity": "high",
             "line": 12,
-            "source_path": "/tmp/memory.md",
+            "source_path": "/tmp/memory-0.md",
             "agent": "codex",
             "scope": "global:codex",
             "title": "memory",
@@ -285,14 +323,15 @@ async def test_tui_browses_paginated_files_and_click_does_not_open_modal():
     app = DocmancerTuiApp(backend=FakeBackend())
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         tabs = app.query_one("#mode-tabs")
-        memory_tab = app.query_one("#memory")
+        sources_tab = app.query_one("#sources")
         docs_tab = app.query_one("#docs")
-        assert tabs.active == "memory"
-        assert memory_tab.has_class("-active")
-        assert memory_tab.styles.background != docs_tab.styles.background
-        assert len(app.results) == 50
-        assert app.total_pages == 2
+        assert tabs.active == "sources"
+        assert sources_tab.has_class("-active")
+        assert sources_tab.styles.background != docs_tab.styles.background
+        assert len(app.results) == 10
+        assert app.total_pages == 6
         assert len(app.query_one("#source-text").text) == len(MEMORY_SOURCES[0]["content"])
         assert str(app.query_one("#source-action-label").render()) == "RECORD CONTROLS"
         assert str(app.query_one("#source-new").label) == "N  NEW"
@@ -302,7 +341,7 @@ async def test_tui_browses_paginated_files_and_click_does_not_open_modal():
         await pilot.pause()
         assert app.screen is app._main_screen
 
-        await pilot.press("enter")
+        app.query_one("#result-list", ResultList).action_select_cursor()
         await pilot.pause()
         assert isinstance(app.screen, SourceViewerScreen)
 
@@ -312,21 +351,143 @@ async def test_tui_pagination_tabs_and_filters_cover_the_full_file_corpus():
     app = DocmancerTuiApp(backend=FakeBackend())
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         await app.action_next_page()
         assert app.current_page == 2
-        assert len(app.results) == 5
+        assert len(app.results) == 10
 
-        await app.switch_mode("instructions")
+        app.query_one("#harness-filter").value = "instructions"
+        await pilot.pause(0.2)
         assert len(app.results) == 1
         assert app.results[0]["kind"] == "instructions"
         assert str(app.query_one("#source-action-label").render()) == "FILE CONTROLS"
 
-        await app.switch_mode("memory")
-        await pilot.pause()
         app.query_one("#harness-filter").value = "codex"
         await pilot.pause(0.2)
         assert app.results
         assert all(item["harness"] == "codex" for item in app.results)
+
+
+@pytest.mark.asyncio
+async def test_removed_intelligence_backend_does_not_affect_context_tab():
+    class BusyBackend(FakeBackend):
+        async def memory_intelligence(self, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    app = DocmancerTuiApp(backend=BusyBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        assert app.mode == "context"
+        assert app.results == []
+        assert "CONTEXT" in str(app.query_one("#results-title").render())
+        assert app.query_one("#context")
+        assert app.query_one("#sources")
+        assert app.query_one("#audit")
+        assert app.query_one("#docs")
+
+
+@pytest.mark.asyncio
+async def test_intelligence_review_groups_claims_and_paginates_them():
+    class FakeMemory:
+        def conflicts(self, *, unresolved_only=True):
+            assert unresolved_only is True
+            return [
+                {
+                    "relation_id": "rel-1",
+                    "source_node_id": "node-a",
+                    "target_node_id": "node-b",
+                    "source_atom_id": "atom-a",
+                    "target_atom_id": "atom-b",
+                    "source_text": "The project uses npm.",
+                    "target_text": "The project uses pnpm.",
+                    "source_scope": "project:test",
+                    "target_scope": "project:test",
+                    "confidence": 0.95,
+                    "evidence": {
+                        "claim_key": "the project|uses",
+                        "subject": "the project",
+                        "source_value": "npm",
+                        "target_value": "pnpm",
+                    },
+                }
+            ]
+
+        def recent(self, *, since, limit):
+            assert since.tzinfo is not None
+            assert limit == 50_000
+            return [
+                {
+                    "atom_id": "atom-recent",
+                    "text": "The project uses pnpm.",
+                    "activity_at": NOW.isoformat(),
+                    "scope": "project:test",
+                    "project_path": "/tmp/project",
+                }
+            ]
+
+    backend = TuiBackend(memory_factory=FakeMemory)
+    backend.memory = FakeMemory()
+    backend.ready = True
+
+    data = await backend.memory_intelligence(view="review", page=1, page_size=10)
+
+    assert data["total"] == 1
+    assert data["total_pages"] == 1
+    assert data["items"][0]["intelligence_kind"] == "conflict-group"
+    assert data["items"][0]["relation_ids"] == ["rel-1"]
+    assert [member["atom_id"] for member in data["items"][0]["members"]] == ["atom-a", "atom-b"]
+
+    recent = await backend.memory_intelligence(view="recent", page=1, page_size=10)
+    assert recent["total"] == 1
+    assert recent["items"][0]["intelligence_kind"] == "recent-source"
+    assert recent["items"][0]["atom_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_source_inspector_navigates_atoms_instead_of_an_unlabelled_passage_count():
+    class AtomBackend(FakeBackend):
+        async def get_memory_source(self, source_key):
+            document = await super().get_memory_source(source_key)
+            assert document is not None
+            document["atoms"] = [
+                {
+                    "navigation_kind": "atom",
+                    "identifier": "atom-one",
+                    "atom_id": "atom-one",
+                    "memory_type": "decision",
+                    "status": "current",
+                    "line_start": 1,
+                    "line_end": 1,
+                    "text": "Production deploys run on Railway.",
+                },
+                {
+                    "navigation_kind": "atom",
+                    "identifier": "atom-two",
+                    "atom_id": "atom-two",
+                    "memory_type": "fact",
+                    "status": "current",
+                    "line_start": 1,
+                    "line_end": 1,
+                    "text": "The support email is help@example.test.",
+                },
+            ]
+            document["atom_count"] = 2
+            return document
+
+    app = DocmancerTuiApp(backend=AtomBackend())
+    async with app.run_test(size=(130, 40)) as pilot:
+        await pilot.pause()
+        await app.switch_mode("sources")
+        inspector = app.query_one("#inspector", Inspector)
+
+        assert inspector.navigation_kind == "atom"
+        assert inspector.selected_memory_identifier == "atom-one"
+        assert "atom 1/2" in str(app.query_one("#source-meta").render())
+        assert str(app.query_one("#source-action-label").render()) == "ATOM CONTROLS"
+
+        inspector.move_match(1)
+        assert inspector.selected_memory_identifier == "atom-two"
+        assert "atom 2/2" in str(app.query_one("#source-meta").render())
 
 
 @pytest.mark.asyncio
@@ -356,6 +517,7 @@ async def test_updated_filter_and_docs_tab_browse_without_a_query():
     app = DocmancerTuiApp(backend=FakeBackend())
     async with app.run_test(size=(150, 40)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         app.query_one("#time-filter").value = "day"
         await pilot.pause(0.2)
         assert app.results
@@ -382,27 +544,39 @@ async def test_updated_filter_and_docs_tab_browse_without_a_query():
 
 
 @pytest.mark.asyncio
-async def test_security_tab_runs_audit_automatically_and_filters_masked_findings():
+async def test_security_audit_annotates_sources_and_status_badge():
     backend = SecurityBackend()
     app = DocmancerTuiApp(backend=backend)
     async with app.run_test(size=(150, 40)) as pilot:
         await pilot.pause()
         assert backend.audit_calls == 1
-        assert "Security 1" in str(app.query_one("#security").label)
+        assert "Sources 56 !" in str(app.query_one("#sources").label)
+        assert "Audit 1 !" in str(app.query_one("#audit").label)
 
-        await app.switch_mode("security")
+        await app.switch_mode("audit")
         await pilot.pause()
-        assert app.results[0]["view_kind"] == "security-finding"
-        assert app.results[0]["occurrences"][0]["masked_excerpt"] == "ghp_…abcd"
-        assert str(app.query_one("#inspector-title").render()) == "SECURITY AUDIT"
+        assert [row["view_kind"] for row in app.results] == ["security-finding"]
+        assert app.results[0]["type"] == "github-token"
+        assert str(app.query_one("#inspector-title").render()) == "AUDIT"
+        assert app.query_one("#inspector-markdown").display is True
+        assert "CLAUDE CODE" in str(app.query_one("#audit-hook-claude-code", Button).label)
+        assert "all projects" in str(app.query_one("#audit-hook-claude-code", Button).label)
 
-        app.query_one("#harness-filter").value = "critical"
-        await pilot.pause(0.2)
-        assert app.results == []
+        await pilot.click("#audit-hook-claude-code")
+        await pilot.pause()
+        assert str(app.query_one("#inspector-title").render()) == "AUDIT"
 
-        app.query_one("#harness-filter").value = "high"
-        await pilot.pause(0.2)
-        assert len(app.results) == 1
+        await pilot.click("#audit-how-it-works")
+        await pilot.pause()
+        assert isinstance(app.screen, DetailScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await app.switch_mode("sources")
+        await pilot.pause()
+        warned = next(row for row in app.results if row["path"] == "/tmp/memory-0.md")
+        assert warned["security_findings"] == 1
+        assert warned["security_severity"] == "high"
 
 
 @pytest.mark.asyncio
@@ -411,6 +585,7 @@ async def test_tui_groups_search_matches_and_uses_passage_actions(monkeypatch):
     app = DocmancerTuiApp(backend=backend)
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         await app.run_query("Railway")
         await pilot.pause()
         selected = app.query_one("#result-list", ResultList).selected_result
@@ -453,6 +628,44 @@ async def test_tui_queries_docs_and_opens_operational_overlays():
 
 
 @pytest.mark.asyncio
+async def test_sync_screen_animates_and_reports_stage_durations(monkeypatch):
+    class Clock:
+        now = 100.0
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    monkeypatch.setattr(sync_screen_module, "monotonic", clock)
+    app = App()
+    screen = SyncScreen()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.push_screen(screen)
+        await pilot.pause()
+
+        initial = str(screen.query_one("#sync-lock").render())
+        clock.now = 102.5
+        screen._tick()
+        moving = str(screen.query_one("#sync-lock").render())
+        assert initial != moving
+        assert "2.5s" in moving
+        assert "Step 1 of 7" in str(screen.query_one("#sync-detail").render())
+
+        screen.update_stage("harvest", "Found 203 source files")
+        assert str(screen.query_one("#sync-lock").render()) == "[✓] lock  2.5s"
+        clock.now = 105.75
+        screen.update_stage("graph", "Reconciling 5,521 memory atoms")
+        assert "3.2s" in str(screen.query_one("#sync-harvest").render())
+        assert "Step 5 of 7" in str(screen.query_one("#sync-detail").render())
+        assert "Reconciling 5,521 memory atoms" in str(screen.query_one("#sync-detail").render())
+
+        clock.now = 165.75
+        screen.update_stage("done", "Indexed 5,521 memory atoms")
+        assert "1m 05.8s total" in str(screen.query_one("#sync-done").render())
+        assert "Sync complete in 1m 05.8s" in str(screen.query_one("#sync-detail").render())
+
+
+@pytest.mark.asyncio
 async def test_tui_edit_uses_real_modal_result():
     backend = FakeBackend()
     app = DocmancerTuiApp(backend=backend)
@@ -472,6 +685,7 @@ async def test_tui_external_sources_can_be_created_edited_and_deleted(monkeypatc
     app = DocmancerTuiApp(backend=backend)
     async with app.run_test(size=(150, 42)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         app.query_one("#result-list", ResultList).index = 1
         await pilot.pause()
         selected = app.selected_result
@@ -497,7 +711,8 @@ async def test_tui_external_sources_can_be_created_edited_and_deleted(monkeypatc
             return "/tmp/new-rule.md", "# Rule\n\nUse Ruff.\n"
 
         monkeypatch.setattr(app, "_show_modal_wait", created)
-        await app.switch_mode("instructions")
+        app.query_one("#harness-filter").value = "instructions"
+        await pilot.pause(0.2)
         await app.command_new([])
         assert backend.created_sources == [("/tmp/new-rule.md", "# Rule\n\nUse Ruff.\n")]
 
@@ -507,15 +722,20 @@ async def test_new_button_cancel_dismisses_modal_without_blocking_the_ui():
     app = DocmancerTuiApp(backend=FakeBackend())
     async with app.run_test(size=(150, 42)) as pilot:
         await pilot.pause()
-        await app.switch_mode("instructions")
+        await app.switch_mode("sources")
+        app.query_one("#harness-filter").value = "instructions"
+        await pilot.pause(0.2)
 
+        new_button = app.query_one("#source-new", Button)
         await pilot.click("#source-new")
         await pilot.pause()
         assert isinstance(app.screen, CreateSourceScreen)
+        assert new_button.loading is True
 
         await pilot.click("#cancel")
         await pilot.pause()
         assert app.screen is app._main_screen
+        assert new_button.loading is False
 
 
 @pytest.mark.asyncio
@@ -528,6 +748,7 @@ async def test_tui_large_source_is_not_truncated():
         app = DocmancerTuiApp(backend=FakeBackend())
         async with app.run_test(size=(130, 40)) as pilot:
             await pilot.pause()
+            await app.switch_mode("sources")
             assert app.query_one("#source-text").text.endswith("last line")
             assert len(app.query_one("#source-text").text) > 500_000
     finally:
@@ -593,12 +814,71 @@ async def test_continuous_audit_skips_unchanged_source_contents(tmp_path):
     assert memory.preview_calls == 2
 
 
+@pytest.mark.asyncio
+async def test_hook_status_reports_user_and_project_recall_and_capture(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    (home / ".claude").mkdir(parents=True)
+    (project / ".codex").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        '{"hooks":{"SessionStart":[{"hooks":[{"command":"docmancer memory hook-context --agent claude-code"}]}]}}',
+        encoding="utf-8",
+    )
+    (project / ".codex" / "hooks.json").write_text(
+        '{"hooks":{"Stop":[{"hooks":[{"command":"docmancer memory capture-hook --agent codex"}]}]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    backend = TuiBackend(project_path=project)
+    rows = await backend.hook_status()
+    by_key = {(row["agent"], row["scope"]): row for row in rows}
+
+    assert by_key[("claude-code", "user")]["recall"] is True
+    assert by_key[("claude-code", "user")]["events"] == ["SessionStart"]
+    assert by_key[("codex", "project")]["capture"] is True
+    assert by_key[("codex", "project")]["events"] == ["Stop"]
+
+
+def test_hook_status_ui_collapses_scopes_into_effective_agent_coverage():
+    rows = DocmancerTuiApp._effective_hook_rows(
+        [
+            {
+                "agent": "claude-code",
+                "scope": "user",
+                "path": "/tmp/.claude/settings.json",
+                "exists": True,
+                "recall": True,
+                "capture": False,
+                "events": ["SessionStart"],
+                "error": None,
+            },
+            {
+                "agent": "claude-code",
+                "scope": "project",
+                "path": "/tmp/project/.claude/settings.json",
+                "exists": False,
+                "recall": False,
+                "capture": False,
+                "events": [],
+                "error": None,
+            },
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["agent"] == "claude-code"
+    assert rows[0]["context_coverage"] == "all projects"
+    assert rows[0]["capture_coverage"] == "off"
+    assert rows[0]["paths"] == ["/tmp/.claude/settings.json"]
+
+
 class NarrowSearchBackend(FakeBackend):
     """Search hits only a couple of files, so the first match is not row 0 of the browse page."""
 
     async def search_memory_sources(self, text, *, kinds, page=1, page_size=50, **kwargs):
         data = await super().search_memory_sources(text, kinds=kinds, page=page, page_size=page_size, **kwargs)
-        data["items"] = data["items"][40:42]
+        data["items"] = data["items"][3:5]
         data["has_more"] = False
         return data
 
@@ -609,6 +889,7 @@ async def test_tui_search_inspects_first_match_after_a_previous_selection():
     app = DocmancerTuiApp(backend=NarrowSearchBackend())
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.pause()
+        await app.switch_mode("sources")
         result_list = app.query_one("#result-list", ResultList)
         inspector = app.query_one("#inspector", Inspector)
 

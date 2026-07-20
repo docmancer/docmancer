@@ -1,69 +1,46 @@
 # Supported Sources
 
-Docmancer indexes two kinds of content: the memory your coding agents already wrote on this machine (the primary path), and documentation you point it at from local files and URLs (the secondary path on the same engine).
+Docmancer maintains two local corpora: memory and instructions discovered from coding agents, plus documentation explicitly added by the user.
 
-## Memory sources
+## Memory evidence
 
-`docmancer memory sync` (and `docmancer setup`) discovers three kinds of content from every coding agent on this machine, with no URLs or files to specify. See [Install Targets](./Install-Targets.md) for the per-agent discovery paths.
+`docmancer sync` discovers agent-written memory, user-authored instruction files, and project rule directories. This raw corpus remains source-attributed evidence for canonical context packs.
 
 | Kind | Examples |
 |------|----------|
-| Agent-written memory | Claude Code project memory, Codex `~/.codex/memories`, and other agents' memory stores |
-| User-authored instructions | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and similar always-loaded instruction files, global and per-repo |
-| Rule directories | `.cursor/rules`, `.claude/rules`, `.windsurf/rules`, and other rule folders |
+| Agent memory | Claude Code project memory, Codex memory and rollout summaries, and supported agent memory stores. |
+| Instructions | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and equivalent global or project files. |
+| Rules | `.cursor/rules`, `.claude/rules`, `.windsurf/rules`, and other supported rule directories. |
 
-Secrets are redacted before indexing. Scope the harvest with `--include` / `--exclude` globs and preview it with `--dry-run` or `docmancer memory sources --preview`.
+Secrets are redacted before indexing or distillation. `docmancer status` reports source counts and masked security findings. The Sources TUI tab shows exact provenance and inline warnings.
 
-## URL sources (docs)
+## Canonical records
+
+Approved statements are individual revisioned Markdown records. Pack manifests group those records into Personal defaults, Current project, Team standards, and Team project. Agent-owned source files remain evidence; managed agent projections are excluded so generated context cannot feed back into the corpus.
+
+## Documentation URLs
 
 | Source | Strategy | Command |
 |--------|----------|---------|
-| GitBook sites | `/llms-full.txt`, then `/llms.txt` | `docmancer add <url> --provider gitbook` |
-| Mintlify sites | `/llms-full.txt`, then `/llms.txt`, then `/sitemap.xml` | `docmancer add <url> --provider mintlify` |
-| Generic web docs | `llms-full.txt`, linked documentation roots, sitemap, nav crawl, filters, readability extraction | `docmancer add <url> --provider web` |
-| GitHub repositories and blobs | README and docs Markdown paths | `docmancer add <github-url> --provider github` |
-| Crawl4AI-backed sites | Browser-style extraction for difficult docs sites | `docmancer add <url> --provider crawl4ai` |
+| GitBook sites | `/llms-full.txt`, then `/llms.txt` | `docmancer docs add <url> --provider gitbook` |
+| Mintlify sites | `/llms-full.txt`, then `/llms.txt`, then `/sitemap.xml` | `docmancer docs add <url> --provider mintlify` |
+| Generic web docs | Documentation roots, sitemaps, navigation crawl, filters, and readability extraction | `docmancer docs add <url> --provider web` |
+| GitHub repositories and blobs | README and documentation Markdown paths | `docmancer docs add <github-url> --provider github` |
+| Crawl4AI-backed sites | Browser-style extraction for difficult sites | `docmancer docs add <url> --provider crawl4ai` |
 
-`--provider auto` is the default and chooses the best available path from response headers and content.
+`--provider auto` is the default. `--max-pages` bounds discovery across one add operation, and `--browser` enables Playwright fallback for JavaScript-heavy sites.
 
-If a product landing page or its `llms-full.txt` explicitly links to the real documentation on a same-company `docs.*` subdomain or a known hosted-docs domain, the generic web provider indexes the landing content and the linked documentation corpus together. It does not follow unrelated external links, and `--max-pages` still bounds page discovery across the complete add operation.
-
-## Local file formats
+## Local documentation formats
 
 All local loaders ship in the core install.
 
 | Format | Loader notes |
 |--------|--------------|
-| `.md` / `.markdown` | Heading-aware Markdown chunker. |
-| `.txt` | Paragraph and sliding-window chunker; encoding is detected with `charset-normalizer`. |
-| `.html` / `.htm` | Readability-based extraction reused from the URL fetcher. |
-| `.pdf` | `pypdf` first, with `pdfplumber` fallback when extraction quality is poor. |
-| `.docx` | `python-docx`; heading styles map to Markdown headings. |
-| `.rtf` | `striprtf`; paragraph-based extraction. |
+| `.md` and `.markdown` | Heading-aware Markdown chunking. |
+| `.txt` | Paragraph and sliding-window chunking with encoding detection. |
+| `.html` and `.htm` | Readability-based extraction. |
+| `.pdf` | `pypdf` with `pdfplumber` fallback. |
+| `.docx` | Heading styles mapped to Markdown headings. |
+| `.rtf` | Paragraph-based extraction through `striprtf`. |
 
-## Local ingest options
-
-- `--include <glob>` includes only matching paths relative to the ingest root.
-- `--exclude <glob>` excludes matching paths relative to the ingest root.
-- `--format <format>` restricts ingest to one or more supported file formats.
-- `--recursive / --no-recursive` controls directory traversal.
-- `--skip-known` skips files whose content hash is already indexed.
-- `--no-vectors` skips embedding and vector upsert for FTS5-only ingest.
-
-## URL add options
-
-- `--provider` forces a provider instead of auto-detection.
-- `--strategy` forces a discovery strategy such as `llms-full.txt`, `sitemap.xml`, or `nav-crawl`.
-- `--max-pages <n>` caps the number of pages fetched from a web provider.
-- `--browser` enables Playwright fallback for JS-heavy sites.
-- `--fetch-workers` controls fetch parallelism.
-
-## Updating sources
-
-Run `docmancer update` to refresh all existing sources. To update a single source:
-
-```bash
-docmancer update https://docs.example.com
-```
-
-Docmancer detects changed content and updates the affected sections. See [Commands](./Commands.md) for the full option reference.
+Run `docmancer docs sync` to refresh every documentation source, or pass one indexed source to refresh it selectively.

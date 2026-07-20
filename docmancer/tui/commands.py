@@ -43,31 +43,14 @@ class CommandRegistry:
 def default_registry() -> CommandRegistry:
     registry = CommandRegistry()
     for name, handler, usage, description in [
-        ("add", "command_add", "/add <text>", "Add a durable memory record."),
-        ("audit", "command_audit", "/audit", "Scan local memory sources for likely secrets."),
-        ("clear", "command_clear", "/clear", "Clear the local memory index after confirmation."),
-        ("cloud", "command_cloud", "/cloud status|sync|conflicts|devices|recovery|audit|promotions", "Manage optional encrypted sync."),
-        ("docs", "command_docs", "/docs <query>", "Search indexed documentation."),
-        ("delete", "command_delete", "/delete", "Delete the selected memory, instruction, or rule file."),
-        ("doctor", "command_doctor", "/doctor", "Show local environment checks."),
-        ("edit", "command_edit", "/edit <id>", "Edit a user-owned memory record."),
-        ("forget", "command_forget", "/forget <id>", "Exclude a matched passage from recall."),
+        ("add", "command_add", "/add <text>", "Add approved personal context."),
+        ("distill", "command_distill", "/distill", "Propose updates to the selected context."),
         ("help", "command_help", "/help", "Show commands and keybindings."),
-        ("instructions", "command_instructions", "/instructions <query>", "Search instruction and rule files."),
-        ("intelligence", "command_intelligence", "/intelligence [query]", "Inspect conflicts, history, recap, and orphans."),
-        ("memory", "command_memory", "/memory <query>", "Search memory files."),
-        ("mode", "command_mode", "/mode hybrid|lexical|dense", "Set memory retrieval mode."),
-        ("new", "command_new", "/new [path]", "Create a file-backed memory, instruction, or rule source."),
-        ("promote", "command_promote", "/promote <id>", "Promote a matched passage into team scope."),
-        ("reset", "command_reset", "/reset", "Clear the search and restore all browse filters."),
-        ("resolve", "command_resolve", "/resolve <relation-id> choose|keep-both|dismiss [winner-id]", "Resolve a suggested memory conflict."),
-        ("scope", "command_scope", "/scope <project path>", "Set the project scope."),
-        ("rules", "command_instructions", "/rules <query>", "Alias for instruction and rule search."),
-        ("security", "command_security", "/security <query>", "Inspect masked local audit findings."),
-        ("show", "command_show", "/show <id>", "Open one indexed passage."),
-        ("sources", "command_sources", "/sources", "Show live source provenance."),
-        ("status", "command_status", "/status", "Show memory and docs status."),
-        ("sync", "command_sync", "/sync", "Rebuild the local memory index."),
+        ("review", "command_review", "/review [proposal]", "Open the canonical review queue."),
+        ("share", "command_share", "/share", "Propose the selected personal context for the team."),
+        ("settings", "command_settings", "/settings", "Edit local per-harness capture controls."),
+        ("status", "command_status", "/status", "Show memory, source, security, agent, and cloud status."),
+        ("sync", "command_sync", "/sync", "Refresh memory, context, agents, and cloud."),
     ]:
         registry.register(CommandSpec(name, handler, usage, description))
     return registry

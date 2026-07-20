@@ -18,7 +18,7 @@ class HelpScreen(ModalScreen[None]):
             "",
             "- `Enter` submits or opens the selected file. Clicking only selects it.",
             "- `V` opens the selected file in the full-screen viewer.",
-            "- `[` and `]` move between matching passages in the selected file.",
+            "- `[` and `]` move between atoms, or between search matches, in the selected file.",
             "- `Alt+Left` and `Alt+Right` move between result pages.",
             "- `Tab` and `Shift+Tab` move between panes.",
             "- `Ctrl+K` focuses the command input.",

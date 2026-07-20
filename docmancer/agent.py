@@ -76,13 +76,14 @@ class DocmancerAgent:
         recreate: bool = False,
         *,
         with_vectors: bool = True,
+        embeddings_provider=None,
     ) -> int:
         logger.info("Indexing %d document(s) with SQLite FTS5", len(documents))
         result = self.store.add_documents(documents, recreate=recreate)
         logger.info("Stored %d source(s), %d section(s)", result.sources, result.sections)
         if with_vectors:
             try:
-                self._sync_vectors_if_enabled()
+                self._sync_vectors_if_enabled(embeddings_provider=embeddings_provider)
             except Exception as exc:
                 raise RuntimeError(f"vector indexing failed after FTS5 ingest: {exc}") from exc
         return result.sections
@@ -147,7 +148,7 @@ class DocmancerAgent:
         vec_db = index_db.with_name(f"{index_db.stem}-vec.db")
         return vs.model_copy(update={"options": {**(vs.options or {}), "db_path": str(vec_db)}})
 
-    def _sync_vectors_if_enabled(self) -> None:
+    def _sync_vectors_if_enabled(self, *, embeddings_provider=None) -> None:
         """Embed any new chunks and upsert into the configured vector store.
 
         Vector retrieval is on by default. The default backend is local and
@@ -219,7 +220,7 @@ class DocmancerAgent:
             logger.info("vector indexing disabled (missing extra): %s", exc)
             return
 
-        provider = get_embeddings_provider(self.config.embeddings)
+        provider = embeddings_provider or get_embeddings_provider(self.config.embeddings)
         include_sparse = self.config.retrieval.default_mode in {"sparse", "hybrid"}
         result = sync_vector_store(
             store=self.store,

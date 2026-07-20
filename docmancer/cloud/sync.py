@@ -64,7 +64,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     account = config.account()
     workspace = config.workspace()
     if not config.enabled() or workspace is None:
-        raise ValueError("cloud sync is not configured; run `docmancer cloud login` and `link`")
+        raise ValueError("cloud sync is not configured; run `docmancer cloud connect`")
     account_id = str(account["account_id"])
     workspace_id, metadata = workspace
     keys = keystore or KeyStore()
@@ -77,7 +77,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     if not workspace_key:
         raise ValueError("workspace key is unavailable on this device")
     state = CloudState(config.paths.sync_state)
-    entitlement = cache_entitlement(client.entitlement(), root=root)
+    entitlement = cache_entitlement(client.entitlement(workspace_id), root=root)
     if not remote_transfer_allowed(entitlement):
         return {
             "pushed": 0, "applied": 0, "duplicate": 0,

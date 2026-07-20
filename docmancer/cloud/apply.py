@@ -17,6 +17,10 @@ def apply_payload(
     store: MemoryRecordStore | None = None,
 ) -> str:
     if int(payload.get("schema_version") or 1) == 2:
+        if payload.get("object_kind") == "pack":
+            from docmancer.memory.packs import ContextPackStore
+
+            return ContextPackStore(root).apply_cloud_pack(payload)
         from docmancer.memory.graph import MemoryGraphStore
 
         return MemoryGraphStore(Path(root) / "memory.db").apply_cloud_object(payload)
@@ -37,6 +41,18 @@ def apply_payload(
             reason="unmapped_project", resolution="project-linked",
         )
     existing = record_store.find_record(payload["record_id"], project_paths=[project_path] if project_path else None)
+    revisions = record_store.revisions(payload["record_id"])
+    local_head = revisions[-1] if revisions else None
+    if (
+        existing is None
+        and local_head
+        and bool(local_head.get("deleted"))
+        and local_head.get("revision_id") not in payload["parent_revision_ids"]
+    ):
+        # A content-free local tombstone is authoritative over replayed or
+        # concurrent live revisions. Only an explicit child of that tombstone
+        # can restore the stable record identity.
+        return "duplicate"
     if existing and existing.revision_id == payload["revision_id"]:
         record_store.append_revision(payload)
         return "duplicate"

@@ -13,26 +13,28 @@ import re
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from threading import Lock
+from typing import Callable, Iterable, Sequence
 
 from docmancer.memory.atomic import AtomicMemoryEntry
 
 
-GRAPH_SCHEMA_VERSION = 1
+GRAPH_SCHEMA_VERSION = 2
 RELATION_TYPES = {"relates_to", "derived_from", "supersedes", "contradicts"}
 RESOLUTION_STATES = {"suggested", "confirmed", "rejected"}
 _TRUST = {"manual": 4, "mcp": 4, "promoted": 3, "capture": 2, "harvested": 1}
-_NEGATIVE = re.compile(
-    r"\b(?:must not|do not|don't|never|avoid|no longer|not|isn't|is not)\b",
-    re.IGNORECASE,
-)
 _ASSIGNMENT = re.compile(
-    r"^(?P<subject>.+?)\b(?:uses?|runs? on|deploys? (?:to|on)|database is|"
-    r"package manager is|stored? in|hosted? on)\b(?P<value>.+)$",
+    r"^(?P<subject>[a-z0-9][a-z0-9 _./-]{1,79}?)\s+"
+    r"(?P<predicate>uses?|runs? on|deploys? (?:to|on)|database is|"
+    r"package manager is|is stored in|is hosted on)\s+"
+    r"(?P<value>[a-z0-9][a-z0-9 _./+-]{0,79})[.!]?$",
     re.IGNORECASE,
 )
 _WORDS = re.compile(r"[a-z0-9][a-z0-9_.-]*", re.IGNORECASE)
+_CURRENT_CUE = re.compile(r"\b(?:current|currently|latest|now|active)\b", re.IGNORECASE)
+_STALE_CUE = re.compile(r"\b(?:retired|obsolete|previous|formerly|legacy|old)\b", re.IGNORECASE)
 _STOP = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
     "is", "it", "of", "on", "or", "that", "the", "this", "to", "we", "with",
@@ -88,13 +90,23 @@ def _parse_time(value: str | None) -> datetime | None:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
+@lru_cache(maxsize=32_768)
 def _tokens(text: str) -> set[str]:
     return {word.casefold() for word in _WORDS.findall(text) if word.casefold() not in _STOP}
 
 
-def _jaccard(left: str, right: str) -> float:
-    a, b = _tokens(left), _tokens(right)
-    return len(a & b) / len(a | b) if a and b else 0.0
+@lru_cache(maxsize=32_768)
+def _assignment_parts(text: str) -> tuple[str, str, str] | None:
+    compact = " ".join(text.split())
+    if len(compact) > 240 or any(marker in compact for marker in (" > ", "`", ":")):
+        return None
+    match = _ASSIGNMENT.fullmatch(compact)
+    if not match:
+        return None
+    subject = " ".join(match["subject"].casefold().split())
+    predicate = " ".join(match["predicate"].casefold().split())
+    value = " ".join(match["value"].casefold().split())
+    return f"{subject}|{predicate}", subject, value
 
 
 def _relation_id(kind: str, left: str, right: str) -> str:
@@ -111,18 +123,47 @@ def _pair_fingerprint(kind: str, left_hash: str, right_hash: str) -> str:
 class MemoryGraphStore:
     def __init__(self, db_path: str | Path) -> None:
         self.path = Path(db_path)
+        self._initialized = False
+        self._initialize_lock = Lock()
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    def _schema_is_current(self) -> bool:
+        if not self.path.is_file():
+            return False
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT value FROM memory_graph_meta WHERE key='schema_version'"
+                ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).casefold():
+                return False
+            raise
+        return row is not None and str(row["value"]) == str(GRAPH_SCHEMA_VERSION)
+
     def initialize(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(
-                """
+        if self._initialized and self.path.is_file():
+            return
+        with self._initialize_lock:
+            if self._initialized and self.path.is_file():
+                return
+            # Existing graph databases need no schema write. This matters when
+            # another process is rebuilding the graph: readers can keep using
+            # the previous committed snapshot without competing for its write
+            # lock merely because they opened the Intelligence tab.
+            if self._schema_is_current():
+                self._initialized = True
+                return
+            with self._connect() as conn:
+                conn.executescript(
+                    """
                 CREATE TABLE IF NOT EXISTS memory_atoms (
                     node_id TEXT PRIMARY KEY,
                     atom_id TEXT NOT NULL,
@@ -195,15 +236,46 @@ class MemoryGraphStore:
                     payload_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
-                """
-            )
-            conn.execute(
-                "INSERT INTO memory_graph_meta(key,value) VALUES('schema_version',?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (str(GRAPH_SCHEMA_VERSION),),
-            )
+                    """
+                )
+                self._repair_legacy_machine_conflicts(conn)
+                conn.execute(
+                    "INSERT INTO memory_graph_meta(key,value) VALUES('schema_version',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(GRAPH_SCHEMA_VERSION),),
+                )
+            self._initialized = True
 
-    def rebuild(self, atoms: list[AtomicMemoryEntry], *, now: datetime | None = None) -> dict[str, int]:
+    @classmethod
+    def _repair_legacy_machine_conflicts(cls, conn: sqlite3.Connection) -> None:
+        """Remove pre-v2 guesses and restore atom lifecycle before normal reads."""
+        conn.execute(
+            """
+            DELETE FROM memory_relations
+            WHERE relation_type='contradicts'
+              AND NOT EXISTS(
+                SELECT 1 FROM memory_relation_overrides o
+                WHERE o.pair_fingerprint=memory_relations.pair_fingerprint
+              )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE memory_atoms SET lifecycle_state=CASE
+              WHEN memory_type='status' AND timestamp IS NOT NULL
+                AND julianday('now') - julianday(timestamp) > 90 THEN 'expired'
+              ELSE 'current' END
+            """
+        )
+        cls._apply_confirmed_lifecycle(conn)
+
+    def rebuild(
+        self,
+        atoms: list[AtomicMemoryEntry],
+        *,
+        now: datetime | None = None,
+        embed_texts: Callable[[list[str]], Sequence[Sequence[float]]] | None = None,
+    ) -> dict[str, int]:
         self.initialize()
         moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         stamp = moment.isoformat(timespec="seconds")
@@ -258,6 +330,7 @@ class MemoryGraphStore:
                 self._insert_relation(conn, relation)
             self._merge_cloud_relations(conn)
             self._merge_cloud_overrides(conn)
+            self._discard_unsafe_machine_conflicts(conn)
             self._apply_overrides(conn)
             self._apply_confirmed_lifecycle(conn)
         return {
@@ -294,51 +367,87 @@ class MemoryGraphStore:
                 )
                 relations[relation.relation_id] = relation
 
-        for index, (left_id, left) in enumerate(current):
-            for right_id, right in current[index + 1 :]:
-                if left.scope != right.scope or left.type != right.type:
-                    continue
-                if left.content_hash == right.content_hash:
-                    relation = self._relation(
-                        "derived_from", left_id, right_id, left, asdict(right),
-                        state="confirmed", winner=self._winner(left_id, left, right_id, right),
-                        confidence=1.0, detector="exact-content", stamp=stamp,
-                    )
-                    relations[relation.relation_id] = relation
-                    continue
-                confidence, evidence = self._contradiction_confidence(left.text, right.text)
-                if confidence <= 0:
-                    continue
+        candidates = self._candidate_pairs(current)
+        for left_index, right_index in candidates:
+            left_id, left = current[left_index]
+            right_id, right = current[right_index]
+            if left.content_hash == right.content_hash:
                 relation = self._relation(
-                    "contradicts", left_id, right_id, left, asdict(right),
-                    state="suggested", winner=None, confidence=confidence,
-                    detector=str(evidence.pop("detector")), stamp=stamp, evidence=evidence,
+                    "derived_from", left_id, right_id, left, asdict(right),
+                    state="confirmed", winner=self._winner(left_id, left, right_id, right),
+                    confidence=1.0, detector="exact-content", stamp=stamp,
                 )
                 relations[relation.relation_id] = relation
+                continue
+            confidence, evidence = self._contradiction_confidence(left.text, right.text)
+            if confidence <= 0:
+                continue
+            relation = self._relation(
+                "contradicts", left_id, right_id, left, asdict(right),
+                state="suggested", winner=None, confidence=confidence,
+                detector=str(evidence.pop("detector")), stamp=stamp, evidence=evidence,
+            )
+            relations[relation.relation_id] = relation
         return list(relations.values())
 
+    @classmethod
+    def _candidate_pairs(
+        cls, current: list[tuple[str, AtomicMemoryEntry]]
+    ) -> list[tuple[int, int]]:
+        """Compare exact duplicates and concise assignments in the same scope."""
+        buckets: dict[tuple[str, str, str], list[int]] = {}
+        for index, (_identity, atom) in enumerate(current):
+            buckets.setdefault((atom.scope, atom.type, f"hash:{atom.content_hash}"), []).append(index)
+            assignment = _assignment_parts(atom.text)
+            if assignment:
+                claim_key, _subject, _value = assignment
+                buckets.setdefault((atom.scope, atom.type, f"claim:{claim_key}"), []).append(index)
+        pairs: set[tuple[int, int]] = set()
+        for members in buckets.values():
+            for offset, left_index in enumerate(members):
+                for right_index in members[offset + 1 :]:
+                    pairs.add((left_index, right_index))
+        return sorted(pairs)
+
     @staticmethod
-    def _contradiction_confidence(left: str, right: str) -> tuple[float, dict]:
-        overlap = _jaccard(left, right)
-        polarity = bool(_NEGATIVE.search(left)) != bool(_NEGATIVE.search(right))
-        if polarity and overlap >= 0.45:
-            return min(0.99, 0.72 + overlap * 0.25), {"detector": "polarity", "token_overlap": overlap}
-        left_assignment, right_assignment = _ASSIGNMENT.match(left), _ASSIGNMENT.match(right)
+    def _contradiction_confidence(
+        left: str,
+        right: str,
+    ) -> tuple[float, dict]:
+        left_assignment, right_assignment = _assignment_parts(left), _assignment_parts(right)
         if left_assignment and right_assignment:
-            subject_overlap = _jaccard(left_assignment["subject"], right_assignment["subject"])
-            left_value = _tokens(left_assignment["value"])
-            right_value = _tokens(right_assignment["value"])
-            if subject_overlap >= 0.5 and left_value and right_value and not (left_value & right_value):
-                return min(0.97, 0.78 + subject_overlap * 0.18), {
-                    "detector": "exclusive-assignment", "subject_overlap": subject_overlap,
+            left_key, subject, left_raw_value = left_assignment
+            right_key, _right_subject, right_raw_value = right_assignment
+            left_value = _tokens(left_raw_value)
+            right_value = _tokens(right_raw_value)
+            if left_key == right_key and left_value and right_value and not (left_value & right_value):
+                return 0.95, {
+                    "detector": "exclusive-assignment",
+                    "claim_key": left_key,
+                    "subject": subject,
+                    "source_value": left_raw_value,
+                    "target_value": right_raw_value,
                 }
         return 0.0, {}
 
     @staticmethod
     def _winner(left_id: str, left: AtomicMemoryEntry, right_id: str, right: AtomicMemoryEntry) -> str:
-        left_key = (_TRUST.get(left.origin, 1), _parse_time(left.timestamp) or datetime.min.replace(tzinfo=timezone.utc))
-        right_key = (_TRUST.get(right.origin, 1), _parse_time(right.timestamp) or datetime.min.replace(tzinfo=timezone.utc))
-        return left_id if left_key >= right_key else right_id
+        def currentness(text: str) -> int:
+            return int(bool(_CURRENT_CUE.search(text))) - int(bool(_STALE_CUE.search(text)))
+
+        left_key = (
+            _TRUST.get(left.origin, 1),
+            currentness(left.text),
+            _parse_time(left.timestamp) or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        right_key = (
+            _TRUST.get(right.origin, 1),
+            currentness(right.text),
+            _parse_time(right.timestamp) or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        # The current list is ordered oldest to newest during sync, so the
+        # right-hand atom wins an exact trust and timestamp tie.
+        return left_id if left_key > right_key else right_id
 
     def _relation(
         self, kind: str, left_id: str, right_id: str, left: AtomicMemoryEntry,
@@ -387,6 +496,24 @@ class MemoryGraphStore:
               )
             WHERE EXISTS(SELECT 1 FROM memory_relation_overrides o
                          WHERE o.pair_fingerprint=memory_relations.pair_fingerprint)
+            """
+        )
+
+    @staticmethod
+    def _discard_unsafe_machine_conflicts(conn: sqlite3.Connection) -> None:
+        """Reject legacy or imported guesses that lack a structured claim key."""
+        conn.execute(
+            """
+            DELETE FROM memory_relations
+            WHERE relation_type='contradicts'
+              AND (
+                detector IN ('semantic-polarity','polarity')
+                OR json_extract(evidence_json, '$.claim_key') IS NULL
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM memory_relation_overrides o
+                WHERE o.pair_fingerprint=memory_relations.pair_fingerprint
+              )
             """
         )
 
@@ -459,7 +586,17 @@ class MemoryGraphStore:
               SELECT CASE WHEN winner_node_id=source_node_id THEN target_node_id ELSE source_node_id END
               FROM memory_relations
               WHERE resolution_state='confirmed' AND winner_node_id IS NOT NULL
-                AND relation_type IN ('supersedes','contradicts')
+                AND (
+                  relation_type IN ('supersedes','derived_from')
+                  OR (
+                    relation_type='contradicts'
+                    AND EXISTS(
+                      SELECT 1 FROM memory_relation_overrides o
+                      WHERE o.pair_fingerprint=memory_relations.pair_fingerprint
+                        AND o.resolution_state='confirmed'
+                    )
+                  )
+                )
             )
             """
         )
@@ -477,7 +614,12 @@ class MemoryGraphStore:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""SELECT r.*, a.text source_text, b.text target_text,
-                    a.content_hash source_content_hash, b.content_hash target_content_hash
+                    a.atom_id source_atom_id, b.atom_id target_atom_id,
+                    a.content_hash source_content_hash, b.content_hash target_content_hash,
+                    a.scope source_scope, b.scope target_scope,
+                    a.project_path source_project_path, b.project_path target_project_path,
+                    a.memory_type source_memory_type, b.memory_type target_memory_type,
+                    a.origin source_origin, b.origin target_origin
                     FROM memory_relations r
                     JOIN memory_atoms a ON a.node_id=r.source_node_id
                     JOIN memory_atoms b ON b.node_id=r.target_node_id
@@ -529,11 +671,66 @@ class MemoryGraphStore:
         self.initialize()
         placeholders = ",".join("?" for _ in values)
         with self._connect() as conn:
+            conn.execute(
+                """UPDATE memory_atoms SET lifecycle_state='expired'
+                   WHERE memory_type='status' AND lifecycle_state='current' AND timestamp IS NOT NULL
+                     AND julianday('now') - julianday(timestamp) > 90"""
+            )
             rows = conn.execute(
-                f"SELECT atom_id,lifecycle_state FROM memory_atoms WHERE atom_id IN ({placeholders})",
+                f"""SELECT atom_id,lifecycle_state,present FROM memory_atoms
+                    WHERE atom_id IN ({placeholders})
+                    ORDER BY present DESC,
+                      CASE lifecycle_state WHEN 'current' THEN 0 WHEN 'superseded' THEN 1 ELSE 2 END""",
                 values,
             ).fetchall()
-        return {str(row["atom_id"]): str(row["lifecycle_state"]) for row in rows}
+        states: dict[str, str] = {}
+        for row in rows:
+            states.setdefault(str(row["atom_id"]), str(row["lifecycle_state"]))
+        return states
+
+    def atoms_for_ids(self, atom_ids: Iterable[str]) -> dict[str, AtomicMemoryEntry]:
+        """Read only requested atom rows from the first-class graph table."""
+        values = list(dict.fromkeys(str(value) for value in atom_ids if value))
+        if not values or not self.path.exists():
+            return {}
+        self.initialize()
+        placeholders = ",".join("?" for _ in values)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM memory_atoms WHERE atom_id IN ({placeholders}) AND present=1
+                    ORDER BY CASE lifecycle_state WHEN 'current' THEN 0 ELSE 1 END""",
+                values,
+            ).fetchall()
+        output: dict[str, AtomicMemoryEntry] = {}
+        for row in rows:
+            output.setdefault(str(row["atom_id"]), self._row_to_atom(row))
+        return output
+
+    def atom_for_node(self, identity: str) -> AtomicMemoryEntry | None:
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM memory_atoms WHERE node_id=?", (identity,)).fetchone()
+        return self._row_to_atom(row) if row is not None else None
+
+    @staticmethod
+    def _row_to_atom(row) -> AtomicMemoryEntry:
+        metadata = json.loads(str(row["metadata_json"] or "{}"))
+        return AtomicMemoryEntry(
+            atom_id=str(row["atom_id"]), text=str(row["text"]), type=str(row["memory_type"]),
+            harness=str(row["harness"]), kind=str(row["kind"]), scope=str(row["scope"]),
+            source_path=str(row["source_path"]), source_title=str(row["source_title"]),
+            line_start=int(row["line_start"]), line_end=int(row["line_end"]),
+            source_hash=str(row["source_hash"]), content_hash=str(row["content_hash"]),
+            tags=list(metadata.get("tags") or []), timestamp=row["timestamp"],
+            source_count=int(row["source_count"]), merged_from=list(metadata.get("merged_from") or []),
+            record_id=row["record_id"], origin=str(row["origin"]), scope_kind=str(row["scope_kind"]),
+            project_path=row["project_path"], project_id=row["project_id"], revision_id=row["revision_id"],
+            parent_revision_ids=list(metadata.get("parent_revision_ids") or []),
+            deleted=bool(metadata.get("deleted", False)), status=str(row["lifecycle_state"]),
+            audience_kind=str(metadata.get("audience_kind") or "personal"),
+            applicability_kind=str(metadata.get("applicability_kind") or "global"),
+            pack_ids=list(metadata.get("pack_ids") or []),
+        )
 
     def orphans(self) -> list[dict]:
         self.initialize()
@@ -542,10 +739,52 @@ class MemoryGraphStore:
                 """SELECT a.* FROM memory_atoms a
                    WHERE a.present=1 AND a.lifecycle_state='current'
                    AND NOT EXISTS(SELECT 1 FROM memory_relations r
-                                  WHERE r.source_node_id=a.node_id OR r.target_node_id=a.node_id)
+                                  WHERE (r.source_node_id=a.node_id OR r.target_node_id=a.node_id)
+                                    AND r.resolution_state!='rejected')
+                   AND (a.record_id IS NOT NULL OR a.origin IN ('manual','mcp','promoted','capture'))
                    ORDER BY a.last_seen_at DESC, a.node_id"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def recent(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        harness: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return a recency-ordered memory timeline with source mtime fallback."""
+        self.initialize()
+        start = since.astimezone(timezone.utc)
+        end = (until or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM memory_atoms WHERE present=1
+                   ORDER BY COALESCE(timestamp,last_seen_at) DESC, node_id"""
+            ).fetchall()
+        output: list[dict] = []
+        for raw in rows:
+            row = dict(raw)
+            stamp = _parse_time(row.get("timestamp"))
+            fallback = False
+            if stamp is None:
+                try:
+                    stamp = datetime.fromtimestamp(Path(str(row["source_path"])).stat().st_mtime, timezone.utc)
+                    fallback = True
+                except OSError:
+                    stamp = _parse_time(row.get("last_seen_at"))
+                    fallback = True
+            if stamp is None or stamp < start or stamp > end:
+                continue
+            if harness and str(row.get("harness") or "").casefold() != harness.casefold():
+                continue
+            row["activity_at"] = stamp.isoformat(timespec="seconds")
+            row["timestamp_fallback"] = fallback
+            output.append(row)
+            if len(output) >= max(0, limit):
+                break
+        return output
 
     def search_history(self, query: str, *, limit: int = 20) -> list[dict]:
         """Return lexical matches from revisions no longer in the search projection."""
@@ -664,6 +903,9 @@ class MemoryGraphStore:
                         content_hash=str(data["content_hash"]), source_count=int(data.get("source_count") or 1),
                         timestamp=data.get("timestamp"), record_id=data.get("record_id"),
                         revision_id=data.get("revision_id"), origin=str(data["origin"]),
+                        audience_kind=str(data.get("audience_kind") or "personal"),
+                        applicability_kind=str(data.get("applicability_kind") or "global"),
+                        pack_ids=list(data.get("pack_ids") or []),
                     )
                 )
             except (KeyError, TypeError, ValueError):

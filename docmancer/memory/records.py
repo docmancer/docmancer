@@ -29,6 +29,8 @@ _FRONTMATTER = re.compile(
     re.DOTALL,
 )
 _VALID_SCOPES = {"global", "project", "team"}
+_VALID_AUDIENCES = {"personal", "team"}
+_VALID_APPLICABILITY = {"global", "project"}
 
 
 def _now() -> str:
@@ -81,17 +83,50 @@ class MemoryRecord:
     parent_revision_ids: list[str] = field(default_factory=list)
     deleted: bool = False
     project_id: str | None = None
+    audience_kind: str = ""
+    applicability_kind: str = ""
+    pack_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.scope_kind not in _VALID_SCOPES:
             raise ValueError(f"invalid memory scope: {self.scope_kind}")
+        tag_values = {str(tag) for tag in self.tags}
+        tagged_audience = next(
+            (tag.split(":", 1)[1] for tag in tag_values if tag.startswith("audience:")),
+            None,
+        )
+        tagged_applicability = next(
+            (tag.split(":", 1)[1] for tag in tag_values if tag.startswith("applicability:")),
+            None,
+        )
+        tagged_packs = sorted(
+            tag.split(":", 1)[1] for tag in tag_values if tag.startswith("pack:")
+        )
+        self.audience_kind = self.audience_kind or tagged_audience or (
+            "team" if self.scope_kind == "team" else "personal"
+        )
+        self.applicability_kind = self.applicability_kind or tagged_applicability or (
+            "project" if self.scope_kind in {"project", "team"} else "global"
+        )
+        if self.audience_kind not in _VALID_AUDIENCES:
+            raise ValueError(f"invalid memory audience: {self.audience_kind}")
+        if self.applicability_kind not in _VALID_APPLICABILITY:
+            raise ValueError(f"invalid memory applicability: {self.applicability_kind}")
         self.text = " ".join((self.text or "").split()).strip()
         if not self.text:
             raise ValueError("memory text cannot be empty")
         self.project_path = _clean_path(self.project_path)
         if self.scope_kind in {"project", "team"} and not self.project_path:
             raise ValueError(f"{self.scope_kind} memory requires a project path")
-        self.tags = sorted({str(tag).strip() for tag in self.tags if str(tag).strip()})
+        self.pack_ids = sorted({str(value).strip() for value in [*self.pack_ids, *tagged_packs] if str(value).strip()})
+        self.tags = sorted(
+            {
+                *(str(tag).strip() for tag in self.tags if str(tag).strip()),
+                f"audience:{self.audience_kind}",
+                f"applicability:{self.applicability_kind}",
+                *(f"pack:{pack_id}" for pack_id in self.pack_ids),
+            }
+        )
         self.parent_revision_ids = [str(value) for value in self.parent_revision_ids if str(value)]
         if self.scope_kind == "global":
             self.project_id = None
@@ -107,7 +142,7 @@ class MemoryRecord:
         return _hash(self.text)
 
     def to_atom(self) -> AtomicMemoryEntry:
-        source = self.source_path or f"docmancer://memory/{self.record_id}"
+        source = self.source_path or f"docmancer://record/{self.record_id}"
         atom_id = _hash(f"record\n{self.record_id}\n{self.scope}\n{self.text}")[:24]
         return AtomicMemoryEntry(
             atom_id=atom_id,
@@ -133,6 +168,9 @@ class MemoryRecord:
             revision_id=self.revision_id,
             parent_revision_ids=list(self.parent_revision_ids),
             deleted=self.deleted,
+            audience_kind=self.audience_kind,
+            applicability_kind=self.applicability_kind,
+            pack_ids=list(self.pack_ids),
         )
 
     def to_revision_payload(self, *, deleted: bool | None = None, updated_at: str | None = None) -> dict:
@@ -181,6 +219,9 @@ class MemoryRecordStore:
         origin: str = "manual",
         session_id: str | None = None,
         promoted_from: str | None = None,
+        audience_kind: str | None = None,
+        applicability_kind: str | None = None,
+        pack_ids: list[str] | None = None,
     ) -> MemoryRecord:
         cleaned = " ".join(redact_secrets(text or "").split()).strip()
         if not cleaned:
@@ -200,6 +241,9 @@ class MemoryRecordStore:
             session_id=session_id,
             promoted_from=promoted_from,
             project_id=project_id,
+            audience_kind=audience_kind or "",
+            applicability_kind=applicability_kind or "",
+            pack_ids=list(pack_ids or []),
         )
         path = self._record_path(record)
         record.source_path = str(path)
@@ -209,7 +253,9 @@ class MemoryRecordStore:
 
     def _record_path(self, record: MemoryRecord) -> Path:
         directory = self.personal_dir
-        if record.scope_kind == "team":
+        if record.audience_kind == "team" and record.applicability_kind == "global":
+            directory = self.root / "context" / "team-memory"
+        elif record.scope_kind == "team":
             directory = Path(record.project_path or Path.cwd()) / ".docmancer" / "memory"
         return directory / f"{_slug(record.text)}-{record.record_id[:8]}.md"
 
@@ -241,6 +287,9 @@ class MemoryRecordStore:
         paths: list[Path] = []
         if self.personal_dir.is_dir():
             paths.extend(sorted(self.personal_dir.glob("*.md")))
+        team_global_dir = self.root / "context" / "team-memory"
+        if team_global_dir.is_dir():
+            paths.extend(sorted(team_global_dir.glob("*.md")))
         roots = {_clean_path(path) for path in (project_paths or []) if path}
         for root in sorted(path for path in roots if path):
             team_dir = Path(root) / ".docmancer" / "memory"

@@ -6,6 +6,7 @@ import pytest
 
 from docmancer.core.models import RetrievedChunk
 from docmancer.memory import MemoryAgent, MemorySourceFilters
+from docmancer.memory.atomic import AtomicMemoryEntry
 
 
 def _agent_with_snapshot(tmp_path, sources):
@@ -82,6 +83,53 @@ def test_browse_filters_before_exact_pagination_and_returns_full_text(tmp_path):
     document = agent.get_indexed_source(first.items[0].source_key)
     assert document is not None
     assert document.content.startswith("Complete source")
+
+
+def test_source_document_exposes_numbered_atoms_for_human_navigation(tmp_path, monkeypatch):
+    path = tmp_path / "memory.md"
+    row = _source(path, text="First decision.\nSecond fact.\n")
+    agent = _agent_with_snapshot(tmp_path, [row])
+    content_hash = hashlib.sha256(b"First decision.").hexdigest()
+    atom = AtomicMemoryEntry(
+        atom_id="atom-first",
+        text="First decision.",
+        type="decision",
+        harness="codex",
+        kind="agent-memory",
+        scope="global:codex",
+        scope_kind="global",
+        source_path=str(path),
+        source_title="memory",
+        line_start=1,
+        line_end=1,
+        source_hash=row["source_hash"],
+        content_hash=content_hash,
+        origin="harvested",
+    )
+    monkeypatch.setattr(agent, "indexed_atoms", lambda **kwargs: [atom])
+
+    document = agent.get_indexed_source(
+        agent.browse_sources(MemorySourceFilters(kinds=("agent-memory",))).items[0].source_key
+    )
+
+    assert document is not None
+    assert document.atom_count == 1
+    assert document.atoms == [
+        {
+            "navigation_kind": "atom",
+            "identifier": "atom-first",
+            "atom_id": "atom-first",
+            "record_id": None,
+            "text": "First decision.",
+            "memory_type": "decision",
+            "origin": "harvested",
+            "status": "current",
+            "line_start": 1,
+            "line_end": 1,
+            "timestamp": None,
+            "tags": [],
+        }
+    ]
 
 
 def test_codex_rollout_uses_filename_timestamp_instead_of_regeneration_mtime(tmp_path):

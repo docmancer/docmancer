@@ -84,6 +84,9 @@ class AtomicMemoryEntry:
     revision_id: str | None = None
     parent_revision_ids: list[str] = field(default_factory=list)
     deleted: bool = False
+    audience_kind: str = "personal"
+    applicability_kind: str = "global"
+    pack_ids: list[str] = field(default_factory=list)
 
     @property
     def title(self) -> str:
@@ -109,6 +112,7 @@ class AtomicMemoryEntry:
             "source_count": self.source_count,
             "merged_from": list(self.merged_from),
             "record_id": self.record_id,
+            "record_uri": f"docmancer://record/{self.record_id}" if self.record_id else None,
             "origin": self.origin,
             "scope_kind": self.scope_kind,
             "project_path": self.project_path,
@@ -116,6 +120,9 @@ class AtomicMemoryEntry:
             "revision_id": self.revision_id,
             "parent_revision_ids": list(self.parent_revision_ids),
             "deleted": self.deleted,
+            "audience_kind": self.audience_kind,
+            "applicability_kind": self.applicability_kind,
+            "pack_ids": list(self.pack_ids),
         }
 
     def to_document(self) -> "Document":
@@ -149,6 +156,9 @@ class AtomicMemoryEntry:
             "revision_id": self.revision_id,
             "parent_revision_ids": list(self.parent_revision_ids),
             "deleted": self.deleted,
+            "audience_kind": self.audience_kind,
+            "applicability_kind": self.applicability_kind,
+            "pack_ids": list(self.pack_ids),
             "format": "memory-atomic",
             "chunking_strategy": "single",
             "anchor": f"{self.source_title}:{self.line_start}",
@@ -254,23 +264,57 @@ def merge_atoms(
     except Exception:  # noqa: BLE001 - never let merge break indexing
         return list(atoms)
 
+    # Scope, type, and polarity are hard merge boundaries. Computing one
+    # similarity matrix per compatible group moves the expensive dot products
+    # into optimized NumPy code instead of performing millions of tiny Python
+    # operations. The stable greedy cluster semantics remain unchanged.
+    grouped: dict[tuple[str, str, bool], list[int]] = {}
+    for index, atom in enumerate(atoms):
+        grouped.setdefault((atom.type, atom.scope, _is_negative(atom.text)), []).append(index)
+
     clusters: list[list[int]] = []
-    reps: list[int] = []  # representative row index per cluster
-    for i in range(len(atoms)):
-        best_cluster = -1
-        best_sim = threshold
-        for c, rep in enumerate(reps):
-            if not all(_can_merge(atoms[i], atoms[member]) for member in clusters[c]):
-                continue
-            sim = float(unit[i] @ unit[rep])
-            if sim >= best_sim:
-                best_sim = sim
-                best_cluster = c
-        if best_cluster < 0:
-            clusters.append([i])
-            reps.append(i)
-        else:
-            clusters[best_cluster].append(i)
+    for members in grouped.values():
+        local_unit = unit[np.asarray(members, dtype="int64")]
+        local_clusters: list[list[int]] = []
+        representative_positions: list[int] = []
+        durable_ids: list[str | None] = []
+        # Bound temporary similarity memory while retaining batched BLAS work.
+        # A 256-row block uses roughly 1 MB per 1,000 group members.
+        block_size = 256
+        for block_start in range(0, len(members), block_size):
+            block_end = min(block_start + block_size, len(members))
+            similarity_rows = local_unit[block_start:block_end] @ local_unit.T
+            for position in range(block_start, block_end):
+                atom_index = members[position]
+                atom = atoms[atom_index]
+                best_cluster = -1
+                if representative_positions:
+                    scores = similarity_rows[position - block_start, representative_positions]
+                    eligible = scores >= threshold
+                    if atom.record_id:
+                        eligible &= np.asarray(
+                            [record_id in {None, atom.record_id} for record_id in durable_ids],
+                            dtype=bool,
+                        )
+                    choices = np.flatnonzero(eligible)
+                    if choices.size:
+                        best_score = scores[choices].max()
+                        # The old greedy loop chose the later cluster on an
+                        # exact tie, so retain that deterministic behavior.
+                        best_cluster = int(choices[np.flatnonzero(scores[choices] == best_score)[-1]])
+                if best_cluster < 0:
+                    local_clusters.append([atom_index])
+                    representative_positions.append(position)
+                    durable_ids.append(atom.record_id)
+                else:
+                    local_clusters[best_cluster].append(atom_index)
+                    if atom.record_id:
+                        durable_ids[best_cluster] = atom.record_id
+        clusters.extend(local_clusters)
+
+    # Grouped processing changes traversal order, so restore the original
+    # first-seen cluster order before electing canonical atoms.
+    clusters.sort(key=lambda members: members[0])
 
     merged: list[AtomicMemoryEntry] = []
     for members in clusters:

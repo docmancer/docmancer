@@ -43,23 +43,22 @@ def test_install_claude_code_creates_rebooted_skill_file():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "claude-code"])
+            result = runner.invoke(cli, ["agent", "install", "claude-code"])
         assert result.exit_code == 0, result.output
         skill_file = fake_home / ".claude" / "skills" / "docmancer" / "SKILL.md"
         content = skill_file.read_text()
         assert "allowed-tools" in content
-        assert "docmancer add" in content
-        assert "docmancer ingest" in content
+        assert "docmancer docs add" in content
         # The memory skill lands alongside the docs skill.
         mem_skill = fake_home / ".claude" / "skills" / "docmancer-memory" / "SKILL.md"
         assert mem_skill.exists()
-        assert "docmancer memory query" in mem_skill.read_text()
+        assert "docmancer query" in mem_skill.read_text()
         # Recall instruction injected into the always-loaded CLAUDE.md.
         claude_md = fake_home / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
         injected = claude_md.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer memory query" in injected
+        assert "docmancer query" in injected
         assert "docmancer bench" not in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content
@@ -80,7 +79,7 @@ def test_install_claude_code_backs_up_existing_user_file():
         claude_md.write_text("# My own global instructions\n\nKeep these.\n")
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "claude-code"])
+            result = runner.invoke(cli, ["agent", "install", "claude-code"])
         assert result.exit_code == 0, result.output
         text = claude_md.read_text()
         # User content preserved, our block appended.
@@ -111,9 +110,9 @@ def test_install_claude_code_hooks_and_remove_preserves_other_hooks():
         )
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "claude-code", "--hooks"])
-            second = runner.invoke(cli, ["install", "claude-code", "--hooks"])
-            removed = runner.invoke(cli, ["remove", "claude-code", "--hooks"])
+            result = runner.invoke(cli, ["agent", "install", "claude-code", "--hooks"])
+            second = runner.invoke(cli, ["agent", "install", "claude-code", "--hooks"])
+            removed = runner.invoke(cli, ["agent", "remove", "claude-code", "--hooks"])
 
         assert result.exit_code == 0, result.output
         assert second.exit_code == 0, second.output
@@ -130,7 +129,7 @@ def test_install_codex_creates_native_and_shared_skills():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "codex"])
+            result = runner.invoke(cli, ["agent", "install", "codex"])
         assert result.exit_code == 0, result.output
         assert (fake_home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()
         assert (fake_home / ".agents" / "skills" / "docmancer" / "SKILL.md").exists()
@@ -139,7 +138,7 @@ def test_install_codex_creates_native_and_shared_skills():
         assert codex_agents.exists()
         injected = codex_agents.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer memory query" in injected
+        assert "docmancer query" in injected
 
 
 def test_install_codex_hooks_mentions_trust_flow():
@@ -148,7 +147,7 @@ def test_install_codex_hooks_mentions_trust_flow():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "codex", "--hooks"])
+            result = runner.invoke(cli, ["agent", "install", "codex", "--hooks"])
         assert result.exit_code == 0, result.output
         hooks_file = fake_home / ".codex" / "hooks.json"
         data = json.loads(hooks_file.read_text())
@@ -167,7 +166,7 @@ def test_install_codex_hooks_use_documented_hooks_json_shape():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "codex", "--hooks"])
+            result = runner.invoke(cli, ["agent", "install", "codex", "--hooks"])
         assert result.exit_code == 0, result.output
         data = json.loads((fake_home / ".codex" / "hooks.json").read_text())
 
@@ -185,8 +184,8 @@ def test_install_and_remove_codex_capture_hooks_separately():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            installed = runner.invoke(cli, ["install", "codex", "--hooks", "--capture-hooks"])
-            removed = runner.invoke(cli, ["remove", "codex", "--capture-hooks"])
+            installed = runner.invoke(cli, ["agent", "install", "codex", "--hooks", "--capture-hooks"])
+            removed = runner.invoke(cli, ["agent", "remove", "codex", "--capture-hooks"])
 
         assert installed.exit_code == 0, installed.output
         assert removed.exit_code == 0, removed.output
@@ -207,8 +206,8 @@ def test_remove_hooks_removes_recall_and_capture_but_preserves_unrelated_hooks()
         )
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            installed = runner.invoke(cli, ["install", "codex", "--hooks", "--capture-hooks"])
-            removed = runner.invoke(cli, ["remove", "codex", "--hooks"])
+            installed = runner.invoke(cli, ["agent", "install", "codex", "--hooks", "--capture-hooks"])
+            removed = runner.invoke(cli, ["agent", "remove", "codex", "--hooks"])
 
         assert installed.exit_code == 0, installed.output
         assert removed.exit_code == 0, removed.output
@@ -224,7 +223,7 @@ def test_install_claude_capture_hooks_uses_compaction_and_session_events():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "claude-code", "--capture-hooks"])
+            result = runner.invoke(cli, ["agent", "install", "claude-code", "--capture-hooks"])
 
         assert result.exit_code == 0, result.output
         data = json.loads((fake_home / ".claude" / "settings.json").read_text())
@@ -240,13 +239,12 @@ def test_install_cursor_creates_agents_md_fallback():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "cursor"])
+            result = runner.invoke(cli, ["agent", "install", "cursor"])
         assert result.exit_code == 0, result.output
         agents_md = fake_home / ".cursor" / "AGENTS.md"
         assert agents_md.exists()
         content = agents_md.read_text()
-        assert "docmancer ingest" in content
-        assert "docmancer add" in content
+        assert "docmancer docs add" in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content
         assert "install" + "-pack" not in content
@@ -258,7 +256,7 @@ def test_install_github_copilot_project_creates_repo_instructions():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "github-copilot", "--project"])
+            result = runner.invoke(cli, ["agent", "install", "github-copilot", "--project"])
         assert result.exit_code == 0, result.output
         copilot_md = Path(".github") / "copilot-instructions.md"
         agents_md = Path("AGENTS.md")
@@ -268,7 +266,7 @@ def test_install_github_copilot_project_creates_repo_instructions():
         assert vscode_settings.exists()
         copilot_content = copilot_md.read_text()
         assert "docmancer query" in copilot_content
-        assert "docmancer ingest" in copilot_content
+        assert "docmancer docs add" in copilot_content
         assert "docmancer bench" not in copilot_content
         assert "--expand page" in copilot_content
         assert "docmancer:start" in agents_md.read_text()
@@ -297,15 +295,14 @@ def test_install_claude_desktop_creates_zip():
         fake_home = _home(tmp_dir)
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_config_class", return_value=FakeDocmancerConfig):
-            result = runner.invoke(cli, ["install", "claude-desktop"])
+            result = runner.invoke(cli, ["agent", "install", "claude-desktop"])
         assert result.exit_code == 0, result.output
         zip_path = fake_home / ".docmancer" / "exports" / "claude-desktop" / "docmancer.zip"
         assert zip_path.exists()
         with zipfile.ZipFile(zip_path) as zf:
             assert "docmancer/Skill.md" in zf.namelist()
             content = zf.read("docmancer/Skill.md").decode()
-            assert "docmancer ingest" in content
-            assert "docmancer add" in content
+            assert "docmancer docs add" in content
             assert "Advanced: API Tools via MCP" not in content
             assert "docmancer " + "m" + "c" + "p" not in content
             assert "install" + "-pack" not in content

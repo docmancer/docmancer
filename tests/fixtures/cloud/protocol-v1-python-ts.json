@@ -20,6 +20,8 @@
   },
   "canonical_utf8": "{\"created_at\":\"2026-07-19T12:00:00+00:00\",\"deleted\":false,\"memory_type\":\"decision\",\"origin\":{\"harness\":\"docmancer\",\"kind\":\"manual\"},\"parent_revision_ids\":[],\"project_id\":\"prj_0001\",\"record_id\":\"record-0001\",\"revision_id\":\"rev_vu5t5bdu5vapnylqvdj5ryy4wobwj2g3gltnhet4rrps5htuodoq\",\"schema_version\":1,\"scope_kind\":\"project\",\"tags\":[\"deployment\",\"production\"],\"text\":\"Production deploys run on Railway.\",\"updated_at\":\"2026-07-19T12:00:00+00:00\"}",
   "revision_id": "rev_vu5t5bdu5vapnylqvdj5ryy4wobwj2g3gltnhet4rrps5htuodoq",
+  "associated_data_b64": "eyJhbGdvcml0aG0iOiJ4Y2hhY2hhMjBwb2x5MTMwNS1pZXRmIiwia2V5X3ZlcnNpb24iOjEsImtpbmQiOiJyZWNvcmRfcmV2aXNpb24iLCJwcm90b2NvbF92ZXJzaW9uIjoxLCJyZWNvcmRfcmVmIjoiNTRSV0dXa1R2OEV3aHZvc2VFSDRpVHgzYTQzOXBkbllZT0dNdytNL2FNQT0iLCJyZXZpc2lvbl9yZWYiOiJleCt6dm02S0Exc0UrV0QyeG5rQ1JWR1ZGRk5uVm5sSGp3N0dOcEhyREFvPSIsIndvcmtzcGFjZV9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJ9",
+  "signature_input_sha256": "b2de0bab706a67b6e468b7d955e85cc293f9576fa2469b1a80ae74b7ee7343a4",
   "envelope": {
     "protocol_version": 1,
     "workspace_id": "00000000-0000-4000-8000-000000000001",

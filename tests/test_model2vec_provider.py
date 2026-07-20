@@ -16,6 +16,47 @@ def test_factory_model2vec_no_load():
     assert prov.name == "model2vec"
 
 
+def test_large_embedding_always_disables_multiprocessing():
+    class FakeModel:
+        def __init__(self):
+            self.options = None
+
+        def encode(self, texts, **options):
+            self.options = options
+            if len(texts) > 10_000 and options.get("use_multiprocessing", True):
+                raise ValueError("bad value(s) in fds_to_keep")
+            return [[0.0] for _text in texts]
+
+    provider = Model2VecProvider(EmbeddingsConfig(provider="model2vec"))
+    model = FakeModel()
+    provider._model = model
+    provider._dimensions_resolved = True
+
+    vectors = provider.embed(["memory"] * 10_001)
+
+    assert len(vectors) == 10_001
+    assert model.options["use_multiprocessing"] is False
+
+
+def test_embedding_configures_tqdm_with_a_thread_lock(monkeypatch):
+    from tqdm import tqdm
+
+    configured = []
+    monkeypatch.setattr(tqdm, "set_lock", configured.append)
+
+    class FakeModel:
+        def encode(self, texts, **_options):
+            return [[0.0] for _text in texts]
+
+    provider = Model2VecProvider(EmbeddingsConfig(provider="model2vec"))
+    provider._model = FakeModel()
+    provider._dimensions_resolved = True
+    provider.embed(["memory"])
+
+    assert len(configured) == 1
+    assert configured[0].__class__.__module__ == "_thread"
+
+
 # The embedding tests load the real model (vendored if present, else a one-time
 # download). Marked integration so offline CI without the asset does not flake;
 # run locally after `scripts/vendor_static_model.py`.

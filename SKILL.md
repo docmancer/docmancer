@@ -27,10 +27,10 @@ Docmancer compresses documentation context so coding agents spend tokens on code
 
 ## Workflow
 
-1. **Check indexed docs:** `docmancer list`
-2. **Query existing docs:** `docmancer query "<question>"`
-3. **Index local docs if needed:** `docmancer ingest <path>`
-4. **Fetch URL docs if needed:** `docmancer add <url>`
+1. **Check indexed docs:** `docmancer docs list`
+2. **Query existing docs:** `docmancer docs query "<question>"`
+3. **Index local docs if needed:** `docmancer docs add <path>`
+4. **Fetch URL docs if needed:** `docmancer docs add <url>`
 5. **Use the returned context** to ground your response with source-attributed sections.
 
 ## Core Commands
@@ -38,7 +38,7 @@ Docmancer compresses documentation context so coding agents spend tokens on code
 ### Ingest Local Documentation
 
 ```bash
-docmancer ingest ./docs
+docmancer docs add ./docs
 ```
 
 Use `ingest` for local files and directories.
@@ -55,7 +55,7 @@ Use `ingest` for local files and directories.
 ### Add URL Documentation
 
 ```bash
-docmancer add https://docs.example.com
+docmancer docs add https://docs.example.com
 ```
 
 Use `add` for documentation URLs and GitHub repositories.
@@ -71,7 +71,7 @@ Use `add` for documentation URLs and GitHub repositories.
 ### Query Documentation
 
 ```bash
-docmancer query "<question>"
+docmancer docs query "<question>"
 ```
 
 Returns a compact markdown context pack with source attribution and token savings. This is the primary command agents should call.
@@ -88,19 +88,19 @@ Returns a compact markdown context pack with source attribution and token saving
 
 | Command | Purpose |
 |---------|---------|
-| `docmancer list` | Show indexed documentation sources |
-| `docmancer list --all` | Show every stored page or file |
-| `docmancer inspect` | Show index stats, format counts, and extract locations |
-| `docmancer remove <source>` | Remove a source or docset root |
-| `docmancer remove --all` | Clear the entire index |
-| `docmancer update [source]` | Re-fetch and re-index all sources, or one specific source |
-| `docmancer doctor` | Check config, loader availability, index health, and agent skill installs |
-| `docmancer init` | Create project-local `docmancer.yaml` |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown files without indexing |
+| `docmancer docs list` | Show indexed documentation sources |
+| `docmancer docs list --all` | Show every stored page or file |
+| `docmancer docs list` | Show index stats, format counts, and extract locations |
+| `docmancer docs remove <source>` | Remove a source or docset root |
+| `docmancer docs remove --all` | Clear the entire index |
+| `docmancer docs sync [source]` | Re-fetch and re-index all sources, or one specific source |
+| `docmancer status --check` | Check config, loader availability, index health, and agent skill installs |
+| `docmancer setup` | Create project-local `docmancer.yaml` |
+| `docmancer docs add <url> --output <dir>` | Download docs to markdown files without indexing |
 
 ## Common Mistakes
 
-- Do not use `docmancer add` for new local files. Use `docmancer ingest <path>`.
-- Do not use `docmancer ingest` for URLs. Use `docmancer add <url>`.
-- Do not run `docmancer query` before checking indexed sources with `docmancer list`.
-- Do not assume docs are indexed. Always verify with `docmancer list` before querying.
+- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
+- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
+- Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.
+- Do not assume docs are indexed. Always verify with `docmancer docs list` before querying.

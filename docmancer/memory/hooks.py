@@ -148,6 +148,15 @@ def _format_context(chunks: list[Any], *, max_chars: int) -> str:
     return text[: max_chars - 1].rstrip() + "..."
 
 
+def _format_canonical(records: list[Any]) -> str:
+    if not records:
+        return ""
+    lines = ["Approved docmancer context, highest precedence first:"]
+    for record in records:
+        lines.append(f"- [{record.type}] {_one_line(record.text)}")
+    return "\n".join(lines)
+
+
 def build_hook_context(
     payload: HookPayload,
     *,
@@ -164,17 +173,19 @@ def build_hook_context(
         return ""
 
     from docmancer.memory import MemoryAgent
+    from docmancer.memory.service import MemoryService
 
-    chunks = MemoryAgent().query(
+    agent = MemoryAgent()
+    service = MemoryService(agent)
+    canonical = service.compile_context(project_path=payload.cwd or None, query=query, limit=16)
+    chunks = service.query(
         query,
         limit=max(limit * 3, limit),
         mode="hybrid",
         project_path=payload.cwd or None,
     )
-    if not chunks:
-        return ""
-    if max(float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks) < threshold:
-        return ""
+    if chunks and max(float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks) < threshold:
+        chunks = []
 
     should_dedupe = payload.event == "UserPromptSubmit"
     seen_order = _load_seen(payload.session_id) if should_dedupe else []
@@ -192,11 +203,13 @@ def build_hook_context(
             seen_order.append(fp)
         if len(selected) >= limit:
             break
-    if not selected:
-        return ""
     if should_dedupe:
         _save_seen(payload.session_id, seen_order)
-    return _format_context(selected, max_chars=max_chars)
+    sections = [value for value in (_format_canonical(canonical), _format_context(selected, max_chars=max_chars) if selected else "") if value]
+    if not sections:
+        return ""
+    context = "\n\n".join(sections)
+    return context if len(context) <= max_chars else context[: max_chars - 1].rstrip() + "..."
 
 
 def hook_output(event: str, context: str) -> str:

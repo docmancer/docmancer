@@ -110,6 +110,8 @@ def capture_payload(payload: dict, *, agent: str) -> tuple[int, bool]:
     if not candidates:
         return 0, False
     memory = MemoryAgent()
+    if not memory.config.capture.allows(agent):
+        return 0, False
     cwd = payload.get("cwd") or None
     project_paths = [cwd] if cwd else None
     existing_texts = {normalize_memory_text(atom.text) for atom in memory.indexed_atoms()}

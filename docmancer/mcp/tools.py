@@ -30,9 +30,10 @@ def memory_search(
     """Search the local memory index. Returns source-attributed excerpts."""
     from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
+    from docmancer.memory.service import MemoryService
 
     agent = MemoryAgent()
-    chunks = agent.query(
+    chunks = MemoryService(agent).query(
         query,
         limit=limit,
         include_history=include_history,
@@ -53,6 +54,7 @@ def memory_search(
                 "lifecycle_state": meta.get("lifecycle_state", "current"),
                 "relation_type": meta.get("relation_type"),
                 "relation_id": meta.get("relation_id"),
+                "record_uri": f"docmancer://record/{meta['record_id']}" if meta.get("record_id") else None,
             }
         )
     return out
@@ -99,9 +101,11 @@ def docs_search(query: str, limit: int = _DEFAULT_LIMIT) -> list[dict]:
 def memory_status() -> dict:
     from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
+    from docmancer.memory.service import MemoryService
 
-    status = MemoryAgent().status()
-    status["display_path"] = display_path(status.get("db_path", ""))
+    service = MemoryService(MemoryAgent())
+    status = service.status()
+    status["display_path"] = display_path(status.get("memory", {}).get("db_path", ""))
     return status
 
 
@@ -168,6 +172,23 @@ def memory_recap(since: str = "7d", until: str | None = None, project_id: str | 
     return MemoryAgent().recap(start, until=end, project_id=project_id)
 
 
+def memory_recent(
+    since: str = "7d",
+    until: str | None = None,
+    harness: str | None = None,
+    limit: int = 100,
+) -> list[dict] | dict:
+    """Return a recency-ordered local memory timeline."""
+    from docmancer.cli.memory_commands import _parse_recap_time
+    from docmancer.memory import MemoryAgent
+
+    start = _parse_recap_time(since)
+    end = _parse_recap_time(until) if until else None
+    if end and end < start:
+        return {"error": "until must be later than since"}
+    return MemoryAgent().recent(since=start, until=end, harness=harness, limit=limit)
+
+
 def sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
     from docmancer.cli.ui import display_path
     from docmancer.memory import MemoryAgent
@@ -191,22 +212,29 @@ def memory_add(
     memory_type: str | None = None,
     tags: list[str] | None = None,
 ) -> dict:
+    from pathlib import Path
     from docmancer.memory import MemoryAgent
+    from docmancer.memory.service import MemoryService
 
-    record, indexed = MemoryAgent().add_record(
-        text,
-        scope_kind=scope,
-        project_path=project_path,
-        memory_type=memory_type,
-        tags=tags or [],
-        origin="mcp",
+    service = MemoryService(MemoryAgent())
+    project = Path(project_path).expanduser().resolve() if project_path else Path.cwd()
+    pack_id = "personal-defaults"
+    if scope in {"project", "team"}:
+        prefix = "team-project:" if scope == "team" else "personal-project:"
+        pack_id = next(pack.pack_id for pack in service.ensure_packs(project_path=project) if pack.pack_id.startswith(prefix))
+    result = service.add_canonical(
+        text, pack_id=pack_id, project_path=project, memory_type=memory_type, tags=tags or [], origin="mcp"
     )
+    record = result["record"]
+    proposal = result["proposal"]
     return {
-        "record_id": record.record_id,
-        "scope": record.scope,
-        "type": record.type,
-        "source_path": record.source_path,
-        "indexed": indexed,
+        "record_id": record.record_id if record else None,
+        "proposal_id": proposal.proposal_id if proposal else None,
+        "pack_id": pack_id,
+        "scope": record.scope if record else scope,
+        "type": record.type if record else memory_type or "fact",
+        "source_path": record.source_path if record else None,
+        "indexed": bool(record),
     }
 
 
@@ -263,6 +291,7 @@ def memory_show(identifier: str) -> dict:
 
 def memory_forget(identifier: str, *, confirm: bool = False) -> dict:
     from docmancer.memory import MemoryAgent
+    from docmancer.memory.service import MemoryService
 
     agent = MemoryAgent()
     atom = agent.find_atom(identifier)
@@ -276,10 +305,14 @@ def memory_forget(identifier: str, *, confirm: bool = False) -> dict:
             "action": "remove owned record" if atom.record_id else "suppress harvested atom",
         }
     try:
-        forgotten = agent.forget(identifier)
+        result = MemoryService(agent).remove_record(identifier)
     except ValueError as exc:
         return {"error": str(exc)}
-    return {"forgotten": True, "id": forgotten.record_id or forgotten.atom_id}
+    return {
+        "forgotten": bool(result["removed"]),
+        "proposal_id": result["proposal"].proposal_id if result["proposal"] else None,
+        "id": result["atom"].record_id or result["atom"].atom_id,
+    }
 
 
 def memory_promote(identifier: str, *, project_path: str, confirm: bool = False) -> dict:
@@ -356,8 +389,8 @@ def _redacted_entries(limit: int):
 
 def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
     """Cloud: produce a review-only consolidated memory draft via OpenRouter."""
-    from docmancer.ai.memory_features import consolidate_memory
     from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
+    from docmancer.memory.consolidation import consolidate_payload
 
     blocked = _blocked_by_recursion()
     if blocked:
@@ -373,7 +406,16 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
     ]
     try:
         client = OpenRouterClient()
-        return consolidate_memory(payload, instruction=query, client=client).model_dump()
+        return consolidate_payload(
+            payload,
+            instruction=query,
+            client=client,
+            model=None,
+            budget=24_000,
+            draft_quality="standard",
+            max_output_tokens=8_000,
+            concurrency=2,
+        ).model_dump()
     except Exception as exc:  # noqa: BLE001 - return an error payload, never raise to the client
         return {"error": f"OpenRouter consolidate failed: {exc}"}
 
@@ -385,6 +427,7 @@ __all__ = [
     "memory_relations",
     "memory_orphans",
     "memory_recap",
+    "memory_recent",
     "docs_search",
     "memory_status",
     "sources_list",

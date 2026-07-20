@@ -39,6 +39,9 @@ def test_owned_record_crud_redacts_and_leaves_content_free_tombstone(tmp_path, m
     shown = runner.invoke(cli, ["memory", "show", identifier[:12], "--json"])
     assert shown.exit_code == 0, shown.output
     assert json.loads(shown.output)["type"] == "decision"
+    assert json.loads(shown.output)["record_uri"] == f"docmancer://record/{identifier}"
+    shown_by_uri = runner.invoke(cli, ["memory", "show", f"docmancer://record/{identifier}", "--json"])
+    assert shown_by_uri.exit_code == 0, shown_by_uri.output
 
     forgotten = runner.invoke(cli, ["memory", "forget", identifier[:12], "--yes"])
     assert forgotten.exit_code == 0, forgotten.output
@@ -60,6 +63,44 @@ def test_record_store_accepts_deterministic_ids_for_repeatable_imports(tmp_path,
 
     assert record.record_id == "eval-deploy"
     assert Path(record.source_path).name.endswith("eval-dep.md")
+
+
+def test_conversation_export_import_redacts_and_deduplicates(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    export = tmp_path / "conversations.json"
+    export.write_text(json.dumps([{
+        "name": "Deployment decision",
+        "chat_messages": [
+            {"sender": "human", "text": "Which platform should production use?"},
+            {"sender": "assistant", "text": "Production deploys use Railway with token=supersecretvalue123."},
+        ],
+    }]))
+    runner = CliRunner()
+
+    preview = runner.invoke(cli, ["memory", "import-conversations", str(export), "--source", "claude", "--dry-run", "--json"])
+    assert preview.exit_code == 0, preview.output
+    assert json.loads(preview.output)["candidates"] >= 1
+    imported = runner.invoke(cli, ["memory", "import-conversations", str(export), "--source", "claude", "--json"])
+    assert imported.exit_code == 0, imported.output
+    assert json.loads(imported.output)["created"] >= 1
+    assert "supersecretvalue123" not in "\n".join(path.read_text() for path in (tmp_path / "state" / "memories").glob("*.md"))
+
+
+def test_recent_profile_and_filtered_clear(tmp_path, monkeypatch):
+    _memory_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    assert runner.invoke(cli, ["memory", "add", "Prefer concise full sentence release notes.", "--type", "preference"]).exit_code == 0
+    recent = runner.invoke(cli, ["memory", "recent", "--since", "24h", "--json"])
+    assert recent.exit_code == 0, recent.output
+    assert json.loads(recent.output)[0]["record_id"]
+    profile = runner.invoke(cli, ["memory", "profile", "--apply", "--yes", "--json"])
+    assert profile.exit_code == 0, profile.output
+    assert json.loads(profile.output)["record_uri"].startswith("docmancer://record/")
+    preview = runner.invoke(cli, ["memory", "clear", "--scope", "global", "--dry-run"])
+    assert preview.exit_code == 0 and "Will forget" in preview.output
+    cleared = runner.invoke(cli, ["memory", "clear", "--scope", "global", "--yes"])
+    assert cleared.exit_code == 0, cleared.output
+    assert json.loads(runner.invoke(cli, ["memory", "list", "--json"]).output) == []
 
 
 def test_forget_help_explains_memory_id(tmp_path, monkeypatch):
@@ -160,7 +201,7 @@ def test_team_memory_is_reviewable_and_promotion_never_stages(tmp_path, monkeypa
     assert not (project / ".git" / "index").exists()
 
 
-def test_team_add_explains_untracked_git_review(tmp_path, monkeypatch):
+def test_team_add_creates_review_proposal(tmp_path, monkeypatch):
     _memory_env(tmp_path, monkeypatch)
     project = tmp_path / "repo"
     (project / ".git").mkdir(parents=True)
@@ -179,8 +220,14 @@ def test_team_add_explains_untracked_git_review(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0, result.output
-    assert "plain `git diff` can be empty" in result.output
-    assert "git status --short .docmancer/memory/" in result.output
+    assert "Created team review proposal" in result.output
+    assert not (project / ".docmancer" / "memory").exists()
+
+    pending = CliRunner().invoke(cli, ["memory", "review", "--json"])
+    assert pending.exit_code == 0, pending.output
+    proposals = json.loads(pending.output)
+    assert len(proposals) == 1
+    assert proposals[0]["pack_id"].startswith("team-project:")
 
 
 def test_capture_supported_events_are_redacted_deduplicated_and_project_scoped(tmp_path, monkeypatch):

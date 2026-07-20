@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - Unreleased
+### Added
+
+- **Canonical context packs.** Added revisioned Personal defaults, Current project, Team standards, and Team project manifests above the raw memory corpus, with provenance-complete deterministic distillation, review proposals, direct Markdown reconciliation, content-free tombstones, and explicit project overrides.
+- **Automatic cross-agent delivery.** Added shared context compilation for hooks and disposable managed projections, with team-project, personal-project, team-global, then personal-global precedence across supported agents.
+- **Complete local memory management.** Added `memory recent` and MCP `memory_recent`, ChatGPT and Claude conversation-export import, scoped clear filters, stable `docmancer://record/<id>` references, per-harness capture controls, and a local profile record flow.
+- **TUI v2 workflows.** Added `/recent`, `/settings`, `/ingest`, `/consolidate`, and `/apply`, including in-process docs ingestion, provider-aware streaming consolidation, explicit provider confirmation, and managed-block application.
+- **Shared consolidation service.** CLI, MCP, and TUI consolidation now use one batching and map-reduce orchestration module with presentation callbacks.
+- **Record-oriented Context management.** The TUI now paginates approved canonical statements as individually inspectable, editable, and removable rows, with confirmed Personal reset and review-gated Team reset flows.
+- **CLI-first cloud bootstrap.** `docmancer cloud connect` now completes device-code authentication, selects or creates a workspace, persists server-issued device and workspace UUIDs, links the current project, and queues existing memory only after the device has a usable workspace key.
+
+### Changed
+
+- **Smaller public surfaces.** Reduced the root CLI to setup, sync, query, memory, docs, status, cloud, agent, and MCP; reduced canonical memory and cloud subcommands; and kept the old commands as hidden one-release compatibility aliases with replacement warnings.
+- **First-class Audit tab.** Context contains packs and review, Sources combines provenance with inline warnings, Audit shows masked security findings plus automatic-context and optional new-memory-capture coverage, and Docs retains documentation browsing. The public slash-command set is sync, distill, review, add, share, status, settings, and help.
+- **Conservative living-memory reconciliation.** Only explicit record lineage, exact duplicates, and concise same-scope structured claims create graph relationships. Machine contradiction suggestions never suppress memory; only deterministic lineage and persisted human choices can change lifecycle state.
+- **Graph-backed recall.** Query-time lifecycle and temporal weighting read only the retrieved atom rows from the first-class graph projection. Exact-content and structured-claim buckets avoid an all-pairs relation scan without using broad semantic similarity as contradiction evidence.
+- **Faster memory intelligence sync.** Near-duplicate clustering uses bounded, vectorized similarity batches, while graph reconciliation compares only exact-content buckets and matching structured claim keys. Large local corpora no longer spend minutes in Python-level pairwise loops.
+- **Cleaner recall results.** Query-time residual deduplication collapses near-identical results within one scope, status expiry is evaluated at query time, and low-signal raw harvested orphans are omitted.
+- **Installed agent protocol.** Skills now teach the onboarding phrase, query-before-work and record-after-work loop, recent activity, scoped clearing, local profiles, conversation import, and stable record references. Shared skill installs report other detected agents they already cover.
+- **Visible TUI sync progress.** The sync modal now animates its active stage, shows the current step and elapsed time, includes graph reconciliation as a distinct stage, and records the duration of every completed step.
+- **Actionable Review inbox.** The TUI separates claim groups that need review from recent changes, maintenance, and history. Ten-item numbered pages, explicit file and atom counts, and `1/N` atom navigation remove the previous mixed units and nested scrolling.
+
+### Fixed
+
+- **Large memory syncs.** Model2Vec now stays in-process on every surface, uses a thread-only progress lock, and reuses one loaded embedding provider across merge, graph, and index stages. This avoids the macOS `bad value(s) in fds_to_keep` failure caused by `tqdm` starting a multiprocessing resource tracker inside the TUI.
+- **Concurrent TUI access.** Intelligence reads no longer rerun graph schema writes, so a second terminal can browse the last committed graph while sync rebuilds it. Transient SQLite contention now appears as an in-app warning instead of a Textual traceback.
+- **Legacy conflict repair.** Graph schema v2 removes unreviewed heuristic contradiction edges and restores current lifecycle state before recall. Persisted human review overrides remain intact.
+- **Fast conflict review.** Resolving a graph relation updates lifecycle state and queues its encrypted graph projection without rebuilding the full memory index.
+- **Cloud development sync.** The hidden two-client sync helper calls the shared sync implementation directly instead of invoking a Click callback outside its context.
+- **Cloud transport compatibility.** The Python client now uses the OpenAPI route family, parses nested API errors and authorization-pending responses, resolves workspaces after authentication, validates server-facing UUIDs, and approves devices with fingerprint-verified workspace-key wrappers. A real Python-to-Fastify contract test guards the integration.
+- **Safe cloud lifecycle controls.** Incomplete export, promotion, rotation, and revocation operations are removed from the public CLI surface so the client does not claim to complete workflows that are not yet atomic end to end.
+- **Idempotent distillation.** Pack evidence fingerprints and per-record source-atom lineage prevent unchanged evidence from becoming another proposal after an approved or rejected review. Personal defaults now exclude one-off task histories and global project decisions instead of consuming the raw corpus in repeated 50-item batches.
+
 ## [0.7.3] - 2026-07-20
 ### Added
 

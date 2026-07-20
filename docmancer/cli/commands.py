@@ -6,7 +6,6 @@ import logging
 import shlex
 import shutil
 import sys
-import warnings
 import zipfile
 from datetime import datetime, timezone
 from importlib.util import find_spec
@@ -79,6 +78,20 @@ def _get_codex_skill_path() -> Path:
 
 def _get_shared_agent_skill_path() -> Path:
     return Path.home() / ".agents" / "skills" / "docmancer" / "SKILL.md"
+
+
+def _shared_skill_coverage(installed_for: str) -> str | None:
+    """Describe other detected agents covered by the shared skill bundle."""
+    home = Path.home()
+    checks = {
+        "codex": home / ".codex",
+        "gemini": home / ".gemini",
+        "opencode": home / ".config" / "opencode",
+    }
+    covered = [name for name, path in checks.items() if name != installed_for and path.exists()]
+    if not covered:
+        return None
+    return "The shared skill also covers " + ", ".join(covered) + "; no separate install is required."
 
 
 def _get_gemini_skill_path() -> Path:
@@ -235,7 +248,7 @@ def _can_default_query_fallback(exc: Exception) -> bool:
     """Whether a default-mode query may silently fall back to lexical.
 
     The default retrieval mode is hybrid, but users can explicitly build an
-    FTS5-only index with ``ingest --no-vectors``. A plain ``docmancer query``
+    FTS5-only index with ``ingest --no-vectors``. A plain ``docmancer docs query``
     should still work in that state. Explicit vector modes remain strict unless
     the caller passes ``--allow-degraded``.
     """
@@ -387,7 +400,7 @@ def _emit_install_summary(
         click.echo()
         click.echo(_style(f"  {heading}", fg="white", bold=True))
     else:
-        _emit_brand_header("docmancer install", heading)
+        _emit_brand_header("docmancer agent install", heading)
     for label, path in installed_paths:
         _emit_status_line(f"{label}: {display_path(path)}")
     if created_user_config:
@@ -704,15 +717,28 @@ def init_cmd(directory: str | None, embedding_provider: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Add URL docs to the local SQLite index.",
+    short_help="Add local or URL docs to the local SQLite index.",
     epilog=format_examples(
-        "docmancer add https://docs.example.com",
-        "docmancer add https://github.com/owner/repo",
-        "docmancer add https://docs.example.com --max-pages 200",
+        "docmancer docs add https://docs.example.com",
+        "docmancer docs add ./docs",
+        "docmancer docs add https://github.com/owner/repo",
+        "docmancer docs add https://docs.example.com --max-pages 200",
     ),
 )
 @click.argument("path")
 @click.option("--recreate", is_flag=True, help="Recreate the collection first.")
+@click.option("--include", "include_patterns", multiple=True, help="Glob pattern to include for a local path.")
+@click.option("--exclude", "exclude_patterns", multiple=True, help="Glob pattern to exclude for a local path.")
+@click.option(
+    "--format",
+    "formats",
+    multiple=True,
+    type=click.Choice(["md", "markdown", "txt", "pdf", "docx", "rtf", "html", "htm"], case_sensitive=False),
+    help="Restrict local ingest to one or more file formats.",
+)
+@click.option("--recursive/--no-recursive", default=True, show_default=True, help="Recurse through local directories.")
+@click.option("--skip-known", is_flag=True, help="Skip local files whose content hash is already indexed.")
+@click.option("--no-vectors", is_flag=True, help="Index local files with FTS5 only.")
 @click.option("--provider", default="auto", show_default=True,
               type=click.Choice(["auto", "gitbook", "mintlify", "web", "github", "crawl4ai"], case_sensitive=False),
               help="Docs platform. auto tries llms.txt then sitemap.xml. web uses generic pipeline.")
@@ -728,6 +754,12 @@ def init_cmd(directory: str | None, embedding_provider: str | None):
 def add_cmd(
     path: str,
     recreate: bool,
+    include_patterns: tuple[str, ...],
+    exclude_patterns: tuple[str, ...],
+    formats: tuple[str, ...],
+    recursive: bool,
+    skip_known: bool,
+    no_vectors: bool,
     provider: str,
     config_path: str | None,
     max_pages: int,
@@ -735,7 +767,7 @@ def add_cmd(
     browser: bool,
     fetch_workers: int | None,
 ):
-    """Add documents from a documentation URL or GitHub repository."""
+    """Add documents from a local path, documentation URL, or GitHub repository."""
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
 
@@ -746,6 +778,8 @@ def add_cmd(
 
     try:
         if path.startswith("http://") or path.startswith("https://"):
+            if include_patterns or exclude_patterns or formats or not recursive or skip_known or no_vectors:
+                raise click.UsageError("local file options cannot be used with a documentation URL")
             click.echo(f"Adding docs from {path}...")
             total = agent.add(
                 path,
@@ -756,18 +790,18 @@ def add_cmd(
                 browser=browser,
             )
         else:
-            warnings.warn(
-                "docmancer add for local files is deprecated. Use docmancer ingest <path>. "
-                "The compatibility path will be removed after the 0.4.x line.",
-                DeprecationWarning,
-                stacklevel=2,
+            if recreate and not no_vectors:
+                _drop_vector_collection(config, agent)
+            total = agent.ingest(
+                path,
+                recreate=recreate,
+                include=include_patterns,
+                exclude=exclude_patterns,
+                formats=formats,
+                recursive=recursive,
+                skip_known=skip_known,
+                with_vectors=not no_vectors,
             )
-            click.echo(
-                "Warning: local paths now belong to `docmancer ingest`. "
-                "`docmancer add ./path` still works during the 0.4.x compatibility window.",
-                err=True,
-            )
-            total = agent.add(path, recreate=recreate)
         _emit_index_summary(total, agent)
         if getattr(agent, "last_ingest_skips", None):
             report_path = getattr(agent, "last_ingest_report_path", None)
@@ -782,9 +816,9 @@ def add_cmd(
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Refresh all or specific indexed docs sources.",
     epilog=format_examples(
-        "docmancer update",
-        "docmancer update https://docs.example.com",
-        "docmancer update ./docs",
+        "docmancer docs sync",
+        "docmancer docs sync https://docs.example.com",
+        "docmancer docs sync ./docs",
     ),
 )
 @click.argument("source", required=False, default=None)
@@ -812,7 +846,7 @@ def update_cmd(
 
     sources = agent.list_sources_with_dates()
     if not sources:
-        click.echo("No indexed sources to update. Run 'docmancer add <url-or-path>' first.")
+        click.echo("No indexed sources to update. Run 'docmancer docs add <url-or-path>' first.")
         return
 
     if source:
@@ -834,7 +868,7 @@ def update_cmd(
                     matching = [{"source": row["source"]} for row in rows]
             if not matching:
                 click.echo(f"Source not found in index: {source}")
-                click.echo("Run 'docmancer list' to see indexed sources.")
+                click.echo("Run 'docmancer docs list' to see indexed sources.")
                 sys.exit(1)
         targets = matching
     else:
@@ -873,10 +907,10 @@ def update_cmd(
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Index local files into the SQLite index.",
     epilog=format_examples(
-        "docmancer ingest ./docs",
-        "docmancer ingest ./README.md",
-        "docmancer ingest ./docs --format md --format pdf",
-        "docmancer ingest ./docs --include 'guides/**' --exclude '**/draft*'",
+        "docmancer docs add ./docs",
+        "docmancer docs add ./README.md",
+        "docmancer docs add ./docs --format md --format pdf",
+        "docmancer docs add ./docs --include 'guides/**' --exclude '**/draft*'",
     ),
 )
 @click.argument("path")
@@ -907,7 +941,7 @@ def ingest_cmd(
 ):
     """Index local files or directories."""
     if path.startswith(("http://", "https://")):
-        raise click.ClickException("Use `docmancer add` for URLs.")
+        raise click.ClickException("Use `docmancer docs add` for URLs.")
 
     config_path = _effective_config(config_path)
     _configure_ingest_logging()
@@ -1042,8 +1076,8 @@ def fetch_cmd(url: str, output_dir: str, output_format: str):
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Show collection stats.",
     epilog=format_examples(
-        "docmancer inspect",
-        "docmancer inspect --config ./docmancer.yaml",
+        "docmancer docs list",
+        "docmancer docs list --config ./docmancer.yaml",
     ),
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
@@ -1076,8 +1110,8 @@ def inspect_cmd(config_path: str | None):
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Check config, memory and docs indexes, providers, and skills.",
     epilog=format_examples(
-        "docmancer doctor",
-        "docmancer doctor --config ./docmancer.yaml",
+        "docmancer status --check",
+        "docmancer status --check --config ./docmancer.yaml",
     ),
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
@@ -1086,7 +1120,7 @@ def doctor_cmd(config_path: str | None):
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     home = Path.home()
-    _emit_brand_header("docmancer doctor", "Check binary, config, memory and docs indexes, and installed skills.")
+    _emit_brand_header("docmancer status --check", "Check binary, config, memory and docs indexes, and installed skills.")
 
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
@@ -1122,7 +1156,7 @@ def doctor_cmd(config_path: str | None):
         _emit_status_line(str(exc), state="error")
     else:
         if not Path(config.index.db_path).exists():
-            _emit_status_line("No docs indexed yet (run: docmancer ingest <path> or docmancer add <url>)", state="warn")
+            _emit_status_line("No docs indexed yet (run: docmancer docs add <path> or docmancer docs add <url>)", state="warn")
 
     click.echo()
     click.echo(_style("  Memory index", fg="white", bold=True))
@@ -1258,13 +1292,13 @@ def doctor_cmd(config_path: str | None):
                             or int(meta_dim or 0) != int(config.embeddings.dimensions or 0)
                         ):
                             _emit_status_line(
-                                "embedder mismatch: configured embeddings do not match the collection; rebuild with docmancer ingest <path> --recreate",
+                                "embedder mismatch: configured embeddings do not match the collection; rebuild with docmancer docs add <path> --recreate",
                                 state="error",
                                 indent=4,
                             )
                     else:
                         _emit_status_line(
-                            "collection embedder metadata missing; rebuild with docmancer ingest <path> --recreate",
+                            "collection embedder metadata missing; rebuild with docmancer docs add <path> --recreate",
                             state="warn",
                             indent=4,
                         )
@@ -1288,7 +1322,7 @@ def doctor_cmd(config_path: str | None):
         if has_hook:
             _emit_status_line(f"{label}: hooks installed at {display_path(path)}", indent=4)
         else:
-            _emit_status_line(f"{label}: no hooks installed (run: docmancer install {label} --hooks)", state="warn", indent=4)
+            _emit_status_line(f"{label}: no hooks installed (run: docmancer agent install {label} --hooks)", state="warn", indent=4)
 
     # Skill install status
     click.echo()
@@ -1308,7 +1342,7 @@ def doctor_cmd(config_path: str | None):
         if path.exists():
             _emit_status_line(f"{label}: {display_path(path)}", indent=4)
         else:
-            _emit_status_line(f"{label}: not installed (run: docmancer install {install_target})", state="warn", indent=4)
+            _emit_status_line(f"{label}: not installed (run: docmancer agent install {install_target})", state="warn", indent=4)
 
 
 
@@ -1317,11 +1351,11 @@ def doctor_cmd(config_path: str | None):
     context_settings={**HELP_CONTEXT_SETTINGS, "allow_extra_args": True},
     short_help="Search indexed docs.",
     epilog=format_examples(
-        'docmancer query "How do I authenticate?"',
-        'docmancer query "getting started" --limit 3',
-        'docmancer query "season 5 end date" --expand',
-        'docmancer query "season 5 end date" --expand page',
-        'docmancer query "auth" --format json',
+        'docmancer docs query "How do I authenticate?"',
+        'docmancer docs query "getting started" --limit 3',
+        'docmancer docs query "season 5 end date" --expand',
+        'docmancer docs query "season 5 end date" --expand page',
+        'docmancer docs query "auth" --format json',
     ),
 )
 @click.argument("text")
@@ -1466,12 +1500,12 @@ def query_cmd(
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Remove an indexed source.",
     epilog=format_examples(
-        "docmancer remove --all",
-        "docmancer remove claude-code --hooks",
-        "docmancer remove codex --hooks",
-        "docmancer remove https://docs.example.com",
-        "docmancer remove https://docs.example.com/page",
-        "docmancer remove ./docs/getting-started.md",
+        "docmancer docs remove --all",
+        "docmancer agent remove claude-code --hooks",
+        "docmancer agent remove codex --hooks",
+        "docmancer docs remove https://docs.example.com",
+        "docmancer docs remove https://docs.example.com/page",
+        "docmancer docs remove ./docs/getting-started.md",
     ),
 )
 @click.argument("source", required=False)
@@ -1667,9 +1701,9 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="List indexed documentation sources.",
     epilog=format_examples(
-        "docmancer list",
-        "docmancer list --all",
-        "docmancer list --config ./docmancer.yaml",
+        "docmancer docs list",
+        "docmancer docs list --all",
+        "docmancer docs list --config ./docmancer.yaml",
     ),
 )
 @click.option("--all", "show_all", is_flag=True, default=False, help="Show every stored page/file source.")
@@ -1692,15 +1726,15 @@ def list_cmd(show_all: bool, config_path: str | None):
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Install docmancer skills into an AI agent.",
     epilog=format_examples(
-        "docmancer install claude-code",
-        "docmancer install codex",
-        "docmancer install claude-code --project",
-        "docmancer install cursor",
-        "docmancer install claude-desktop",
-        "docmancer install gemini",
-        "docmancer install github-copilot --project",
-        "docmancer install opencode",
-        "docmancer install cline",
+        "docmancer agent install claude-code",
+        "docmancer agent install codex",
+        "docmancer agent install claude-code --project",
+        "docmancer agent install cursor",
+        "docmancer agent install claude-desktop",
+        "docmancer agent install gemini",
+        "docmancer agent install github-copilot --project",
+        "docmancer agent install opencode",
+        "docmancer agent install cline",
     ),
 )
 @click.argument("agent", type=click.Choice(INSTALL_TARGETS, case_sensitive=False))
@@ -1723,6 +1757,28 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
     if (hooks or capture_hooks) and normalized not in {"claude-code", "codex", "codex-app", "codex-desktop"}:
         raise click.ClickException("memory hooks are currently supported for claude-code and codex.")
     home = Path.home()
+
+    def refresh_projection() -> None:
+        """Best-effort delivery of already approved context after installation."""
+        try:
+            from docmancer.memory import MemoryAgent, default_memory_db
+            from docmancer.memory.projections import refresh_projections
+            from docmancer.memory.service import MemoryService
+
+            memory_db = Path(os.getenv("DOCMANCER_MEMORY_DB") or default_memory_db())
+            if not memory_db.exists():
+                return
+            rows = refresh_projections(
+                MemoryService(MemoryAgent()),
+                project_path=Path.cwd(),
+                agents=[normalized],
+                installed_only=False,
+                home=home,
+            )
+            if rows:
+                _emit_status_line(f"Refreshed approved context at {display_path(rows[0]['path'])}")
+        except Exception:  # noqa: BLE001 - a projection must not make skill installation fail
+            return
     user_config_exists_before = _get_user_config_path().exists()
     effective_config_path = _resolve_install_config_path(config_path, project)
     created_user_config = (
@@ -1747,6 +1803,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
                 f"4. Upload: {display_path(zip_path)}",
             ],
         )
+        refresh_projection()
         return
 
     if normalized == "claude-code":
@@ -1791,6 +1848,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             next_step,
             extra_lines=extra_lines,
         )
+        refresh_projection()
         return
 
     if normalized in {"codex", "codex-app", "codex-desktop"}:
@@ -1816,7 +1874,10 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             ("Injected recall instruction into", codex_agents_md),
         ]
         extra_lines = ["Codex can use docmancer commands as a fallback."]
-        next_step = 'Run `docmancer query "your question"` to verify retrieval from the CLI.'
+        shared_coverage = _shared_skill_coverage("codex")
+        if shared_coverage:
+            extra_lines.append(shared_coverage)
+        next_step = 'Run `docmancer docs query "your question"` to verify retrieval from the CLI.'
         if hooks:
             installed_paths.extend(_install_agent_hooks("codex", project=project, config_path=effective_config_path))
             extra_lines.insert(0, "Automatic recall hooks installed for SessionStart and UserPromptSubmit.")
@@ -1835,6 +1896,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             next_step,
             extra_lines=extra_lines,
         )
+        refresh_projection()
         return
 
     if hooks or capture_hooks:
@@ -1861,6 +1923,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             effective_config_path,
             "Restart Cursor for changes to take effect.",
         )
+        refresh_projection()
         return
 
     if normalized == "cline":
@@ -1880,6 +1943,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
                 "Cline discovers skills from ~/.cline/skills/ or .cline/skills/ in the workspace.",
             ],
         )
+        refresh_projection()
         return
 
     if normalized == "github-copilot":
@@ -1916,9 +1980,10 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
                 effective_config_path,
                 "Start a new Copilot CLI session for the instructions to take effect.",
                 extra_lines=[
-                    "For Copilot in VS Code, Xcode, JetBrains, or GitHub.com, run `docmancer install github-copilot --project` inside each repository.",
+                    "For Copilot in VS Code, Xcode, JetBrains, or GitHub.com, run `docmancer agent install github-copilot --project` inside each repository.",
                 ],
             )
+        refresh_projection()
         return
 
     if normalized == "gemini":
@@ -1941,9 +2006,15 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             installed_paths,
             created_user_config,
             effective_config_path,
-            'Run `docmancer query "your question"` or restart Gemini if it does not pick up the skill immediately.',
-            extra_lines=["Gemini CLI will automatically use docmancer commands."],
+            'Run `docmancer docs query "your question"` or restart Gemini if it does not pick up the skill immediately.',
+            extra_lines=[
+                line for line in (
+                    "Gemini CLI will automatically use docmancer commands.",
+                    _shared_skill_coverage("gemini"),
+                ) if line
+            ],
         )
+        refresh_projection()
         return
 
     if normalized == "opencode":
@@ -1963,9 +2034,15 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
             installed_paths,
             created_user_config,
             effective_config_path,
-            'Run `docmancer query "your question"` to verify retrieval from the CLI.',
-            extra_lines=["OpenCode will automatically use docmancer commands."],
+            'Run `docmancer docs query "your question"` to verify retrieval from the CLI.',
+            extra_lines=[
+                line for line in (
+                    "OpenCode will automatically use docmancer commands.",
+                    _shared_skill_coverage("opencode"),
+                ) if line
+            ],
         )
+        refresh_projection()
         return
 
 

@@ -21,7 +21,7 @@ Most users only need these:
 | `DOCMANCER_HOME` | Override the storage root. Defaults to `~/.docmancer`. |
 | `DOCMANCER_MEMORY_DB` | Override the memory index database path. |
 | `DOCMANCER_HOOK_TIMEOUT_MS` | Bound automatic hook recall. Default: `1000`. |
-| `OPENROUTER_API_KEY` | Enable optional `docmancer memory consolidate` and MCP consolidation tools. |
+| `OPENROUTER_API_KEY` | Enable optional model-assisted wording in advanced compatibility workflows. Deterministic reconciliation remains authoritative. |
 
 Do not put real keys in `docmancer.yaml`. docmancer reads provider keys from the shell environment.
 
@@ -129,9 +129,9 @@ The default stack needs no provider keys. These settings are for explicit opt-in
 
 | Use case | Variables or config |
 |----------|---------------------|
-| OpenRouter consolidation | `OPENROUTER_API_KEY` for `docmancer memory consolidate --provider openrouter`. |
+| Optional model assistance | `OPENROUTER_API_KEY` for advanced compatibility workflows. |
 | Cloud embeddings | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VOYAGE_API_KEY`, or `COHERE_API_KEY`, depending on `embeddings.provider`. |
-| FTS5-only operation | `DOCMANCER_AUTO_VECTORS=0` or `docmancer ingest --no-vectors`. |
+| FTS5-only operation | `DOCMANCER_AUTO_VECTORS=0`; the hidden one-release ingest alias also retains `--no-vectors`. |
 | FastEmbed cache override | `DOCMANCER_FASTEMBED_CACHE_DIR`. |
 | Advanced Qdrant backend | `vector_store.provider: qdrant`, optional `vector_store.url`, optional `vector_store.api_key_env`, and the `embeddings-heavy` extra. |
 

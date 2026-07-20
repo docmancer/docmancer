@@ -2,10 +2,24 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Markdown, Static, TextArea, Tree
+from textual.widgets import Button, LoadingIndicator, Markdown, Static, TextArea, Tree
 
 from docmancer.tui.presentation import source_display_location
+
+
+class ScrollableMarkdown(Markdown, can_focus=True):
+    """Markdown inspector that supports mouse and keyboard scrolling."""
+
+    BINDINGS = [
+        Binding("up", "scroll_up", show=False),
+        Binding("down", "scroll_down", show=False),
+        Binding("pageup", "page_up", show=False),
+        Binding("pagedown", "page_down", show=False),
+        Binding("home", "scroll_home", show=False),
+        Binding("end", "scroll_end", show=False),
+    ]
 
 
 def render_result(result: dict | None, mode: str = "docs") -> str:
@@ -32,6 +46,8 @@ class Inspector(Vertical):
         self.document: dict | None = None
         self.matches: list[dict] = []
         self.match_index = 0
+        self.navigation_kind = "match"
+        self._context_action_label = "CONTEXT ACTIONS"
 
     def compose(self) -> ComposeResult:
         yield Static("SELECTED FILE", classes="pane-title", id="inspector-title")
@@ -45,9 +61,11 @@ class Inspector(Vertical):
             soft_wrap=True,
             id="source-text",
         )
-        yield Markdown("Select a result to inspect it.", id="inspector-markdown")
+        yield ScrollableMarkdown("Select a result to inspect it.", id="inspector-markdown")
         with Vertical(id="source-action-bar"):
-            yield Static("FILE CONTROLS", id="source-action-label")
+            with Horizontal(id="source-action-header"):
+                yield Static("FILE CONTROLS", id="source-action-label")
+                yield LoadingIndicator(id="context-loading")
             with Horizontal(id="source-actions"):
                 yield Button("N  NEW", id="source-new", variant="primary", classes="crud-action")
                 yield Button("E  EDIT", id="source-edit", classes="crud-action")
@@ -59,23 +77,93 @@ class Inspector(Vertical):
         self.document = None
         self.matches = []
         self.match_index = 0
+        self.navigation_kind = "match"
         is_docs = mode == "docs"
-        self.query_one("#inspector-title", Static).update("DOCUMENT" if is_docs else "SELECTED FILE")
-        self.query_one("#source-meta", Static).display = not is_docs
-        self.query_one("#source-text", TextArea).display = not is_docs
+        is_context = mode == "context"
+        title = (
+            "DOCUMENT"
+            if is_docs
+            else "SELECTED CONTEXT"
+            if is_context
+            else "SELECTED FILE"
+        )
+        self.query_one("#inspector-title", Static).update(title)
+        self.query_one("#source-meta", Static).display = not is_docs and not is_context
+        self.query_one("#source-text", TextArea).display = not is_docs and not is_context
         self.query_one("#docs-outline", Tree).display = False
         markdown = self.query_one("#inspector-markdown", Markdown)
         markdown.display = is_docs or bool(message)
         markdown.update(message or "Select a result to inspect it.")
         action_bar = self.query_one("#source-action-bar", Vertical)
-        action_bar.display = not is_docs and mode in {"memory", "instructions"}
-        self.query_one("#source-action-label", Static).update("NEW SOURCE")
+        action_bar.display = not is_docs and (mode in {"memory", "instructions"} or is_context)
+        self.query_one("#source-action-label", Static).update("CONTEXT ACTIONS" if is_context else "NEW SOURCE")
         actions = self.query_one("#source-actions", Horizontal)
         for button in actions.query(Button):
-            button.display = button.id == "source-new"
-        if not is_docs:
+            button.display = is_context or button.id == "source-new"
+        if is_context:
+            self.query_one("#source-new", Button).label = "A  ADD"
+            self.query_one("#source-edit", Button).label = "✓  APPROVE"
+            self.query_one("#source-delete", Button).label = "×  REJECT"
+            self.query_one("#source-forget", Button).label = "R  REVIEW"
+            self.query_one("#source-promote", Button).label = "S  SHARE"
+            self._set_context_buttons(add=True, review=True)
+        if not is_docs and not is_context:
             self.query_one("#source-meta", Static).update(message or "Select a file to inspect it.")
             self.query_one("#source-text", TextArea).load_text("")
+
+    def show_context(self, item: dict, message: str) -> None:
+        """Render context and expose only actions that apply to the selected row."""
+        self.clear("context", message)
+        is_proposal = item.get("view_kind") == "context-proposal"
+        is_record = item.get("view_kind") == "context-record"
+        if is_proposal:
+            self._context_action_label = "REVIEW PROPOSAL"
+            self.query_one("#source-edit", Button).label = "✓  APPROVE"
+            self.query_one("#source-delete", Button).label = "×  REJECT"
+            self._set_context_buttons(approve=True, reject=True)
+        elif is_record:
+            self._context_action_label = "CANONICAL RECORD"
+            self.query_one("#source-edit", Button).label = "E  EDIT"
+            self.query_one("#source-delete", Button).label = "D  REMOVE"
+            self._set_context_buttons(approve=True, reject=True)
+        else:
+            audience = str(item.get("audience_kind") or "personal")
+            pending = int(item.get("pending") or 0)
+            self._context_action_label = "PERSONAL CONTEXT" if audience == "personal" else "TEAM CONTEXT"
+            self._set_context_buttons(
+                add=True,
+                review=pending > 0,
+                share=audience == "personal" and int(item.get("records") or 0) > 0,
+            )
+        self.query_one("#source-action-label", Static).update(self._context_action_label)
+        self.set_context_busy(None)
+
+    def _set_context_buttons(
+        self,
+        *,
+        add: bool = False,
+        approve: bool = False,
+        reject: bool = False,
+        review: bool = False,
+        share: bool = False,
+    ) -> None:
+        visibility = {
+            "source-new": add,
+            "source-edit": approve,
+            "source-delete": reject,
+            "source-forget": review,
+            "source-promote": share,
+        }
+        for button in self.query_one("#source-actions", Horizontal).query(Button):
+            button.display = visibility.get(button.id or "", False)
+
+    def set_context_busy(self, label: str | None) -> None:
+        """Show immediate progress and prevent duplicate context mutations."""
+        busy = bool(label)
+        self.query_one("#context-loading", LoadingIndicator).display = busy
+        self.query_one("#source-action-label", Static).update(label or self._context_action_label)
+        for button in self.query_one("#source-actions", Horizontal).query(Button):
+            button.disabled = busy
 
     def show_docs_result(self, result: dict | None) -> None:
         self.document = None
@@ -171,7 +259,7 @@ class Inspector(Vertical):
             self._show_security_markdown(
                 "# Security audit unavailable\n\n"
                 f"The local audit could not complete: `{report['error']}`\n\n"
-                "Run `/audit` to try again."
+                "Run `docmancer status --json` for the diagnostic report."
             )
             return
         count = int(report.get("unique_secret_count") or 0)
@@ -209,20 +297,87 @@ class Inspector(Vertical):
                 ]
             )
         if len(occurrences) > 50:
-            lines.append(f"Showing 50 of {len(occurrences):,} occurrences. Use `docmancer memory audit --json` for the complete report.")
+            lines.append(f"Showing 50 of {len(occurrences):,} occurrences. Use `docmancer status --json` for the complete report.")
         self._show_security_markdown("\n".join(lines))
+
+    def show_hook_status(self, hook: dict) -> None:
+        context_on = bool(hook.get("recall"))
+        context_coverage = str(hook.get("context_coverage") or hook.get("scope") or "off")
+        capture_coverage = str(hook.get("capture_coverage") or "off")
+        events = ", ".join(str(event) for event in (hook.get("events") or [])) or "None"
+        error = f"\n\n**Read error:** `{hook['error']}`" if hook.get("error") else ""
+        lines = [
+            f"# {hook.get('agent') or 'Agent'} automatic context",
+            "",
+            f"**Automatic context:** {'On' if context_on else 'Off'}",
+            "",
+            (
+                f"Relevant approved context is added automatically for **{context_coverage}**."
+                if context_on
+                else "This agent will not receive context automatically. Manual queries still work."
+            ),
+            "",
+            f"**New-memory capture:** {capture_coverage}",
+            "",
+            "Capture is optional and separate. It lets completed agent sessions propose new memory; "
+            "it does not affect context delivery.",
+            "",
+            f"**Hook events:** {events}",
+        ]
+        paths = list(hook.get("paths") or [])
+        if paths:
+            lines.extend(["", "**Configuration:**", *[f"- `{path}`" for path in paths]])
+        elif hook.get("path"):
+            lines.extend(["", f"**Configuration:** `{hook['path']}`"])
+        if hook.get("project_override"):
+            lines.extend(["", "A project hook is also installed, but the user-level hook already covers this project."])
+        if error:
+            lines.append(error)
+        if not context_on:
+            lines.extend(
+                [
+                    "",
+                    f"Enable automatic context with `docmancer agent install {hook.get('agent')} --hooks`.",
+                ]
+            )
+        body = "\n".join(lines)
+        self._show_security_markdown(body)
 
     def show_intelligence(self, item: dict) -> None:
         kind = str(item.get("intelligence_kind") or "relation")
-        if kind == "recap":
-            counts = item.get("counts") or {}
+        if kind == "conflict-group":
+            members = list(item.get("members") or [])
             lines = [
-                "# Seven-day memory recap",
+                "# Claim needs review",
                 "",
-                f"- **New or revised memories:** {int(counts.get('memories') or 0)}",
-                f"- **Conflicts:** {int(counts.get('conflicts') or 0)}",
-                f"- **Superseded:** {int(counts.get('superseded') or 0)}",
+                f"**Claim:** {item.get('claim_subject') or item.get('claim_key')}",
+                "",
+                f"**Scope:** `{item.get('scope')}`",
+                "",
             ]
+            labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            for index, member in enumerate(members):
+                label = labels[index] if index < len(labels) else str(index + 1)
+                lines.extend(
+                    [
+                        f"## {label}",
+                        "",
+                        str(member.get("text") or ""),
+                        "",
+                        f"Memory ID: `{member.get('atom_id')}`",
+                        "",
+                    ]
+                )
+            relation_ids = list(item.get("relation_ids") or [])
+            if relation_ids:
+                lines.extend(
+                    [
+                        "Choose one value with `/resolve choose <memory-id>`. Use `/resolve keep-both` "
+                        "when both values are scope-specific, or `/resolve dismiss` when this is not a conflict.",
+                        "",
+                        "Relations: " + ", ".join(f"`{value}`" for value in relation_ids),
+                    ]
+                )
         elif kind == "orphan":
             lines = [
                 "# Orphan memory",
@@ -233,6 +388,21 @@ class Inspector(Vertical):
                 f"- **Type:** {item.get('memory_type')}",
                 f"- **Scope:** {item.get('scope')}",
             ]
+        elif kind == "recent-source":
+            lines = [
+                "# Recently changed source",
+                "",
+                f"**{item.get('source_title') or item.get('source_path')}**",
+                "",
+                f"- **Changed:** {item.get('activity_at')}",
+                f"- **Source:** `{item.get('source_path')}`",
+                f"- **Atoms changed:** {int(item.get('atom_count') or 0)}",
+            ]
+            samples = list(item.get("samples") or [])
+            if samples:
+                lines.extend(["", "## Sample atoms", ""])
+                for sample in samples:
+                    lines.append(f"- `{sample.get('atom_id')}` {sample.get('text')}")
         else:
             lines = [
                 f"# {kind.title()}",
@@ -255,7 +425,7 @@ class Inspector(Vertical):
         self.document = None
         self.matches = []
         self.match_index = 0
-        self.query_one("#inspector-title", Static).update("SECURITY AUDIT")
+        self.query_one("#inspector-title", Static).update("AUDIT")
         self.query_one("#source-meta", Static).display = False
         self.query_one("#source-text", TextArea).display = False
         self.query_one("#docs-outline", Tree).display = False
@@ -265,23 +435,36 @@ class Inspector(Vertical):
         self.query_one("#source-action-bar", Vertical).display = False
 
     def show_source(self, document: dict, matches: list[dict] | None = None, match_index: int = 0) -> None:
+        self.query_one("#source-new", Button).label = "N  NEW"
+        self.query_one("#source-edit", Button).label = "E  EDIT"
+        self.query_one("#source-delete", Button).label = "D  DELETE"
+        self.query_one("#source-forget", Button).label = "F  SUPPRESS"
+        self.query_one("#source-promote", Button).label = "P  PROMOTE"
         self.document = document
-        self.matches = list(matches or [])
+        self.navigation_kind = "atom" if matches is None else "match"
+        self.matches = list(document.get("atoms") or []) if matches is None else list(matches)
         self.match_index = min(max(0, match_index), max(0, len(self.matches) - 1))
         self.query_one("#inspector-title", Static).update("SELECTED MEMORY FILE")
         meta = [
             "Indexed copy",
             str(document.get("harness") or "unknown"),
             str(document.get("scope") or "unknown"),
-            f"{int(document.get('atom_count') or 0):,} passages",
+            f"{int(document.get('atom_count') or 0):,} atoms",
         ]
         if document.get("changed_since_sync"):
             meta.append("source changed since sync")
         if document.get("source_missing"):
             meta.append("original source missing")
         if self.matches:
-            meta.append(f"match {self.match_index + 1}/{len(self.matches)}  [ and ] navigate")
-            meta.append("[E] edit file  [D] delete file  [F] suppress passage  [P] promote")
+            selected = self.matches[self.match_index]
+            noun = "atom" if self.navigation_kind == "atom" else "match"
+            meta.append(f"{noun} {self.match_index + 1}/{len(self.matches)}  [ and ] navigate")
+            if self.navigation_kind == "atom":
+                meta.append(
+                    f"{selected.get('memory_type') or 'fact'}  |  {selected.get('status') or 'current'}  |  "
+                    f"{str(selected.get('identifier') or '')[:18]}"
+                )
+            meta.append("[E] edit file  [D] delete file  [F] suppress atom  [P] promote")
         else:
             meta.append("[N] new file  [E] edit  [D] delete  [O] open  [C] copy")
         display_path = source_display_location(str(document.get("path") or ""), limit=110)
@@ -306,7 +489,7 @@ class Inspector(Vertical):
         action_bar = self.query_one("#source-action-bar", Vertical)
         action_bar.display = True
         owned = bool(document.get("record_id") and document.get("origin") != "harvested")
-        label = "MATCH CONTROLS" if self.matches else "RECORD CONTROLS" if owned else "FILE CONTROLS"
+        label = "ATOM CONTROLS" if self.matches and self.navigation_kind == "atom" else "MATCH CONTROLS" if self.matches else "RECORD CONTROLS" if owned else "FILE CONTROLS"
         self.query_one("#source-action-label", Static).update(label)
         actions = self.query_one("#source-actions", Horizontal)
         missing = bool(document.get("source_missing"))
@@ -321,5 +504,13 @@ class Inspector(Vertical):
         if not self.document or not self.matches:
             return False
         self.match_index = (self.match_index + delta) % len(self.matches)
-        self.show_source(self.document, self.matches, self.match_index)
+        atom_navigation = self.navigation_kind == "atom"
+        self.show_source(self.document, None if atom_navigation else self.matches, self.match_index)
         return True
+
+    @property
+    def selected_memory_identifier(self) -> str | None:
+        if not self.matches:
+            return None
+        selected = self.matches[min(self.match_index, len(self.matches) - 1)]
+        return str(selected.get("identifier") or selected.get("record_id") or selected.get("atom_id") or "") or None

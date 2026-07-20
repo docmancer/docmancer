@@ -65,7 +65,8 @@ class SourceViewerScreen(ModalScreen[None]):
         area = self.query_one("#source-viewer-text", TextArea)
         if self.matches:
             match = self.matches[self.match_index]
-            label += f"  |  match {self.match_index + 1}/{len(self.matches)}  |  [ and ] navigate"
+            noun = "atom" if match.get("navigation_kind") == "atom" else "match"
+            label += f"  |  {noun} {self.match_index + 1}/{len(self.matches)}  |  [ and ] navigate"
             lines = str(self.document.get("content") or "").splitlines()
             start = min(max(0, int(match.get("line_start") or 1) - 1), max(0, len(lines) - 1))
             end = min(max(start, int(match.get("line_end") or start + 1) - 1), max(0, len(lines) - 1))

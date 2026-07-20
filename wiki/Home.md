@@ -2,7 +2,7 @@
 
 This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, the memory loop, and a high-level overview.
 
-Docmancer turns the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into **memory atoms**: small self-contained facts, decisions, rules, preferences, and workflows with stable identity and source provenance. It stores those atoms in one local, offline index, connects revisions and related claims in a reviewable graph, and recalls the current projection manually or through Claude Code and Codex hooks. The Intelligence surface exposes conflicts, history, recaps, and orphans without letting unreviewed suggestions change memory. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
+Docmancer turns the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into **memory atoms**: small self-contained facts, decisions, rules, preferences, and workflows with stable identity and source provenance. It stores those atoms in one local, offline index, connects explicit revisions and precise structured claims in a reviewable graph, and recalls the current projection manually or through Claude Code and Codex hooks. The Review surface separates actionable claim groups from recent changes, maintenance, and history, and machine suggestions never change lifecycle state. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
 
 ## Pick a page
 
@@ -13,7 +13,7 @@ Docmancer turns the memory your coding agents already wrote (Claude Code, Codex,
 | **[Configuration](./Configuration.md)** | `docmancer.yaml` reference, common env vars, API keys, and advanced backends |
 | **[Architecture](./Architecture.md)** | The memory harness, graph, lifecycle, hybrid retrieval, cloud projection, and agent installs |
 | **[Supported Sources](./Supported-Sources.md)** | Memory sources plus doc file formats and URL providers |
-| **[Install Targets](./Install-Targets.md)** | Where `docmancer install <agent>` writes skill files |
+| **[Install Targets](./Install-Targets.md)** | Where `docmancer agent install <agent>` writes skill files and projections |
 | **[Troubleshooting](./Troubleshooting.md)** | Common errors and fixes |
 
 ## What lives where

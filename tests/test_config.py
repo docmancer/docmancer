@@ -20,6 +20,14 @@ def test_config_from_dict():
     assert config.query.default_budget == 1800
 
 
+def test_capture_config_is_per_harness():
+    config = DocmancerConfig(capture={"enabled": {"codex": False, "claude-code": True}})
+
+    assert config.capture.allows("claude-code") is True
+    assert config.capture.allows("codex") is False
+    assert config.capture.allows("unknown") is True
+
+
 def test_loader_format_config_overrides_defaults():
     config = DocmancerConfig(
         loaders={

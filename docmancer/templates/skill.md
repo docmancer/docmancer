@@ -5,7 +5,7 @@ description: Search local documentation context packs with docmancer CLI. Use wh
 
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer memory query`. The core retrieval path needs no API keys, vector database, hosted query API, or background daemon.
+Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`. The core retrieval path needs no API keys, vector database, hosted query API, or background daemon.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -20,16 +20,16 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Workflow
 
-1. Run `docmancer list` to see indexed docs.
-2. Run `docmancer query "question"` when relevant docs are present.
-3. If local docs are missing and the user approves the path, run `docmancer ingest <path>`.
-4. If URL docs are missing and the user approves the source, run `docmancer add <url>`.
+1. Run `docmancer docs list` to see indexed docs.
+2. Run `docmancer docs query "question"` when relevant docs are present.
+3. If local docs are missing and the user approves the path, run `docmancer docs add <path>`.
+4. If URL docs are missing and the user approves the source, run `docmancer docs add <url>`.
 5. Use the returned sections as source-grounded context for the answer or code change.
 
 ## Ingest Local Documentation
 
 ```bash
-docmancer ingest ./docs
+docmancer docs add ./docs
 ```
 
 Use `ingest` for local files and directories.
@@ -48,7 +48,7 @@ An OKF bundle (a directory of markdown files with YAML frontmatter, produced by 
 ## Add URL Documentation
 
 ```bash
-docmancer add https://docs.example.com
+docmancer docs add https://docs.example.com
 ```
 
 Use `add` for documentation URLs and GitHub repositories.
@@ -64,7 +64,7 @@ Use `add` for documentation URLs and GitHub repositories.
 ## Query Documentation
 
 ```bash
-docmancer query "<question>"
+docmancer docs query "<question>"
 ```
 
 Primary command. Returns a compact markdown context pack with source attribution and token savings.
@@ -82,19 +82,19 @@ Primary command. Returns a compact markdown context pack with source attribution
 
 | Command | Purpose |
 |---------|---------|
-| `docmancer list` | Show indexed documentation sources |
-| `docmancer list --all` | Show every stored page or file |
-| `docmancer inspect` | Show index stats, format counts, and extract locations |
-| `docmancer update [source]` | Re-fetch and re-index all sources, or one specific source |
-| `docmancer remove <source>` | Remove a source or docset root |
-| `docmancer remove --all` | Clear the entire index |
+| `docmancer docs list` | Show indexed documentation sources |
+| `docmancer docs list --all` | Show every stored page or file |
+| `docmancer docs list` | Show index stats, format counts, and extract locations |
+| `docmancer docs sync [source]` | Re-fetch and re-index all sources, or one specific source |
+| `docmancer docs remove <source>` | Remove a source or docset root |
+| `docmancer docs remove --all` | Clear the entire index |
 | `docmancer clear` | Wipe docmancer home, model caches used by docmancer, and managed Qdrant data (destructive; use `--dry-run`, `--keep-config`, or `--keep-models` as needed) |
-| `docmancer doctor` | Check config, loader availability, index health, and installed skills |
-| `docmancer fetch <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
+| `docmancer status --check` | Check config, loader availability, index health, and installed skills |
+| `docmancer docs add <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
 
 ## Common Mistakes
 
-- Do not use `docmancer add` for new local files. Use `docmancer ingest <path>`.
-- Do not use `docmancer ingest` for URLs. Use `docmancer add <url>`.
-- Do not run `docmancer query` before checking indexed sources with `docmancer list`.
-- Do not assume docs are indexed. Always verify with `docmancer list` before querying.
+- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
+- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
+- Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.
+- Do not assume docs are indexed. Always verify with `docmancer docs list` before querying.

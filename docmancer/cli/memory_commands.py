@@ -30,6 +30,7 @@ from docmancer.cli.ui import (
     style,
 )
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD
+from docmancer.memory.packs import render_pack
 
 
 def _emit_counts(heading: str, counts: Counter) -> None:
@@ -225,31 +226,41 @@ def _agent(include=(), exclude=()):
 @click.group(
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Index and recall your coding agents' memory.",
+    invoke_without_command=True,
+    short_help="Inspect, distil, review, and share canonical context.",
     epilog=format_examples(
-        "docmancer memory sync",
-        "docmancer memory sources --preview",
-        "docmancer memory audit",
-        'docmancer memory query "what deployment decisions have we recorded?"',
-        "docmancer memory sources",
-        "docmancer memory status",
-        "docmancer memory clear",
+        "docmancer memory",
+        "docmancer memory distill --into personal-defaults",
+        "docmancer memory review",
+        'docmancer memory add "Use TypeScript"',
+        "docmancer memory share personal-defaults",
     ),
 )
-def memory_group():
-    """Local, offline memory harness across your coding agents.
+@click.pass_context
+def memory_group(ctx: click.Context):
+    """Manage approved context packs above the local source-attributed memory corpus.
 
-    Discovers and indexes three kinds of content from every agent on this
-    machine (Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and
-    more): agent-written memory, user-authored instruction files (CLAUDE.md /
-    AGENTS.md / GEMINI.md), and project rule directories. `sources` shows exact
-    provenance per file, and `sources --preview` shows what would index before
-    writing. Secrets are redacted on index, and local sync/query commands do not
-    upload anything.
+    Canonical records remain independently editable and revisioned. Distillation
+    proposes software-reconciled pack changes, review controls activation, and
+    sharing creates team proposals instead of writing unreviewed team context.
     """
     if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
         click.echo("docmancer memory commands are disabled inside docmancer subprocesses.", err=True)
         sys.exit(2)
+    if ctx.invoked_subcommand is None:
+        service = _memory_service()
+        rows = service.list_context(project_path=Path.cwd())
+        if not rows:
+            click.echo("No context packs found. Run `docmancer sync`.")
+            return
+        for row in rows:
+            click.echo(f"{row['pack_id']}: {row['records']} active, {row['pending']} pending review")
+
+
+def _memory_service():
+    from docmancer.memory.service import MemoryService
+
+    return MemoryService(_agent())
 
 
 @memory_group.command(
@@ -703,6 +714,103 @@ def memory_recap(since: str, until: str | None, project_id: str | None, as_json:
         click.echo(f"  {row['atom_id']}  {row['memory_type']}  {row['text']}")
 
 
+@memory_group.command("recent", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show recent memory activity.")
+@click.option("--since", default="7d", show_default=True, help="ISO-8601, yesterday, or a relative value such as 24h or 2w.")
+@click.option("--until", default=None, help="Optional ISO-8601 end time.")
+@click.option("--harness", default=None, help="Restrict activity to one harness.")
+@click.option("--limit", default=100, show_default=True, type=click.IntRange(1, 1000))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def memory_recent(since: str, until: str | None, harness: str | None, limit: int, as_json: bool):
+    """Show a recency-ordered timeline, grouped by day and harness."""
+    start = _parse_recap_time(since)
+    end = _parse_recap_time(until) if until else None
+    if end and end < start:
+        raise click.UsageError("--until must be later than --since")
+    rows = _agent().recent(since=start, until=end, harness=harness, limit=limit)
+    if as_json:
+        _emit_json(rows)
+        return
+    emit_brand_header("docmancer memory recent", "See what changed across agent memory lately.")
+    if not rows:
+        emit_status_line("No memory activity matched this time window.", state="info")
+        return
+    grouped = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        grouped[str(row["activity_at"])[:10]][str(row["harness"])].append(row)
+    for day in sorted(grouped, reverse=True):
+        click.echo(style(day, fg="cyan", bold=True))
+        for agent_name in sorted(grouped[day]):
+            click.echo(f"  {agent_name}")
+            for row in grouped[day][agent_name]:
+                fallback = "  source mtime" if row.get("timestamp_fallback") else ""
+                reference = f"docmancer://record/{row['record_id']}" if row.get("record_id") else row["atom_id"]
+                click.echo(f"    {str(row['activity_at'])[11:16]}  {reference}{fallback}")
+                click.echo(f"      {row['text']}")
+
+
+@memory_group.command("import-conversations", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import a ChatGPT or Claude account export.")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--source", type=click.Choice(["auto", "chatgpt", "claude"]), default="auto", show_default=True)
+@click.option("--scope", "scope_kind", type=click.Choice(["global", "project"]), default="global", show_default=True)
+@click.option("--project", "project_path", type=click.Path(file_okay=False, path_type=Path), default=None)
+@click.option("--dry-run", is_flag=True, help="Extract and redact candidates without writing records.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def memory_import_conversations(path: Path, source: str, scope_kind: str, project_path: Path | None, dry_run: bool, as_json: bool):
+    """Recover durable context from a supported account-export conversations.json."""
+    if scope_kind == "project" and project_path is None:
+        project_path = Path.cwd()
+    try:
+        report = _agent().import_conversations(
+            path, source=source, scope_kind=scope_kind, project_path=project_path, dry_run=dry_run
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _emit_json(report)
+        return
+    emit_brand_header("docmancer memory import-conversations", "Import through the normal local redaction and extraction path.")
+    if dry_run:
+        emit_status_line(f"Would create {report['candidates']} durable memory record(s). Nothing was written.", state="info")
+    else:
+        emit_status_line(f"Created {report['created']} durable memory record(s).", state="ok")
+
+
+@memory_group.command("profile", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Preview or update the local working profile.")
+@click.option("--limit", default=24, show_default=True, type=click.IntRange(1, 100))
+@click.option("--apply", "apply_changes", is_flag=True, help="Write the reviewed profile as a durable local record.")
+@click.option("--yes", is_flag=True, help="Confirm writing without an interactive prompt.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable preview output.")
+def memory_profile(limit: int, apply_changes: bool, yes: bool, as_json: bool):
+    """Distil a cheap hook-ready profile entirely on this machine."""
+    agent = _agent()
+    preview = agent.profile_preview(limit=limit)
+    if as_json and not apply_changes:
+        _emit_json(preview)
+        return
+    if not as_json:
+        emit_brand_header("docmancer memory profile", "Distil current working preferences and constraints locally.")
+    if not preview["text"]:
+        if as_json:
+            _emit_json({"error": "no suitable current memories are available for a profile"})
+        else:
+            emit_status_line("No suitable current memories are available for a profile.", state="info")
+        return
+    if not as_json:
+        click.echo(preview["text"])
+        click.echo()
+        emit_status_line(f"Built from {preview['source_atoms']} current memory atom(s).", state="info")
+    if not apply_changes:
+        click.echo("  Review only. Run `docmancer memory profile --apply` to store or update it.")
+        return
+    if not yes:
+        click.confirm("Store this local profile as a durable memory record?", abort=True)
+    record, _indexed = agent.apply_profile(limit=limit)
+    if as_json:
+        _emit_json({"record_id": record.record_id, "record_uri": f"docmancer://record/{record.record_id}"})
+    else:
+        emit_status_line(f"Stored profile as docmancer://record/{record.record_id}.", state="ok")
+
+
 @memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a durable local memory.")
 @click.argument("text")
 @click.option("--scope", "scope_kind", type=click.Choice(["global", "project", "team"], case_sensitive=False), default="global", show_default=True)
@@ -740,6 +848,7 @@ def _atom_dict(atom) -> dict:
         "id": atom.record_id or atom.atom_id,
         "atom_id": atom.atom_id,
         "record_id": atom.record_id,
+        "record_uri": f"docmancer://record/{atom.record_id}" if atom.record_id else None,
         "text": atom.text,
         "type": atom.type,
         "origin": atom.origin,
@@ -819,6 +928,8 @@ def memory_show(identifier: str, as_json: bool):
         return
     emit_brand_header("docmancer memory show", "Inspect content and provenance before changing memory.")
     click.echo(f"ID: {data['id']}")
+    if data["record_uri"]:
+        click.echo(f"URI: {data['record_uri']}")
     click.echo(f"Atom: {atom.atom_id}")
     click.echo(f"Type: {atom.type}")
     click.echo(f"Origin: {atom.origin}")
@@ -1680,6 +1791,47 @@ def _consolidate_payload_in_rounds(
     concurrency: int,
 ):
     """Map-reduce memory consolidation while preserving every selected entry."""
+    from docmancer.memory.consolidation import consolidate_payload
+
+    def on_event(name: str, data: dict) -> None:
+        if name == "plan":
+            click.echo(
+                f"  round {data['round']}  {data['chunks']} provider request(s), "
+                f"~{data['original_tokens']:,} input tokens",
+                err=True,
+            )
+        elif name == "stream":
+            click.echo(
+                f"  round {data['round']} batch {data['batch']}: receiving response... {data['chars']:,} chars",
+                err=True,
+            )
+        elif name == "complete":
+            click.echo(f"  batch {data['batch']}/{data['batches']} completed", err=True)
+
+    initial_chunks, initial_stats = _chunk_payload_entries(payload, budget=budget)
+    _emit_consolidation_plan(
+        provider_label=getattr(client, "provider_name", None) or "provider",
+        chunks=initial_chunks,
+        stats=initial_stats,
+        budget=budget,
+        max_output_tokens=max_output_tokens,
+        draft_quality=draft_quality,
+        concurrency=concurrency,
+    )
+
+    return consolidate_payload(
+        payload,
+        instruction=instruction,
+        client=client,
+        model=model,
+        budget=budget,
+        draft_quality=draft_quality,
+        max_output_tokens=max_output_tokens,
+        concurrency=concurrency,
+        on_event=on_event,
+    )
+
+    # Kept below temporarily for source-compatible helper imports in older integrations.
     from docmancer.ai.memory_features import consolidate_memory, draft_to_markdown, draft_to_merge_text
 
     current_payload = payload
@@ -2097,10 +2249,43 @@ def status():
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Delete the memory index.")
 @click.option("--dry-run", is_flag=True, help="Show what would be removed; delete nothing.")
+@click.option("--harness", default=None, help="Forget only memories from one harness.")
+@click.option("--since", default=None, help="Forget activity on or after this ISO or relative time.")
+@click.option("--before", default=None, help="Forget activity before this ISO or relative time.")
+@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None)
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the confirmation prompt.")
-def clear(dry_run: bool, assume_yes: bool):
+def clear(
+    dry_run: bool,
+    harness: str | None,
+    since: str | None,
+    before: str | None,
+    scope: str | None,
+    assume_yes: bool,
+):
     """Delete the local memory index files."""
     agent = _agent()
+    if any((harness, since, before, scope)):
+        start = _parse_recap_time(since) if since else None
+        end = _parse_recap_time(before) if before else None
+        if start and end and end <= start:
+            raise click.UsageError("--before must be later than --since")
+        matches = agent.clear_filtered(harness=harness, since=start, before=end, scope=scope, dry_run=True)
+        if not matches:
+            click.echo("No memory atoms match these filters.")
+            return
+        click.echo(f"Will forget {len(matches)} memory atom(s):")
+        for atom in matches[:100]:
+            click.echo(f"  {(atom.record_id or atom.atom_id)[:12]}  {atom.harness}  {atom.scope}  {atom.text[:100]}")
+        if len(matches) > 100:
+            click.echo(f"  ... and {len(matches) - 100} more")
+        if dry_run:
+            click.echo("Dry run; no changes made.")
+            return
+        if not assume_yes:
+            click.confirm("Forget these memories?", abort=True)
+        removed = agent.clear_filtered(harness=harness, since=start, before=end, scope=scope)
+        click.echo(f"Forgot {len(removed)} memory atom(s).")
+        return
     paths = [p for p in agent.memory_paths() if p.exists()]
     if not paths:
         click.echo("Memory index is already clear.")
@@ -2115,6 +2300,345 @@ def clear(dry_run: bool, assume_yes: bool):
         click.confirm("Remove the memory index?", abort=True)
     removed = agent.clear()
     click.echo(f"Removed {len(removed)} file(s).")
+
+
+def _context_json(value) -> None:
+    import json
+    from dataclasses import asdict, is_dataclass
+
+    def default(item):
+        return asdict(item) if is_dataclass(item) else str(item)
+
+    click.echo(json.dumps(asdict(value) if is_dataclass(value) else value, indent=2, ensure_ascii=False, default=default))
+
+
+@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show a context pack or memory record.")
+@click.argument("identifier", required=False, metavar="PACK_OR_ID")
+@click.option("--relations", "include_relations", is_flag=True, help="Include graph relationships for a record.")
+@click.option("--history", "include_history", is_flag=True, help="Include revision history.")
+@click.option("--json", "as_json", is_flag=True)
+def canonical_show(identifier: str | None, include_relations: bool, include_history: bool, as_json: bool) -> None:
+    service = _memory_service()
+    if not identifier:
+        value = service.list_context(project_path=Path.cwd())
+        if as_json:
+            _context_json(value)
+        else:
+            for row in value:
+                click.echo(f"{row['pack_id']}: {row['records']} active, {row['pending']} pending")
+        return
+    pack = service.pack(identifier, project_path=Path.cwd())
+    if pack is not None:
+        records = service.agent.records.records(project_paths=service.agent._project_paths())
+        rendered = render_pack(pack, records)
+        if as_json:
+            _context_json({"pack": pack, "rendered": rendered})
+        else:
+            click.echo(rendered, nl=False)
+        return
+    atom = service.agent.find_atom(identifier)
+    if atom is None:
+        raise click.ClickException("context pack or memory ID is missing or ambiguous")
+    value = _atom_dict(atom)
+    if include_relations:
+        value["relations"] = service.agent.relations(identifier)
+    if include_history and atom.record_id:
+        value["history"] = service.agent.records.revisions(atom.record_id)
+    if as_json:
+        _context_json(value)
+        return
+    click.echo(f"ID: {value['id']}")
+    click.echo(f"Type: {atom.type}")
+    click.echo(f"Scope: {atom.audience_kind}/{atom.applicability_kind}")
+    click.echo(f"Source: {display_path(atom.source_path)}")
+    click.echo()
+    click.echo(atom.text)
+    for relation in value.get("relations", []):
+        click.echo(f"\n{relation['relation_type']}: {relation.get('source_text')} <> {relation.get('target_text')}")
+    if value.get("history"):
+        click.echo(f"\n{len(value['history'])} revision(s)")
+
+
+@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add approved personal context or propose team context.")
+@click.argument("text")
+@click.option("--into", "pack_id", default="personal-defaults", show_default=True, help="Destination context pack.")
+@click.option("--scope", "legacy_scope", type=click.Choice(["global", "project", "team"]), default=None, hidden=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
+@click.option("--type", "memory_type", type=click.Choice(["fact", "decision", "preference", "constraint", "workflow", "warning", "command"]), default=None)
+@click.option("--tag", "tags", multiple=True)
+def canonical_add(text: str, pack_id: str, legacy_scope: str | None, project_path: Path | None, memory_type: str | None, tags: tuple[str, ...]) -> None:
+    service = _memory_service()
+    project = project_path or Path.cwd()
+    if legacy_scope in {"project", "team"} and pack_id == "personal-defaults":
+        prefix = "team-project:" if legacy_scope == "team" else "personal-project:"
+        service.ensure_packs(project_path=project)
+        matching = [
+            pack.pack_id
+            for pack in service.packs.packs()
+            if pack.pack_id.startswith(prefix) and service._pack_visible(pack, project)
+        ]
+        if matching:
+            pack_id = matching[0]
+    try:
+        result = service.add_canonical(
+            text,
+            pack_id=pack_id,
+            project_path=project,
+            memory_type=memory_type,
+            tags=list(tags),
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if result["proposal"]:
+        click.echo(f"Created team review proposal {result['proposal'].proposal_id}.")
+    else:
+        click.echo(f"Added approved context {result['record'].record_id} to {result['pack'].pack_id}.")
+
+
+@memory_group.command("edit", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Edit canonical context.")
+@click.argument("identifier", metavar="ID")
+@click.argument("text", required=False)
+def canonical_edit(identifier: str, text: str | None) -> None:
+    service = _memory_service()
+    atom = service.agent.find_atom(identifier)
+    if atom is None:
+        raise click.ClickException("memory ID is missing or ambiguous")
+    replacement = text
+    if replacement is None:
+        replacement = click.edit(atom.text)
+    if replacement is None or not replacement.strip():
+        raise click.ClickException("edit cancelled or empty")
+    try:
+        result = service.edit_record(identifier, replacement)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if result["proposal"]:
+        click.echo(f"Created team review proposal {result['proposal'].proposal_id}.")
+    else:
+        click.echo(f"Updated {result['record'].record_id} and activated its new revision.")
+
+
+@memory_group.command("remove", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Remove context with a durable tombstone.")
+@click.argument("identifier", metavar="ID")
+@click.option("--yes", is_flag=True)
+def canonical_remove(identifier: str, yes: bool) -> None:
+    if not yes:
+        click.confirm("Remove this context?", abort=True)
+    try:
+        result = _memory_service().remove_record(identifier)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if result["proposal"]:
+        click.echo(f"Created team removal proposal {result['proposal'].proposal_id}.")
+    else:
+        click.echo("Removed context and wrote a content-free tombstone.")
+
+
+@memory_group.command("distill", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose a reconciled context-pack patch.")
+@click.option("--into", "pack_id", default="personal-defaults", show_default=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, 5000),
+    default=None,
+    help="Review at most this many operations now; later distillation continues with the remainder.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def canonical_distill(pack_id: str, project_path: Path | None, limit: int, as_json: bool) -> None:
+    try:
+        proposal = _memory_service().distill(pack_id, project_path=project_path or Path.cwd(), limit=limit)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if proposal is None:
+        click.echo("No patch proposed. The approved pack already matches current evidence.")
+        return
+    if as_json:
+        _context_json(proposal)
+        return
+    click.echo(f"Proposal {proposal.proposal_id} for {proposal.pack_id}")
+    for index, operation in enumerate(proposal.operations):
+        click.echo(f"[{index}] {operation.action}: {operation.text or operation.record_id}")
+        click.echo(f"    confidence={operation.confidence:.2f}  sources={len(operation.source_paths)}  {operation.reason}")
+    click.echo(f"Review with: docmancer memory review {proposal.proposal_id}")
+
+
+@memory_group.command("review", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Review context proposals and unresolved evidence.")
+@click.argument("proposal_id", required=False, metavar="PROPOSAL")
+@click.option("--approve", is_flag=True)
+@click.option("--reject", is_flag=True)
+@click.option("--edit", "edit_index", type=int, default=None, help="Edit one operation by zero-based index.")
+@click.option("--text", "replacement_text", default=None)
+@click.option("--conflicts", is_flag=True, help="Show unresolved contradictions.")
+@click.option("--orphans", is_flag=True, help="Show current unconnected memories.")
+@click.option("--strategy", type=click.Choice(["keep-left", "keep-right", "keep-both", "manual"]), default=None, help="Resolve a cloud transport conflict.")
+@click.option("--json", "as_json", is_flag=True)
+def canonical_review(
+    proposal_id: str | None,
+    approve: bool,
+    reject: bool,
+    edit_index: int | None,
+    replacement_text: str | None,
+    conflicts: bool,
+    orphans: bool,
+    strategy: str | None,
+    as_json: bool,
+) -> None:
+    service = _memory_service()
+    if conflicts or orphans:
+        value = (
+            [*service.agent.conflicts(unresolved_only=True), *[
+                {**row, "review_kind": "cloud-conflict", "id": f"cloud:{row['conflict_id']}"}
+                for row in service.cloud_conflicts()
+            ]]
+            if conflicts
+            else service.agent.graph.orphans()
+        )
+        if as_json:
+            _context_json(value)
+        else:
+            for row in value:
+                click.echo(str(row))
+        return
+    if not proposal_id:
+        rows = service.proposals()
+        cloud_rows = service.cloud_conflicts()
+        if as_json:
+            _context_json([*rows, *[
+                {**row, "review_kind": "cloud-conflict", "id": f"cloud:{row['conflict_id']}"}
+                for row in cloud_rows
+            ]])
+        elif not rows and not cloud_rows:
+            click.echo("No context proposals are pending review.")
+        else:
+            for proposal in rows:
+                click.echo(f"{proposal.proposal_id}: {proposal.pack_id}, {len(proposal.operations)} operation(s)")
+            for row in cloud_rows:
+                click.echo(f"cloud:{row['conflict_id']}: encrypted transport conflict, {row['reason']}")
+        return
+    if proposal_id.startswith("cloud:"):
+        if strategy is None:
+            row = next((row for row in service.cloud_conflicts() if f"cloud:{row['conflict_id']}" == proposal_id), None)
+            if row is None:
+                raise click.ClickException("unresolved cloud conflict not found")
+            _context_json(row) if as_json else click.echo(json.dumps(row, indent=2, sort_keys=True))
+            return
+        if strategy == "manual" and not replacement_text:
+            raise click.UsageError("--text is required with --strategy manual")
+        try:
+            service.resolve_cloud_conflict(proposal_id, strategy, text=replacement_text)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Cloud conflict {proposal_id} resolved with {strategy}.")
+        return
+    proposal = service.proposal(proposal_id)
+    if proposal is None:
+        raise click.ClickException("proposal is missing or ambiguous")
+    decisions = int(approve) + int(reject) + int(edit_index is not None)
+    if decisions > 1:
+        raise click.UsageError("choose only one of --approve, --reject, or --edit")
+    if decisions == 0:
+        if as_json:
+            _context_json(proposal)
+        else:
+            click.echo(f"{proposal.proposal_id}: {proposal.pack_id}")
+            for index, operation in enumerate(proposal.operations):
+                click.echo(f"[{index}] {operation.action}: {operation.text or operation.record_id}")
+                for source in operation.source_paths:
+                    click.echo(f"    Source: {display_path(source)}")
+        return
+    decision = "approve" if approve else "reject" if reject else "edit"
+    try:
+        result = service.review(proposal.proposal_id, decision, replacement_text=replacement_text, operation_index=edit_index)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Proposal {result['proposal'].proposal_id} is {result['proposal'].state}.")
+
+
+@memory_group.command("share", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose approved personal context for the team.")
+@click.argument("pack_id", metavar="PACK")
+@click.option("--into", "target_pack_id", default="team-standards", show_default=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
+def canonical_share(pack_id: str, target_pack_id: str, project_path: Path | None) -> None:
+    try:
+        proposal = _memory_service().share(pack_id, target_pack_id=target_pack_id, project_path=project_path or Path.cwd())
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if proposal is None:
+        click.echo("No new context needs team review.")
+    else:
+        click.echo(f"Created encrypted team promotion proposal {proposal.proposal_id}.")
+
+
+@memory_group.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export approved context as Markdown.")
+@click.argument("pack_id", required=False, metavar="PACK")
+@click.option("--output", type=click.Path(path_type=Path), default=None)
+def canonical_export(pack_id: str | None, output: Path | None) -> None:
+    service = _memory_service()
+    records = service.agent.records.records(project_paths=service.agent._project_paths())
+    packs = [service.pack(pack_id, project_path=Path.cwd())] if pack_id else [
+        pack for pack in service.packs.packs() if service._pack_visible(pack, Path.cwd())
+    ]
+    packs = [pack for pack in packs if pack is not None]
+    if not packs:
+        raise click.ClickException("context pack is missing or ambiguous")
+    rendered = {pack.pack_id: render_pack(pack, records) for pack in packs}
+    if output is None:
+        click.echo("\n".join(rendered.values()), nl=False)
+        return
+    if len(rendered) == 1 and output.suffix:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(next(iter(rendered.values())), encoding="utf-8")
+        click.echo(f"Exported context to {display_path(output)}")
+        return
+    output.mkdir(parents=True, exist_ok=True)
+    for name, body in rendered.items():
+        (output / f"{name.replace(':', '-')}.md").write_text(body, encoding="utf-8")
+    click.echo(f"Exported {len(rendered)} context pack(s) to {display_path(output)}")
+
+
+def _hide_compatibility_command(name: str, replacement: str) -> None:
+    from types import MethodType
+
+    command = memory_group.commands.get(name)
+    if command is None:
+        return
+    command.hidden = True
+    original_invoke = command.invoke
+
+    def invoke(self, ctx: click.Context):
+        if not bool(ctx.params.get("as_json")):
+            click.echo(f"Deprecated: `docmancer memory {name}` moved to `{replacement}`.", err=True)
+        return original_invoke(ctx)
+
+    command.invoke = MethodType(invoke, command)
+
+
+for _old_name, _replacement in {
+    "apply": "docmancer agent refresh",
+    "audit": "docmancer status",
+    "clear": "docmancer memory remove",
+    "conflicts": "docmancer memory review --conflicts",
+    "consolidate": "docmancer memory distill",
+    "forget": "docmancer memory remove",
+    "list": "docmancer memory",
+    "orphans": "docmancer memory review --orphans",
+    "profile": "docmancer memory distill",
+    "promote": "docmancer memory share",
+    "query": "docmancer query",
+    "recap": "docmancer memory show --history",
+    "recent": "docmancer memory show --history",
+    "relations": "docmancer memory show --relations",
+    "sources": "docmancer status",
+    "status": "docmancer status",
+    "sync": "docmancer sync",
+    "team": "docmancer memory share",
+}.items():
+    _hide_compatibility_command(_old_name, _replacement)
+
+for _advanced_name in ("capture", "eval", "hook-context", "import-conversations", "scan"):
+    _command = memory_group.commands.get(_advanced_name)
+    if _command is not None:
+        _command.hidden = True
 
 
 __all__ = ["memory_group"]

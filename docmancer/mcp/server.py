@@ -88,6 +88,15 @@ def build_server():
     ) -> dict:
         return tools.memory_recap(since=since, until=until, project_id=project_id)
 
+    @server.tool(description="Show recent local memory activity across coding-agent harnesses.")
+    def docmancer_memory_recent(
+        since: str = "7d",
+        until: str | None = None,
+        harness: str | None = None,
+        limit: int = 100,
+    ) -> list[dict] | dict:
+        return tools.memory_recent(since=since, until=until, harness=harness, limit=limit)
+
     @server.tool(description="List indexed memory sources with provenance (agent, type, scope, title, path). Local only.")
     def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
         return tools.sources_list(agent=agent, scope=scope, kind=kind)

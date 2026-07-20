@@ -27,7 +27,8 @@ def test_bare_redirected_cli_prints_help_without_launching_tui():
 
     assert result.exit_code == 0, result.output
     assert "Commands" in result.output
-    assert "tui" in result.output
+    assert "sync" in result.output
+    assert "tui" not in result.output
     launch.assert_not_called()
 
 
@@ -51,7 +52,7 @@ def test_noninteractive_bare_cli_does_not_import_textual():
 def test_help_and_explicit_subcommands_never_launch_tui():
     with patch("docmancer.cli.__main__._launch_tui") as launch:
         help_result = CliRunner().invoke(cli, ["--help"])
-        status_result = CliRunner().invoke(cli, ["memory", "status"])
+        status_result = CliRunner().invoke(cli, ["status"])
 
     assert help_result.exit_code == 0
     assert status_result.exit_code == 0

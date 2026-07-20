@@ -11,7 +11,7 @@ import rfc8785
 
 PAYLOAD_SCHEMA_VERSION = 1
 GRAPH_PAYLOAD_SCHEMA_VERSION = 2
-GRAPH_OBJECT_KINDS = {"atom", "relation", "override"}
+GRAPH_OBJECT_KINDS = {"atom", "relation", "override", "pack"}
 PAYLOAD_FIELDS = (
     "schema_version",
     "record_id",

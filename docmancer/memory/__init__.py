@@ -16,6 +16,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+from difflib import SequenceMatcher
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ from docmancer.harness import default_home, harvest_all
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
-from docmancer.memory.graph import MemoryGraphStore, node_id, temporal_multiplier
+from docmancer.memory.graph import GRAPH_SCHEMA_VERSION, MemoryGraphStore, node_id, temporal_multiplier
 from docmancer.memory.records import MemoryRecord, MemoryRecordStore, normalize_memory_text
 from docmancer.memory.sources import (
     MemorySourceDocument,
@@ -125,9 +126,10 @@ class MemoryAgent:
         # it until an operation that actually reads or writes the index. This
         # keeps preview()/status()/dry-run from materialising an empty index.
         self._agent = DocmancerAgent(config=self.config, _lazy_init=True)
+        self._embedding_provider = None
 
     def _build_config(self) -> "DocmancerConfig":
-        from docmancer.core.config import DocmancerConfig, IndexConfig, VectorStoreConfig
+        from docmancer.core.config import CaptureConfig, DocmancerConfig, IndexConfig, VectorStoreConfig
 
         db = Path(self.db_path)
         db.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +145,21 @@ class MemoryAgent:
                 options={"db_path": vec_db},
             ),
             discovery=self._load_user_discovery(),
+            capture=self._load_user_config_block("capture", CaptureConfig),
         )
+
+    def _load_user_config_block(self, name: str, model):
+        try:
+            import yaml as _yaml
+
+            cfg_path = self.home / ".docmancer" / "docmancer.yaml"
+            if not cfg_path.is_file():
+                return model()
+            data = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            block = data.get(name)
+            return model(**block) if isinstance(block, dict) else model()
+        except Exception:  # noqa: BLE001 - local config must not break memory startup
+            return model()
 
     def _load_user_discovery(self):
         """Read only the ``discovery`` block from the user's docmancer.yaml.
@@ -155,17 +171,7 @@ class MemoryAgent:
         """
         from docmancer.core.config import DiscoveryConfig
 
-        try:
-            import yaml as _yaml
-
-            cfg_path = self.home / ".docmancer" / "docmancer.yaml"
-            if not cfg_path.is_file():
-                return DiscoveryConfig()
-            data = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-            block = data.get("discovery")
-            return DiscoveryConfig(**block) if isinstance(block, dict) else DiscoveryConfig()
-        except Exception:  # noqa: BLE001 - never let config parsing break discovery
-            return DiscoveryConfig()
+        return self._load_user_config_block("discovery", DiscoveryConfig)
 
     # ------------------------------------------------------------------
     # Harvest / index
@@ -213,7 +219,7 @@ class MemoryAgent:
             atoms = self._merge_all(atoms)
             self._last_sync_stats["atoms_after_merge"] = len(atoms)
             progress("graph", f"Reconciling relationships across {len(atoms):,} memory atoms")
-            graph_stats = self.graph.rebuild(atoms)
+            graph_stats = self.graph.rebuild(atoms, embed_texts=self._embed_fn())
             self._last_sync_stats.update({f"graph_{key}": value for key, value in graph_stats.items()})
             states = self.graph.current_state(atom.atom_id for atom in atoms)
             for atom in atoms:
@@ -229,7 +235,12 @@ class MemoryAgent:
                 self._agent.store.add_documents([], recreate=True)
             else:
                 docs = [atom.to_document() for atom in atoms]
-                self._agent.ingest_documents(docs, recreate=True, with_vectors=True)
+                self._agent.ingest_documents(
+                    docs,
+                    recreate=True,
+                    with_vectors=True,
+                    embeddings_provider=self._embedding_provider,
+                )
             progress("finalize", "Writing provenance and schema metadata")
             from docmancer.harness.base import MemoryEntry
 
@@ -278,7 +289,7 @@ class MemoryAgent:
             {
                 "schema_version": str(MEMORY_SCHEMA_VERSION),
                 "memory_layer": "atomic",
-                "graph_schema_version": "1",
+                "graph_schema_version": str(GRAPH_SCHEMA_VERSION),
                 "embeddings_provider": str(emb.provider or ""),
                 "embeddings_model": str(emb.model or ""),
                 "embeddings_dim": str(emb.dimensions or 0),
@@ -326,8 +337,9 @@ class MemoryAgent:
         try:
             from docmancer.embeddings import get_embeddings_provider
 
-            provider = get_embeddings_provider(self.config.embeddings)
-            return provider.embed
+            if self._embedding_provider is None:
+                self._embedding_provider = get_embeddings_provider(self.config.embeddings)
+            return self._embedding_provider.embed
         except Exception as exc:  # noqa: BLE001 - degrade to unmerged atoms
             logger.debug("merge embeddings unavailable: %s", exc)
             return None
@@ -436,13 +448,15 @@ class MemoryAgent:
         if not atoms:
             return 0
         with self._sync_lock():
+            embed = self._embed_fn()
             self._agent.ingest_documents(
                 [atom.to_document() for atom in atoms],
                 recreate=False,
                 with_vectors=True,
+                embeddings_provider=self._embedding_provider,
             )
             self._stamp_schema()
-            self.graph.rebuild(self.indexed_atoms())
+            self.graph.rebuild(self.indexed_atoms(), embed_texts=embed)
         return len(atoms)
 
     def _project_paths(self, entries: list["MemoryEntry"] | None = None) -> list[str]:
@@ -551,7 +565,9 @@ class MemoryAgent:
                 for chunk in chunks
                 if states.get(str((chunk.metadata or {}).get("atom_id") or ""), "current") == "current"
             ]
-        atom_lookup = {atom.atom_id: atom for atom in self.indexed_atoms()}
+        atom_lookup = self.graph.atoms_for_ids(
+            str((chunk.metadata or {}).get("atom_id") or "") for chunk in chunks
+        )
         for chunk in chunks:
             atom = atom_lookup.get(str((chunk.metadata or {}).get("atom_id") or ""))
             if atom is not None:
@@ -634,13 +650,18 @@ class MemoryAgent:
         # Distinct durable records stay independently addressable, but an
         # equivalent record should not consume another recall result.
         unique_chunks = []
-        seen_memories: set[tuple[str, str]] = set()
+        seen_memories: dict[str, list[str]] = {}
         for chunk in chunks:
             meta = chunk.metadata or {}
-            key = (str(meta.get("scope") or ""), normalize_memory_text(chunk.text))
-            if key in seen_memories:
+            scope_key = str(meta.get("scope") or "")
+            normalized = normalize_memory_text(chunk.text)
+            prior = seen_memories.setdefault(scope_key, [])
+            if any(
+                normalized == value or SequenceMatcher(None, normalized, value, autojunk=False).ratio() >= 0.96
+                for value in prior
+            ):
                 continue
-            seen_memories.add(key)
+            prior.append(normalized)
             unique_chunks.append(chunk)
         selected = unique_chunks[:requested_limit]
         if expand_relations:
@@ -661,7 +682,7 @@ class MemoryAgent:
             identity = node_id(atom)
             for relation in self.graph.relations(identity):
                 other_id = relation["target_node_id"] if relation["source_node_id"] == identity else relation["source_node_id"]
-                other = node_lookup.get(other_id)
+                other = node_lookup.get(other_id) or self.graph.atom_for_node(other_id)
                 if other is None or other.atom_id in seen:
                     continue
                 seen.add(other.atom_id)
@@ -988,7 +1009,9 @@ class MemoryAgent:
         indexed_at = str(snapshot.get("indexed_at") or "") or None
 
         atom_meta: dict[tuple[str, str, str, str], dict] = {}
-        for atom in self.indexed_atoms():
+        indexed_atoms = self.indexed_atoms()
+        states = self.graph.current_state(atom.atom_id for atom in indexed_atoms)
+        for atom in indexed_atoms:
             identity = (atom.harness, atom.scope, atom.kind, atom.source_path)
             row = atom_meta.setdefault(
                 identity,
@@ -997,6 +1020,7 @@ class MemoryAgent:
                     "source_hash": atom.source_hash,
                     "record_ids": set(),
                     "origins": set(),
+                    "atoms": [],
                 },
             )
             if atom.timestamp and (not row["updated_at"] or str(atom.timestamp) > str(row["updated_at"])):
@@ -1004,6 +1028,25 @@ class MemoryAgent:
             if atom.record_id:
                 row["record_ids"].add(atom.record_id)
             row["origins"].add(atom.origin)
+            row["atoms"].append(
+                {
+                    "navigation_kind": "atom",
+                    "identifier": atom.record_id or atom.atom_id,
+                    "atom_id": atom.atom_id,
+                    "record_id": atom.record_id,
+                    "text": atom.text,
+                    "memory_type": atom.type,
+                    "origin": atom.origin,
+                    "status": states.get(
+                        atom.atom_id,
+                        "current" if atom.status in {"", "active"} else atom.status,
+                    ),
+                    "line_start": atom.line_start,
+                    "line_end": atom.line_end,
+                    "timestamp": atom.timestamp,
+                    "tags": list(atom.tags),
+                }
+            )
 
         documents: list[MemorySourceDocument] = []
         for raw in raw_sources:
@@ -1023,6 +1066,10 @@ class MemoryAgent:
             source_hash = str(raw.get("source_hash") or meta.get("source_hash") or "")
             record_ids = sorted(meta.get("record_ids") or [])
             origins = set(meta.get("origins") or [])
+            atoms = sorted(
+                list(meta.get("atoms") or []),
+                key=lambda item: (int(item.get("line_start") or 0), str(item.get("atom_id") or "")),
+            )
             source_missing = False
             changed = False
             try:
@@ -1043,7 +1090,7 @@ class MemoryAgent:
                     title=str(raw.get("title") or Path(path).name or "Memory source"),
                     path=path,
                     chars=int(raw.get("chars") or len(content)),
-                    atom_count=int(raw.get("atoms") or 0),
+                    atom_count=len(atoms) if atoms else int(raw.get("atoms") or 0),
                     updated_at=updated_at,
                     indexed_at=str(raw.get("indexed_at") or indexed_at or "") or None,
                     source_hash=source_hash,
@@ -1052,6 +1099,7 @@ class MemoryAgent:
                     changed_since_sync=changed,
                     source_missing=source_missing,
                     content=content,
+                    atoms=atoms,
                 )
             )
         return documents
@@ -1060,6 +1108,7 @@ class MemoryAgent:
     def _source_summary(document: MemorySourceDocument) -> MemorySourceSummary:
         values = asdict(document)
         values.pop("content", None)
+        values.pop("atoms", None)
         return MemorySourceSummary(**values)
 
     @staticmethod
@@ -1161,6 +1210,9 @@ class MemoryAgent:
             revision_id=meta.get("revision_id"),
             parent_revision_ids=[str(value) for value in meta.get("parent_revision_ids", []) if value],
             deleted=bool(meta.get("deleted", False)),
+            audience_kind=str(meta.get("audience_kind") or "personal"),
+            applicability_kind=str(meta.get("applicability_kind") or "global"),
+            pack_ids=[str(value) for value in meta.get("pack_ids", []) if value],
         )
 
     # ------------------------------------------------------------------
@@ -1220,12 +1272,163 @@ class MemoryAgent:
         return record, indexed
 
     def find_atom(self, identifier: str) -> AtomicMemoryEntry | None:
+        identifier = str(identifier).strip()
+        if identifier.startswith("docmancer://record/"):
+            identifier = identifier.removeprefix("docmancer://record/").split("?", 1)[0].split("#", 1)[0]
         matches = [
             atom
             for atom in self.indexed_atoms()
             if atom.atom_id.startswith(identifier) or (atom.record_id or "").startswith(identifier)
         ]
         return matches[0] if len(matches) == 1 else None
+
+    def recent(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+        harness: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        return self.graph.recent(since, until=until, harness=harness, limit=limit)
+
+    def import_conversations(
+        self,
+        path: str | Path,
+        *,
+        source: str = "auto",
+        scope_kind: str = "global",
+        project_path: str | Path | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        from docmancer.memory.importers import conversation_atoms
+
+        atoms = conversation_atoms(path, source=source, scope_kind=scope_kind, project_path=project_path)
+        existing = {normalize_memory_text(atom.text) for atom in self.indexed_atoms()}
+        candidates = [atom for atom in atoms if normalize_memory_text(atom.text) not in existing]
+        if dry_run:
+            return {"source": source, "candidates": len(candidates), "created": 0, "records": []}
+        created: list[MemoryRecord] = []
+        for atom in candidates:
+            try:
+                record = self.records.add(
+                    atom.text,
+                    scope_kind=scope_kind,
+                    project_path=project_path,
+                    memory_type=atom.type,
+                    tags=["conversation-import", atom.harness],
+                    origin="imported",
+                )
+            except ValueError:
+                continue
+            created.append(record)
+            existing.add(normalize_memory_text(atom.text))
+            self._enqueue_cloud_revision(record.to_revision_payload())
+        if created:
+            self.sync(recreate=False)
+        return {
+            "source": source,
+            "candidates": len(candidates),
+            "created": len(created),
+            "records": [record.record_id for record in created],
+        }
+
+    def clear_filtered(
+        self,
+        *,
+        harness: str | None = None,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        scope: str | None = None,
+        dry_run: bool = False,
+    ) -> list[AtomicMemoryEntry]:
+        """Forget matching records and harvested atoms, then rebuild once."""
+        matches = []
+        for atom in self.indexed_atoms():
+            if harness and atom.harness.casefold() != harness.casefold():
+                continue
+            if scope and atom.scope_kind.casefold() != scope.casefold():
+                continue
+            stamp = None
+            if atom.timestamp:
+                try:
+                    stamp = datetime.fromisoformat(atom.timestamp.replace("Z", "+00:00"))
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    stamp = None
+            if stamp is None:
+                try:
+                    stamp = datetime.fromtimestamp(Path(atom.source_path).stat().st_mtime, timezone.utc)
+                except OSError:
+                    pass
+            if since and (stamp is None or stamp < since):
+                continue
+            if before and (stamp is None or stamp >= before):
+                continue
+            matches.append(atom)
+        if dry_run or not matches:
+            return matches
+        roots = self._project_paths()
+        for atom in matches:
+            self.records.add_tombstone(atom)
+            if not atom.record_id:
+                continue
+            search_roots = [*roots, atom.project_path] if atom.project_path else roots
+            record = self.records.find_record(atom.record_id, project_paths=search_roots)
+            if record is None:
+                continue
+            self.records.append_tombstone_revision(record)
+            self._enqueue_cloud_revision(self.records.revisions(record.record_id)[-1])
+            self.records.delete_record(record)
+        self.sync(recreate=False)
+        return matches
+
+    def profile_preview(self, *, limit: int = 24) -> dict:
+        """Distil a small local working profile without a model or network call."""
+        states = self.graph.current_state(atom.atom_id for atom in self.indexed_atoms())
+        atoms = [
+            atom for atom in self.indexed_atoms()
+            if states.get(atom.atom_id, "current") == "current"
+            and atom.type in {"preference", "constraint", "decision", "fact", "workflow"}
+            and "local-profile" not in atom.tags
+        ]
+        trust = {"manual": 4, "mcp": 4, "promoted": 3, "capture": 2, "imported": 2, "harvested": 1}
+        atoms.sort(key=lambda atom: (trust.get(atom.origin, 1), atom.timestamp or "", atom.source_count), reverse=True)
+        selected = atoms[: max(1, limit)]
+        grouped: dict[str, list[str]] = {}
+        for atom in selected:
+            grouped.setdefault(atom.type, []).append(atom.text)
+        sections = []
+        for memory_type in ("preference", "constraint", "workflow", "decision", "fact"):
+            values = grouped.get(memory_type, [])
+            if values:
+                sections.append(f"{memory_type.title()}s: " + " ".join(values))
+        return {
+            "text": "Local profile: " + " ".join(sections) if sections else "",
+            "source_atoms": len(selected),
+            "types": {key: len(value) for key, value in grouped.items()},
+        }
+
+    def apply_profile(self, *, limit: int = 24) -> tuple[MemoryRecord, bool]:
+        preview = self.profile_preview(limit=limit)
+        if not preview["text"]:
+            raise ValueError("no current preference, constraint, workflow, decision, or fact memories are available")
+        existing = next(
+            (record for record in self.records.records(project_paths=self._project_paths()) if "local-profile" in record.tags),
+            None,
+        )
+        if existing is not None:
+            updated = self.records.update_record(existing, preview["text"])
+            self._enqueue_cloud_revision(updated.to_revision_payload())
+            self.sync(recreate=False)
+            return updated, True
+        return self.add_record(
+            preview["text"],
+            memory_type="fact",
+            tags=["local-profile"],
+            origin="manual",
+        )
 
     def edit_record(self, identifier: str, text: str) -> MemoryRecord:
         """Edit a user-owned durable record and rebuild the memory index.
@@ -1388,8 +1591,57 @@ class MemoryAgent:
                 raise ValueError("winner memory ID is missing or ambiguous")
             winner_node = node_id(atom)
         result = self.graph.resolve(relation_id, resolution, winner_node_id=winner_node)
-        self.sync(recreate=False)
+        self._enqueue_cloud_graph_projection()
         return result
+
+    def resolve_relation_group(
+        self,
+        relation_ids: list[str],
+        resolution: str,
+        *,
+        winner: str | None = None,
+    ) -> list[dict]:
+        """Resolve one displayed claim group while persisting each pair decision."""
+        relation_ids = list(dict.fromkeys(str(value) for value in relation_ids if value))
+        if not relation_ids:
+            raise ValueError("conflict group has no relations")
+        winner_node = None
+        if resolution == "choose":
+            if not winner:
+                raise ValueError("winner memory ID is required")
+            atom = self.find_atom(winner)
+            if atom is None:
+                raise ValueError("winner memory ID is missing or ambiguous")
+            winner_node = node_id(atom)
+
+        available = {row["relation_id"]: row for row in self.graph.relations(relation_type="contradicts")}
+        missing = [value for value in relation_ids if value not in available]
+        if missing:
+            raise ValueError(f"conflict relation is missing: {missing[0]}")
+        if winner_node and not any(
+            winner_node in {available[value]["source_node_id"], available[value]["target_node_id"]}
+            for value in relation_ids
+        ):
+            raise ValueError("winner must belong to the selected claim group")
+
+        resolved = []
+        for relation_id in relation_ids:
+            row = available[relation_id]
+            pair = {str(row["source_node_id"]), str(row["target_node_id"])}
+            if resolution == "choose" and winner_node not in pair:
+                # Both values lose to the selected winner through other edges in
+                # the complete claim group, so this pair no longer needs review.
+                resolved.append(self.graph.resolve(relation_id, "dismiss"))
+            else:
+                resolved.append(
+                    self.graph.resolve(
+                        relation_id,
+                        resolution,
+                        winner_node_id=winner_node if resolution == "choose" else None,
+                    )
+                )
+        self._enqueue_cloud_graph_projection()
+        return resolved
 
     def orphans(self) -> list[dict]:
         return self.graph.orphans()

@@ -6,7 +6,7 @@ from rich.text import Text
 from textual.widgets import Label, ListItem, ListView
 from textual.message import Message
 
-from docmancer.tui.presentation import source_display_location, source_display_title
+from docmancer.tui.presentation import context_display_name, context_scope_label, source_display_location, source_display_title
 
 
 def _age(metadata: dict) -> str:
@@ -46,6 +46,9 @@ def _source_card(source: dict, matches: list[dict]) -> Text:
     title = source_display_title(source)
 
     card = Text()
+    number = source.get("display_number")
+    if number:
+        card.append(f"{int(number)}. ", style="dim")
     card.append(title, style="bold")
     age = _age(source)
     if age:
@@ -57,7 +60,13 @@ def _source_card(source: dict, matches: list[dict]) -> Text:
     card.append("  ·  ", style="dim")
     card.append(_size(int(source.get("chars") or 0)), style="dim")
     card.append("  ·  ", style="dim")
-    card.append(f"{int(source.get('atom_count') or 0)} passages", style="dim")
+    card.append(f"{int(source.get('atom_count') or 0)} atoms", style="dim")
+    if source.get("security_findings"):
+        card.append("  ·  ", style="dim")
+        card.append(
+            f"{int(source['security_findings'])} security warning(s)",
+            style="bold red" if source.get("security_severity") in {"critical", "high"} else "yellow",
+        )
     card.append("\n")
     if matches:
         excerpt = " ".join(str(matches[0].get("text") or "").split())[:120]
@@ -108,30 +117,85 @@ def _security_card(result: dict) -> Text:
     return card
 
 
+def _hook_card(result: dict) -> Text:
+    card = Text()
+    installed = bool(result.get("recall"))
+    card.append("CONTEXT ON" if installed else "CONTEXT OFF", style="bold green" if installed else "bold yellow")
+    card.append(f"  {str(result.get('agent') or 'agent').upper()}", style="bold")
+    card.append("\n")
+    coverage = str(result.get("context_coverage") or result.get("scope") or "off")
+    card.append("Automatic context: ", style="dim")
+    card.append(coverage, style="cyan" if installed else "dim")
+    card.append("\n")
+    capture = str(result.get("capture_coverage") or "off")
+    card.append("New-memory capture: ", style="dim")
+    card.append(capture, style="green" if result.get("capture") else "dim")
+    return card
+
+
 def _intelligence_card(result: dict) -> Text:
     kind = str(result.get("intelligence_kind") or "relation")
     card = Text()
-    if kind == "recap":
-        counts = result.get("counts") or {}
-        card.append("7-DAY RECAP", style="bold cyan")
+    number = result.get("display_number")
+    if number:
+        card.append(f"{int(number)}. ", style="dim")
+    if kind == "conflict-group":
+        members = list(result.get("members") or [])
+        card.append("CLAIM NEEDS REVIEW", style="bold red")
+        card.append(f"  {result.get('claim_subject') or 'claim'}", style="bold")
         card.append("\n")
-        card.append(
-            f"{int(counts.get('memories') or 0)} memories  ·  "
-            f"{int(counts.get('conflicts') or 0)} conflicts  ·  "
-            f"{int(counts.get('superseded') or 0)} superseded",
-            style="dim",
-        )
+        values = [str(item.get("value") or item.get("text") or "") for item in members[:3]]
+        card.append("  ↔  ".join(_shorten(value, 55) for value in values), style="dim")
     elif kind == "orphan":
         card.append("ORPHAN", style="bold yellow")
         card.append(f"  {result.get('memory_type') or 'memory'}", style="dim")
         card.append("\n" + _shorten(str(result.get("text") or ""), 150))
+    elif kind == "recent-source":
+        card.append("CHANGED", style="bold cyan")
+        card.append(f"  {str(result.get('activity_at') or '')[:16]}", style="dim")
+        card.append(f"  {int(result.get('atom_count') or 0)} atoms", style="dim")
+        card.append("\n" + _shorten(str(result.get("source_title") or result.get("source_path") or ""), 150))
     else:
         state = str(result.get("resolution_state") or "confirmed")
-        card.append(kind.upper(), style="bold red" if kind == "conflict" and state == "suggested" else "bold magenta")
+        card.append("HISTORY", style="bold magenta")
         card.append(f"  {state}", style="dim")
         card.append("\n" + _shorten(str(result.get("source_text") or ""), 72))
         card.append("  ↔  ", style="dim")
         card.append(_shorten(str(result.get("target_text") or ""), 72))
+    return card
+
+
+def _context_card(result: dict) -> Text:
+    card = Text()
+    if result.get("view_kind") == "context-proposal":
+        card.append("PENDING REVIEW", style="bold yellow")
+        card.append(
+            f"  {context_display_name(result.get('pack_id'), result.get('context_name'))}",
+            style="cyan",
+        )
+        card.append("\n" + _shorten(str(result.get("text") or ""), 150), style="dim")
+        return card
+    card.append(context_display_name(result.get("pack_id"), result.get("name")), style="bold")
+    records = int(result.get("records") or 0)
+    audience = str(result.get("audience_kind") or "personal")
+    card.append(f"  {records} active", style="green" if records else "dim")
+    pending = int(result.get("pending") or 0)
+    if pending:
+        card.append(f"  {pending} pending", style="yellow")
+    card.append("\n")
+    if audience == "team" and records == 0 and not pending:
+        card.append("Not shared yet", style="dim italic")
+    else:
+        card.append(context_scope_label(audience, result.get("applicability_kind")), style="dim")
+    return card
+
+
+def _context_record_card(result: dict) -> Text:
+    card = Text()
+    card.append(str(result.get("memory_type") or "context").upper(), style="bold cyan")
+    card.append(f"  {str(result.get('record_id') or '')[:8]}", style="dim")
+    card.append("\n")
+    card.append(_shorten(" ".join(str(result.get("text") or "").split()), 180))
     return card
 
 
@@ -140,7 +204,9 @@ class ResultItem(ListItem):
         self.result = result
         view_kind = result.get("view_kind")
         if view_kind in {"source", "source-match"}:
-            source = result.get("source") if view_kind == "source-match" else result
+            source = dict(result.get("source") or {}) if view_kind == "source-match" else result
+            if view_kind == "source-match" and result.get("display_number"):
+                source["display_number"] = result["display_number"]
             matches = result.get("matches") or []
             super().__init__(Label(_source_card(source, matches)))
             return
@@ -153,8 +219,20 @@ class ResultItem(ListItem):
             super().__init__(Label(_security_card(result)))
             return
 
+        if view_kind == "hook-status":
+            super().__init__(Label(_hook_card(result)))
+            return
+
         if view_kind == "intelligence":
             super().__init__(Label(_intelligence_card(result)))
+            return
+
+        if view_kind in {"context-pack", "context-proposal"}:
+            super().__init__(Label(_context_card(result)))
+            return
+
+        if view_kind == "context-record":
+            super().__init__(Label(_context_record_card(result)))
             return
 
         meta = result.get("metadata") or {}

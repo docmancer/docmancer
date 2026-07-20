@@ -63,10 +63,10 @@ def test_ingest_skips_reserved_files_in_bundle(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
 
     # The concept content is searchable.
-    hit = runner.invoke(cli, ["query", "Railwaydeploys", "--config", str(config)])
+    hit = runner.invoke(cli, ["docs", "query", "Railwaydeploys", "--config", str(config)])
     assert hit.exit_code == 0, hit.output
     assert "Railwaydeploys" in hit.output
 
     # The reserved log.md was not indexed: text unique to it is unfindable.
-    miss = runner.invoke(cli, ["query", "Logsentinel9999", "--config", str(config)])
+    miss = runner.invoke(cli, ["docs", "query", "Logsentinel9999", "--config", str(config)])
     assert miss.exit_code == 1

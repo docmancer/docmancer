@@ -2,7 +2,7 @@ from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
 from docmancer.cloud.config import CloudConfig
-from docmancer.cloud.crypto import b64decode, b64encode, random_key, wrap_key
+from docmancer.cloud.crypto import b64decode
 from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
 
 
@@ -35,8 +35,6 @@ def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
 
     config = CloudConfig(tmp_path)
     keys = KeyStore(MemorySecretBackend())
-    workspace_key = random_key()
-
     class Client:
         def __init__(self, *_args, **_kwargs):
             self.box_public = None
@@ -50,9 +48,22 @@ def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
 
         def poll_device_login(self, _device_code):
             return {
-                "account_id": "acct", "workspace_id": "ws", "access_token": "token",
-                "workspace_key_wrapper": b64encode(wrap_key(workspace_key, self.box_public)),
-                "key_version": 3,
+                "account_id": "00000000-0000-4000-8000-000000000001",
+                "access_token": "token",
+            }
+
+        def workspaces(self):
+            return {"workspaces": []}
+
+        def create_workspace(self, request):
+            assert request["kind"] == "personal"
+            assert request["device"]["sign_pubkey"]
+            assert request["device"]["box_pubkey"]
+            assert request["wrapped_key"]
+            return {
+                "workspace_id": "00000000-0000-4000-8000-000000000002",
+                "device_id": "00000000-0000-4000-8000-000000000003",
+                "current_key_version": 3,
             }
 
         def close(self):
@@ -61,8 +72,11 @@ def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
     monkeypatch.setattr(cloud_commands, "_context", lambda: (tmp_path, config, {}, keys))
     monkeypatch.setattr(cloud_commands, "CloudClient", Client)
     result = CliRunner().invoke(
-        cli, ["cloud", "login", "--base-url", "https://cloud.invalid", "--device-id", "dev"],
+        cli, ["cloud", "connect", "--base-url", "https://cloud.invalid"],
     )
     assert result.exit_code == 0, result.output
-    assert keys.workspace_key("acct", "ws", 3) == workspace_key
-    assert config.workspace("ws")[1]["key_version"] == 3
+    account = config.account()
+    assert account["workspace_id"] == "00000000-0000-4000-8000-000000000002"
+    assert account["device_id"] == "00000000-0000-4000-8000-000000000003"
+    assert keys.workspace_key(account["account_id"], account["workspace_id"], 3)
+    assert config.workspace(account["workspace_id"])[1]["key_version"] == 3

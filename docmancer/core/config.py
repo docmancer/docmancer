@@ -146,6 +146,16 @@ class DiscoveryConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_DISCOVERY_", extra="ignore")
 
 
+class CaptureConfig(BaseSettings):
+    """Opt-in lifecycle capture controls for each supported agent harness."""
+
+    enabled: dict[str, bool] = Field(default_factory=dict)
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_CAPTURE_", extra="ignore")
+
+    def allows(self, harness: str) -> bool:
+        return bool(self.enabled.get(harness.casefold(), True))
+
+
 _LEGACY_VECTOR_STORE_FIELDS = {"db_path", "local_path"}
 _NEW_VECTOR_STORE_FIELDS = {"provider", "url", "collection", "api_key_env", "options"}
 
@@ -159,6 +169,7 @@ class DocmancerConfig(BaseModel):
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

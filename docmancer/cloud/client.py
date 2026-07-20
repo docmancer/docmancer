@@ -1,7 +1,9 @@
 """Typed HTTP client for the Docmancer cloud protocol."""
 from __future__ import annotations
 
+import re
 from typing import Any
+from uuid import UUID
 
 import httpx
 
@@ -35,6 +37,7 @@ class ProtocolTooOldError(ProtocolError):
 
 class CloudClient:
     def __init__(self, base_url: str, *, token: str, device_id: str, transport=None, timeout: float = 20.0) -> None:
+        _server_uuid(device_id, "device_id")
         headers = {
             "X-Docmancer-Protocol": PROTOCOL_VERSION,
             "X-Docmancer-Client-Version": __version__,
@@ -51,11 +54,30 @@ class CloudClient:
     def close(self) -> None:
         self.http.close()
 
-    def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+    def _request(self, method: str, path: str, **kwargs) -> Any:
+        workspace = re.match(r"^/v1/workspaces/([^/]+)", path)
+        if workspace:
+            _server_uuid(workspace.group(1), "workspace_id")
+        device = re.match(r"^/v1/workspaces/[^/]+/devices/([^/]+)", path)
+        if device:
+            _server_uuid(device.group(1), "device_id")
+        params = kwargs.get("params")
+        if isinstance(params, dict) and params.get("device_id") is not None:
+            _server_uuid(str(params["device_id"]), "device_id")
         response = self.http.request(method, path, **kwargs)
         error_code = None
+        error_message = None
         try:
-            error_code = response.json().get("code") if isinstance(response.json(), dict) else None
+            body = response.json()
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict):
+                error_code = error.get("code")
+                error_message = error.get("message")
+            elif isinstance(body, dict):
+                # Retain compatibility with early alpha servers while the
+                # nested protocol error envelope rolls out.
+                error_code = body.get("code")
+                error_message = body.get("message")
         except ValueError:
             pass
         if response.status_code == 429 or error_code == "RATE_LIMITED":
@@ -63,9 +85,11 @@ class CloudClient:
         if error_code == "PROTOCOL_TOO_OLD":
             raise ProtocolTooOldError("this Docmancer client is too old for cloud sync; local memory is unchanged")
         if response.status_code == 401:
-            raise AuthenticationError("cloud authentication expired; run `docmancer cloud login`")
+            raise AuthenticationError("cloud authentication expired; run `docmancer cloud connect`")
         if response.status_code in {402, 403}:
-            raise EntitlementError("cloud sync is not enabled for this account")
+            if error_code == "ENTITLEMENT_REQUIRED" or response.status_code == 402:
+                raise EntitlementError(error_message or "cloud sync is not enabled for this account")
+            raise AuthenticationError(error_message or "cloud authorization failed")
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -74,8 +98,8 @@ class CloudClient:
             value = response.json()
         except ValueError as exc:
             raise ProtocolError("cloud returned invalid JSON") from exc
-        if not isinstance(value, dict):
-            raise ProtocolError("cloud response must be an object")
+        if not isinstance(value, (dict, list)):
+            raise ProtocolError("cloud response must be an object or array")
         return value
 
     def push(
@@ -104,18 +128,26 @@ class CloudClient:
         )
 
     def start_device_login(self, payload: dict) -> dict:
-        return self._request("POST", "/v1/auth/device/start", json=payload)
+        return self._request("POST", "/v1/auth/cli/start", json=payload)
 
     def poll_device_login(self, device_code: str) -> dict:
-        response = self.http.post("/v1/auth/device/token", json={"device_code": device_code})
+        response = self.http.post("/v1/auth/cli/exchange", json={"device_code": device_code})
         try:
             value = response.json()
         except ValueError as exc:
             raise ProtocolError("cloud returned invalid device-login JSON") from exc
-        if isinstance(value, dict) and value.get("code") in {"AUTHORIZATION_PENDING", "SLOW_DOWN"}:
-            return value
+        error = value.get("error") if isinstance(value, dict) else None
+        code = error.get("code") if isinstance(error, dict) else value.get("code") if isinstance(value, dict) else None
+        message = error.get("message") if isinstance(error, dict) else value.get("message") if isinstance(value, dict) else None
+        retryable = error.get("retryable", False) if isinstance(error, dict) else value.get("retryable", False) if isinstance(value, dict) else False
+        if code in {"AUTHORIZATION_PENDING", "SLOW_DOWN"}:
+            return {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            }
         if response.status_code >= 400:
-            raise AuthenticationError(str(value.get("message") if isinstance(value, dict) else "device login failed"))
+            raise AuthenticationError(str(message or "device login failed"))
         if not isinstance(value, dict):
             raise ProtocolError("cloud device-login response must be an object")
         return value
@@ -134,10 +166,17 @@ class CloudClient:
         }
 
     def status(self, workspace_id: str) -> dict:
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/status")
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/overview")
+
+    def workspaces(self) -> dict:
+        return self._request("GET", "/v1/workspaces")
+
+    def create_workspace(self, payload: dict) -> dict:
+        return self._request("POST", "/v1/workspaces", json=payload)
 
     def devices(self, workspace_id: str) -> dict:
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/devices")
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/devices")
+        return value if isinstance(value, dict) else {"devices": value}
 
     def key_wrapper(self, workspace_id: str, device_id: str, key_version: int) -> dict:
         return self._request(
@@ -149,50 +188,54 @@ class CloudClient:
     def register_device(self, workspace_id: str, payload: dict) -> dict:
         return self._request("POST", f"/v1/workspaces/{workspace_id}/devices", json=payload)
 
-    def revoke_device(self, workspace_id: str, device_id: str) -> dict:
-        return self._request("DELETE", f"/v1/workspaces/{workspace_id}/devices/{device_id}")
+    def approve_device(self, workspace_id: str, device_id: str, payload: dict) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/devices/{device_id}/approve",
+            json=payload,
+        )
 
-    def entitlement(self) -> dict:
-        return self._request("GET", "/v1/billing/entitlement")
+    def entitlement(self, workspace_id: str) -> dict:
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/entitlement")
 
     def upload_recovery_wrapper(self, workspace_id: str, wrapper: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/recovery", json=wrapper)
+        return self._request("PUT", f"/v1/workspaces/{workspace_id}/recovery-wrapper", json=wrapper)
 
     def recovery_wrapper(self, workspace_id: str) -> dict:
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/recovery")
-
-    def rotate_key(self, workspace_id: str, payload: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/key-rotations", json=payload)
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/recovery-wrapper")
 
     def upload_snapshot(self, workspace_id: str, snapshot: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/sync/snapshots", json=snapshot)
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/snapshots", json=snapshot)
 
     def latest_snapshot(self, workspace_id: str) -> dict:
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/sync/snapshots/latest")
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/snapshots")
+        rows = value if isinstance(value, list) else value.get("snapshots", [])
+        return rows[0] if rows else {}
 
     def promotion_proposals(self, workspace_id: str) -> dict:
-        return self._request("GET", f"/v1/workspaces/{workspace_id}/promotion-proposals")
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/promotions")
 
     def review_promotion(self, workspace_id: str, proposal_id: str, payload: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/promotion-proposals/{proposal_id}/reviews", json=payload)
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/promotions/{proposal_id}/reviews", json=payload)
 
     def report_audit_risk(self, workspace_id: str, metadata: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/audit-risk", json=metadata)
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/risk-reports", json=metadata)
 
     def policy(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/policy")
 
     def acknowledge_policy(self, workspace_id: str, payload: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/policy/acknowledgements", json=payload)
-
-    def request_export(self, workspace_id: str) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/export")
-
-    def delete_account(self, confirmation: str) -> dict:
-        return self._request("DELETE", "/v1/account", json={"confirmation": confirmation})
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/policy/acknowledge", json=payload)
 
     def delete_remote(self, workspace_id: str, confirmation: str) -> dict:
-        return self._request("DELETE", f"/v1/workspaces/{workspace_id}/ciphertext", json={"confirmation": confirmation})
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/deletion", json={"confirmation": confirmation})
 
 
 __all__ = ["AuthenticationError", "CloudClient", "CloudError", "EntitlementError", "ProtocolError", "ProtocolTooOldError", "RateLimitedError"]
+
+
+def _server_uuid(value: str, field: str) -> None:
+    try:
+        UUID(value)
+    except ValueError as exc:
+        raise ProtocolError(f"{field} must be a canonical UUID") from exc

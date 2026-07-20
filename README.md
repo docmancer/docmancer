@@ -1,224 +1,214 @@
 <div align="center">
 
-**Your agents' memory, unified, writable, and yours.**
+**Your agents' memory, reconciled, reviewable, and shared.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=for-the-badge)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 
-[Install](#install) | [First run](#first-run) | [Hooks and audit](#make-cross-agent-memory-automatic) | [Work with memory](#work-with-memory) | [Wiki](./wiki/Home.md)
+[Install](#install) | [Context packs](#canonical-context-packs) | [Commands](#command-line) | [Cloud](#optional-encrypted-cloud-sync) | [Wiki](./wiki/Home.md)
 
-<img src="readme-assets/tui-readme.gif" alt="Docmancer terminal explorer browsing memory, instructions, documentation, intelligence, and masked security findings" style="width: 92%; max-width: 1120px; height: auto;" />
+<img src="readme-assets/tui-readme.gif" alt="Docmancer terminal explorer" style="width: 92%; max-width: 1120px; height: auto;" />
 
 </div>
 
----
+Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and other coding agents already write memory, instructions, and rules across your machine. Docmancer harvests that evidence into one local index, reconciles duplicates and revision history, and proposes approved context that every installed agent can use.
 
-Claude Code, Codex, Cursor, Gemini, OpenCode, Cline, Windsurf, and other coding agents already write memory, instructions, and rules across your machine. Docmancer indexes those complete source files for browsing and extracts small, source-attributed **memory atoms** for recall and passage-level curation.
+Raw memory is evidence, not the source of truth. Approved context remains a set of individually editable Markdown records grouped by versioned pack manifests. This keeps provenance and review granular without generating one enormous memory file.
 
-The default path is local and keyless. SQLite FTS5 handles lexical search, the packaged `potion-base-8M` model creates embeddings without a download, and `sqlite-vec` stores dense vectors in the same local index. The same engine can also index documentation from local files, docs sites, and GitHub.
+The default path is local and keyless. SQLite FTS5, the packaged `potion-base-8M` model, and `sqlite-vec` provide hybrid retrieval without a daemon or model download.
 
 ## Install
 
 ```bash
-pipx install docmancer    # Python 3.11, 3.12, or 3.13
-```
-
-If `pipx` picks an unsupported interpreter, pin one: `pipx install docmancer --python python3.13`.
-
-## First run
-
-Set up the local index, then open the interactive explorer:
-
-```bash
+pipx install docmancer --python python3.13
 docmancer setup
 docmancer
 ```
 
-`setup` creates `~/.docmancer/`, discovers memory and instructions from supported agents and repositories, builds the SQLite index, and installs skill files for detected agents. Bare `docmancer` is the recommended human interface. It opens a local terminal explorer with Memory, Instructions & Rules, Docs, Intelligence, and Security tabs. The tab counts describe complete indexed source files, while memory atoms remain the retrieval unit underneath search, recall, graph analysis, and passage-level actions.
+Bare `docmancer` opens with a startup screen while local memory and indexes are loaded, then opens the three-pane terminal interface. It has four top-level tabs:
 
-## Make cross-agent memory automatic
+- **Context** shows Personal defaults, This project, Team standards, Team project, and pending review.
+- **Sources** shows agent memory, instructions, rules, provenance, and inline security warnings.
+- **Audit** is the first-class home for masked security findings, automatic context delivery, and optional new-memory capture coverage for Claude Code and Codex.
+- **Docs** keeps documentation browsing and search separate from memory.
 
-Hooks are the shortest path to Docmancer's cross-agent memory loop. They query the shared local index when Claude Code or Codex starts and before relevant prompts, then inject only the source-backed memories that match the current work. A decision written by one supported agent can therefore reappear when another agent needs it, without copying whole memory files into every prompt.
+The available slash commands are `/sync`, `/distill`, `/review`, `/add`, `/share`, `/status`, `/settings`, and `/help`. Plain text searches the active tab. Visible buttons and keybindings handle selection-specific actions. Any button that starts work immediately shows an animated busy state and ignores repeat clicks until the action finishes.
 
-Install recall hooks for the agents you use, then run the local security audit:
+Context opens on **Personal context** because Personal defaults contains everyday preferences and This project contains local exceptions. Team standards and Team project remain available from the View selector, but stay visually secondary until you share context. Each context area shows a compact summary, while approved statements appear as paginated rows that can be inspected, edited, or removed individually. Actions are contextual: context summaries show Add and Share when applicable, statements show Edit and Remove, and pending changes show Approve and Reject. Mutations display an animated progress state and disable their buttons until the operation finishes.
 
-```bash
-docmancer install claude-code --hooks
-docmancer install codex --hooks
-docmancer memory audit
-```
+The left pane shows approved Personal and Team counts. **Reset Personal** removes personal defaults and current-project context immediately, rejects their pending proposals, and writes tombstones. **Reset Team** creates removal proposals because team changes still require approval. Neither reset changes the raw source corpus.
 
-Hooks are local, bounded, and fail open, so they never block an agent turn. Weak matches stay silent, and a per-session cache avoids repeating the same memory. They do not call OpenRouter or another provider. The internal budget defaults to 1,000 ms and can be changed with `DOCMANCER_HOOK_TIMEOUT_MS`. Remove a hook by replacing `install` with `remove` in the commands above.
+In Audit, the left pane shows persistent Claude Code and Codex automatic-context coverage. Select an agent card for its effective configuration, or choose **How it works** for a concise explanation. The middle pane is reserved for security findings and severity filtering.
 
-The audit scans the original local memory, instruction, and rule sources for likely secrets while only displaying masked values. The TUI runs it automatically and keeps the latest results in the Security tab. Use `docmancer memory audit --json` when you need the complete machine-readable report.
+## First run: activate your context
 
-The deterministic CLI remains available for coding agents, scripts, CI, and advanced workflows:
+Seeing `0 active` in the Context tab is normal after setup. Sources are evidence, and Docmancer does not silently turn harvested agent memory into approved context. You must review the proposed changes once before they become active and reach your agents.
 
-```bash
-docmancer memory sync
-docmancer memory query "what deployment decisions have we recorded?"
-docmancer memory conflicts
-docmancer memory recap --since 7d
-docmancer tui  # explicit alias for the interactive explorer
-```
+In the TUI:
 
-When developing from this repository, run `scripts/tui_local_smoke.sh` for an isolated hands-on demo. It creates more than 60 temporary source files across multiple harnesses, includes instruction files and one source larger than 500 KB, launches the TUI against a temporary index, and removes that temporary data when the TUI exits.
+1. Run `/sync` to harvest current sources and reconcile them.
+2. Open **Context**. If you see a **PENDING REVIEW** row, select it to inspect the proposed statements.
+3. Choose **APPROVE** to activate the proposal, or **REJECT** to discard it.
+4. If there is no pending proposal, run `/distill` first, then review the new proposal.
 
-The TUI browses the complete indexed snapshot, sorted by most recently updated and paginated at 50 files per page. Each row shows the filename, harness, scope, age, size, and atom count. Scope, harness, updated-time, and project filters are applied before pagination, and the project selector includes matching project or team sources plus global sources.
+After approval, the destination pack changes from `0 active` to the number of approved statements. A later `/sync` refreshes managed agent projections automatically. You can also run `docmancer agent refresh` explicitly.
 
-Memory, instruction, and rule files are manageable in place from the inspector. Use `N` to create a Docmancer record or a file beside the selected external source, `E` to edit the live file, and `D` to delete it after confirmation. Direct edits verify that the source has not changed since the editor opened, then rebuild the local index. Search matches retain separate `F` and `P` actions for suppressing one passage or promoting it into team memory. Docmancer-owned records continue to use revision-aware editing and content-free deletion tombstones.
-
-Selecting a memory or instruction file shows its complete privacy-cleaned indexed text in the right pane without opening a popup. Press Enter or `V` for the full-screen viewer. Selecting a documentation source shows an expandable tree of indexed pages and sections; choose a page to read its complete indexed content or a section to inspect that passage. Plain-text search remains passage-powered, but results are grouped by source file and jump to the best matching line range; `[` and `]` move between matches. Use `/memory <query>` to search agent-memory files and `/instructions <query>` or `/rules <query>` to search instruction and rule files. Passage exclusion and promotion are available from search results. After a search or narrow filter produces no matches, press Enter in the empty search box or run `/reset` to restore the full file list and broad filters.
-
-Type `/` to see every available command. The wide layout reserves 20 percent for filters, 30 percent for the file list, and 50 percent for inspection, then collapses cleanly on compact terminals. Codex rollout summaries are shown with human-readable titles, compact timestamps, and shortened home paths while retaining their exact source path for `Open original`.
-
-The Intelligence tab makes memory change visible without turning every possible inconsistency into an automatic decision. It shows unresolved and reviewed contradictions, revision timelines, unconnected current memories, and a seven-day recap. Use `/intelligence [query]` to open or filter it. Use `/resolve <relation-id> choose|keep-both|dismiss [winner-id]` to review a suggested contradiction with a confirmation step.
-
-## Work with memory
-
-Add a project decision, query it, and inspect its provenance:
+The equivalent CLI flow is:
 
 ```bash
-docmancer memory add "Production deploys run on Railway" --type decision --scope project --project "$PWD"
-docmancer memory query "where do production deploys run?" --project "$PWD"
-docmancer memory list --scope project --project "$PWD"
-MEMORY_ID="paste-a-memory-id-from-the-list-output"
-docmancer memory show "$MEMORY_ID"
+docmancer sync --local-only
+docmancer memory review
+docmancer memory review <proposal-id>
+docmancer memory review <proposal-id> --approve
+docmancer memory show personal-defaults
+docmancer agent refresh
 ```
 
-Equivalent memories are not added twice within the same scope. `memory show` displays one extracted atom and its source, not the entire source file.
+Personal defaults and Current project fill only after you approve personal proposals or add context directly. Team standards and Team project remain empty until personal context is shared and the resulting team proposal is approved.
 
-Current recall hides superseded and expired memory by default. Ask for history or direct graph context when the question is about change over time:
+## Canonical context packs
+
+Docmancer creates four default packs:
+
+| Pack | Audience | Applicability |
+| --- | --- | --- |
+| Personal defaults | Personal | Global |
+| Current project | Personal | Project |
+| Team standards | Team | Global |
+| Team project | Team | Project |
+
+Each approved statement is one revisioned Markdown record. Pack manifests store stable pack identity, ordered record references, scope, revision lineage, and publication state. Rendered pack documents are disposable views.
 
 ```bash
-docmancer memory query "what changed in deployment?" --include-history
-docmancer memory query "what is related to this decision?" --expand-relations
-docmancer memory relations "$MEMORY_ID"
+docmancer sync
+docmancer memory distill --into personal-defaults
+docmancer memory review
+docmancer memory review <proposal-id> --approve
+docmancer memory show personal-defaults
 ```
 
-Docmancer builds conservative relationships during sync. Record revisions create confirmed `supersedes` edges, exact duplicated content creates `derived_from` edges, and polarity or exclusive-assignment checks can create suggested `contradicts` edges. Suggestions do not alter recall until a person reviews them. Choose a winner to supersede the other memory, keep both to confirm that both claims remain relevant, or dismiss a false positive:
+Distillation produces a patch with additions, semantic consolidations, removals, project overrides, unresolved contradictions, source paths, and confidence. Personal defaults admit durable preferences, constraints, workflows, and commands rather than paginating through one-off task history. Exact duplicates and explicit revision lineage reconcile automatically. New canonical statements, semantic merges, contradiction winners, and team changes require review.
+
+Default distillation evaluates the complete eligible corpus and has no arbitrary operation cap. Pack manifests record the fully reviewed evidence fingerprint, and each approved record retains its contributing source-atom identity. When the complete evidence set has been reviewed and has not changed, another distill produces no patch. The optional CLI `--limit` creates a review batch instead. After that batch is approved or rejected, the next distill continues with the remaining evidence.
+
+## Automatic agent delivery
+
+Approved context is compiled with this precedence:
+
+1. Team project context
+2. Personal project context
+3. Team standards
+4. Personal defaults
+5. Relevant non-canonical evidence
+
+Hooks inject compiled context automatically for agents that support them. Other installed agents receive the same approved context through a managed projection. Projections are disposable outputs and are never harvested as sources of truth.
 
 ```bash
-docmancer memory conflicts
-docmancer memory conflicts resolve <relation-id> --resolution choose --winner "$MEMORY_ID"
-docmancer memory conflicts --all
+docmancer agent install claude-code --hooks
+docmancer agent install codex --hooks
+docmancer agent install cursor
+docmancer agent refresh
 ```
 
-Reviewed choices survive later index rebuilds. Status memories decay with a 14-day half-life and are hidden after 90 days, repeated preferences receive a bounded boost, and decisions and constraints do not decay.
+`docmancer sync` also refreshes installed projections. It never copies the complete raw corpus into agent files.
 
-To forget a memory, preview the action using its Memory ID before confirming it:
+## Team workflow
+
+Sharing always creates a review proposal:
 
 ```bash
-docmancer memory forget "$MEMORY_ID" --dry-run
-docmancer memory forget "$MEMORY_ID" --yes
+docmancer memory share personal-defaults
+docmancer memory review
+docmancer memory review <proposal-id> --approve
+docmancer memory show team-standards
 ```
 
-For a Docmancer-owned record, forgetting deletes the Markdown body and leaves a content-free tombstone. For harvested memory, it suppresses the atom without editing another agent's source file.
+Reviewers can approve, reject, or edit proposed operations. Approval creates team-owned canonical records and revises the destination manifest. Project-level exceptions remain in a project pack and can explicitly reference the inherited standard they override.
 
-Promote a reviewed memory into the current repository when the team should share it:
+Personal record edits activate immediately. Team record edits and removals become proposals. Removing approved context writes a content-free tombstone so replayed cloud revisions cannot resurrect it.
+
+## Command line
+
+The public root surface is intentionally small:
+
+```text
+docmancer
+docmancer setup
+docmancer sync [--local-only]
+docmancer query <TEXT>
+docmancer memory
+docmancer docs
+docmancer status [--check]
+docmancer cloud
+docmancer agent
+docmancer mcp
+```
+
+Memory actions:
+
+```text
+docmancer memory show [PACK_OR_ID]
+docmancer memory add <TEXT> [--into PACK]
+docmancer memory edit <ID> [TEXT]
+docmancer memory remove <ID>
+docmancer memory distill [--into PACK]
+docmancer memory review [PROPOSAL]
+docmancer memory share <PACK>
+docmancer memory export [PACK]
+```
+
+Documentation actions live under one namespace:
 
 ```bash
-docmancer memory promote "$MEMORY_ID" --team --project "$PWD"
-git status --short .docmancer/memory/
+docmancer docs add ./docs
+docmancer docs add https://docs.pytest.org
+docmancer docs query "How do I parametrize a fixture?"
+docmancer docs list
+docmancer docs sync
+docmancer docs remove <source>
 ```
 
-Team memory lives as editable Markdown under `.docmancer/memory/`. Docmancer never stages or commits it, so new files appear in `git status` before they appear in `git diff`. Review a repository import or export with:
+Older commands remain as hidden compatibility aliases for one release and print their replacement to standard error.
+
+## Status and security
 
 ```bash
-docmancer memory team import --from-git "$PWD"
-docmancer memory team export --to-git "$PWD" --dry-run
+docmancer status
+docmancer status --check
+docmancer status --json
 ```
 
-The export command never stages or commits files.
-
-## Inspect and maintain the index
-
-These commands cover routine maintenance without changing source memory:
-
-| Command                              | Purpose                                                                       |
-| ------------------------------------ | ----------------------------------------------------------------------------- |
-| `docmancer memory sources`           | Show harvested files, scopes, sizes, and atom counts.                         |
-| `docmancer memory sources --preview` | Re-harvest live sources without writing the index.                            |
-| `docmancer memory audit`             | Find stale index state, likely secrets, duplicates, and poor-quality sources. |
-| `docmancer memory status`            | Show index, source, atom, relation, and unresolved-conflict counts.             |
-| `docmancer memory conflicts`         | Review unresolved contradiction suggestions. Add `--all` for reviewed items.   |
-| `docmancer memory relations [id]`    | Inspect revision, duplicate, and contradiction edges.                          |
-| `docmancer memory recap --since 7d`  | Summarize new memories, conflicts, and superseded decisions.                    |
-| `docmancer memory orphans`           | Find current memories with no graph relationships.                             |
-| `docmancer memory clear`             | Delete the rebuildable index while preserving durable records and tombstones. |
-
-For retrieval regression testing, run the checked-in sanitised corpus with `docmancer memory eval --dataset tests/fixtures/memory-eval-sanitized-real.jsonl --gate`. Query and hook recall share a benchmark-calibrated `0.05` relevance floor; use `--min-score` when deliberately testing another threshold.
-
-## Optional capture
-
-Capture is separate from recall hooks. It redacts first, reads only a bounded transcript tail when needed, and stores extracted atoms rather than raw transcripts:
-
-```bash
-docmancer install claude-code --capture-hooks
-docmancer install codex --capture-hooks
-```
-
-Preview a payload without writing by running `docmancer memory capture --agent codex --input hook-payload.json --json`. Remove capture hooks by replacing `install` with `remove`.
-
-## Local MCP
-
-The packaged `docmancer-mcp` stdio server exposes docs search and the complete local memory workflow: search with optional history and relation expansion, add, list, show, status, sources, conflicts, conflict resolution, relations, orphans, recap, forget, and promotion. Conflict resolution, forgetting, and promotion return previews or require explicit confirmation before changing durable state. Run `docmancer mcp install codex`, replacing `codex` with `claude-code` or `claude-desktop` for those clients. The MCP extra is required.
+Status combines index health, source and harness coverage, masked security findings, installed-agent delivery, pending reviews, and cloud state. Secret values are redacted before durable writes, indexing, provider calls, or cloud encryption.
 
 ## Optional encrypted cloud sync
 
-Cloud sync is optional and never gates local recall, capture, MCP, audit, or Git team memory. Protocol v1 synchronizes durable record revisions and tombstones. Protocol v2 adds the memory-intelligence graph, including atom projections, relations, and reviewed conflict overrides. The server stores opaque encrypted envelopes and cannot inspect the graph or memory text.
+Cloud sync is optional and never gates local capture, recall, MCP, docs, or Git export.
 
-### What leaves your machine
-
-| The service receives | The service does not receive |
-| -------------------- | ---------------------------- |
-| Encrypted, signed Protocol v1 and v2 envelopes | Plaintext memories, tags, relations, or conflict choices |
-| Opaque workspace, record, revision, atom, relation, and override references | Raw local IDs or absolute filesystem paths |
-| Device and workspace routing identifiers plus limited sync metadata | Device private keys, workspace keys, or recovery keys |
-
-Project identity is portable, but each device keeps its own mapping from that identity to a local checkout. Incoming graph objects are decrypted and verified by the client, projected into the ordinary local index, and assigned privacy-safe `cloud://atom/...` provenance. See [Cloud Sync](./wiki/Cloud-Sync.md) for onboarding, device recovery, conflict handling, and protocol details.
-
-## Documentation search
-
-Index local documentation or a public docs site, then query the separate docs index:
-
-```bash
-docmancer ingest ./docs
-docmancer add https://docs.pytest.org
-docmancer query "How do I parametrize a fixture?"
+```text
+docmancer cloud
+docmancer cloud connect
+docmancer cloud sync
+docmancer cloud devices
+docmancer cloud disconnect
 ```
 
-Local ingestion supports Markdown, PDF, DOCX, RTF, and HTML. URL ingestion supports GitBook, Mintlify, generic documentation sites, and GitHub. When a product site publishes a short `llms-full.txt` that links to its real documentation on a same-company docs subdomain or a known hosted-docs site, `add` indexes both roots. Page discovery remains bounded by `--max-pages`.
+Protocol v1 synchronizes durable record revisions and tombstones. Protocol v2 synchronizes atoms, relations, overrides, pack manifests, and review proposals as encrypted graph objects. The server receives opaque encrypted envelopes and routing metadata. It never receives plaintext memory, tags, pack content, local paths, raw local IDs, private keys, workspace keys, or recovery keys.
 
-## How retrieval works
+Decrypted local caches support offline recall. Markdown export remains available for review, backup, and leaving the service.
 
-Memory and docs queries combine SQLite FTS5 lexical search with dense vectors from the packaged static model, then fuse the rankings with Reciprocal Rank Fusion. The optional heavy backend adds Qdrant, FastEmbed, and SPLADE. Retrieval budgets keep injected context small enough to leave room for the agent's work.
+## Where data lives
 
-## Where your data lives and how to remove it
+- `~/.docmancer/memory.db` is the rebuildable local search and graph index.
+- `~/.docmancer/memories/*.md` contains personal canonical records.
+- `~/.docmancer/context/team-memory/*.md` contains locally decrypted team-wide records.
+- `~/.docmancer/context/packs/*.yaml` contains versioned pack manifests.
+- `~/.docmancer/context/proposals/*.yaml` contains review proposals.
+- `<repo>/.docmancer/memory/*.md` remains the Git-reviewable team project store.
+- `~/.docmancer/memory-tombstones.json` contains content-free suppression identities and hashes.
 
-Docmancer keeps durable records separate from its rebuildable index:
+There is no telemetry. Local commands do not phone home. Network access occurs only for explicit cloud sync, documentation fetches, or optional provider-backed operations.
 
-- `~/.docmancer/memory.db` and its co-located sqlite-vec file are the rebuildable search and memory-graph index.
-- `~/.docmancer/memories/*.md` contains personal, project, manual, and captured records as Markdown with YAML frontmatter.
-- `<repo>/.docmancer/memory/*.md` contains free, MIT-licensed team memory intended for Git review.
-- `~/.docmancer/memory-tombstones.json` contains content-free suppression identifiers and hashes.
-- Extraction and hook dedupe caches live under `~/.docmancer/`; neither is a transcript archive.
+## More documentation
 
-There is no telemetry. Local commands do not phone home; only an explicit cloud sync or optional provider-backed command uses the network. Every docs section is also written to `~/.docmancer/extracted/` as Markdown and JSON. Use `docmancer inspect` for docs-index statistics and `docmancer query --explain` to see which retrieval signals placed each result.
-
-## Where to next
-
-The wiki is the authoritative reference for everything else. Pick a page based on what you need:
-
-| Page                                                 | When to read it                                           |
-| ---------------------------------------------------- | --------------------------------------------------------- |
-| **[Commands](./wiki/Commands.md)**                   | Complete CLI and maintenance reference                    |
-| **[Cloud Sync](./wiki/Cloud-Sync.md)**               | Optional encrypted records, graph, devices, and recovery  |
-| **[Configuration](./wiki/Configuration.md)**         | All YAML keys, env vars, and the API-key reference        |
-| **[Architecture](./wiki/Architecture.md)**           | How the memory harness, ingest, and hybrid retrieval work |
-| **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered           |
-| **[Install Targets](./wiki/Install-Targets.md)**     | Where each agent's skill file lands                       |
-| **[Troubleshooting](./wiki/Troubleshooting.md)**     | Common errors and fixes                                   |
-
-[Wiki home](./wiki/Home.md) | [Changelog](./CHANGELOG.md) | [PyPI](https://pypi.org/project/docmancer/)
+See the [wiki](./wiki/Home.md) for architecture, supported sources, installation targets, configuration, cloud recovery, and troubleshooting.

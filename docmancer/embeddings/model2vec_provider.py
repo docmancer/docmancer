@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from .base import EmbeddingsCache, EmbeddingsProvider
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_NAME = "minishlab/potion-base-8M"
 _VENDORED_DIRNAME = "potion-base-8M"
+_TQDM_THREAD_LOCK = RLock()
 
 
 def vendored_model_dir() -> Path:
@@ -51,6 +53,14 @@ class Model2VecProvider(EmbeddingsProvider):
         self.cache = EmbeddingsCache(config.cache)
 
     def _ensure_model(self) -> Any:
+        # Model2Vec calls tqdm even when its progress bar is disabled. tqdm's
+        # default lock is a multiprocessing.RLock, whose resource-tracker
+        # subprocess can fail under Textual on macOS with invalid inherited
+        # file descriptors. A thread lock provides all synchronization this
+        # in-process provider needs and prevents that hidden subprocess launch.
+        from tqdm import tqdm
+
+        tqdm.set_lock(_TQDM_THREAD_LOCK)
         if self._model is None:
             try:
                 from model2vec import StaticModel  # type: ignore
@@ -92,7 +102,16 @@ class Model2VecProvider(EmbeddingsProvider):
         if not texts:
             return []
         model = self._ensure_model()
-        arr = model.encode(list(texts), batch_size=self.max_batch_size)
+        # Model2Vec automatically starts a joblib process pool above 10,000
+        # inputs. Docmancer already keeps embedding work off interactive event
+        # loops, and repeated process-pool startup can leave macOS with invalid
+        # inherited descriptors (``bad value(s) in fds_to_keep``). Keep the
+        # static model in-process on every surface for deterministic syncs.
+        encode_options: dict[str, Any] = {
+            "batch_size": self.max_batch_size,
+            "use_multiprocessing": False,
+        }
+        arr = model.encode(list(texts), **encode_options)
         return [[float(x) for x in row] for row in arr]
 
     def embed_query(self, query: str) -> list[float]:

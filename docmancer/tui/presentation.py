@@ -13,6 +13,30 @@ _ACRONYMS = {"api", "ci", "cli", "mcp", "pr", "tui", "ui", "url"}
 _DISPLAY_TERMS = {"ai": "AI", "okf": "OKF", "pypi": "PyPI", "qdrant": "Qdrant", "rag": "RAG", "readme": "README", "sqlite": "SQLite"}
 
 
+def context_display_name(pack_id: str | None, name: str | None = None) -> str:
+    """Return a stable human label without exposing internal context IDs."""
+    if name:
+        return "This project" if name == "Current project" else str(name)
+    identifier = str(pack_id or "")
+    if identifier.startswith("personal-defaults"):
+        return "Personal defaults"
+    if identifier.startswith("personal-project"):
+        return "This project"
+    if identifier.startswith("team-standards"):
+        return "Team standards"
+    if identifier.startswith("team-project"):
+        return "Team project"
+    if identifier == "cloud-transport":
+        return "Cloud sync"
+    return "Context"
+
+
+def context_scope_label(audience_kind: str | None, applicability_kind: str | None) -> str:
+    audience = "Team" if audience_kind == "team" else "Just you"
+    applicability = "This project" if applicability_kind == "project" else "All projects"
+    return f"{audience} · {applicability}"
+
+
 def shorten_middle(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
@@ -77,6 +101,8 @@ def source_display_location(path: str, *, limit: int = 96, include_filename: boo
 
 __all__ = [
     "codex_rollout_label",
+    "context_display_name",
+    "context_scope_label",
     "shorten_middle",
     "source_display_location",
     "source_display_title",
