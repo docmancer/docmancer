@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,7 +12,7 @@ from docmancer.tui.backend import TuiBackend
 from docmancer.tui.presentation import source_display_location, source_display_title
 from docmancer.tui.screens.audit import AuditScreen
 from docmancer.tui.screens.cloud import ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen
-from docmancer.tui.screens.detail import DetailScreen, SourceViewerScreen
+from docmancer.tui.screens.detail import CreateSourceScreen, DetailScreen, SourceViewerScreen
 from docmancer.tui.screens.sources import SourcesScreen
 from docmancer.tui.screens.sync import SyncScreen
 from docmancer.tui.widgets import Inspector, ResultList
@@ -104,6 +105,9 @@ class FakeBackend:
         self.forgotten = []
         self.promoted = []
         self.edited = []
+        self.edited_sources = []
+        self.deleted_sources = []
+        self.created_sources = []
         self.cleared = False
         self.cloud_audit_reports = 0
 
@@ -166,6 +170,28 @@ class FakeBackend:
 
     async def get_memory_source(self, source_key):
         return next((dict(item) for item in ALL_SOURCES if item["source_key"] == source_key), None)
+
+    async def get_live_source(self, source_key):
+        source_row = next(item for item in ALL_SOURCES if item["source_key"] == source_key)
+        content = source_row["content"]
+        return {
+            **source_row,
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+
+    async def edit_source(self, source_key, content, *, expected_hash):
+        self.edited_sources.append((source_key, content, expected_hash))
+        source_row = next(item for item in ALL_SOURCES if item["source_key"] == source_key)
+        return source_row
+
+    async def delete_source(self, source_key, *, expected_hash):
+        self.deleted_sources.append((source_key, expected_hash))
+        source_row = next(item for item in ALL_SOURCES if item["source_key"] == source_key)
+        return source_row["path"]
+
+    async def create_source(self, path, content):
+        self.created_sources.append((path, content))
+        return path, True
 
     async def docs_sources(self):
         return [{"source": "https://docs.pytest.org", "pages": 10, "sections": 40, "ingested_at": NOW.isoformat(), "formats": ["markdown"]}]
@@ -268,6 +294,9 @@ async def test_tui_browses_paginated_files_and_click_does_not_open_modal():
         assert len(app.results) == 50
         assert app.total_pages == 2
         assert len(app.query_one("#source-text").text) == len(MEMORY_SOURCES[0]["content"])
+        assert str(app.query_one("#source-action-label").render()) == "RECORD CONTROLS"
+        assert str(app.query_one("#source-new").label) == "N  NEW"
+        assert app.query_one("#source-delete").variant == "error"
 
         await pilot.click("#result-list > ResultItem")
         await pilot.pause()
@@ -290,6 +319,7 @@ async def test_tui_pagination_tabs_and_filters_cover_the_full_file_corpus():
         await app.switch_mode("instructions")
         assert len(app.results) == 1
         assert app.results[0]["kind"] == "instructions"
+        assert str(app.query_one("#source-action-label").render()) == "FILE CONTROLS"
 
         await app.switch_mode("memory")
         await pilot.pause()
@@ -387,6 +417,10 @@ async def test_tui_groups_search_matches_and_uses_passage_actions(monkeypatch):
         assert selected["view_kind"] == "source-match"
         assert selected["matches"][0]["line_start"] == 1
         assert app.query_one("#source-text").selection.start == (0, 0)
+        assert str(app.query_one("#source-action-label").render()) == "MATCH CONTROLS"
+        assert app.query_one("#source-new").display is False
+        assert app.query_one("#source-forget").variant == "warning"
+        assert app.query_one("#source-promote").variant == "success"
 
         monkeypatch.setattr(app, "_show_modal_wait", lambda screen: _confirmed())
         await app.command_promote([])
@@ -430,6 +464,58 @@ async def test_tui_edit_uses_real_modal_result():
         await pilot.click("#save")
         await task
         assert backend.edited == [("record-123", "Production deploys run on Fly.io.")]
+
+
+@pytest.mark.asyncio
+async def test_tui_external_sources_can_be_created_edited_and_deleted(monkeypatch):
+    backend = FakeBackend()
+    app = DocmancerTuiApp(backend=backend)
+    async with app.run_test(size=(150, 42)) as pilot:
+        await pilot.pause()
+        app.query_one("#result-list", ResultList).index = 1
+        await pilot.pause()
+        selected = app.selected_result
+        assert selected["origin"] == "harvested"
+        assert app.query_one("#source-edit").display
+        assert app.query_one("#source-delete").display
+
+        edit_task = asyncio.create_task(app.command_edit([]))
+        await pilot.pause()
+        app.screen.query_one("#record-editor").text = "Updated external agent memory."
+        await pilot.click("#save")
+        await edit_task
+        assert backend.edited_sources[0][0] == selected["source_key"]
+        assert backend.edited_sources[0][1] == "Updated external agent memory."
+
+        monkeypatch.setattr(app, "_show_modal_wait", lambda screen: _confirmed())
+        app.query_one("#result-list", ResultList).index = 1
+        await pilot.pause()
+        await app.command_delete([])
+        assert backend.deleted_sources[0][0] == selected["source_key"]
+
+        async def created(_screen):
+            return "/tmp/new-rule.md", "# Rule\n\nUse Ruff.\n"
+
+        monkeypatch.setattr(app, "_show_modal_wait", created)
+        await app.switch_mode("instructions")
+        await app.command_new([])
+        assert backend.created_sources == [("/tmp/new-rule.md", "# Rule\n\nUse Ruff.\n")]
+
+
+@pytest.mark.asyncio
+async def test_new_button_cancel_dismisses_modal_without_blocking_the_ui():
+    app = DocmancerTuiApp(backend=FakeBackend())
+    async with app.run_test(size=(150, 42)) as pilot:
+        await pilot.pause()
+        await app.switch_mode("instructions")
+
+        await pilot.click("#source-new")
+        await pilot.pause()
+        assert isinstance(app.screen, CreateSourceScreen)
+
+        await pilot.click("#cancel")
+        await pilot.pause()
+        assert app.screen is app._main_screen
 
 
 @pytest.mark.asyncio

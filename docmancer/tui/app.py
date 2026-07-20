@@ -18,7 +18,7 @@ from docmancer.tui.backend import TuiBackend
 from docmancer.tui.commands import default_registry
 from docmancer.tui.screens.audit import AuditScreen
 from docmancer.tui.screens.cloud import CloudListScreen, ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen, RecoveryKeyScreen
-from docmancer.tui.screens.detail import ConfirmScreen, DetailScreen, EditScreen, SourceViewerScreen
+from docmancer.tui.screens.detail import ConfirmScreen, CreateSourceScreen, DetailScreen, EditScreen, SourceViewerScreen
 from docmancer.tui.screens.help import HelpScreen
 from docmancer.tui.screens.main import MainScreen
 from docmancer.tui.screens.sources import SourcesScreen
@@ -45,7 +45,9 @@ class DocmancerTuiApp(App):
         Binding("v", "view_selected", "View file"),
         Binding("[", "previous_match", "Previous match"),
         Binding("]", "next_match", "Next match"),
+        Binding("n", "new_source", "New file"),
         Binding("e", "edit_selected", "Edit"),
+        Binding("d", "delete_selected", "Delete file"),
         Binding("f", "forget_selected", "Forget"),
         Binding("p", "promote_selected", "Promote"),
         Binding("c", "copy_selected", "Copy"),
@@ -95,15 +97,13 @@ class DocmancerTuiApp(App):
         return base.query_one(selector, expect_type)
 
     async def _show_modal_wait(self, screen):
-        """Push a result modal and await dismissal from normal event handlers."""
-        future = asyncio.get_running_loop().create_future()
-
-        def resolve(result) -> None:
-            if not future.done():
-                future.set_result(result)
-
-        await self.push_screen(screen, callback=resolve)
-        return await future
+        """Push a result modal in a worker so its controls remain responsive."""
+        worker = self.run_worker(
+            self.push_screen_wait(screen),
+            group="modal",
+            exit_on_error=False,
+        )
+        return await worker.wait()
 
     async def _load_backend(self) -> None:
         self._update_status()
@@ -359,7 +359,11 @@ class DocmancerTuiApp(App):
         event.input.clear()
         self._hide_command_menu()
         if line.startswith("/"):
-            await self.registry.dispatch(self, line)
+            self.run_worker(
+                self.registry.dispatch(self, line),
+                group="slash-command",
+                exit_on_error=False,
+            )
         else:
             await self.run_query(line)
 
@@ -590,6 +594,16 @@ class DocmancerTuiApp(App):
             await self.action_previous_page()
         elif event.button.id == "next-page":
             await self.action_next_page()
+        elif event.button.id == "source-new":
+            self.run_worker(self.command_new([]), group="modal-command", exit_on_error=False)
+        elif event.button.id == "source-edit":
+            self.run_worker(self.command_edit([]), group="modal-command", exit_on_error=False)
+        elif event.button.id == "source-delete":
+            self.run_worker(self.command_delete([]), group="modal-command", exit_on_error=False)
+        elif event.button.id == "source-forget":
+            self.run_worker(self.command_forget([]), group="modal-command", exit_on_error=False)
+        elif event.button.id == "source-promote":
+            await self.command_promote([])
 
     def on_resize(self, event: events.Resize) -> None:
         self._update_responsive(event.size.width)
@@ -759,6 +773,78 @@ class DocmancerTuiApp(App):
         except Exception as exc:  # noqa: BLE001
             self.notify(str(exc), severity="error", timeout=8)
 
+    def _selected_source(self) -> dict | None:
+        result = self.selected_result
+        if not result or self.mode not in {"memory", "instructions"}:
+            return None
+        return result.get("source") if result.get("view_kind") == "source-match" else result
+
+    async def _refresh_after_source_mutation(self) -> None:
+        counts = await self.backend.counts()
+        self._set_counts(counts)
+        await self._refresh_sources()
+        await self._refresh_security_report()
+        if self.mode in {"memory", "instructions"}:
+            await self._load_source_page()
+
+    async def command_new(self, args: list[str]) -> None:
+        if self.mode not in {"memory", "instructions"}:
+            self.notify("New source files are available in Memory and Instructions & Rules.", severity="warning")
+            return
+        source = self._selected_source()
+        owned_record = bool(
+            source
+            and source.get("record_id")
+            and source.get("origin") != "harvested"
+        )
+        if self.mode == "memory" and (source is None or owned_record):
+            text = await self._show_modal_wait(
+                EditScreen(
+                    "new-memory",
+                    "",
+                    title="Create Docmancer memory",
+                    note="Creates a durable global record with revision history and immediate indexing.",
+                )
+            )
+            if text is None or not text.strip():
+                return
+            try:
+                record, indexed = await self.backend.add(text)
+                await self._refresh_after_source_mutation()
+                self.notify(
+                    f"Added memory {record.record_id[:12]}"
+                    + ("" if indexed else "; run /sync to index it")
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.notify(str(exc), severity="error", timeout=8)
+            return
+        kind = str((source or {}).get("kind") or ("agent-memory" if self.mode == "memory" else "instructions"))
+        path = Path(str((source or {}).get("path") or Path.cwd())).expanduser()
+        directory = path.parent if path.suffix else path
+        stem = {"agent-memory": "new-memory", "rules": "new-rule"}.get(kind, "new-instructions")
+        suggested = str(directory / f"{stem}.md")
+        if args:
+            suggested = " ".join(args)
+        result = await self._show_modal_wait(
+            CreateSourceScreen(suggested, kind_label=kind.replace("-", " "))
+        )
+        if result is None:
+            return
+        destination, content = result
+        try:
+            created, indexed = await self.backend.create_source(destination, content)
+            await self._refresh_after_source_mutation()
+            if indexed:
+                self.notify(f"Created and indexed {created}")
+            else:
+                self.notify(
+                    f"Created {created}, but no installed harness discovers that location.",
+                    severity="warning",
+                    timeout=8,
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+
     async def command_show(self, args: list[str]) -> None:
         if not args:
             self.notify("Usage: /show <id>", severity="warning")
@@ -771,6 +857,31 @@ class DocmancerTuiApp(App):
         await self.push_screen(DetailScreen("Memory detail", body))
 
     async def command_edit(self, args: list[str]) -> None:
+        source = self._selected_source() if not args else None
+        if source and source.get("source_key") and not (
+            source.get("record_id") and source.get("origin") != "harvested"
+        ):
+            try:
+                live = await self.backend.get_live_source(str(source["source_key"]))
+                edited = await self._show_modal_wait(
+                    EditScreen(
+                        str(source["source_key"]),
+                        str(live["content"]),
+                        title=f"Edit {Path(str(live['path'])).name}",
+                        note=f"Direct file edit: {live['path']}",
+                    )
+                )
+                if edited is not None and edited != live["content"]:
+                    await self.backend.edit_source(
+                        str(source["source_key"]),
+                        edited,
+                        expected_hash=str(live["content_hash"]),
+                    )
+                    await self._refresh_after_source_mutation()
+                    self.notify(f"Saved and re-indexed {live['path']}")
+            except Exception as exc:  # noqa: BLE001
+                self.notify(str(exc), severity="error", timeout=8)
+            return
         identifier = args[0] if args else self._selected_identifier()
         if not identifier:
             self.notify("Usage: /edit <id>", severity="warning")
@@ -787,10 +898,58 @@ class DocmancerTuiApp(App):
             try:
                 await self.backend.edit(atom.record_id, edited)
                 self.notify(f"Updated memory {atom.record_id[:12]}")
-                if self.last_query:
-                    await self.run_query(self.last_query, mode="memory")
+                await self._refresh_after_source_mutation()
             except Exception as exc:  # noqa: BLE001
                 self.notify(str(exc), severity="error", timeout=8)
+
+    async def command_delete(self, _args: list[str]) -> None:
+        source = self._selected_source()
+        if not source or not source.get("source_key"):
+            self.notify("Select a memory, instruction, or rule file to delete.", severity="warning")
+            return
+        if source.get("record_id") and source.get("origin") != "harvested":
+            identifier = str(source["record_id"])
+            confirmed = await self._show_modal_wait(
+                ConfirmScreen(
+                    "Delete Docmancer record",
+                    f"Delete record {identifier[:12]} and remove its Markdown file? "
+                    "A content-free tombstone is retained for sync and suppression.",
+                    confirm_label="Delete record",
+                )
+            )
+            if not confirmed:
+                return
+            try:
+                await self.backend.forget(identifier)
+                await self._refresh_after_source_mutation()
+                self.notify(f"Deleted record {identifier[:12]}")
+            except Exception as exc:  # noqa: BLE001
+                self.notify(str(exc), severity="error", timeout=8)
+            return
+        try:
+            live = await self.backend.get_live_source(str(source["source_key"]))
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
+            return
+        confirmed = await self._show_modal_wait(
+            ConfirmScreen(
+                "Delete source file",
+                f"Permanently delete this {source.get('kind') or 'source'} file from disk?\n\n"
+                f"{live['path']}\n\nThis changes the owning agent's files and cannot be undone by Docmancer.",
+                confirm_label="Delete file",
+            )
+        )
+        if not confirmed:
+            return
+        try:
+            deleted = await self.backend.delete_source(
+                str(source["source_key"]),
+                expected_hash=str(live["content_hash"]),
+            )
+            await self._refresh_after_source_mutation()
+            self.notify(f"Deleted and removed from the index: {deleted}")
+        except Exception as exc:  # noqa: BLE001
+            self.notify(str(exc), severity="error", timeout=8)
 
     async def command_forget(self, args: list[str]) -> None:
         identifier = args[0] if args else self._selected_identifier()
@@ -942,13 +1101,21 @@ class DocmancerTuiApp(App):
         if self._main_action_allowed(mode="memory"):
             self.query_one("#inspector", Inspector).move_match(1)
 
-    async def action_edit_selected(self) -> None:
+    def action_edit_selected(self) -> None:
         if self._main_action_allowed(mode="memory"):
-            await self.command_edit([])
+            self.run_worker(self.command_edit([]), group="modal-command", exit_on_error=False)
 
-    async def action_forget_selected(self) -> None:
+    def action_new_source(self) -> None:
         if self._main_action_allowed(mode="memory"):
-            await self.command_forget([])
+            self.run_worker(self.command_new([]), group="modal-command", exit_on_error=False)
+
+    def action_delete_selected(self) -> None:
+        if self._main_action_allowed(mode="memory"):
+            self.run_worker(self.command_delete([]), group="modal-command", exit_on_error=False)
+
+    def action_forget_selected(self) -> None:
+        if self._main_action_allowed(mode="memory"):
+            self.run_worker(self.command_forget([]), group="modal-command", exit_on_error=False)
 
     async def action_promote_selected(self) -> None:
         if self._main_action_allowed(mode="memory"):

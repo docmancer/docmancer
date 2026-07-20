@@ -126,6 +126,28 @@ class TuiBackend:
         result = await asyncio.to_thread(self._require_memory().get_indexed_source, source_key)
         return asdict(result) if result is not None else None
 
+    async def get_live_source(self, source_key: str) -> dict:
+        return await asyncio.to_thread(self._require_memory().live_source, source_key)
+
+    async def edit_source(self, source_key: str, content: str, *, expected_hash: str) -> dict:
+        result = await asyncio.to_thread(
+            self._require_memory().edit_source,
+            source_key,
+            content,
+            expected_hash=expected_hash,
+        )
+        return asdict(result)
+
+    async def delete_source(self, source_key: str, *, expected_hash: str) -> str:
+        return await asyncio.to_thread(
+            self._require_memory().delete_source,
+            source_key,
+            expected_hash=expected_hash,
+        )
+
+    async def create_source(self, path: str, content: str) -> tuple[str, bool]:
+        return await asyncio.to_thread(self._require_memory().create_source, path, content)
+
     async def search_memory_sources(
         self,
         text: str,

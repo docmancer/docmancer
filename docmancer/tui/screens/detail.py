@@ -117,14 +117,18 @@ class ConfirmScreen(ModalScreen[bool]):
 class EditScreen(ModalScreen[str | None]):
     BINDINGS = [("escape", "cancel", "Cancel"), ("ctrl+s", "save", "Save")]
 
-    def __init__(self, identifier: str, text: str) -> None:
+    def __init__(self, identifier: str, text: str, *, title: str | None = None, note: str | None = None) -> None:
         super().__init__()
         self.identifier = identifier
         self.text = text
+        self.screen_title = title or f"Edit memory {identifier[:12]}"
+        self.note = note
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="modal-card edit-card"):
-            yield Static(f"Edit memory {self.identifier[:12]}", classes="modal-title")
+            yield Static(self.screen_title, classes="modal-title")
+            if self.note:
+                yield Static(self.note, classes="modal-note")
             yield TextArea(self.text, id="record-editor")
             with Horizontal(classes="modal-actions"):
                 yield Button("Cancel", id="cancel")
@@ -141,6 +145,50 @@ class EditScreen(ModalScreen[str | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
+            self.action_save()
+        else:
+            self.action_cancel()
+
+
+class CreateSourceScreen(ModalScreen[tuple[str, str] | None]):
+    """Create a new file-backed memory, instruction, or rule source."""
+
+    BINDINGS = [("escape", "cancel", "Cancel"), ("ctrl+s", "save", "Create")]
+
+    def __init__(self, suggested_path: str, *, kind_label: str) -> None:
+        super().__init__()
+        self.suggested_path = suggested_path
+        self.kind_label = kind_label
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="modal-card create-source-card"):
+            yield Static(f"Create {self.kind_label} file", classes="modal-title")
+            yield Static(
+                "The file is written directly to disk, then memory discovery runs again. "
+                "Use a location already watched by your agent so it remains indexed.",
+                classes="modal-note",
+            )
+            yield Static("Destination", classes="field-label")
+            yield Input(value=self.suggested_path, id="source-path")
+            yield Static("Contents", classes="field-label")
+            yield TextArea("", id="source-editor")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Create file", id="create", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#source-path", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        path = self.query_one("#source-path", Input).value.strip()
+        content = self.query_one("#source-editor", TextArea).text
+        self.dismiss((path, content) if path else None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "create":
             self.action_save()
         else:
             self.action_cancel()

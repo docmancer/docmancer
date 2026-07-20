@@ -1,5 +1,8 @@
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from docmancer.core.models import RetrievedChunk
 from docmancer.memory import MemoryAgent, MemorySourceFilters
@@ -188,3 +191,56 @@ def test_drift_indicator_uses_metadata_without_replacing_indexed_text(tmp_path):
     assert document is not None
     assert document.content == "Indexed copy."
     assert document.changed_since_sync is True
+
+
+def test_file_backed_sources_support_edit_delete_and_create_with_stale_write_protection(tmp_path, monkeypatch):
+    path = tmp_path / "AGENTS.md"
+    row = _source(path, harness="instructions", kind="instructions", text="Run tests before release.\n")
+    agent = _agent_with_snapshot(tmp_path, [row])
+
+    def write_snapshot(sources):
+        (tmp_path / "memory-sources.json").write_text(
+            json.dumps({"version": 2, "indexed_at": "2026-07-19T12:00:00+00:00", "sources": sources}),
+            encoding="utf-8",
+        )
+
+    def fake_sync():
+        sources = []
+        for candidate, harness, kind in (
+            (path, "instructions", "instructions"),
+            (tmp_path / "new-rule.md", "instructions", "rules"),
+        ):
+            if candidate.is_file():
+                sources.append(_source(candidate, harness=harness, kind=kind, text=candidate.read_text(encoding="utf-8")))
+        write_snapshot(sources)
+        return len(sources)
+
+    monkeypatch.setattr(agent, "sync", fake_sync)
+    source_key = agent.browse_sources(MemorySourceFilters(kinds=("instructions",))).items[0].source_key
+    live = agent.live_source(source_key)
+
+    updated = agent.edit_source(source_key, "Run tests and lint before release.\n", expected_hash=live["content_hash"])
+
+    assert path.read_text(encoding="utf-8") == "Run tests and lint before release.\n"
+    assert updated.content == "Run tests and lint before release.\n"
+
+    stale = agent.live_source(updated.source_key)
+    path.write_text("Changed by another process.\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="changed on disk"):
+        agent.edit_source(updated.source_key, "Overwrite it.\n", expected_hash=stale["content_hash"])
+
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    deleted = agent.delete_source(updated.source_key, expected_hash=current_hash)
+    assert deleted == str(path)
+    assert not path.exists()
+
+    created, indexed = agent.create_source(tmp_path / "new-rule.md", "# Rule\n\nUse Ruff.\n")
+    assert created == str(tmp_path / "new-rule.md")
+    assert indexed is True
+
+
+def test_file_source_crud_rejects_environment_files(tmp_path):
+    agent = _agent_with_snapshot(tmp_path, [])
+
+    with pytest.raises(ValueError, match="environment files"):
+        agent.create_source(tmp_path / ".env.local", "TOKEN=value\n")

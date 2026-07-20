@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Markdown, Static, TextArea, Tree
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Markdown, Static, TextArea, Tree
 
 from docmancer.tui.presentation import source_display_location
 
@@ -46,6 +46,14 @@ class Inspector(Vertical):
             id="source-text",
         )
         yield Markdown("Select a result to inspect it.", id="inspector-markdown")
+        with Vertical(id="source-action-bar"):
+            yield Static("FILE CONTROLS", id="source-action-label")
+            with Horizontal(id="source-actions"):
+                yield Button("N  NEW", id="source-new", variant="primary", classes="crud-action")
+                yield Button("E  EDIT", id="source-edit", classes="crud-action")
+                yield Button("D  DELETE", id="source-delete", variant="error", classes="crud-action")
+                yield Button("F  SUPPRESS", id="source-forget", variant="warning", classes="crud-action")
+                yield Button("P  PROMOTE", id="source-promote", variant="success", classes="crud-action")
 
     def clear(self, mode: str, message: str | None = None) -> None:
         self.document = None
@@ -59,6 +67,12 @@ class Inspector(Vertical):
         markdown = self.query_one("#inspector-markdown", Markdown)
         markdown.display = is_docs or bool(message)
         markdown.update(message or "Select a result to inspect it.")
+        action_bar = self.query_one("#source-action-bar", Vertical)
+        action_bar.display = not is_docs and mode in {"memory", "instructions"}
+        self.query_one("#source-action-label", Static).update("NEW SOURCE")
+        actions = self.query_one("#source-actions", Horizontal)
+        for button in actions.query(Button):
+            button.display = button.id == "source-new"
         if not is_docs:
             self.query_one("#source-meta", Static).update(message or "Select a file to inspect it.")
             self.query_one("#source-text", TextArea).load_text("")
@@ -72,12 +86,14 @@ class Inspector(Vertical):
         markdown = self.query_one("#inspector-markdown", Markdown)
         markdown.display = True
         markdown.update(render_result(result))
+        self.query_one("#source-action-bar", Vertical).display = False
 
     def show_docs_source(self, source: dict, document: dict | None = None) -> None:
         """Show an expandable page and section outline for one docset."""
         self.document = None
         self.matches = []
         self.match_index = 0
+        self.query_one("#source-action-bar", Vertical).display = False
         self.query_one("#inspector-title", Static).update("DOCUMENTATION SOURCE")
         outline = self.query_one("#docs-outline", Tree)
         pages = list((document or {}).get("pages") or [])
@@ -207,6 +223,7 @@ class Inspector(Vertical):
         markdown = self.query_one("#inspector-markdown", Markdown)
         markdown.display = True
         markdown.update(body)
+        self.query_one("#source-action-bar", Vertical).display = False
 
     def show_source(self, document: dict, matches: list[dict] | None = None, match_index: int = 0) -> None:
         self.document = document
@@ -225,11 +242,9 @@ class Inspector(Vertical):
             meta.append("original source missing")
         if self.matches:
             meta.append(f"match {self.match_index + 1}/{len(self.matches)}  [ and ] navigate")
-            meta.append("[F] exclude passage  [P] promote passage")
+            meta.append("[E] edit file  [D] delete file  [F] suppress passage  [P] promote")
         else:
-            meta.append("[O] open original  [C] copy full text")
-            if document.get("record_id") and document.get("origin") != "harvested":
-                meta.append("[E] edit record")
+            meta.append("[N] new file  [E] edit  [D] delete  [O] open  [C] copy")
         display_path = source_display_location(str(document.get("path") or ""), limit=110)
         self.query_one("#source-meta", Static).update("  |  ".join(meta) + f"\n{display_path}")
         self.query_one("#source-meta", Static).display = True
@@ -249,6 +264,19 @@ class Inspector(Vertical):
             area.move_cursor((end, len(lines[end]) if lines else 0), select=True, center=True)
         else:
             area.move_cursor((0, 0))
+        action_bar = self.query_one("#source-action-bar", Vertical)
+        action_bar.display = True
+        owned = bool(document.get("record_id") and document.get("origin") != "harvested")
+        label = "MATCH CONTROLS" if self.matches else "RECORD CONTROLS" if owned else "FILE CONTROLS"
+        self.query_one("#source-action-label", Static).update(label)
+        actions = self.query_one("#source-actions", Horizontal)
+        missing = bool(document.get("source_missing"))
+        for button in actions.query(Button):
+            button.display = button.id == "source-new" and not self.matches
+        self.query_one("#source-edit", Button).display = not missing
+        self.query_one("#source-delete", Button).display = not missing
+        self.query_one("#source-forget", Button).display = bool(self.matches)
+        self.query_one("#source-promote", Button).display = bool(self.matches)
 
     def move_match(self, delta: int) -> bool:
         if not self.document or not self.matches:

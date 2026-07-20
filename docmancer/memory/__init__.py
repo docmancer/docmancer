@@ -10,11 +10,12 @@ collection, separate from any docs index.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
-import json
-import hashlib
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -53,6 +54,7 @@ MEMORY_SCHEMA_VERSION = 2
 _SOURCE_SNAPSHOT_VERSION = 2
 _SCHEMA_META_TABLE = "docmancer_memory_meta"
 _DEFAULT_SYNC_LOCK_TIMEOUT = 10.0
+_EDITABLE_SOURCE_SUFFIXES = {".md", ".markdown", ".mdc", ".txt", ".yaml", ".yml"}
 
 
 class SyncInProgressError(RuntimeError):
@@ -663,6 +665,113 @@ class MemoryAgent:
             if row.source_key == source_key:
                 return row
         return None
+
+    @staticmethod
+    def _validate_mutable_source_path(path: Path) -> Path:
+        """Validate a user-selected text source without touching secret env files."""
+        candidate = path.expanduser().resolve()
+        name = candidate.name.casefold()
+        if name == ".env" or name.startswith(".env."):
+            raise ValueError("environment files cannot be managed through Docmancer")
+        if candidate.suffix.casefold() not in _EDITABLE_SOURCE_SUFFIXES:
+            allowed = ", ".join(sorted(_EDITABLE_SOURCE_SUFFIXES))
+            raise ValueError(f"source files must use one of these text extensions: {allowed}")
+        return candidate
+
+    def live_source(self, source_key: str) -> dict:
+        """Read the current on-disk contents for an indexed file-backed source."""
+        document = self.get_indexed_source(source_key)
+        if document is None:
+            raise ValueError("indexed source is missing or ambiguous; run `docmancer memory sync`")
+        path = self._validate_mutable_source_path(Path(document.path))
+        if not path.is_file():
+            raise ValueError("source file no longer exists")
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ValueError("source file is not readable UTF-8 text") from exc
+        return {
+            **asdict(document),
+            "path": str(path),
+            "content": content,
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+
+    def edit_source(self, source_key: str, content: str, *, expected_hash: str) -> MemorySourceDocument:
+        """Replace any indexed text source using optimistic concurrency control."""
+        live = self.live_source(source_key)
+        if live["content_hash"] != expected_hash:
+            raise ValueError("source changed on disk after the editor opened; reopen it before saving")
+        if not content.strip():
+            raise ValueError("source content cannot be empty; use delete if you want to remove the file")
+        path = Path(live["path"])
+        mode = path.stat().st_mode
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
+            temporary.chmod(mode)
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+        self.sync()
+        updated = next(
+            (
+                row
+                for row in self._indexed_source_documents()
+                if Path(row.path).expanduser().resolve() == path
+                and row.harness == live["harness"]
+                and row.kind == live["kind"]
+            ),
+            None,
+        )
+        if updated is None:
+            raise ValueError("source was saved but is no longer discovered after sync")
+        return updated
+
+    def delete_source(self, source_key: str, *, expected_hash: str) -> str:
+        """Delete an indexed text source after verifying it has not changed."""
+        live = self.live_source(source_key)
+        if live["content_hash"] != expected_hash:
+            raise ValueError("source changed on disk after confirmation opened; review it before deleting")
+        path = Path(live["path"])
+        path.unlink()
+        self.sync()
+        return str(path)
+
+    def create_source(self, path: str | Path, content: str) -> tuple[str, bool]:
+        """Create a new text file and report whether harness discovery indexed it."""
+        candidate = self._validate_mutable_source_path(Path(path))
+        if not candidate.parent.is_dir():
+            raise ValueError("destination directory does not exist")
+        if candidate.exists():
+            raise ValueError("destination file already exists")
+        if not content.strip():
+            raise ValueError("source content cannot be empty")
+        try:
+            with candidate.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as exc:
+            raise ValueError("destination file already exists") from exc
+        self.sync()
+        indexed = any(
+            Path(row.path).expanduser().resolve() == candidate
+            for row in self._indexed_source_documents()
+        )
+        return str(candidate), indexed
 
     def search_sources(
         self,

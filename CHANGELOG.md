@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - Unreleased
+### Added
+
+- **In-place source management from the TUI.** Memory, instruction, and rule inspectors now provide explicit controls to create nearby source files, edit live file-backed sources, and delete them after confirmation. Mutations rebuild the local index immediately, while search results retain separate passage suppression and team-promotion actions.
+
+### Changed
+
+- **Safer external file writes.** Direct edits use optimistic content-hash checks and atomic replacement so Docmancer does not overwrite concurrent changes. Managed text files are limited to supported source extensions, and environment files are explicitly excluded from TUI source management.
+- **Responsive modal commands.** Modal and slash-command work now runs through Textual workers, keeping create, edit, delete, and confirmation screens responsive while asynchronous operations complete.
+
 ## [0.7.1] - 2026-07-19
 ### Changed
 
