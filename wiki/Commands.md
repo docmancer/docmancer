@@ -4,7 +4,19 @@ Reference for the docmancer CLI. The primary product surface is the local memory
 
 ## Interactive terminal explorer
 
-Run bare `docmancer`, or `docmancer tui`, in an interactive terminal. The Memory and Instructions & Rules tabs browse complete indexed source files with 50-file pagination, scope, harness, project, and date filters. Selecting a file shows its complete indexed copy in the right pane. Search stays atom-powered internally but groups matching passages by file and jumps to their source lines. Use `/memory <query>`, `/instructions <query>`, or `/rules <query>` to search a specific file class.
+Run bare `docmancer`, or `docmancer tui`, in an interactive terminal. Memory, Instructions & Rules, and Docs browse complete indexed sources with pagination and relevant filters. Selecting a file shows its indexed copy in the right pane. Search stays atom-powered internally but groups matching passages by file and jumps to their source lines.
+
+The Intelligence tab shows unresolved and reviewed contradiction suggestions, supersession history, current memories with no detected relationships, and a seven-day recap. Security shows the latest local audit. Type `/` for the full in-app command list. The main search and intelligence commands are:
+
+| TUI command | Description |
+|-------------|-------------|
+| `/memory <query>` | Search agent-memory source files. |
+| `/instructions <query>` | Search instruction source files. |
+| `/rules <query>` | Search rule source files. |
+| `/docs <query>` | Search indexed documentation. |
+| `/intelligence [query]` | Open Intelligence and optionally filter its rows. |
+| `/resolve <relation-id> choose|keep-both|dismiss [winner-id]` | Review a suggested contradiction. `choose` requires the winning memory ID and every change is confirmed. |
+| `/reset` | Clear the active search and broad filters. |
 
 ## Primary memory loop
 
@@ -14,6 +26,8 @@ Run bare `docmancer`, or `docmancer tui`, in an interactive terminal. The Memory
 | `docmancer memory sync` | Harvest agent memory, instructions, and rules, redact them, extract memory atoms, and rebuild the local index. Supports `--recreate`, `--dry-run`, `--include`, and `--exclude`. |
 | `docmancer memory query "<text>"` | Recall memory atoms from the local index. Hybrid retrieval is the default and results below the shared `0.05` relevance floor are omitted. Use `--min-score 0` only for retrieval diagnostics. |
 | `docmancer memory query "<text>" --project <path>` | Recall matching project, team, and global memory while excluding unrelated projects. Add `--scope global\|project\|team` to restrict the result set. |
+| `docmancer memory query "<text>" --include-history` | Include superseded and expired memory. Historical record revisions also participate in lexical retrieval. |
+| `docmancer memory query "<text>" --expand-relations` | Append directly related current memories to each retrieved match. Combine it with `--include-history` when the relation may point into history. |
 | `docmancer memory add "<text>"` | Write a redacted Markdown memory atom with a stable record ID. Supports `--scope`, `--project`, `--type`, and repeatable `--tag`. Team scope requires a Git repository and never stages the file. |
 | `docmancer memory list` | List indexed memory atoms with stable IDs, type, scope, origin, and text. Supports filters plus JSON output. |
 | `docmancer memory show <id>` | Inspect one memory atom, including its record ID, atom ID, provenance, scope, tags, and merge sources. |
@@ -23,13 +37,18 @@ Run bare `docmancer`, or `docmancer tui`, in an interactive terminal. The Memory
 | `docmancer memory team export --to-git <repo> --dry-run` | Preview reviewable team Markdown without staging or committing it. Use `--yes` to perform the write. |
 | `docmancer memory sources` | Show indexed provenance by agent, type, scope, title, short path, and character count. Use `--preview` for a live re-harvest without writing. |
 | `docmancer memory audit` | Run a local, read-only corpus health report covering masked secret findings, index drift, exact cross-source duplicates, oversized sources, and large sources that produce no usable atoms. Human output shows up to `--max-findings`; JSON includes every finding. Use `--fail-on-findings` for automation. |
+| `docmancer memory conflicts` | List unresolved suggested contradictions. Use `--all` to include confirmed and dismissed reviews, or `--json` for machine-readable output. Suggestions do not change recall by themselves. |
+| `docmancer memory conflicts resolve <relation-id> --resolution <choice>` | Review a suggestion as `choose`, `keep-both`, or `dismiss`. `choose` requires `--winner <memory-id>` and supersedes the losing memory. `keep-both` confirms the conflict without hiding either memory. `dismiss` rejects the suggestion. Add `--yes` only after review. |
+| `docmancer memory relations [memory-id]` | List the whole graph or the edges for one memory. Filter with `--type relates_to\|derived_from\|supersedes\|contradicts`; add `--json` for structured output. |
+| `docmancer memory recap --since 7d` | Show memories and graph relationships introduced in a time window. `--since` accepts ISO 8601, `yesterday`, or values such as `24h` and `2w`; `--until` and `--project-id` narrow the window. |
+| `docmancer memory orphans` | List current memory atoms with no detected relationships. Supports `--json`. |
 | `docmancer install claude-code --hooks` | Install Claude Code hook recall so relevant local memories are injected automatically. |
 | `docmancer install codex --hooks` | Install Codex hook recall. Codex may ask you to review and trust the hook through `/hooks`. |
 | `docmancer remove <agent> --hooks` | Remove all docmancer-owned Claude Code or Codex recall and capture hooks while preserving unrelated hooks. |
 | `docmancer install <agent> --capture-hooks` | Separately opt into local durable capture for Claude Code or Codex. Raw transcripts are not persisted and no hosted model is called. |
 | `docmancer memory capture --agent <agent> --input <payload.json>` | Preview the redacted memory candidates a supported lifecycle payload would retain. This never creates records, changes the index, or enables hooks. Add `--json` for machine-readable output. |
 | `docmancer remove <agent> --capture-hooks` | Remove only capture hooks while leaving recall hooks intact. |
-| `docmancer memory status` | Show memory index location and source/section counts. |
+| `docmancer memory status` | Show memory index location plus source, atom, graph-relation, and unresolved-conflict counts. |
 | `docmancer memory clear` | Delete the local memory index files. Use `--dry-run` first when checking scope. |
 
 ## Optional encrypted cloud sync
@@ -43,7 +62,7 @@ The commands below require a compatible cloud service. They never gate local rec
 | `docmancer cloud recovery verify` | Re-enter the recovery key before another device enrols. |
 | `docmancer cloud enable` | Enable local encrypted-envelope queueing and explicit remote sync. |
 | `docmancer cloud disable` | Pause remote transfer without changing local memory. |
-| `docmancer cloud sync` | Explicitly drain encrypted revisions and apply verified remote revisions. |
+| `docmancer cloud sync` | Explicitly drain encrypted Protocol v1 record revisions and Protocol v2 graph objects, then apply verified remote data locally. |
 | `docmancer cloud status` | Read local account, device, cursor, outbox, conflict, and entitlement state. |
 | `docmancer cloud link <path> [--project-id <id>]` | Map a portable project ID to a local checkout on this device. |
 | `docmancer cloud devices` | List registered devices through the service. |
@@ -119,7 +138,7 @@ The commands below require a compatible cloud service. They never gate local rec
 |---------|-------------|
 | `docmancer mcp serve` | Run the packaged `docmancer-mcp` stdio server. Requires the `mcp` extra. |
 | `docmancer mcp doctor` | Check the MCP server environment. |
-| `docmancer mcp install <client>` | Install MCP config into Codex, Claude Code, or Claude Desktop. Local tools cover memory search, add, list, show, forget, promote, status, sources, and docs search. Destructive memory operations require explicit confirmation. OpenRouter consolidation appears only when `OPENROUTER_API_KEY` is set. |
+| `docmancer mcp install <client>` | Install MCP config into Codex, Claude Code, or Claude Desktop. Local tools cover docs search plus memory search, add, list, show, status, sources, conflicts, conflict resolution, relations, orphans, recap, forget, and promotion. Conflict resolution and destructive operations require explicit confirmation. OpenRouter consolidation appears only when `OPENROUTER_API_KEY` is set. |
 | `docmancer qdrant ...` | Advanced compatibility surface for users who explicitly configure the optional heavy Qdrant backend. It is hidden from top-level help because the default backend is `sqlite-vec`. |
 
 ## Install targets

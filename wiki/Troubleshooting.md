@@ -107,7 +107,44 @@ Interactive memory query and recall hooks omit matches below the shared `0.05` r
 - Run `docmancer memory status` and `docmancer memory sources` to confirm the index is populated.
 - Run `docmancer memory sync` if sources changed after the last index build.
 - Try a more specific question that includes the decision, tool, project, or constraint you need.
+- Add `--include-history` if the answer may be an expired status or an older revision that has been superseded.
 - Use `docmancer memory query "<question>" --min-score 0` only to inspect weak candidates while diagnosing retrieval. Do not treat zero-floor output as trusted recall.
+
+## An older memory disappeared from normal recall
+
+Normal recall uses the current graph projection. A reviewed replacement can supersede an older memory, and status memories decay with a 14-day half-life before becoming hidden after 90 days. The historical atom remains available:
+
+```bash
+docmancer memory query "<question>" --include-history
+docmancer memory relations <memory-id>
+```
+
+Use `--expand-relations` when you also want directly connected current memories. Decisions and constraints do not decay.
+
+## `docmancer memory conflicts` shows nothing
+
+This can be correct. The detector is deliberately conservative and only emits suggested contradictions for supported polarity and exclusive-assignment patterns. Exact record lineage and duplicate relationships appear under `docmancer memory relations`, not in the conflict queue. Run `docmancer memory conflicts --all` to include already confirmed or dismissed reviews.
+
+If expected graph data is entirely absent, run `docmancer memory sync` and inspect `docmancer memory status`. Status reports relation and unresolved-conflict counts after the rebuild.
+
+## Conflict resolution rejects the winner
+
+`choose` requires the ID or unique prefix of one of the two memories connected by that relation:
+
+```bash
+docmancer memory conflicts
+docmancer memory conflicts resolve <relation-id> --resolution choose --winner <memory-id>
+```
+
+Use `memory show <memory-id>` before confirming. `keep-both` and `dismiss` do not accept a winner. Omit `--yes` for the interactive confirmation. Review overrides are durable and survive later index rebuilds.
+
+## The Intelligence tab looks stale
+
+The tab reads the local graph. Run `docmancer memory sync` after source files change, then use `/intelligence` again. The default recap window is seven days, so older changes can still exist in `memory relations` or a CLI recap with a wider window such as `docmancer memory recap --since 2w`.
+
+## Cloud conflicts and memory conflicts do not match
+
+They are separate queues. `docmancer cloud conflicts` reports transport issues such as divergent encrypted record heads or project data that cannot be mapped on this device. `docmancer memory conflicts` reports semantic contradiction suggestions inside the decrypted local graph. Resolve each with its corresponding command group.
 
 ## `docmancer memory consolidate` fails with OpenRouter
 

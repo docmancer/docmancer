@@ -34,8 +34,11 @@ Use `--capture-hooks` only as a separate explicit choice. Remove them with `docm
 Installed skills cover memory recall first, then docs retrieval when the user asks for documentation context:
 
 - `docmancer memory query` to recall past decisions, conventions, and project context.
+- `docmancer memory query --include-history --expand-relations` when the question is about change over time or directly connected evidence.
 - `docmancer memory add` when the user explicitly asks to remember a durable item.
 - `docmancer memory list` and `show` before changing or promoting a memory.
+- `docmancer memory conflicts`, `relations`, `recap`, and `orphans` to inspect local memory intelligence. Suggested contradictions remain review candidates until the user chooses an outcome.
+- `docmancer memory conflicts resolve` only after the user chooses whether to keep both claims, dismiss the suggestion, or select a winning memory.
 - `docmancer memory promote --team --dry-run` for reviewed team-memory previews, never automatic team writes.
 - `docmancer memory sources --preview` to inspect what would be harvested.
 - `docmancer memory audit` to find likely secrets in source memory before re-indexing.

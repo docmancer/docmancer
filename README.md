@@ -8,7 +8,7 @@
 
 [Install](#install) | [First run](#first-run) | [Hooks and audit](#make-cross-agent-memory-automatic) | [Work with memory](#work-with-memory) | [Wiki](./wiki/Home.md)
 
-<img src="readme-assets/tui-readme.gif" alt="Docmancer file-first terminal explorer browsing memory, instructions, documentation, and masked security findings" style="width: 92%; max-width: 1120px; height: auto;" />
+<img src="readme-assets/tui-readme.gif" alt="Docmancer terminal explorer browsing memory, instructions, documentation, intelligence, and masked security findings" style="width: 92%; max-width: 1120px; height: auto;" />
 
 </div>
 
@@ -35,7 +35,7 @@ docmancer setup
 docmancer
 ```
 
-`setup` creates `~/.docmancer/`, discovers memory and instructions from supported agents and repositories, builds the SQLite index, and installs skill files for detected agents. Bare `docmancer` is the recommended human interface. It opens a local terminal explorer with Memory, Instructions & Rules, Docs, and Security tabs. The tab counts describe complete indexed source files, while memory atoms remain the retrieval unit underneath search, recall, and passage-level actions.
+`setup` creates `~/.docmancer/`, discovers memory and instructions from supported agents and repositories, builds the SQLite index, and installs skill files for detected agents. Bare `docmancer` is the recommended human interface. It opens a local terminal explorer with Memory, Instructions & Rules, Docs, Intelligence, and Security tabs. The tab counts describe complete indexed source files, while memory atoms remain the retrieval unit underneath search, recall, graph analysis, and passage-level actions.
 
 ## Make cross-agent memory automatic
 
@@ -73,6 +73,8 @@ Selecting a memory or instruction file shows its complete privacy-cleaned indexe
 
 Type `/` to see every available command. The wide layout reserves 20 percent for filters, 30 percent for the file list, and 50 percent for inspection, then collapses cleanly on compact terminals. Codex rollout summaries are shown with human-readable titles, compact timestamps, and shortened home paths while retaining their exact source path for `Open original`.
 
+The Intelligence tab makes memory change visible without turning every possible inconsistency into an automatic decision. It shows unresolved and reviewed contradictions, revision timelines, unconnected current memories, and a seven-day recap. Use `/intelligence [query]` to open or filter it. Use `/resolve <relation-id> choose|keep-both|dismiss [winner-id]` to review a suggested contradiction with a confirmation step.
+
 ## Work with memory
 
 Add a project decision, query it, and inspect its provenance:
@@ -86,6 +88,24 @@ docmancer memory show "$MEMORY_ID"
 ```
 
 Equivalent memories are not added twice within the same scope. `memory show` displays one extracted atom and its source, not the entire source file.
+
+Current recall hides superseded and expired memory by default. Ask for history or direct graph context when the question is about change over time:
+
+```bash
+docmancer memory query "what changed in deployment?" --include-history
+docmancer memory query "what is related to this decision?" --expand-relations
+docmancer memory relations "$MEMORY_ID"
+```
+
+Docmancer builds conservative relationships during sync. Record revisions create confirmed `supersedes` edges, exact duplicated content creates `derived_from` edges, and polarity or exclusive-assignment checks can create suggested `contradicts` edges. Suggestions do not alter recall until a person reviews them. Choose a winner to supersede the other memory, keep both to confirm that both claims remain relevant, or dismiss a false positive:
+
+```bash
+docmancer memory conflicts
+docmancer memory conflicts resolve <relation-id> --resolution choose --winner "$MEMORY_ID"
+docmancer memory conflicts --all
+```
+
+Reviewed choices survive later index rebuilds. Status memories decay with a 14-day half-life and are hidden after 90 days, repeated preferences receive a bounded boost, and decisions and constraints do not decay.
 
 To forget a memory, preview the action using its Memory ID before confirming it:
 
@@ -121,11 +141,11 @@ These commands cover routine maintenance without changing source memory:
 | `docmancer memory sources`           | Show harvested files, scopes, sizes, and atom counts.                         |
 | `docmancer memory sources --preview` | Re-harvest live sources without writing the index.                            |
 | `docmancer memory audit`             | Find stale index state, likely secrets, duplicates, and poor-quality sources. |
-| `docmancer memory status`            | Show index location and summary counts.                                       |
-| `docmancer memory conflicts`         | Review conservative contradiction suggestions and prior resolutions.           |
+| `docmancer memory status`            | Show index, source, atom, relation, and unresolved-conflict counts.             |
+| `docmancer memory conflicts`         | Review unresolved contradiction suggestions. Add `--all` for reviewed items.   |
 | `docmancer memory relations [id]`    | Inspect revision, duplicate, and contradiction edges.                          |
 | `docmancer memory recap --since 7d`  | Summarize new memories, conflicts, and superseded decisions.                    |
-| `docmancer memory orphans`           | Find current memories with no graph relationships.                              |
+| `docmancer memory orphans`           | Find current memories with no graph relationships.                             |
 | `docmancer memory clear`             | Delete the rebuildable index while preserving durable records and tombstones. |
 
 For retrieval regression testing, run the checked-in sanitised corpus with `docmancer memory eval --dataset tests/fixtures/memory-eval-sanitized-real.jsonl --gate`. Query and hook recall share a benchmark-calibrated `0.05` relevance floor; use `--min-score` when deliberately testing another threshold.
@@ -143,7 +163,21 @@ Preview a payload without writing by running `docmancer memory capture --agent c
 
 ## Local MCP
 
-The packaged `docmancer-mcp` stdio server exposes memory search, add, list, show, forget, and promote alongside docs search. Forget and promote return previews until the caller explicitly confirms them. Run `docmancer mcp install codex`, replacing `codex` with `claude-code` or `claude-desktop` for those clients. The MCP extra is required.
+The packaged `docmancer-mcp` stdio server exposes docs search and the complete local memory workflow: search with optional history and relation expansion, add, list, show, status, sources, conflicts, conflict resolution, relations, orphans, recap, forget, and promotion. Conflict resolution, forgetting, and promotion return previews or require explicit confirmation before changing durable state. Run `docmancer mcp install codex`, replacing `codex` with `claude-code` or `claude-desktop` for those clients. The MCP extra is required.
+
+## Optional encrypted cloud sync
+
+Cloud sync is optional and never gates local recall, capture, MCP, audit, or Git team memory. Protocol v1 synchronizes durable record revisions and tombstones. Protocol v2 adds the memory-intelligence graph, including atom projections, relations, and reviewed conflict overrides. The server stores opaque encrypted envelopes and cannot inspect the graph or memory text.
+
+### What leaves your machine
+
+| The service receives | The service does not receive |
+| -------------------- | ---------------------------- |
+| Encrypted, signed Protocol v1 and v2 envelopes | Plaintext memories, tags, relations, or conflict choices |
+| Opaque workspace, record, revision, atom, relation, and override references | Raw local IDs or absolute filesystem paths |
+| Device and workspace routing identifiers plus limited sync metadata | Device private keys, workspace keys, or recovery keys |
+
+Project identity is portable, but each device keeps its own mapping from that identity to a local checkout. Incoming graph objects are decrypted and verified by the client, projected into the ordinary local index, and assigned privacy-safe `cloud://atom/...` provenance. See [Cloud Sync](./wiki/Cloud-Sync.md) for onboarding, device recovery, conflict handling, and protocol details.
 
 ## Documentation search
 
@@ -165,13 +199,13 @@ Memory and docs queries combine SQLite FTS5 lexical search with dense vectors fr
 
 Docmancer keeps durable records separate from its rebuildable index:
 
-- `~/.docmancer/memory.db` and its co-located sqlite-vec file are the rebuildable search index.
+- `~/.docmancer/memory.db` and its co-located sqlite-vec file are the rebuildable search and memory-graph index.
 - `~/.docmancer/memories/*.md` contains personal, project, manual, and captured records as Markdown with YAML frontmatter.
 - `<repo>/.docmancer/memory/*.md` contains free, MIT-licensed team memory intended for Git review.
 - `~/.docmancer/memory-tombstones.json` contains content-free suppression identifiers and hashes.
 - Extraction and hook dedupe caches live under `~/.docmancer/`; neither is a transcript archive.
 
-There is no telemetry or phone-home. Every docs section is also written to `~/.docmancer/extracted/` as Markdown and JSON. Use `docmancer inspect` for docs-index statistics and `docmancer query --explain` to see which retrieval signals placed each result.
+There is no telemetry. Local commands do not phone home; only an explicit cloud sync or optional provider-backed command uses the network. Every docs section is also written to `~/.docmancer/extracted/` as Markdown and JSON. Use `docmancer inspect` for docs-index statistics and `docmancer query --explain` to see which retrieval signals placed each result.
 
 ## Where to next
 
@@ -180,6 +214,7 @@ The wiki is the authoritative reference for everything else. Pick a page based o
 | Page                                                 | When to read it                                           |
 | ---------------------------------------------------- | --------------------------------------------------------- |
 | **[Commands](./wiki/Commands.md)**                   | Complete CLI and maintenance reference                    |
+| **[Cloud Sync](./wiki/Cloud-Sync.md)**               | Optional encrypted records, graph, devices, and recovery  |
 | **[Configuration](./wiki/Configuration.md)**         | All YAML keys, env vars, and the API-key reference        |
 | **[Architecture](./wiki/Architecture.md)**           | How the memory harness, ingest, and hybrid retrieval work |
 | **[Supported Sources](./wiki/Supported-Sources.md)** | What file formats and URL providers are covered           |

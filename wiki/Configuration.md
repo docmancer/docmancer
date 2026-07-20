@@ -10,7 +10,7 @@ A fresh install uses a fully local retrieval stack:
 - `vector_store.provider: sqlite-vec`, using one local SQLite-backed vector file.
 - `retrieval.default_mode: hybrid`, combining lexical and dense retrieval and degrading to lexical when vector retrieval is unavailable.
 
-The rebuildable memory index uses its own database under `~/.docmancer/memory.db` and a co-located vector file. Durable personal records use `~/.docmancer/memories/`, tombstones use `~/.docmancer/memory-tombstones.json`, and team records use `<repo>/.docmancer/memory/`. The docs index uses the configured `index.db_path`. None of these local paths needs API keys or a daemon.
+The rebuildable memory index uses its own database under `~/.docmancer/memory.db` with co-located graph tables and a vector file. Durable personal records use `~/.docmancer/memories/`, canonical revisions use `~/.docmancer/memories/.revisions/`, tombstones use `~/.docmancer/memory-tombstones.json`, and team records use `<repo>/.docmancer/memory/`. Graph relationship detection, lifecycle ranking, history retrieval, and conflict review require no additional configuration, API key, or daemon. The docs index uses the configured `index.db_path`.
 
 ## Common environment variables
 

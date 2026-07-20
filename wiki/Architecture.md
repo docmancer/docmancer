@@ -1,6 +1,6 @@
 # Architecture
 
-Docmancer is a local-first memory harness for coding agents, with documentation RAG as a secondary capability on the same retrieval engine. It discovers the memory, instructions, and rules your coding agents already wrote on this machine and extracts **memory atoms**: small self-contained, source-attributed facts, decisions, rules, preferences, and workflows. It indexes those atoms in a local hybrid (lexical + dense) store and recalls relevant matches through CLI, MCP, and hooks. The same engine indexes docs you point it at and returns compact context packs through `docmancer query`.
+Docmancer is a local-first memory harness for coding agents, with documentation RAG as a secondary capability on the same retrieval engine. It discovers the memory, instructions, and rules your coding agents already wrote on this machine and extracts **memory atoms**: small self-contained, source-attributed facts, decisions, rules, preferences, and workflows. It indexes those atoms in a local hybrid (lexical + dense) store, builds a reviewable relationship graph, and recalls relevant matches through CLI, MCP, hooks, and the TUI. The same engine indexes docs you point it at and returns compact context packs through `docmancer query`.
 
 There is no hosted query API or separate server runtime in the Python package. The default retrieval stack is fully local and offline: SQLite FTS5 for lexical search, a vendored static `model2vec` embedding model (`potion-base-8M`) for dense vectors, and `sqlite-vec` as a single-file vector store with no daemon. FastEmbed + Qdrant is an optional heavy backend (`pipx install "docmancer[embeddings-heavy]"`).
 
@@ -10,12 +10,14 @@ The primary surface indexes context your agents already leave on disk.
 
 - **Discovery and harvest** (`docmancer/harness`): per-agent readers locate memory, instruction files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), and rule directories for Claude Code, Codex, Cursor, Gemini, and many external agents, plus repo-level instruction files recovered from each agent's recorded project paths. Entries carry a `kind` (`agent-memory`, `instructions`, or `rules`) and provenance (harness, scope, path).
 - **Privacy and audit** (`docmancer/harness/privacy`, `docmancer/harness/secrets`): a shared detector redacts secrets before anything is indexed. `docmancer memory audit` runs the same detector over harvested source files before redaction, compares the live corpus with the last source snapshot, and reports masked secret findings, index drift, exact duplicates, oversized sources, and low-yield sources. Nothing is uploaded on the sync, audit, or recall path.
-- **Memory atoms and index** (`docmancer/memory`): harvested context is deterministically split into self-contained memory atoms, compatible near-duplicates are merged, and each atom retains provenance. Atoms are indexed into a dedicated memory collection under `~/.docmancer/memory.db` with a co-located `sqlite-vec` file, kept separate from any docs index. `docmancer memory query` answers through the same hybrid dispatcher used for docs.
-- **Durable records** (`docmancer/memory/records.py`): personal and project records are editable Markdown with schema-versioned YAML frontmatter under `~/.docmancer/memories/`. Team records use the same format under `<repo>/.docmancer/memory/`. Stable `record_id` values identify the editable record; content-addressed `atom_id` values identify the derived indexed projection. The current local schema does not yet define revision IDs or a revision graph.
+- **Memory atoms and index** (`docmancer/memory`): harvested context is deterministically split into self-contained memory atoms, compatible near-duplicates are merged, and each atom retains provenance. Atoms are indexed into a dedicated memory collection under `~/.docmancer/memory.db` with co-located graph and `sqlite-vec` state, kept separate from any docs index. `docmancer memory query` answers through the same hybrid dispatcher used for docs.
+- **Durable records and revisions** (`docmancer/memory/records.py`): personal and project records are editable Markdown with schema-versioned YAML frontmatter under `~/.docmancer/memories/`. Team records use the same format under `<repo>/.docmancer/memory/`. Stable `record_id` values identify the editable record; content-addressed `atom_id` values identify the derived indexed projection. Canonical record revisions are retained under `~/.docmancer/memories/.revisions/`, and each revision receives a revision-specific graph node.
+- **Memory graph** (`docmancer/memory/graph.py`): first-class SQLite tables store atom nodes, typed relations, and human review overrides. Sync detects confirmed `supersedes` edges from record lineage, confirmed `derived_from` edges for exact duplicated content, and conservative suggested `contradicts` edges from polarity or exclusive assignments. Review overrides are keyed by a stable pair fingerprint, so `choose`, `keep-both`, and `dismiss` decisions survive a rebuild.
+- **Lifecycle and ranking**: the current projection hides superseded and expired memory unless history is requested. Status memories decay with a 14-day half-life and are hidden after 90 days. Repeated preference evidence receives a bounded boost, while decisions and constraints do not decay. A suggested contradiction has no lifecycle effect until a person reviews it.
 - **Tombstones**: forgetting harvested memory stores a content-free suppression record and leaves the source file untouched. Forgetting Docmancer-owned memory removes its Markdown body and retains only the tombstone, so sync cannot resurrect it.
 - **Hook recall** (`docmancer/memory/hooks.py`): `docmancer memory hook-context` reads Claude Code or Codex hook JSON from stdin, runs local retrieval only, and emits compact `additionalContext` when relevant source-backed matches clear the threshold. It is timeout-bounded and silent on weak matches, errors, or stale indexes.
 - **Capture** (`docmancer/memory/capture.py`): separately installed lifecycle hooks redact a bounded payload or transcript tail, deterministically extract durable memory atoms, and store only those records. Unknown events, malformed transcript records, active background work, acknowledgements, and duplicates are skipped. `docmancer memory capture` exposes the same extraction as a read-only preview before hooks are enabled. Capture never writes team memory.
-- **Local MCP** (`docmancer/mcp`): the stdio server exposes memory CRUD and promotion in addition to retrieval. Forget and promotion require explicit confirmation, and promotion derives the output location from a validated project path.
+- **Local MCP** (`docmancer/mcp`): the stdio server exposes docs search plus memory retrieval, CRUD, status, sources, conflict review, relations, orphans, recap, and promotion. Conflict resolution, forgetting, and promotion require explicit confirmation, and promotion derives the output location from a validated project path.
 - **Consolidation** (`docmancer/ai`): `docmancer memory consolidate --provider openrouter` sends selected privacy-redacted entries to OpenRouter and returns a review-only master-memory draft. This is optional maintenance, not the main memory-transfer path. `docmancer memory apply` materializes a reviewed draft into an agent's always-loaded file inside a managed block.
 
 ## Docs indexing
@@ -39,7 +41,19 @@ Dense retrieval uses the vendored static `model2vec` model in `sqlite-vec` by de
 
 RRF determines ordering, while the public chunk score carries normalized retrieval strength. Memory query and hook recall apply the same `0.05` minimum score, calibrated against the checked twenty-case corpus. Neighbor and full-page expansion inherit the selecting hit's relevance so supporting context survives the floor. Export, consolidation, and evaluation can bypass or override the floor because they are maintenance and measurement surfaces rather than interactive recall.
 
-`docmancer query --mode {lexical,dense,sparse,hybrid} --explain` and `docmancer memory query` both run through this dispatcher.
+`docmancer query --mode {lexical,dense,sparse,hybrid} --explain` and `docmancer memory query` both run through this dispatcher. Memory recall searches the current projection by default. `--include-history` admits superseded and expired indexed memories and historical record revisions, while `--expand-relations` appends directly related current atoms after the primary retrieval pass.
+
+## Memory intelligence surfaces
+
+The graph is deliberately inspectable rather than autonomous:
+
+- `memory conflicts` lists suggested contradictions, and `memory conflicts resolve` records an explicit choice.
+- `memory relations` exposes typed edges for one memory or the whole graph.
+- `memory recap` reports memories and relationships introduced in a requested time window.
+- `memory orphans` finds current atoms with no detected relationships.
+- The TUI Intelligence tab combines unresolved and reviewed conflicts, supersession timelines, orphans, and a seven-day recap. `/resolve` uses the same persisted review path as the CLI.
+
+Choosing a winner confirms the contradiction and supersedes the losing memory. Keeping both confirms the relationship without changing either lifecycle. Dismissing rejects the suggestion. These operations never edit an external agent's source file.
 
 ## Vector sync
 
@@ -65,6 +79,10 @@ Neighbor expansion works for lexical and hybrid modes. Use `--expand` for adjace
 
 No server registration is performed during install. `--hooks` installs read-only recall; `--capture-hooks` separately installs opt-in lifecycle capture. Claude Code capture uses `PostCompact` and `SessionEnd`; Codex capture uses `PreCompact` and `Stop`. Both call the local CLI, never call OpenRouter, and fail silently without blocking an agent turn.
 
+## Optional encrypted cloud projection
+
+Local intelligence does not depend on cloud sync. When a compatible service is enabled, Protocol v1 carries durable record revisions and tombstones, while Protocol v2 carries encrypted atom projections, relations, and reviewed conflict overrides. The client strips absolute paths, replaces remote atom provenance with privacy-safe `cloud://atom/...` references, and maps portable project IDs to local checkouts before importing graph data into the ordinary local index. The service routes opaque, signed ciphertext and cannot inspect memory text or graph contents.
+
 ## Concurrency
 
 Multiple CLI calls from parallel agents or terminals are safe. SQLite handles concurrent reads natively, and write operations use SQLite locking plus file locks where managed Qdrant lifecycle state needs serialization.
@@ -75,12 +93,15 @@ Multiple CLI calls from parallel agents or terminals are safe. SQLite handles co
 agent memory + CLAUDE.md / AGENTS.md / rules + Docmancer Markdown records
   -> discover + harvest + redact
   -> docmancer memory audit        (local secret audit over source files)
-  -> SQLite FTS5 + sqlite-vec (memory.db)
-  -> docmancer memory query        (manual recall)
+  -> SQLite FTS5 + sqlite-vec + graph tables (memory.db)
+  -> relation detection + persisted human review overrides
+  -> docmancer memory query        (current recall, optional history/graph expansion)
   -> docmancer memory hook-context (automatic Claude Code / Codex hook recall)
   -> docmancer memory add/list/show/forget
+  -> conflicts/relations/recap/orphans + TUI Intelligence
   -> optional capture hooks        (durable memory atoms only)
   -> .docmancer/memory/*.md        (reviewed Git team memory)
+  -> optional Protocol v1/v2 encrypted cloud projection
   -> docmancer memory consolidate  (optional OpenRouter -> review-only draft)
   -> docmancer memory apply        (optional managed block in an agent's always-loaded file)
 

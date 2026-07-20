@@ -2,16 +2,16 @@
 
 This wiki is the deep-dive reference. The [README](../README.md) is the on-ramp: install, the memory loop, and a high-level overview.
 
-Docmancer turns the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into **memory atoms**: small self-contained facts, decisions, rules, preferences, and workflows with stable identity and source provenance. It stores those atoms in one local, offline index that you can query manually or inject automatically into Claude Code and Codex through hooks. Recall uses a benchmark-calibrated relevance floor, and the read-only audit covers masked secret findings, stale index state, duplicates, oversized sources, and sources that produce no usable atoms. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
+Docmancer turns the memory your coding agents already wrote (Claude Code, Codex, Cursor, Gemini, and more) into **memory atoms**: small self-contained facts, decisions, rules, preferences, and workflows with stable identity and source provenance. It stores those atoms in one local, offline index, connects revisions and related claims in a reviewable graph, and recalls the current projection manually or through Claude Code and Codex hooks. The Intelligence surface exposes conflicts, history, recaps, and orphans without letting unreviewed suggestions change memory. Docs retrieval runs on the same engine as a secondary capability. Consolidation is optional OpenRouter-backed maintenance, not the primary memory-transfer path.
 
 ## Pick a page
 
 | Page | What's there |
 |------|--------------|
-| **[Commands](./Commands.md)** | The memory loop, audit, docs commands, and advanced maintenance |
-| **[Cloud sync](./Cloud-Sync.md)** | Optional encrypted sync, privacy boundaries, recovery, devices, and conflicts |
+| **[Commands](./Commands.md)** | Recall, graph intelligence, audit, docs commands, and advanced maintenance |
+| **[Cloud sync](./Cloud-Sync.md)** | Optional encrypted record and graph sync, privacy boundaries, recovery, devices, and conflicts |
 | **[Configuration](./Configuration.md)** | `docmancer.yaml` reference, common env vars, API keys, and advanced backends |
-| **[Architecture](./Architecture.md)** | The memory harness, audit, indexing, hybrid retrieval, and agent skill installs |
+| **[Architecture](./Architecture.md)** | The memory harness, graph, lifecycle, hybrid retrieval, cloud projection, and agent installs |
 | **[Supported Sources](./Supported-Sources.md)** | Memory sources plus doc file formats and URL providers |
 | **[Install Targets](./Install-Targets.md)** | Where `docmancer install <agent>` writes skill files |
 | **[Troubleshooting](./Troubleshooting.md)** | Common errors and fixes |
@@ -19,7 +19,7 @@ Docmancer turns the memory your coding agents already wrote (Claude Code, Codex,
 ## What lives where
 
 - `~/.docmancer/docmancer.yaml`: global config.
-- `~/.docmancer/memory.db`: rebuildable memory SQLite FTS5 index, with co-located sqlite-vec state.
+- `~/.docmancer/memory.db`: rebuildable memory SQLite FTS5 index, with co-located graph and sqlite-vec state.
 - `~/.docmancer/memories/`: editable personal and project memory records.
 - `~/.docmancer/memories/.revisions/`: append-only canonical record lineage.
 - `~/.docmancer/cloud/`: optional non-secret cloud metadata, ciphertext outbox, cursors, project mappings, and conflict state. Tokens and keys stay in the operating-system credential store.
