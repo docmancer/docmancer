@@ -1,6 +1,6 @@
 # Commands
 
-Docmancer exposes a small task-oriented CLI. Bare `docmancer` opens the terminal UI in an interactive terminal. Run `docmancer --help` to see the nine public command groups.
+Docmancer exposes a small task-oriented CLI. Bare `docmancer` opens the terminal UI in an interactive terminal. Run `docmancer --help` to see the ten public command groups.
 
 ## Primary commands
 
@@ -13,6 +13,7 @@ Docmancer exposes a small task-oriented CLI. Bare `docmancer` opens the terminal
 | `docmancer docs` | Add, search, list, refresh, or remove documentation sources. |
 | `docmancer status` | Show index health, source and security counts, installed-agent delivery, pending reviews, and cloud state. |
 | `docmancer status --check` | Run the main diagnostic checks and return a non-zero exit code when the setup needs attention. |
+| `docmancer web` | Open the complete local browser application on a loopback-only server. Use `--project`, `--port`, or `--no-open` when needed. |
 | `docmancer cloud` | Connect, sync, inspect devices, or disconnect encrypted cloud sync. |
 | `docmancer agent` | Install agent integrations or refresh disposable approved-context projections. |
 | `docmancer mcp` | Run, inspect, or install the local MCP server. |
@@ -83,6 +84,18 @@ The public slash commands are:
 ```
 
 Plain text searches the active tab. Visible buttons and keybindings handle record inspection, editing, removal, approval, rejection, conflict resolution, and export.
+
+## Local browser application
+
+`docmancer web` opens the complete local interface in the browser while keeping memory, files, credentials, and actions on the machine. The server binds only to `127.0.0.1`, creates a one-time browser bootstrap session, and requires origin plus CSRF checks for changes.
+
+```bash
+docmancer web
+docmancer web --project /path/to/project
+docmancer web --no-open
+```
+
+Cloud sync remains an encrypted revision transport between approved devices. The hosted service cannot request local actions or connect back to the localhost application.
 
 ## Compatibility aliases
 

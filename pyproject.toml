@@ -33,6 +33,8 @@ dependencies = [
     "pynacl>=1.6.2,<2.0.0",
     "keyring>=25.7.0,<26.0.0",
     "rfc8785>=0.1.4,<0.2.0",
+    "starlette>=0.40.0,<0.42.0",
+    "uvicorn>=0.30.0,<0.36.0",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +64,9 @@ path = "docmancer/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["docmancer"]
+
+[tool.hatch.build]
+artifacts = ["docmancer/web/static/**"]
 
 # The default static embedding model is committed under docmancer/_models so
 # release builds never depend on Hugging Face availability or rate limits.

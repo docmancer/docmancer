@@ -534,6 +534,7 @@ def test_client_headers_and_typed_non_destructive_errors():
     assert seen["x-docmancer-device-id"] == device_id
     assert seen["x-docmancer-client-version"]
     assert seen["x-docmancer-device-signature"]
+    assert seen["x-docmancer-device-nonce"]
     assert seen["x-docmancer-device-body-sha256"]
 
     client = CloudClient(
@@ -560,9 +561,9 @@ def test_python_cloud_routes_are_declared_by_sibling_openapi():
     import re
 
     client_path = Path(__file__).parents[1] / "docmancer" / "cloud" / "client.py"
-    openapi_path = Path(__file__).parents[2] / "docmancer-cloud" / "packages" / "protocol" / "openapi.yaml"
+    openapi_path = Path(__file__).parents[2] / "website" / "packages" / "protocol" / "openapi.yaml"
     if not openapi_path.exists():
-        pytest.skip("docmancer-cloud sibling checkout is unavailable")
+        pytest.skip("website platform monorepo sibling checkout is unavailable")
     client_source = client_path.read_text(encoding="utf-8")
     openapi_source = openapi_path.read_text(encoding="utf-8")
     declared = set(re.findall(r"^  (/v1/[^:]+):$", openapi_source, re.MULTILINE))

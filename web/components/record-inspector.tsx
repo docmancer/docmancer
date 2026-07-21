@@ -1,0 +1,132 @@
+"use client";
+
+import { AlertTriangle, Check, Copy, ExternalLink, LoaderCircle, Pencil, ShieldCheck, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import type { JsonMap } from "@/lib/api";
+import type { ViewKey } from "./workspace-app";
+
+type Mutate = (path: string, body: JsonMap, success: string, method?: string) => Promise<JsonMap | undefined>;
+
+export type InspectorState = {
+  item: JsonMap;
+  detail: JsonMap;
+  loading?: boolean;
+  error?: string;
+};
+
+export function RecordInspector({
+  view,
+  state,
+  close,
+  mutate,
+  reload,
+}: {
+  view: ViewKey;
+  state: InspectorState;
+  close: () => void;
+  mutate: Mutate;
+  reload: () => Promise<void>;
+}) {
+  const value = Object.keys(state.detail).length ? state.detail : state.item;
+  const [draft, setDraft] = useState(String(value.content ?? value.text ?? value.rendered ?? ""));
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const title = recordTitle(value, view);
+  const subtitle = recordSubtitle(value, view);
+
+  async function run(operation: () => Promise<unknown>, shouldClose = false) {
+    setBusy(true);
+    try {
+      const result = await operation();
+      if (result === undefined) return;
+      await reload();
+      if (shouldClose) close();
+      else setMode("view");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const identifier = String(value.record_id ?? value.atom_id ?? value.id ?? "");
+  const sourceKey = String(value.source_key ?? "");
+  const contextKind = String(value.view_kind ?? "");
+  const canEditMemory = view === "memory" && Boolean(identifier);
+  const canEditContext = view === "context" && contextKind === "context-record" && Boolean(identifier);
+  const canEditSource = view === "sources" && Boolean(sourceKey && value.content_hash);
+
+  return <div className="drawer-backdrop" onMouseDown={close}>
+    <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Inspect ${title}`} onMouseDown={(event) => event.stopPropagation()}>
+      <header className="drawer-header">
+        <div><span className="mini-label">{humanise(view)} detail</span><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>
+        <button className="icon-button" onClick={close} aria-label="Close inspector"><X size={16}/></button>
+      </header>
+
+      {state.loading ? <div className="drawer-loading"><LoaderCircle className="spin"/><span>Loading the current local record</span></div> : state.error ? <div className="drawer-error"><AlertTriangle size={17}/>{state.error}</div> : <>
+        {(canEditMemory || canEditContext || canEditSource) && mode === "edit" ? <div className="drawer-editor">
+          <label>{canEditSource ? "File contents" : "Text"}<textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} /></label>
+          <div className="drawer-actions">
+            <button className="primary" disabled={busy || !draft.trim()} onClick={() => void run(async () => {
+              if (canEditSource) await mutate("/api/v1/source", { source_key: sourceKey, content: draft, expected_hash: value.content_hash }, "Source saved and reindexed.", "PUT");
+              else if (canEditContext) await mutate(`/api/v1/context/${encodeURIComponent(identifier)}`, { action: "edit", text: draft }, "Context entry updated.");
+              else await mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "edit", text: draft }, "Memory atom updated.");
+            }, true)}><Check size={14}/>Save changes</button>
+            <button className="secondary" onClick={() => setMode("view")}>Cancel</button>
+          </div>
+        </div> : <>
+          {(value.content || value.text || value.rendered) && <section className="drawer-section"><div className="section-heading"><h3>{canEditSource ? "Current file" : "Content"}</h3><button className="copy-button" onClick={() => void navigator.clipboard.writeText(String(value.content ?? value.text ?? value.rendered ?? ""))}><Copy size={13}/>Copy</button></div><pre className="record-content">{String(value.content ?? value.text ?? value.rendered)}</pre></section>}
+          <section className="drawer-section"><h3>Details</h3><Metadata value={value}/></section>
+          {Array.isArray(value.matches) && value.matches.length > 0 && <section className="drawer-section"><h3>Search matches</h3><div className="match-list">{value.matches.map((match, index) => <article key={index}><span>Lines {String((match as JsonMap).line_start ?? "?")} to {String((match as JsonMap).line_end ?? "?")}</span><p>{String((match as JsonMap).text ?? "")}</p></article>)}</div></section>}
+        </>}
+      </>}
+
+      {!state.loading && !state.error && <footer className="drawer-footer">
+        <div className="drawer-actions">
+          {(canEditMemory || canEditContext || canEditSource) && mode === "view" && <button className="secondary" onClick={() => setMode("edit")}><Pencil size={14}/>Edit</button>}
+          {view === "memory" && identifier && <button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "promote" }, "Memory promoted into prepared context."))}><ShieldCheck size={14}/>Promote</button>}
+          {view === "context" && contextKind === "context-pack" && <><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.pack_id))}`, { action: "distill" }, "Context distillation completed."))}>Distill</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.pack_id))}`, { action: "share" }, "Team proposal created."))}>Share</button></>}
+          {view === "context" && contextKind === "context-proposal" && <><button className="primary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.proposal_id))}`, { action: "approve" }, "Proposal approved."), true)}>Approve</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.proposal_id))}`, { action: "reject" }, "Proposal rejected."), true)}>Reject</button></>}
+          {view === "intelligence" && Boolean(value.relation_id) && <><button className="primary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/intelligence/${encodeURIComponent(String(value.relation_id))}`, { action: "resolve", resolution: "keep-both" }, "Both memories retained."), true)}>Keep both</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/intelligence/${encodeURIComponent(String(value.relation_id))}`, { action: "resolve", resolution: "dismiss" }, "Suggestion dismissed."), true)}>Dismiss</button></>}
+          {view === "team" && Boolean(value.proposal_id) && <><button className="primary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/cloud/team/${encodeURIComponent(String(value.proposal_id))}/review`, { decision: "approve" }, "Team proposal approved."), true)}>Approve</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/cloud/team/${encodeURIComponent(String(value.proposal_id))}/review`, { decision: "reject" }, "Team proposal rejected."), true)}>Reject</button></>}
+          {view === "docs" && typeof value.source === "string" && value.source.startsWith("http") && <a className="secondary link-control" href={value.source} target="_blank" rel="noreferrer"><ExternalLink size={14}/>Open original</a>}
+        </div>
+        <div className="drawer-actions">
+          {canEditMemory && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm(`Forget memory ${identifier}? The source file and index will be updated.`)) void run(() => mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "forget", confirmation: identifier }, "Memory forgotten."), true); }}><Trash2 size={14}/>Forget</button>}
+          {canEditContext && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm("Remove this prepared context entry?")) void run(() => mutate(`/api/v1/context/${encodeURIComponent(identifier)}`, { action: "remove", confirmation: identifier }, "Context entry removed."), true); }}><Trash2 size={14}/>Remove</button>}
+          {canEditSource && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm(`Delete ${String(value.path)}? This removes the file from disk.`)) void run(() => mutate("/api/v1/source", { source_key: sourceKey, expected_hash: value.content_hash, confirmation: sourceKey }, "Source deleted and index rebuilt.", "DELETE"), true); }}><Trash2 size={14}/>Delete file</button>}
+          {view === "devices" && Boolean(value.device_id ?? value.id) && <button className="danger-outline" disabled={busy} onClick={() => { const deviceId = String(value.device_id ?? value.id); if (window.confirm(`Revoke device ${deviceId}? It will no longer be able to sync.`)) void run(() => mutate(`/api/v1/cloud/devices/${encodeURIComponent(deviceId)}/revoke`, { confirmation: deviceId }, "Device revoked."), true); }}><Trash2 size={14}/>Revoke device</button>}
+        </div>
+      </footer>}
+    </aside>
+  </div>;
+}
+
+function Metadata({ value }: { value: JsonMap }) {
+  const hidden = new Set(["content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids"]);
+  const entries = Object.entries(value).filter(([key, item]) => !hidden.has(key) && item !== null && item !== "").slice(0, 24);
+  return <dl className="inspector-definitions">{entries.map(([key, item]) => <div key={key}><dt>{humanise(key)}</dt><dd title={displayValue(item)}>{displayValue(item)}</dd></div>)}</dl>;
+}
+
+function recordTitle(value: JsonMap, view: ViewKey): string {
+  if (view === "sources") return sourceTitle(value);
+  return String(value.name ?? value.title ?? value.text ?? value.source ?? value.kind ?? value.id ?? `${humanise(view)} record`).slice(0, 180);
+}
+
+function recordSubtitle(value: JsonMap, view: ViewKey): string {
+  if (view === "sources") return String(value.path ?? "");
+  return String(value.source_path ?? value.scope ?? value.memory_type ?? value.state ?? "");
+}
+
+function sourceTitle(value: JsonMap): string {
+  const title = String(value.title ?? "");
+  if (title && title.toLowerCase() !== "manual memory") return title;
+  const name = String(value.path ?? "").split("/").pop() ?? "Source file";
+  return name.replace(/-[a-f0-9]{8}(?=\.[^.]+$)/, "").replace(/\.[^.]+$/, "").replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function humanise(value: string): string { return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()); }
+function displayValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "Not set";
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}

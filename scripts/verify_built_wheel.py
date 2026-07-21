@@ -50,6 +50,7 @@ import docmancer
 from docmancer.ai import openrouter_client
 from docmancer._version import __version__
 from docmancer.memory import hooks
+from docmancer.web import app as web_app
 
 repo_root = Path(r"__REPO_ROOT__").resolve()
 module_path = Path(docmancer.__file__).resolve()
@@ -59,6 +60,9 @@ if repo_root in module_path.parents:
     raise SystemExit(f"imported docmancer from repo instead of installed wheel: {module_path}")
 if expected_version and __version__ != expected_version:
     raise SystemExit(f"expected version {expected_version}, got {__version__}")
+static_root = Path(web_app.__file__).with_name("static")
+if not (static_root / "index.html").is_file() or not (static_root / "asset-manifest.json").is_file():
+    raise SystemExit("packaged localhost interface is missing from installed wheel")
 if getattr(openrouter_client, "_PREFLIGHT_MAX_TOKENS", None) != 16:
     raise SystemExit("OpenRouter preflight token floor is missing from installed wheel")
 

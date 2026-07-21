@@ -43,6 +43,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
+        "docmancer web",
         "docmancer sync",
         'docmancer query "what deployment decisions have we recorded?"',
         "docmancer memory distill",
@@ -99,6 +100,38 @@ def tui_cmd(ctx: click.Context, config_path: str | None) -> None:
     _launch_tui(config_path=config_path)
 
 
+@click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the local browser application.")
+@click.option("--port", type=click.IntRange(0, 65535), default=0, show_default="automatic")
+@click.option("--no-open", is_flag=True, help="Start the server without opening a browser.")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=str, file_okay=False, resolve_path=True),
+    default=".",
+    show_default="current directory",
+)
+@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
+@click.pass_context
+def web_cmd(
+    ctx: click.Context,
+    port: int,
+    no_open: bool,
+    project_path: str,
+    config_path: str | None,
+) -> None:
+    """Open the full local Docmancer interface on a loopback-only server."""
+    if config_path is None and ctx.parent and ctx.parent.obj:
+        config_path = ctx.parent.obj.get("config_path")
+    from docmancer.web import run_web
+
+    run_web(
+        port=port,
+        open_browser=not no_open,
+        config_path=config_path,
+        project_path=project_path,
+    )
+
+
 @click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add, search, and manage documentation.")
 def docs_group() -> None:
     """Manage the secondary local documentation retrieval index."""
@@ -139,6 +172,7 @@ cli.add_command(status_cmd, "status")
 cli.add_command(cloud_group, "cloud")
 cli.add_command(agent_group, "agent")
 cli.add_command(mcp_group, "mcp")
+cli.add_command(web_cmd, "web")
 
 for _command, _name, _replacement in (
     (add_cmd, "add", "docmancer docs add"),

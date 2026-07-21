@@ -15,11 +15,11 @@ from docmancer.cloud.recovery import create_recovery
 
 
 def test_real_python_client_bootstraps_against_real_fastify_api(tmp_path):
-    cloud_root = Path(__file__).parents[2] / "docmancer-cloud"
+    cloud_root = Path(__file__).parents[2] / "website"
     server_script = cloud_root / "apps" / "api" / "scripts" / "contract-server.ts"
     tsx = cloud_root / "apps" / "api" / "node_modules" / ".bin" / "tsx"
     if not server_script.exists() or not tsx.exists():
-        pytest.skip("docmancer-cloud sibling checkout is unavailable")
+        pytest.skip("website platform monorepo sibling checkout is unavailable")
 
     process = subprocess.Popen(
         [str(tsx), str(server_script)],

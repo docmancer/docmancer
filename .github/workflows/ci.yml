@@ -10,6 +10,26 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  local-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Build static localhost interface
+        working-directory: web
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm lint
+          pnpm build
+      - name: Verify wheel asset staging
+        run: |
+          python scripts/stage_web_assets.py
+          test -f docmancer/web/static/index.html
+
   test:
     runs-on: ubuntu-latest
     strategy:

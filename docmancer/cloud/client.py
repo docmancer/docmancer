@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import time
 from typing import Any
 from uuid import UUID
@@ -87,14 +88,16 @@ class CloudClient:
             signed_path = f"{path}?{httpx.QueryParams(kwargs['params'])}"
         if self.signing_private_key and path.startswith("/v1/workspaces/"):
             timestamp = str(int(time.time() * 1000))
+            nonce = secrets.token_urlsafe(24)
             body_hash = hashlib.sha256(body_bytes).hexdigest()
             message = _device_request_message(
-                timestamp=timestamp, method=method, path=signed_path,
+                timestamp=timestamp, nonce=nonce, method=method, path=signed_path,
                 body_hash=body_hash,
             )
             headers = dict(kwargs.get("headers") or {})
             headers.update({
                 "X-Docmancer-Device-Timestamp": timestamp,
+                "X-Docmancer-Device-Nonce": nonce,
                 "X-Docmancer-Device-Body-SHA256": body_hash,
                 "X-Docmancer-Device-Signature": b64encode(sign(message, self.signing_private_key)),
             })
@@ -239,6 +242,20 @@ class CloudClient:
             json={},
         )
 
+    def members(self, workspace_id: str) -> dict:
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/members")
+        return value if isinstance(value, dict) else {"members": value}
+
+    def invite_member(self, workspace_id: str, payload: dict) -> dict:
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/invitations", json=payload)
+
+    def request_export(self, workspace_id: str) -> dict:
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/exports", json={})
+
+    def exports(self, workspace_id: str) -> dict:
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/exports")
+        return value if isinstance(value, dict) else {"exports": value}
+
     def entitlement(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/entitlement")
 
@@ -257,33 +274,11 @@ class CloudClient:
     def report_audit_risk(self, workspace_id: str, metadata: dict) -> dict:
         return self._request("POST", f"/v1/workspaces/{workspace_id}/risk-reports", json=metadata)
 
-    def create_relay_job(self, workspace_id: str, payload: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/relay/jobs", json=payload)
-
-    def relay_jobs(self, workspace_id: str) -> dict:
-        value = self._request("GET", f"/v1/workspaces/{workspace_id}/relay/jobs")
-        return {"jobs": value if isinstance(value, list) else list(value.get("jobs") or [])}
-
-    def claim_relay_job(self, workspace_id: str) -> dict | None:
-        value = self._request("POST", f"/v1/workspaces/{workspace_id}/relay/claim", json={})
-        return value.get("job") if isinstance(value, dict) else None
-
-    def complete_relay_job(self, workspace_id: str, job_id: str, payload: dict) -> dict:
-        return self._request(
-            "POST",
-            f"/v1/workspaces/{workspace_id}/relay/jobs/{job_id}/result",
-            json=payload,
-        )
-
-    def cancel_relay_job(self, workspace_id: str, job_id: str) -> dict:
-        return self._request(
-            "POST",
-            f"/v1/workspaces/{workspace_id}/relay/jobs/{job_id}/cancel",
-            json={},
-        )
-
     def policy(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/policy")
+
+    def update_policy(self, workspace_id: str, payload: dict) -> dict:
+        return self._request("PUT", f"/v1/workspaces/{workspace_id}/policy", json=payload)
 
     def acknowledge_policy(self, workspace_id: str, payload: dict) -> dict:
         return self._request("POST", f"/v1/workspaces/{workspace_id}/policy/acknowledge", json=payload)
@@ -302,8 +297,8 @@ def _server_uuid(value: str, field: str) -> None:
         raise ProtocolError(f"{field} must be a canonical UUID") from exc
 
 
-def _device_request_message(*, timestamp: str, method: str, path: str, body_hash: str) -> bytes:
+def _device_request_message(*, timestamp: str, nonce: str, method: str, path: str, body_hash: str) -> bytes:
     return (
         "docmancer-device-request-v1\n"
-        f"{timestamp}\n{method.upper()}\n{path}\n{body_hash}"
+        f"{timestamp}\n{nonce}\n{method.upper()}\n{path}\n{body_hash}"
     ).encode("utf-8")

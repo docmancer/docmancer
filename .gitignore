@@ -17,3 +17,9 @@ downloaded-docs/
 /repush-release-tag.sh
 docs/
 scripts/*.log
+output/playwright/
+.playwright-cli/
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo

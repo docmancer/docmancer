@@ -20,6 +20,23 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Build static localhost interface
+        working-directory: web
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm lint
+          pnpm build
+
+      - name: Stage localhost assets into the Python package
+        run: python scripts/stage_web_assets.py
+
       - name: Install package and build tools
         run: pip install -e ".[dev]" build twine "hatchling<1.27"
 
