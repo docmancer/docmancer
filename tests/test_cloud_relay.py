@@ -9,6 +9,7 @@ import pytest
 
 from docmancer.cloud.crypto import b64encode, encrypt, sign, signing_keypair
 from docmancer.cloud.relay import (
+    CLI_ONLY_ACTIONS,
     RELAY_ACTIONS,
     _associated_data,
     _signature_input,
@@ -70,6 +71,18 @@ def test_relay_request_is_signed_and_encrypted():
     }
 
 
+def test_relay_signature_normalizes_postgres_utc_timestamp():
+    workspace_key = bytes(range(32))
+    signing_private, signing_public = signing_keypair()
+    job = relay_job(workspace_key, signing_private)
+    job["expires_at"] = str(job["expires_at"]).replace("+00:00", "Z")
+
+    assert decrypt_request(job, workspace_key, signing_public) == {
+        "action": "memory.query",
+        "arguments": {"text": "private question"},
+    }
+
+
 def test_dispatch_uses_an_explicit_allowlist_and_local_write_gate():
     backend = FakeBackend()
     result = asyncio.run(
@@ -77,10 +90,21 @@ def test_dispatch_uses_an_explicit_allowlist_and_local_write_gate():
     )
     assert result == [{"text": "decision", "score": 0.9}]
     with pytest.raises(PermissionError, match="--allow-writes"):
-        asyncio.run(dispatch(backend, "memory.clear_index", {}, allow_writes=False))
+        asyncio.run(
+            dispatch(
+                backend,
+                "context.add",
+                {"text": "decision"},
+                allow_writes=False,
+            )
+        )
     with pytest.raises(ValueError, match="allowlisted"):
         asyncio.run(dispatch(backend, "shell.exec", {"command": "whoami"}, allow_writes=True))
+    with pytest.raises(PermissionError, match="docmancer memory forget"):
+        asyncio.run(dispatch(backend, "memory.forget", {"identifier": "memory-id"}, allow_writes=True))
     assert "shell.exec" not in RELAY_ACTIONS
+    assert "memory.forget" in CLI_ONLY_ACTIONS
+    assert "memory.forget" not in RELAY_ACTIONS
 
 
 def test_process_one_returns_only_an_encrypted_result_to_the_server():

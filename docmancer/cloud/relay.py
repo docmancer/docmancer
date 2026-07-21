@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -24,8 +24,19 @@ def relay_header(job: dict) -> dict:
         "source_device_id": str(job["source_device_id"]),
         "target_device_id": str(job["target_device_id"]),
         "key_version": int(job["key_version"]),
-        "expires_at": str(job["expires_at"]),
+        "expires_at": _canonical_timestamp(job["expires_at"]),
     }
+
+
+def _canonical_timestamp(value: Any) -> str:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("relay timestamp must include a timezone")
+    return (
+        parsed.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _associated_data(header: dict, direction: str) -> bytes:
@@ -134,8 +145,6 @@ RELAY_ACTIONS: dict[str, tuple[ActionHandler, bool]] = {
     "context.add": (_method("add_context"), True),
     "context.share": (_method("share_context"), True),
     "context.edit": (_method("edit_context"), True),
-    "context.remove": (_method("remove_context"), True),
-    "context.reset": (_method("reset_context"), True),
     "intelligence.list": (_method("memory_intelligence"), False),
     "intelligence.resolve": (_method("resolve_memory_conflict"), True),
     "intelligence.resolve_group": (_method("resolve_memory_conflict_group"), True),
@@ -143,16 +152,12 @@ RELAY_ACTIONS: dict[str, tuple[ActionHandler, bool]] = {
     "memory.query": (_method("query_memory"), False),
     "memory.add": (_method("add"), True),
     "memory.edit": (_method("edit"), True),
-    "memory.forget": (_method("forget"), True),
     "memory.promote": (_method("promote"), True),
-    "memory.clear_index": (_method("clear_memory"), True),
     "sources.browse": (_method("browse_memory_sources"), False),
     "sources.get": (_method("get_memory_source"), False),
     "sources.live": (_method("get_live_source"), False),
     "sources.search": (_method("search_memory_sources"), False),
     "sources.create": (_method("create_source"), True),
-    "sources.edit": (_method("edit_source"), True),
-    "sources.delete": (_method("delete_source"), True),
     "audit.secrets": (_method("audit"), False),
     "audit.hooks": (_method("hook_status"), False),
     "docs.list": (_method("docs_sources"), False),
@@ -162,14 +167,27 @@ RELAY_ACTIONS: dict[str, tuple[ActionHandler, bool]] = {
     "settings.capture.get": (_method("capture_settings"), False),
     "settings.capture.set": (_method("save_capture_settings"), True),
     "maintenance.consolidate": (_method("consolidate"), True),
-    "maintenance.apply": (_method("apply_memory"), True),
     "status": (_method("status"), False),
     "sync": (_method("sync"), True),
     "doctor": (_method("doctor"), False),
 }
 
+CLI_ONLY_ACTIONS = {
+    "context.remove": "Run `docmancer memory remove <id>` locally.",
+    "context.reset": "Open `docmancer` locally and reset the selected context from the Context screen.",
+    "memory.forget": "Run `docmancer memory forget <id> --dry-run`, then repeat without `--dry-run` after review.",
+    "memory.clear_index": "Open `docmancer` locally and clear the rebuildable index from Maintenance.",
+    "sources.edit": "Edit the source locally, then run `docmancer sync --project \"$PWD\"`.",
+    "sources.delete": "Delete the source locally, then run `docmancer sync --project \"$PWD\"`.",
+    "maintenance.apply": "Open `docmancer` locally, review the draft, then run `/apply <agent>`.",
+}
+
 
 async def dispatch(backend: Any, action: str, arguments: dict, *, allow_writes: bool) -> Any:
+    if action in CLI_ONLY_ACTIONS:
+        raise PermissionError(
+            f"relay action is CLI-only because it can remove or overwrite local state. {CLI_ONLY_ACTIONS[action]}"
+        )
     entry = RELAY_ACTIONS.get(action)
     if entry is None:
         raise ValueError("relay action is not allowlisted")
@@ -264,6 +282,7 @@ async def serve(
 
 
 __all__ = [
+    "CLI_ONLY_ACTIONS",
     "RELAY_ACTIONS",
     "decrypt_request",
     "dispatch",

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.9] - Unreleased
+### Changed
+
+- **Safer Cloud relay boundaries.** Destructive and overwrite-prone actions such as forgetting memory, resetting context, clearing indexes, editing or deleting source files, and applying generated context now stay in the local CLI or TUI, where their full confirmation flows remain visible.
+
+### Fixed
+
+- **Compatible relay signatures.** Relay request verification now canonicalizes timezone-aware expiry timestamps to the same UTC millisecond format used by PostgreSQL and the browser, preventing equivalent `Z` and `+00:00` timestamps from producing different signatures.
+
 ## [0.7.8] - 2026-07-21
 ### Added
 
