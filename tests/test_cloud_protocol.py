@@ -523,12 +523,18 @@ def test_client_headers_and_typed_non_destructive_errors():
 
     device_id = "00000000-0000-4000-8000-000000000002"
     workspace_id = "00000000-0000-4000-8000-000000000001"
-    client = CloudClient("https://cloud.invalid", token="token", device_id=device_id, transport=httpx.MockTransport(handler))
+    signing_private, _signing_public = signing_keypair()
+    client = CloudClient(
+        "https://cloud.invalid", token="token", device_id=device_id,
+        signing_private_key=signing_private, transport=httpx.MockTransport(handler),
+    )
     with pytest.raises(RateLimitedError):
         client.push(workspace_id, [])
     assert seen["x-docmancer-protocol"] == "1"
     assert seen["x-docmancer-device-id"] == device_id
     assert seen["x-docmancer-client-version"]
+    assert seen["x-docmancer-device-signature"]
+    assert seen["x-docmancer-device-body-sha256"]
 
     client = CloudClient(
         "https://cloud.invalid", token="token", device_id=device_id,
@@ -561,6 +567,7 @@ def test_python_cloud_routes_are_declared_by_sibling_openapi():
     openapi_source = openapi_path.read_text(encoding="utf-8")
     declared = set(re.findall(r"^  (/v1/[^:]+):$", openapi_source, re.MULTILINE))
     called = set(re.findall(r'[f]?"(/v1/[^"?]+)', client_source))
+    called.discard("/v1/workspaces/")
     replacements = {
         "{workspace_id}": "{workspaceId}",
         "{device_id}": "{deviceId}",

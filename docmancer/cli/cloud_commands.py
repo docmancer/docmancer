@@ -56,7 +56,11 @@ def _client() -> tuple[CloudClient, Path, CloudConfig, dict, KeyStore]:
     token = keys.token(account_id)
     if not account_id or not token or not account.get("base_url") or not account.get("device_id"):
         raise click.ClickException("cloud session is incomplete; run `docmancer cloud connect`")
-    return CloudClient(str(account["base_url"]), token=token.decode("utf-8"), device_id=str(account["device_id"])), root, config, account, keys
+    return CloudClient(
+        str(account["base_url"]), token=token.decode("utf-8"),
+        device_id=str(account["device_id"]),
+        signing_private_key=keys.get(account_id, "device-signing-private"),
+    ), root, config, account, keys
 
 
 def _resume_existing_connect(
@@ -78,7 +82,10 @@ def _resume_existing_connect(
             f"this device is already associated with {configured_url}; disconnect it before changing servers"
         )
 
-    client = CloudClient(base_url, token=token.decode("utf-8"), device_id=device_id)
+    client = CloudClient(
+        base_url, token=token.decode("utf-8"), device_id=device_id,
+        signing_private_key=keys.get(account_id, "device-signing-private"),
+    )
     try:
         rows = list(client.devices(workspace_id).get("devices") or [])
     except AuthenticationError:
@@ -242,7 +249,10 @@ def login(
         }.items():
             keys.set(account_id, kind, value)
         device_keys = {"signing_public": signing_public, "box_public": box_public}
-        authenticated = CloudClient(base_url, token=token, device_id=device_id)
+        authenticated = CloudClient(
+            base_url, token=token, device_id=device_id,
+            signing_private_key=signing_private,
+        )
         try:
             rows = list(authenticated.workspaces().get("workspaces") or [])
             if workspace_id:
@@ -366,7 +376,7 @@ def login(
 
 @cloud_group.command("disconnect", cls=DocmancerCommand, short_help="Disconnect cloud without deleting local memory.")
 @click.option("--export", "export_destination", type=click.Path(path_type=Path), default=None, help="Export local Markdown records first.")
-@click.option("--delete-remote", is_flag=True, help="Delete server-held ciphertext first.")
+@click.option("--delete-remote", is_flag=True, help="Schedule server-held ciphertext for deletion first.")
 @click.option("--confirm", default=None, help="Required as DELETE with --delete-remote.")
 def logout(export_destination: Path | None, delete_remote: bool, confirm: str | None) -> None:
     if export_destination is not None:
@@ -831,7 +841,7 @@ def _export_local(destination: Path) -> None:
     click.echo(f"Exported {count} local record(s) to {destination}")
 
 
-@cloud_group.command("delete-remote", cls=DocmancerCommand, short_help="Delete server ciphertext and keep local memory.", hidden=True)
+@cloud_group.command("delete-remote", cls=DocmancerCommand, short_help="Schedule server ciphertext deletion and keep local memory.", hidden=True)
 @click.option("--confirm", required=True, help="Type DELETE to confirm.")
 def delete_remote(confirm: str) -> None:
     _delete_remote(confirm)

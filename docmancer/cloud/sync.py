@@ -146,14 +146,6 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
 
         acknowledgement = apply_policy(client.policy(workspace_id), root=root)
         client.acknowledge_policy(workspace_id, acknowledgement)
-    if state.get_meta("cursor") is None:
-        try:
-            from docmancer.cloud.snapshot import apply_snapshot
-
-            snapshot = client.latest_snapshot(workspace_id)
-            apply_snapshot(snapshot, root=root, workspace_key=workspace_key)
-        except Exception:  # noqa: BLE001 - verification or availability falls back to full replay
-            pass
     pushed = 0
     if can_push:
         pushed = _push_pending(

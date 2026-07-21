@@ -447,6 +447,24 @@ ModalScreen {
     max-height: 18;
 }
 
+.busy-card {
+    width: 60;
+    height: auto;
+    max-height: 14;
+    content-align: center middle;
+}
+
+.busy-card #busy-spinner {
+    height: 3;
+    margin: 1 0;
+}
+
+.busy-card #busy-detail {
+    height: auto;
+    color: $text-muted;
+    text-align: center;
+}
+
 .edit-card {
     width: 80%;
     height: 70%;

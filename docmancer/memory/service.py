@@ -843,6 +843,7 @@ class MemoryService:
             str(account["base_url"]),
             token=token,
             device_id=str(account["device_id"]),
+            signing_private_key=keys.get(account_id, "device-signing-private"),
         )
         try:
             return sync_once(client, root=self.root, keystore=keys)

@@ -784,7 +784,11 @@ class TuiBackend:
         token = await asyncio.to_thread(keys.token, account_id)
         if not token or not account.get("base_url") or not account.get("device_id"):
             raise ValueError("cloud session is incomplete; run `docmancer cloud connect`")
-        client = CloudClient(str(account["base_url"]), token=token.decode("utf-8"), device_id=str(account["device_id"]))
+        client = CloudClient(
+            str(account["base_url"]), token=token.decode("utf-8"),
+            device_id=str(account["device_id"]),
+            signing_private_key=keys.get(account_id, "device-signing-private"),
+        )
         try:
             return await asyncio.to_thread(sync_once, client, root=root, keystore=keys)
         finally:
@@ -803,7 +807,11 @@ class TuiBackend:
         token = keys.token(account_id)
         if not token or not account.get("base_url") or not account.get("device_id") or not account.get("workspace_id"):
             raise ValueError("cloud session is incomplete; run `docmancer cloud connect`")
-        client = CloudClient(str(account["base_url"]), token=token.decode("utf-8"), device_id=str(account["device_id"]))
+        client = CloudClient(
+            str(account["base_url"]), token=token.decode("utf-8"),
+            device_id=str(account["device_id"]),
+            signing_private_key=keys.get(account_id, "device-signing-private"),
+        )
         return client, str(account["workspace_id"])
 
     async def cloud_devices(self) -> list[dict]:

@@ -18,6 +18,7 @@ from docmancer.memory import SyncInProgressError
 from docmancer.tui.backend import TuiBackend
 from docmancer.tui.commands import default_registry
 from docmancer.tui.screens.audit import AuditScreen
+from docmancer.tui.screens.busy import BusyScreen
 from docmancer.tui.screens.cloud import CloudListScreen, ConflictResolutionScreen, DeviceApprovalScreen, PromotionReviewScreen, RecoveryKeyScreen
 from docmancer.tui.screens.consolidate import ConsolidateScreen
 from docmancer.tui.screens.detail import ConfirmScreen, CreateSourceScreen, DetailScreen, EditScreen, SourceViewerScreen
@@ -558,6 +559,15 @@ class DocmancerTuiApp(App):
             await self.reset_browse()
             self.notify("Search and filters reset.")
             return
+        # A partial slash command (e.g. "/dis") should complete to the highlighted
+        # suggestion on Enter instead of failing as an unknown command.
+        if line.startswith("/"):
+            token = line[1:].split(" ", 1)[0].casefold()
+            known = token in {spec.name for spec in self.registry.commands}
+            menu = self.query_one("#command-menu", OptionList)
+            if token and not known and menu.has_class("visible"):
+                if self._complete_command(run=True):
+                    return
         event.input.clear()
         self._hide_command_menu()
         if line.startswith("/"):
@@ -568,6 +578,38 @@ class DocmancerTuiApp(App):
             )
         else:
             await self.run_query(line)
+
+    def _complete_command(self, *, run: bool) -> bool:
+        """Accept the highlighted command-menu suggestion.
+
+        Commands that take arguments are filled into the input (with a trailing
+        space) so the user can type the argument. Argument-free commands run
+        immediately when `run` is set (Enter); Tab only completes the text.
+        Returns True when a suggestion was accepted.
+        """
+        menu = self.query_one("#command-menu", OptionList)
+        if not menu.has_class("visible") or menu.option_count == 0:
+            return False
+        index = menu.highlighted if menu.highlighted is not None else 0
+        option = menu.get_option_at_index(index)
+        spec = next((item for item in self.registry.commands if item.name == option.id), None)
+        if spec is None:
+            return False
+        input_widget = self.query_one("#command-input", Input)
+        takes_args = spec.usage != f"/{spec.name}"
+        self._hide_command_menu()
+        if takes_args or not run:
+            input_widget.value = f"/{spec.name}" + (" " if takes_args else "")
+            input_widget.cursor_position = len(input_widget.value)
+            input_widget.focus()
+            return True
+        input_widget.clear()
+        self.run_worker(
+            self.registry.dispatch(self, f"/{spec.name}"),
+            group="slash-command",
+            exit_on_error=False,
+        )
+        return True
 
     async def run_query(self, query: str, *, mode: str | None = None, expand: str | None = None) -> None:
         if not self.backend.ready:
@@ -608,6 +650,9 @@ class DocmancerTuiApp(App):
             [Option(f"{spec.usage}  [dim]{spec.description}[/dim]", id=spec.name) for spec in specs]
         )
         menu.set_class(bool(specs), "visible")
+        # Pre-select the first match so Enter/Tab always have a clear target.
+        if specs:
+            menu.highlighted = 0
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id != "command-menu" or not event.option.id:
@@ -1428,19 +1473,30 @@ Reset Personal removes approved personal records, rejects pending personal propo
 
     async def command_distill(self, args: list[str]) -> None:
         pack_id = args[0] if args else self._selected_context_id()
-        await self._start_context_work("Distilling context...")
+        screen = BusyScreen(
+            "Reviewing your memory and drafting context proposals. This can take a moment.",
+            title="Distilling context",
+        )
+        await self.push_screen(screen)
         try:
             proposal = await self.backend.distill_context(pack_id)
-            if proposal is None:
-                self.notify("No update proposed. Approved context already matches the evidence.")
-            else:
-                self.notify(f"Created proposal {proposal.proposal_id} with {len(proposal.operations)} operation(s).")
-            await self.switch_mode("context")
-            await self._load_context_page()
         except Exception as exc:  # noqa: BLE001
+            await self._dismiss_busy(screen)
             self.notify(str(exc), severity="error", timeout=8)
-        finally:
-            self._finish_context_work()
+            return
+        await self._dismiss_busy(screen)
+        if proposal is None:
+            self.notify("No update proposed. Approved context already matches the evidence.")
+        else:
+            self.notify(f"Created proposal {proposal.proposal_id} with {len(proposal.operations)} operation(s).")
+        await self.switch_mode("context")
+        await self._load_context_page()
+
+    async def _dismiss_busy(self, screen: BusyScreen) -> None:
+        """Pop a BusyScreen overlay if it is still on the stack."""
+        if screen.is_running:
+            screen.dismiss(None)
+            await asyncio.sleep(0)
 
     async def command_review(self, args: list[str]) -> None:
         if not args:

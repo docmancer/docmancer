@@ -11,9 +11,10 @@ import pytest
 
 from docmancer.cloud.client import CloudClient
 from docmancer.cloud.crypto import b64encode, box_keypair, random_key, signing_keypair, wrap_key
+from docmancer.cloud.recovery import create_recovery
 
 
-def test_real_python_client_bootstraps_against_real_fastify_api():
+def test_real_python_client_bootstraps_against_real_fastify_api(tmp_path):
     cloud_root = Path(__file__).parents[2] / "docmancer-cloud"
     server_script = cloud_root / "apps" / "api" / "scripts" / "contract-server.ts"
     tsx = cloud_root / "apps" / "api" / "node_modules" / ".bin" / "tsx"
@@ -59,7 +60,7 @@ def test_real_python_client_bootstraps_against_real_fastify_api():
         session = unauthenticated.poll_device_login(challenge["device_code"])
         unauthenticated.close()
 
-        _signing_private, signing_public = signing_keypair()
+        signing_private, signing_public = signing_keypair()
         _box_private, box_public = box_keypair()
         workspace_key = random_key()
         authenticated = CloudClient(
@@ -84,6 +85,21 @@ def test_real_python_client_bootstraps_against_real_fastify_api():
         assert created["entitlement"]["status"] == "trialing"
         assert authenticated.status(created["workspace_id"])["devices"]["approved"] == 1
         authenticated.close()
+
+        device_client = CloudClient(
+            base_url,
+            token=session["access_token"],
+            device_id=created["device_id"],
+            signing_private_key=signing_private,
+        )
+        assert device_client.pull(created["workspace_id"])["envelopes"] == []
+        recovery_key, wrapper = create_recovery(
+            created["workspace_id"], workspace_key, root=tmp_path,
+        )
+        assert recovery_key
+        assert device_client.upload_recovery_wrapper(created["workspace_id"], wrapper)["state"] == "stored"
+        assert device_client.recovery_wrapper(created["workspace_id"]) == wrapper
+        device_client.close()
     finally:
         process.terminate()
         try:

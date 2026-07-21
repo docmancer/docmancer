@@ -1,7 +1,10 @@
 """Typed HTTP client for the Docmancer cloud protocol."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import time
 from typing import Any
 from uuid import UUID
 
@@ -9,6 +12,7 @@ import httpx
 
 from docmancer.cloud import PROTOCOL_VERSION
 from docmancer import __version__
+from docmancer.cloud.crypto import b64encode, sign
 
 
 class CloudError(RuntimeError):
@@ -36,7 +40,10 @@ class ProtocolTooOldError(ProtocolError):
 
 
 class CloudClient:
-    def __init__(self, base_url: str, *, token: str, device_id: str, transport=None, timeout: float = 20.0) -> None:
+    def __init__(
+        self, base_url: str, *, token: str, device_id: str,
+        signing_private_key: bytes | None = None, transport=None, timeout: float = 20.0,
+    ) -> None:
         _server_uuid(device_id, "device_id")
         headers = {
             "X-Docmancer-Protocol": PROTOCOL_VERSION,
@@ -50,6 +57,7 @@ class CloudClient:
             base_url=base_url.rstrip("/"), transport=transport, timeout=timeout,
             headers=headers,
         )
+        self.signing_private_key = signing_private_key
 
     def close(self) -> None:
         self.http.close()
@@ -64,6 +72,33 @@ class CloudClient:
         params = kwargs.get("params")
         if isinstance(params, dict) and params.get("device_id") is not None:
             _server_uuid(str(params["device_id"]), "device_id")
+        request_body = kwargs.pop("json", None)
+        body_bytes = (
+            json.dumps(request_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if request_body is not None else b"null"
+        )
+        if request_body is not None:
+            kwargs["content"] = body_bytes
+            headers = dict(kwargs.get("headers") or {})
+            headers["Content-Type"] = "application/json"
+            kwargs["headers"] = headers
+        signed_path = path
+        if kwargs.get("params"):
+            signed_path = f"{path}?{httpx.QueryParams(kwargs['params'])}"
+        if self.signing_private_key and path.startswith("/v1/workspaces/"):
+            timestamp = str(int(time.time() * 1000))
+            body_hash = hashlib.sha256(body_bytes).hexdigest()
+            message = _device_request_message(
+                timestamp=timestamp, method=method, path=signed_path,
+                body_hash=body_hash,
+            )
+            headers = dict(kwargs.get("headers") or {})
+            headers.update({
+                "X-Docmancer-Device-Timestamp": timestamp,
+                "X-Docmancer-Device-Body-SHA256": body_hash,
+                "X-Docmancer-Device-Signature": b64encode(sign(message, self.signing_private_key)),
+            })
+            kwargs["headers"] = headers
         response = self.http.request(method, path, **kwargs)
         error_code = None
         error_message = None
@@ -213,14 +248,6 @@ class CloudClient:
     def recovery_wrapper(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/recovery-wrapper")
 
-    def upload_snapshot(self, workspace_id: str, snapshot: dict) -> dict:
-        return self._request("POST", f"/v1/workspaces/{workspace_id}/snapshots", json=snapshot)
-
-    def latest_snapshot(self, workspace_id: str) -> dict:
-        value = self._request("GET", f"/v1/workspaces/{workspace_id}/snapshots")
-        rows = value if isinstance(value, list) else value.get("snapshots", [])
-        return rows[0] if rows else {}
-
     def promotion_proposals(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/promotions")
 
@@ -273,3 +300,10 @@ def _server_uuid(value: str, field: str) -> None:
         UUID(value)
     except ValueError as exc:
         raise ProtocolError(f"{field} must be a canonical UUID") from exc
+
+
+def _device_request_message(*, timestamp: str, method: str, path: str, body_hash: str) -> bytes:
+    return (
+        "docmancer-device-request-v1\n"
+        f"{timestamp}\n{method.upper()}\n{path}\n{body_hash}"
+    ).encode("utf-8")

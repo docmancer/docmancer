@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - Unreleased
+### Added
+
+- **Device-signed Cloud requests.** Authenticated workspace operations now carry a device timestamp, canonical body hash, and Ed25519 signature from the registered device key, so the API can verify the caller's device proof independently of its account session.
+- **Keyboard-first slash commands.** The TUI command menu now preselects its first match, supports Up and Down navigation, completes with Tab, and runs highlighted argument-free commands with Enter.
+
+### Changed
+
+- **Visible distillation progress.** Context distillation now opens a focused non-dismissable progress overlay until the proposal is ready or the operation fails.
+- **Authoritative first sync.** New Cloud clients rebuild from the ordered encrypted revision stream instead of probing the retired snapshot preflight before normal replay.
+- **Accurate remote deletion wording.** Cloud disconnect and deletion help now describe remote deletion as a scheduled operation rather than implying immediate removal.
+
 ## [0.7.7] - 2026-07-21
 ### Added
 
