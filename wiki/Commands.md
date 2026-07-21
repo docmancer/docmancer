@@ -66,25 +66,6 @@ Context compilation uses this precedence:
 
 Transport and semantic conflicts appear in `docmancer memory review`. Recovery, export, revocation, and remote deletion remain guarded options inside the relevant cloud workflow rather than public command groups.
 
-## Terminal UI
-
-The TUI retains the three-pane layout and exposes four tabs: Context, Sources, Audit, and Docs. Review is a queue within Context. Audit is a first-class surface for masked security findings, automatic context delivery, and optional new-memory capture. Its left pane shows one effective coverage card per supported agent plus a How it works modal, while the middle pane remains dedicated to security findings. Sources retain inline warning annotations, while cloud appears in the footer and settings.
-
-The public slash commands are:
-
-```text
-/sync
-/distill
-/review
-/add
-/share
-/status
-/settings
-/help
-```
-
-Plain text searches the active tab. Visible buttons and keybindings handle record inspection, editing, removal, approval, rejection, conflict resolution, and export.
-
 ## Local browser application
 
 `docmancer web` opens the complete local interface in the browser while keeping memory, files, credentials, and actions on the machine. The server binds only to `127.0.0.1`, creates a one-time browser bootstrap session, and requires origin plus CSRF checks for changes.
@@ -94,6 +75,8 @@ docmancer web
 docmancer web --project /path/to/project
 docmancer web --no-open
 ```
+
+Use the `Run or go to` palette to move between pages and run the supported local maintenance actions. Context, Memory, Sources, Docs, Audit, Intelligence, Maintenance, Devices, and Team collections use numbered pagination. Editable Markdown records expose Write and Preview modes before saving through the local API.
 
 Cloud sync remains an encrypted revision transport between approved devices. The hosted service cannot request local actions or connect back to the localhost application.
 

@@ -31,6 +31,22 @@ class FakeRuntime:
     async def find_atom(self, identifier: str) -> dict | None:
         return {"record_id": identifier, "text": "Remember the local boundary"} if identifier == "record-1" else None
 
+    async def context(self) -> list[dict]:
+        return [{"record_id": f"record-{index}", "text": f"Context {index}"} for index in range(45)]
+
+    async def memory_recent(self, _since) -> list[dict]:
+        return [{"atom_id": f"atom-{index}", "text": f"Memory {index}"} for index in range(45)]
+
+    async def audit(self) -> dict:
+        return {
+            "finding_count": 1,
+            "unique_secret_count": 1,
+            "findings": [{"type": "API key", "severity": "high", "occurrences": [], "occurrence_count": 1}],
+        }
+
+    async def hook_status(self) -> list[dict]:
+        return [{"agent": "codex", "scope": "user", "path": "/tmp/hooks.json"}]
+
     async def get_docs_source(self, source: str) -> dict | None:
         return {"source": source, "documents": [{"title": "Start"}]} if source == "https://docs.example" else None
 
@@ -159,3 +175,24 @@ def test_intelligence_resolution_is_allowlisted(tmp_path: Path) -> None:
             headers=headers,
         )
         assert rejected.status_code == 400
+
+
+def test_collection_routes_return_consistent_page_metadata(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        authenticate(client, app)
+        context = client.get("/api/v1/context?page=2&page_size=20").json()
+        assert context["page"] == 2
+        assert context["total"] == 45
+        assert context["total_pages"] == 3
+        assert len(context["items"]) == 20
+
+        memory = client.get("/api/v1/memory?page=3&page_size=20").json()
+        assert memory["page"] == 3
+        assert memory["total"] == 45
+        assert len(memory["items"]) == 5
+
+        audit = client.get("/api/v1/audit").json()
+        assert audit["total"] == 2
+        assert audit["items"][0]["view_kind"] == "secret-finding"
+        assert audit["items"][1]["view_kind"] == "hook-status"

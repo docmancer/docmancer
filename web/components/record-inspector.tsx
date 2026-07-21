@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertTriangle, Check, Copy, ExternalLink, LoaderCircle, Pencil, ShieldCheck, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, ExternalLink, Eye, LoaderCircle, Pencil, ShieldCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { JsonMap } from "@/lib/api";
 import type { ViewKey } from "./workspace-app";
+import { MarkdownContent } from "./markdown-content";
 
 type Mutate = (path: string, body: JsonMap, success: string, method?: string) => Promise<JsonMap | undefined>;
 
@@ -31,6 +32,7 @@ export function RecordInspector({
   const [draft, setDraft] = useState(String(value.content ?? value.text ?? value.rendered ?? ""));
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const [editorTab, setEditorTab] = useState<"write" | "preview">("write");
   const title = recordTitle(value, view);
   const subtitle = recordSubtitle(value, view);
 
@@ -61,9 +63,10 @@ export function RecordInspector({
         <button className="icon-button" onClick={close} aria-label="Close inspector"><X size={16}/></button>
       </header>
 
-      {state.loading ? <div className="drawer-loading"><LoaderCircle className="spin"/><span>Loading the current local record</span></div> : state.error ? <div className="drawer-error"><AlertTriangle size={17}/>{state.error}</div> : <>
+      <div className="drawer-scroll">{state.loading ? <div className="drawer-loading"><LoaderCircle className="spin"/><span>Loading the current local record</span></div> : state.error ? <div className="drawer-error"><AlertTriangle size={17}/>{state.error}</div> : <>
         {(canEditMemory || canEditContext || canEditSource) && mode === "edit" ? <div className="drawer-editor">
-          <label>{canEditSource ? "File contents" : "Text"}<textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} /></label>
+          <div className="editor-toolbar"><span>{canEditSource ? "File contents" : "Markdown content"}</span><div className="segmented"><button className={editorTab === "write" ? "active" : ""} onClick={() => setEditorTab("write")}><Pencil size={13}/>Write</button><button className={editorTab === "preview" ? "active" : ""} onClick={() => setEditorTab("preview")}><Eye size={13}/>Preview</button></div></div>
+          {editorTab === "write" ? <textarea aria-label="Markdown editor" autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} /> : <div className="editor-preview"><MarkdownContent value={draft}/></div>}
           <div className="drawer-actions">
             <button className="primary" disabled={busy || !draft.trim()} onClick={() => void run(async () => {
               if (canEditSource) await mutate("/api/v1/source", { source_key: sourceKey, content: draft, expected_hash: value.content_hash }, "Source saved and reindexed.", "PUT");
@@ -73,11 +76,17 @@ export function RecordInspector({
             <button className="secondary" onClick={() => setMode("view")}>Cancel</button>
           </div>
         </div> : <>
-          {(value.content || value.text || value.rendered) && <section className="drawer-section"><div className="section-heading"><h3>{canEditSource ? "Current file" : "Content"}</h3><button className="copy-button" onClick={() => void navigator.clipboard.writeText(String(value.content ?? value.text ?? value.rendered ?? ""))}><Copy size={13}/>Copy</button></div><pre className="record-content">{String(value.content ?? value.text ?? value.rendered)}</pre></section>}
-          <section className="drawer-section"><h3>Details</h3><Metadata value={value}/></section>
+          {view === "audit" && value.view_kind === "secret-finding" && (
+            <AuditFinding value={value}/>
+          )}
+          {view === "intelligence" && (
+            <IntelligenceDetail value={value}/>
+          )}
+          {(value.content || value.text || value.rendered) && view !== "audit" && <section className="drawer-section content-section"><div className="section-heading"><h3>{canEditSource ? "Current file" : "Content"}</h3><button className="copy-button" onClick={() => void navigator.clipboard.writeText(String(value.content ?? value.text ?? value.rendered ?? ""))}><Copy size={13}/>Copy</button></div><MarkdownContent value={String(value.content ?? value.text ?? value.rendered)}/></section>}
+          <details className="drawer-details"><summary><span>Technical details</span><ChevronDown size={14}/></summary><div><Metadata value={value}/></div></details>
           {Array.isArray(value.matches) && value.matches.length > 0 && <section className="drawer-section"><h3>Search matches</h3><div className="match-list">{value.matches.map((match, index) => <article key={index}><span>Lines {String((match as JsonMap).line_start ?? "?")} to {String((match as JsonMap).line_end ?? "?")}</span><p>{String((match as JsonMap).text ?? "")}</p></article>)}</div></section>}
         </>}
-      </>}
+      </>}</div>
 
       {!state.loading && !state.error && <footer className="drawer-footer">
         <div className="drawer-actions">
@@ -100,6 +109,28 @@ export function RecordInspector({
   </div>;
 }
 
+function AuditFinding({ value }: { value: JsonMap }) {
+  const occurrences = Array.isArray(value.occurrences) ? value.occurrences.filter(isObject) : [];
+  return <section className="audit-finding-detail">
+    <div className={`risk-banner severity-${String(value.severity ?? "medium")}`}><AlertTriangle size={18}/><div><span>{String(value.severity ?? "finding")} severity</span><strong>{String(value.type ?? "Possible secret")}</strong><p>The value remains masked. Rotate it if it is real, remove it from the source, then rebuild memory.</p></div></div>
+    <div className="occurrence-list"><h3>Found in {occurrences.length} {occurrences.length === 1 ? "location" : "locations"}</h3>{occurrences.map((occurrence, index) => <article key={`${String(occurrence.source_path)}:${String(occurrence.line)}:${index}`}>
+      <div className="location-line"><strong>{filename(String(occurrence.source_path ?? "Unknown file"))}</strong><span>Line {String(occurrence.line ?? "?")}</span></div>
+      <code className="full-path" title={String(occurrence.source_path ?? "")}>{String(occurrence.source_path ?? "")}</code>
+      <pre>{String(occurrence.masked_excerpt ?? "[SECRET]")}</pre>
+      <div className="occurrence-meta"><span>{humanise(String(occurrence.agent ?? "local"))}</span><span>{humanise(String(occurrence.scope ?? "memory"))}</span></div>
+    </article>)}</div>
+    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the file above and run <code>docmancer memory sync --recreate</code>.</li></ol></div>
+  </section>;
+}
+
+function IntelligenceDetail({ value }: { value: JsonMap }) {
+  const raw = Array.isArray(value.members) ? value.members : Array.isArray(value.samples) ? value.samples : [];
+  const entries = raw.filter(isObject);
+  if (!entries.length) return null;
+  const conflict = value.intelligence_kind === "conflict-group";
+  return <section className="drawer-section intelligence-detail"><div className="section-heading"><h3>{conflict ? "Evidence to compare" : "Recent memory samples"}</h3><span>{entries.length} shown</span></div><div className="evidence-list">{entries.map((entry, index) => <article key={String(entry.atom_id ?? entry.node_id ?? index)}><div><span>{humanise(String(entry.memory_type ?? "memory"))}</span>{entry.value ? <strong>{String(entry.value)}</strong> : null}</div><MarkdownContent value={String(entry.text ?? "No text available.")} compact/></article>)}</div></section>;
+}
+
 function Metadata({ value }: { value: JsonMap }) {
   const hidden = new Set(["content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids"]);
   const entries = Object.entries(value).filter(([key, item]) => !hidden.has(key) && item !== null && item !== "").slice(0, 24);
@@ -108,6 +139,10 @@ function Metadata({ value }: { value: JsonMap }) {
 
 function recordTitle(value: JsonMap, view: ViewKey): string {
   if (view === "sources") return sourceTitle(value);
+  if (view === "audit" && value.view_kind === "secret-finding") return String(value.type ?? "Possible secret");
+  if (view === "audit" && value.agent) return `${humanise(String(value.agent))} ${String(value.scope ?? "hook")}`;
+  if (view === "intelligence" && value.intelligence_kind === "recent-source") { const title = String(value.source_title ?? ""); const sample = Array.isArray(value.samples) ? value.samples.find(isObject) : undefined; return title && !["promoted memory", "manual memory", "memory"].includes(title.toLowerCase()) ? title : String(sample?.text ?? filename(String(value.source_path ?? "Recent source"))).slice(0, 120); }
+  if (view === "intelligence" && value.intelligence_kind === "conflict-group") return String(value.claim_subject ?? value.claim_key ?? "Conflicting memories");
   return String(value.name ?? value.title ?? value.text ?? value.source ?? value.kind ?? value.id ?? `${humanise(view)} record`).slice(0, 180);
 }
 
@@ -130,3 +165,5 @@ function displayValue(value: unknown): string {
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
+function isObject(value: unknown): value is JsonMap { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+function filename(value: string): string { return value.split("/").pop() || value; }

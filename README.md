@@ -8,7 +8,7 @@
 
 [Install](#install) | [Context packs](#canonical-context-packs) | [Commands](#command-line) | [Cloud](#optional-encrypted-cloud-sync) | [Wiki](./wiki/Home.md)
 
-<img src="readme-assets/tui-readme.gif" alt="Docmancer terminal explorer" style="width: 92%; max-width: 1120px; height: auto;" />
+<img src="readme-assets/web-readme.png" alt="Docmancer local web interface" style="width: 92%; max-width: 1120px; height: auto;" />
 
 </div>
 
@@ -23,35 +23,28 @@ The default path is local and keyless. SQLite FTS5, the packaged `potion-base-8M
 ```bash
 pipx install docmancer --python python3.13
 docmancer setup
-docmancer
-# or open the full loopback-only browser interface
 docmancer web
 ```
 
-Bare `docmancer` opens with a startup screen while local memory and indexes are loaded, then opens the three-pane terminal interface. It has four top-level tabs:
+`docmancer web` starts a loopback-only server on `127.0.0.1`, opens your browser, and authenticates that browser once with a single-use token. Nothing listens on any external interface, and the footer always shows the active `Loopback only 127.0.0.1` binding. Bare `docmancer` prints help, so the browser interface and the deterministic CLI are the two ways to drive it.
 
-- **Context** shows Personal defaults, This project, Team standards, Team project, and pending review.
-- **Sources** shows agent memory, instructions, rules, provenance, and inline security warnings.
-- **Audit** is the first-class home for masked security findings, automatic context delivery, and optional new-memory capture coverage for Claude Code and Codex.
-- **Docs** keeps documentation browsing and search separate from memory.
+The sidebar is organized into three groups:
 
-The available slash commands are `/sync`, `/distill`, `/review`, `/add`, `/share`, `/status`, `/settings`, and `/help`. Plain text searches the active tab. Visible buttons and keybindings handle selection-specific actions. Any button that starts work immediately shows an animated busy state and ignores repeat clicks until the action finishes.
+- **Operate** covers day-to-day memory. **Overview** is the local control room, showing index health, prepared context, docs, and the local-versus-cloud trust boundary at a glance. **Context** holds the deliberate packs your agents carry, which you can inspect, edit, remove, distill, and share. **Memory** browses every indexed atom with its provenance. **Sources** lists the agent memory, instructions, and rules Docmancer harvested. **Docs** keeps documentation browsing separate from memory.
+- **Review** is where you approve and clean up. **Audit** is the first-class home for masked security findings, while **Intelligence** and **Maintenance** cover proposed improvements and index upkeep.
+- **Cloud** manages the optional encrypted sync surfaces: **Personal Sync**, **Devices**, **Team**, and **Settings**.
 
-Context opens on **Personal context** because Personal defaults contains everyday preferences and This project contains local exceptions. Team standards and Team project remain available from the View selector, but stay visually secondary until you share context. Each context area shows a compact summary, while approved statements appear as paginated rows that can be inspected, edited, or removed individually. Actions are contextual: context summaries show Add and Share when applicable, statements show Edit and Remove, and pending changes show Approve and Reject. Mutations display an animated progress state and disable their buttons until the operation finishes.
-
-The left pane shows approved Personal and Team counts. **Reset Personal** removes personal defaults and current-project context immediately, rejects their pending proposals, and writes tombstones. **Reset Team** creates removal proposals because team changes still require approval. Neither reset changes the raw source corpus.
-
-In Audit, the left pane shows persistent Claude Code and Codex automatic-context coverage. Select an agent card for its effective configuration, or choose **How it works** for a concise explanation. The middle pane is reserved for security findings and severity filtering.
+Press ⌘K to open the `Run or go to` palette, which runs a command such as `/sync` or `/distill` and jumps between pages. Each page also exposes a **Run command** button for the actions that apply there, and a header toggle switches between light and dark themes.
 
 ## First run: activate your context
 
-Seeing `0 active` in the Context tab is normal after setup. Sources are evidence, and Docmancer does not silently turn harvested agent memory into approved context. You must review the proposed changes once before they become active and reach your agents.
+Seeing `0 active` on the Context page is normal after setup. Sources are evidence, and Docmancer does not silently turn harvested agent memory into approved context. You must review the proposed changes once before they become active and reach your agents.
 
-In the TUI:
+In the web app:
 
-1. Run `/sync` to harvest current sources and reconcile them.
-2. Open **Context**. If you see a **PENDING REVIEW** row, select it to inspect the proposed statements.
-3. Choose **APPROVE** to activate the proposal, or **REJECT** to discard it.
+1. Open the ⌘K palette or a **Run command** button and run `/sync` to harvest current sources and reconcile them.
+2. Open **Context**. If a proposal is pending review, select it to inspect the proposed statements.
+3. Approve the proposal to activate it, or reject it to discard.
 4. If there is no pending proposal, run `/distill` first, then review the new proposal.
 
 After approval, the destination pack changes from `0 active` to the number of approved statements. A later `/sync` refreshes managed agent projections automatically. You can also run `docmancer agent refresh` explicitly.
@@ -202,7 +195,7 @@ The device list shows each registration's state, full device ID, fingerprint, ke
 
 Protocol v1 synchronizes durable record revisions and tombstones. Protocol v2 synchronizes atoms, relations, overrides, pack manifests, and review proposals as encrypted graph objects. The server receives opaque encrypted envelopes and routing metadata. It never receives plaintext memory, tags, pack content, local paths, raw local IDs, private keys, workspace keys, or recovery keys.
 
-The complete memory interface runs locally through the CLI, TUI, MCP server, or `docmancer web`. Cloud sync exchanges signed encrypted revisions between explicitly connected devices. The service cannot request local actions or connect back to the localhost application.
+The complete memory interface runs locally through the CLI, MCP server, or `docmancer web`. Cloud sync exchanges signed encrypted revisions between explicitly connected devices. The service cannot request local actions or connect back to the localhost application.
 
 Decrypted local caches support offline recall. Markdown export remains available for review, backup, and leaving the service.
 

@@ -12,7 +12,7 @@ Docmancer maintains two local corpora: memory and instructions discovered from c
 | Instructions | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and equivalent global or project files. |
 | Rules | `.cursor/rules`, `.claude/rules`, `.windsurf/rules`, and other supported rule directories. |
 
-Secrets are redacted before indexing or distillation. `docmancer status` reports source counts and masked security findings. The Sources TUI tab shows exact provenance and inline warnings.
+Secrets are redacted before indexing or distillation. `docmancer status` reports source counts and masked security findings. The local web Sources page shows exact provenance, while Audit shows the credential category, severity, masked excerpt, file, and line.
 
 ## Canonical records
 

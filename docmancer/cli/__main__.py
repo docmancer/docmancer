@@ -1,5 +1,3 @@
-import os
-import sys
 from copy import copy
 from types import MethodType
 
@@ -68,36 +66,7 @@ def cli(ctx, config_path: str | None):
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
-        if _interactive_terminal():
-            _launch_tui(config_path=config_path)
-        else:
-            click.echo(ctx.get_help())
-
-
-def _interactive_terminal() -> bool:
-    """Return true only for a supported human terminal session."""
-    if os.getenv("CI") or os.getenv("TERM", "").lower() == "dumb":
-        return False
-    try:
-        return bool(sys.stdin.isatty() and sys.stdout.isatty())
-    except (AttributeError, OSError):
-        return False
-
-
-def _launch_tui(*, config_path: str | None = None) -> None:
-    from docmancer.tui import run_tui
-
-    run_tui(config_path=config_path)
-
-
-@click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the interactive terminal explorer.")
-@click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
-@click.pass_context
-def tui_cmd(ctx: click.Context, config_path: str | None) -> None:
-    """Open the local memory and documentation terminal explorer."""
-    if config_path is None and ctx.parent and ctx.parent.obj:
-        config_path = ctx.parent.obj.get("config_path")
-    _launch_tui(config_path=config_path)
+        click.echo(ctx.get_help())
 
 
 @click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the local browser application.")
@@ -188,7 +157,6 @@ for _command, _name, _replacement in (
     (ingest_cmd, "ingest", "docmancer docs add"),
     (okf_group, "okf", "docmancer memory export"),
     (qdrant_group, "qdrant", "docmancer docs"),
-    (tui_cmd, "tui", "docmancer"),
 ):
     _add_deprecated_root_alias(_command, _name, _replacement)
 

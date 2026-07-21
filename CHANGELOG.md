@@ -7,10 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.8.0] - Unreleased
 ### Added
 
-- **Local web application.** Added a packaged loopback-only web interface over the same local runtime used by the terminal surfaces.
+- **Full local web application.** Added a polished Next.js interface that is statically exported, packaged in the Python wheel, and served by `docmancer web` through an authenticated loopback-only ASGI server. Users do not need Node.js.
+- **Complete local workflows.** Added Overview, Context, Memory, Sources, Docs, Audit, Intelligence, Maintenance, Personal Sync, Devices, Team, and Settings pages over the shared local runtime. Narrow allowlisted API methods support memory and context management, source-file CRUD, maintenance commands, encrypted sync, device approval, and Team review without accepting arbitrary shell commands.
+- **Markdown reading and editing.** Context, memory, and source details render GitHub-flavoured Markdown, provide Write and Preview modes for editable records, and keep technical metadata collapsed behind the primary content.
+- **Actionable security audit.** Secret findings now show the detected credential category, severity, exact source file and line, safely masked excerpts, affected harness and scope, and concrete remediation steps.
+- **Memory Intelligence views.** Added explicit review, recent activity, orphan, and resolved views with evidence previews and a clear explanation that the sidebar badge counts unresolved conflict suggestions.
+- **Consistent pagination.** Added full-width numbered pagination with Previous, Next, page buttons, and ellipses across every list surface.
+
+### Changed
+
+- **Browser-first human interface.** `docmancer web` is now the supported interactive interface, while bare `docmancer` prints deterministic CLI help. README guidance and screenshots now describe the local web workflow.
+- **Compact memory presentation.** Context and Memory rows use semantic titles, short scope and type badges, readable excerpts, and truncated provenance paths instead of exposing long raw identifiers and paths as headings.
 
 ### Removed
 
+- **Terminal user interface.** Removed the Textual TUI, its dependency, tests, assets, `docmancer tui` compatibility alias, and the bare-command automatic TUI launcher.
 - **Hosted action relay.** Removed `docmancer cloud relay` and the Cloud-to-device action queue. Paid Cloud remains a signed encrypted revision transport and cannot request local file or memory operations.
 
 ## [0.7.9] - 2026-07-21

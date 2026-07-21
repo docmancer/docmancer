@@ -87,9 +87,9 @@ docmancer memory review --orphans
 
 Project-specific differences may be classified as explicit overrides instead of global conflicts. Exact duplicates and confirmed revision lineage can reconcile automatically without entering the queue.
 
-## Security warning appears in Sources
+## Security warning appears in Audit
 
-The TUI shows masked warnings next to affected source files. Use `docmancer status --json` for the complete local report, then remove the secret from its original source and run `docmancer sync --local-only`. Docmancer never prints the complete detected value.
+The local web Audit page shows the likely credential type, severity, exact source file and line, and a masked excerpt. Use `docmancer status --json` for the complete local report, then rotate the credential if it is real, remove it from its original source, and run `docmancer sync --local-only`. Docmancer never prints the complete detected value.
 
 ## Documentation fetch is incomplete
 

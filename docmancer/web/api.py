@@ -123,7 +123,8 @@ class LocalApi:
         return JSONResponse({"api_version": 1, "capabilities": CAPABILITIES})
 
     async def context(self, request: Request) -> JSONResponse:
-        return JSONResponse(jsonable({"items": await self.runtime.context()}))
+        items = await self.runtime.context()
+        return JSONResponse(jsonable(paginate(items, request)))
 
     async def context_add(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -152,17 +153,18 @@ class LocalApi:
 
     async def memory(self, request: Request) -> JSONResponse:
         query = (request.query_params.get("q") or "").strip()
+        page_size = bounded_int(request.query_params.get("page_size"), 20, maximum=100)
         if query:
             items = await self.runtime.query_memory(
                 query,
                 mode=request.query_params.get("mode") or "hybrid",
                 scope=request.query_params.get("scope"),
                 project_path=self.runtime.project_path,
-                limit=bounded_int(request.query_params.get("limit"), 30, maximum=100),
+                limit=100,
             )
         else:
             items = await self.runtime.memory_recent(datetime.now(timezone.utc) - timedelta(days=7))
-        return JSONResponse(jsonable({"items": items, "query": query}))
+        return JSONResponse(jsonable({**paginate(items, request, page_size=page_size), "query": query}))
 
     async def memory_add(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -247,8 +249,8 @@ class LocalApi:
 
     async def docs(self, request: Request) -> JSONResponse:
         query = (request.query_params.get("q") or "").strip()
-        items = await self.runtime.query_docs(query, limit=bounded_int(request.query_params.get("limit"), 30, maximum=100)) if query else await self.runtime.docs_sources()
-        return JSONResponse(jsonable({"items": items, "query": query}))
+        items = await self.runtime.query_docs(query, limit=100) if query else await self.runtime.docs_sources()
+        return JSONResponse(jsonable({**paginate(items, request), "query": query}))
 
     async def docs_ingest(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -270,7 +272,13 @@ class LocalApi:
 
     async def audit(self, request: Request) -> JSONResponse:
         report, hooks = await asyncio.gather(self.runtime.audit(), self.runtime.hook_status())
-        return JSONResponse(jsonable({"report": report, "hooks": hooks}))
+        findings = [dict(item, view_kind="secret-finding") for item in report.get("findings", [])]
+        hook_rows = [dict(item, view_kind="hook-status") for item in hooks]
+        return JSONResponse(jsonable({
+            **paginate([*findings, *hook_rows], request),
+            "report": report,
+            "hook_count": len(hooks),
+        }))
 
     async def intelligence(self, request: Request) -> JSONResponse:
         result = await self.runtime.memory_intelligence(
@@ -444,6 +452,29 @@ def required_text(body: dict[str, Any], key: str, *, allow_empty: bool = False) 
 def require_confirmation(body: dict[str, Any], expected: str) -> None:
     if body.get("confirmation") != expected:
         raise ValueError("confirmation does not match the target")
+
+
+def paginate(
+    items: list[Any],
+    request: Request,
+    *,
+    page_size: int | None = None,
+) -> dict[str, Any]:
+    """Return stable page metadata for every local collection surface."""
+    size = page_size or bounded_int(request.query_params.get("page_size"), 20, maximum=100)
+    requested_page = bounded_int(request.query_params.get("page"), 1)
+    total = len(items)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(requested_page, total_pages)
+    start = (page - 1) * size
+    return {
+        "items": items[start : start + size],
+        "total": total,
+        "page": page,
+        "page_size": size,
+        "total_pages": total_pages,
+        "has_more": page < total_pages,
+    }
 
 
 def bounded_int(value: str | None, default: int, *, maximum: int = 10_000) -> int:

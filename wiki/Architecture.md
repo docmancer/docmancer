@@ -28,7 +28,7 @@ Direct personal Markdown edits become active manual revisions. Direct team edits
 
 ## Shared application services
 
-The CLI, TUI, hooks, managed projections, and MCP tools call the same services for sync, query, distill, review, mutation, sharing, status, and documentation operations. This keeps terminology and decisions consistent across surfaces.
+The CLI, local web application, hooks, managed projections, and MCP tools call the same services for sync, query, distill, review, mutation, sharing, status, and documentation operations. This keeps terminology and decisions consistent across surfaces.
 
 Context compilation applies this precedence:
 
@@ -56,18 +56,17 @@ Claude Code and Codex hooks request bounded task-relevant compiled context. Supp
 
 The raw corpus is never copied wholesale into agent files. Projection paths are excluded from discovery to prevent feedback loops.
 
-## Terminal UI
+## Local web application
 
-The TUI keeps the three-pane browser and has four top-level tabs:
+`docmancer web` serves the packaged Next.js interface through an authenticated loopback-only ASGI server. Its sidebar groups the application into these surfaces:
 
-- Context contains all four pack kinds and the review queue.
-- Sources combines agent memory, instructions, rules, provenance, and inline security warnings.
-- Audit shows masked security findings plus one automatic-context coverage summary per supported agent. User and project hook details are reconciled so a user-level installation simply reports coverage for all projects. Optional new-memory capture is shown separately.
-- Context is record-oriented: pack rows provide summaries, approved statements are independently selectable and editable, and proposals remain distinct review rows. Personal reset writes tombstones immediately; team reset produces removal proposals.
-- Global distillation excludes one-off task history. It fingerprints the evidence set only after complete review, while explicitly limited batches continue with the remaining evidence.
-- Docs contains documentation browsing and search.
+- Operate contains Overview, Context, Memory, Sources, and Docs.
+- Review contains Audit, Intelligence, and Maintenance.
+- Cloud contains Personal Sync, Devices, Team, and Settings.
 
-Cloud state lives in the footer and settings. Recent activity and revision history live in the selected pack or record inspector.
+Context and Memory use compact paginated rows with provenance-aware inspectors. Markdown content is rendered by default, while editable local records provide Write and Preview modes. Audit findings show masked values with exact file and line locations. Intelligence separates unresolved conflicts, recent activity, orphan maintenance, and resolved history.
+
+The browser never submits arbitrary shell commands or filesystem paths to a general executor. Changes call narrow local runtime methods, require same-origin CSRF protection, and keep destructive confirmation in the local interface.
 
 ## Cloud protocol
 
