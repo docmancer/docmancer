@@ -10,6 +10,68 @@ from docmancer.cloud.outbox import CloudState
 from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allowed
 
 
+_PUSH_BATCH_SIZE = 100
+_PULL_PAGE_SIZE = 500
+_MAX_PULL_PAGES = 100
+
+
+def _push_pending(client, *, state: CloudState, workspace_id: str, cursor: int) -> int:
+    """Drain the durable outbox in bounded, single-protocol batches."""
+    pushed = 0
+    while pending := state.pending(limit=_PUSH_BATCH_SIZE):
+        batches: dict[int, list[dict]] = {}
+        for envelope in pending:
+            batches.setdefault(int(envelope.get("protocol_version") or 1), []).append(envelope)
+        acknowledged_this_round = 0
+        for version, batch in sorted(batches.items()):
+            operation = f"push:v{version}"
+            response = client.push(
+                workspace_id,
+                batch,
+                idempotency_key=state.idempotency_key(operation),
+                cursor=cursor,
+                protocol_version=version,
+            )
+            newly_accepted = {str(value) for value in response.get("accepted", [])}
+            accepted_ids = set(newly_accepted)
+            accepted_ids.update(str(value) for value in response.get("already_present", []))
+            acknowledged_refs = [
+                str(envelope["revision_ref"])
+                for envelope in batch
+                if str(envelope.get("envelope_id")) in accepted_ids
+            ]
+            state.acknowledge(acknowledged_refs)
+            state.clear_idempotency_key(operation)
+            acknowledged_this_round += len(acknowledged_refs)
+            pushed += len(newly_accepted)
+            rejected = list(response.get("rejected") or [])
+            if rejected:
+                codes = sorted({str(item.get("code") or "UNKNOWN") for item in rejected})
+                raise ValueError(
+                    f"cloud rejected {len(rejected)} encrypted envelope(s): {', '.join(codes)}"
+                )
+        if acknowledged_this_round == 0:
+            raise ValueError("cloud push made no progress; encrypted outbox was preserved")
+    return pushed
+
+
+def _pull_all(client, *, workspace_id: str, cursor: str | None) -> tuple[list[dict], str]:
+    """Fetch every available encrypted page before one durable apply/reindex."""
+    envelopes: list[dict] = []
+    current = str(cursor or "0")
+    for _page in range(_MAX_PULL_PAGES):
+        response = client.pull(workspace_id, cursor=current, limit=_PULL_PAGE_SIZE)
+        page = list(response.get("envelopes") or [])
+        next_cursor = str(response.get("cursor", current))
+        envelopes.extend(page)
+        if not response.get("has_more"):
+            return envelopes, next_cursor
+        if not page or next_cursor == current:
+            raise ValueError("cloud pull made no progress; local cursor was not advanced")
+        current = next_cursor
+    raise ValueError("cloud pull exceeded the safe page limit")
+
+
 def _refresh_workspace_metadata(client, *, config, account: dict, keys: KeyStore, workspace_id: str, metadata: dict) -> dict:
     """Refresh approved device keys and the current wrapped workspace key."""
     from docmancer.cloud.crypto import b64decode, unwrap_key
@@ -92,34 +154,19 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
             apply_snapshot(snapshot, root=root, workspace_key=workspace_key)
         except Exception:  # noqa: BLE001 - verification or availability falls back to full replay
             pass
-    pending = state.pending()
     pushed = 0
-    if pending and can_push:
-        batches: dict[int, list[dict]] = {}
-        for envelope in pending:
-            batches.setdefault(int(envelope.get("protocol_version") or 1), []).append(envelope)
-        cursor = int(state.get_meta("cursor") or 0)
-        for version, batch in sorted(batches.items()):
-            operation = f"push:v{version}"
-            response = client.push(
-                workspace_id,
-                batch,
-                idempotency_key=state.idempotency_key(operation),
-                cursor=cursor,
-                protocol_version=version,
-            )
-            newly_accepted = {str(value) for value in response.get("accepted", [])}
-            accepted_ids = set(newly_accepted)
-            accepted_ids.update(str(value) for value in response.get("already_present", []))
-            acknowledged_refs = [
-                str(envelope["revision_ref"])
-                for envelope in batch
-                if str(envelope.get("envelope_id")) in accepted_ids
-            ]
-            state.acknowledge(acknowledged_refs)
-            state.clear_idempotency_key(operation)
-            pushed += len(newly_accepted)
-    response = client.pull(workspace_id, cursor=state.get_meta("cursor"))
+    if can_push:
+        pushed = _push_pending(
+            client,
+            state=state,
+            workspace_id=workspace_id,
+            cursor=int(state.get_meta("cursor") or 0),
+        )
+    envelopes, pull_cursor = _pull_all(
+        client,
+        workspace_id=workspace_id,
+        cursor=state.get_meta("cursor"),
+    )
     public_keys = {
         str(device_id): __import__("docmancer.cloud.crypto", fromlist=["b64decode"]).b64decode(value)
         for device_id, value in dict(metadata.get("device_public_keys") or {}).items()
@@ -130,8 +177,11 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     }
     key_versions.setdefault(current_key_version, workspace_key)
     applied = apply_envelopes(
-        list(response.get("envelopes") or []), root=root, workspace_key=key_versions,
-        device_public_keys=public_keys, cursor=response.get("cursor"),
+        envelopes,
+        root=root,
+        workspace_key=key_versions,
+        device_public_keys=public_keys,
+        cursor=pull_cursor,
     )
     return {"pushed": pushed, "paused": not can_push, **applied, **state.status()}
 

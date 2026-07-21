@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - **Device registration management.** `docmancer cloud devices` now shows readable device IDs, trust states, fingerprints, key versions, last-seen times, enrolment times, and the current CLI registration. Individual registrations can be revoked with `--revoke <device-id>`, with confirmation by default and JSON output retained for automation.
+- **Encrypted local action relay.** `docmancer cloud relay` lets the unlocked Cloud workbench request the CLI and TUI's local actions without opening a local port. Requests and results are end-to-end encrypted and signed, action names come from a fixed allowlist, and local mutations require both browser confirmation and the explicit `--allow-writes` flag.
+
+### Changed
+
+- **Refined terminal explorer.** The TUI now uses a quieter low-glare palette, clearer selected rows and badges, improved pane hierarchy, compact pagination controls, and a segmented status bar while retaining the existing keyboard and workflow model.
+
+### Fixed
+
+- **Complete cloud synchronization.** One `docmancer cloud sync` now drains the complete durable outbox in bounded protocol-specific batches and pulls every available encrypted page before rebuilding the local projection.
+- **Idempotent graph publication.** Successfully published revision references are retained locally, and record plus graph envelopes are encrypted and queued in bulk. Repeated syncs no longer regenerate already-acknowledged ciphertext or open a database session for every graph object.
 
 ## [0.7.6] - 2026-07-20
 ### Fixed

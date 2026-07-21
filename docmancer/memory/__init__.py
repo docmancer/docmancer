@@ -1496,15 +1496,14 @@ class MemoryAgent:
     def _enqueue_cloud_graph_projection(self) -> int:
         """Best-effort queue of deterministic Protocol v2 graph objects."""
         try:
-            from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
+            from docmancer.cloud.lifecycle import enqueue_revisions_if_enabled
             from docmancer.cloud.serialize import build_graph_payload
 
-            queued = 0
             root = Path(self.db_path).parent
-            for item in self.graph.cloud_objects():
-                payload = build_graph_payload(**item)
-                queued += int(enqueue_revision_if_enabled(payload, root=root))
-            return queued
+            payloads = (
+                build_graph_payload(**item) for item in self.graph.cloud_objects()
+            )
+            return enqueue_revisions_if_enabled(payloads, root=root)
         except Exception as exc:  # noqa: BLE001 - optional sync cannot break local indexing
             logger.debug("cloud graph projection queueing skipped: %s", exc)
             return 0

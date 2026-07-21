@@ -230,6 +230,31 @@ class CloudClient:
     def report_audit_risk(self, workspace_id: str, metadata: dict) -> dict:
         return self._request("POST", f"/v1/workspaces/{workspace_id}/risk-reports", json=metadata)
 
+    def create_relay_job(self, workspace_id: str, payload: dict) -> dict:
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/relay/jobs", json=payload)
+
+    def relay_jobs(self, workspace_id: str) -> dict:
+        value = self._request("GET", f"/v1/workspaces/{workspace_id}/relay/jobs")
+        return {"jobs": value if isinstance(value, list) else list(value.get("jobs") or [])}
+
+    def claim_relay_job(self, workspace_id: str) -> dict | None:
+        value = self._request("POST", f"/v1/workspaces/{workspace_id}/relay/claim", json={})
+        return value.get("job") if isinstance(value, dict) else None
+
+    def complete_relay_job(self, workspace_id: str, job_id: str, payload: dict) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/relay/jobs/{job_id}/result",
+            json=payload,
+        )
+
+    def cancel_relay_job(self, workspace_id: str, job_id: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/relay/jobs/{job_id}/cancel",
+            json={},
+        )
+
     def policy(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/policy")
 

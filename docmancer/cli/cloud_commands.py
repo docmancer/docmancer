@@ -409,6 +409,94 @@ def sync_command() -> None:
     _run_sync_command()
 
 
+@cloud_group.command("relay", cls=DocmancerCommand, short_help="Serve encrypted browser actions on this device.")
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path, file_okay=False, resolve_path=True),
+    default=Path.cwd,
+    show_default="current directory",
+    help="Bind project-scoped actions to this local project.",
+)
+@click.option(
+    "--allow-writes",
+    is_flag=True,
+    help="Allow confirmed relay actions to change local files, records, settings, or indexes.",
+)
+@click.option("--once", is_flag=True, help="Poll once and exit. Useful for schedulers and tests.")
+@click.option("--poll-seconds", type=float, default=2.0, show_default=True)
+def relay_command(
+    project_path: Path,
+    allow_writes: bool,
+    once: bool,
+    poll_seconds: float,
+) -> None:
+    """Run an outbound-only, end-to-end encrypted local action relay."""
+    import asyncio
+
+    from docmancer.cloud.crypto import b64decode
+    from docmancer.cloud.relay import serve
+    from docmancer.tui.backend import TuiBackend
+
+    client, _root_path, config, account, keys = _client()
+    workspace_id = str(account.get("workspace_id") or "")
+    account_id = str(account.get("account_id") or "")
+    device_id = str(account.get("device_id") or "")
+    workspace = config.workspace(workspace_id)
+    key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
+    workspace_key = keys.workspace_key(account_id, workspace_id, key_version)
+    signing_private = keys.get(account_id, "device-signing-private")
+    if not workspace_key or not signing_private:
+        client.close()
+        raise click.ClickException(
+            "the approved device key is unavailable; run `docmancer cloud sync` first"
+        )
+    try:
+        devices = list(client.devices(workspace_id).get("devices") or [])
+        public_keys = {
+            str(row.get("device_id") or row.get("id")): b64decode(
+                str(row.get("sign_public_key") or row.get("signing_public_key"))
+            )
+            for row in devices
+            if row.get("sign_public_key") or row.get("signing_public_key")
+        }
+        current = next(
+            (row for row in devices if str(row.get("device_id") or row.get("id")) == device_id),
+            None,
+        )
+        if not current or str(current.get("state")) != "approved":
+            raise click.ClickException("this device is not approved for the workspace")
+        click.echo(
+            f"Local relay ready on device {device_id}. "
+            f"Project: {project_path}. Writes: {'allowed' if allow_writes else 'blocked'}."
+        )
+        backend = TuiBackend(project_path=project_path)
+        asyncio.run(
+            serve(
+                client,
+                backend,
+                workspace_id=workspace_id,
+                device_id=device_id,
+                workspace_key=workspace_key,
+                signing_private=signing_private,
+                device_public_keys=public_keys,
+                allow_writes=allow_writes,
+                once=once,
+                poll_seconds=poll_seconds,
+                on_result=lambda result: click.echo(
+                    f"Completed relay job {result.get('id')} with state {result.get('state')}."
+                ),
+                on_error=lambda error: click.echo(
+                    f"Relay request could not be completed: {error}", err=True
+                ),
+            )
+        )
+    except KeyboardInterrupt:
+        click.echo("Local relay stopped.")
+    finally:
+        client.close()
+
+
 def _run_sync_command() -> None:
     from docmancer.cloud.sync import sync_once
     from docmancer.cloud.crypto import b64decode, unwrap_key
@@ -441,15 +529,18 @@ def _run_sync_command() -> None:
 
 
 def _enqueue_current_project(root: Path, keys: KeyStore) -> None:
-    from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
+    from docmancer.cloud.lifecycle import enqueue_revisions_if_enabled
     from docmancer.cloud.migrate import migrate_records
     from docmancer.memory.records import MemoryRecordStore
 
     migrate_records(root=root, project_paths=[Path.cwd()])
     store = MemoryRecordStore(root)
-    for record in store.records(project_paths=[Path.cwd()]):
-        for revision in store.revisions(record.record_id):
-            enqueue_revision_if_enabled(revision, root=root, keystore=keys)
+    revisions = (
+        revision
+        for record in store.records(project_paths=[Path.cwd()])
+        for revision in store.revisions(record.record_id)
+    )
+    enqueue_revisions_if_enabled(revisions, root=root, keystore=keys)
 
 
 def _enqueue_current_project_or_warn(root: Path, keys: KeyStore) -> bool:

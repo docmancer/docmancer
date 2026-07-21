@@ -29,7 +29,7 @@ def test_root_and_nested_help_expose_only_the_simplified_public_surface() -> Non
     assert _commands(root.output) == {"agent", "cloud", "docs", "mcp", "memory", "query", "setup", "status", "sync"}
     assert _commands(memory.output) == {"add", "distill", "edit", "export", "remove", "review", "share", "show"}
     assert _commands(docs.output) == {"add", "list", "query", "remove", "sync"}
-    assert _commands(cloud.output) == {"connect", "devices", "disconnect", "sync"}
+    assert _commands(cloud.output) == {"connect", "devices", "disconnect", "relay", "sync"}
 
     connect = runner.invoke(cli, ["cloud", "connect", "--help"])
     devices = runner.invoke(cli, ["cloud", "devices", "--help"])

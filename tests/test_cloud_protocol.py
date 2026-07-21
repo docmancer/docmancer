@@ -14,13 +14,16 @@ from docmancer.cloud.crypto import b64decode, b64encode, box_keypair, random_key
 from docmancer.cloud.envelope import build_envelope, open_envelope
 from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allowed
 from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
-from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
+from docmancer.cloud.lifecycle import (
+    enqueue_revision_if_enabled,
+    enqueue_revisions_if_enabled,
+)
 from docmancer.cloud.migrate import migrate_records
 from docmancer.cloud.outbox import CloudState
 from docmancer.cloud.recovery import create_recovery, verify_recovery
 from docmancer.cloud.serialize import build_graph_payload, build_record_payload, canonicalize, revision_id
 from docmancer.cloud.snapshot import build_snapshot, open_snapshot
-from docmancer.cloud.sync import sync_once
+from docmancer.cloud.sync import _pull_all, _push_pending, sync_once
 from docmancer.memory.records import MemoryRecordStore
 
 
@@ -178,6 +181,89 @@ def test_outbox_is_idempotent_and_cursor_is_explicit(tmp_path):
     assert state.status()["cursor"] == "cur_1"
     state.acknowledge([envelope["revision_ref"]])
     assert state.status()["pending"] == 0
+    assert not state.enqueue(envelope)
+
+
+def test_cloud_push_drains_every_bounded_protocol_batch(tmp_path):
+    state = CloudState(tmp_path / "cloud-state.sqlite3")
+    for index in range(235):
+        state.enqueue(
+            {
+                "revision_ref": f"revision-{index}",
+                "envelope_id": f"envelope-{index}",
+                "protocol_version": 1 if index % 2 else 2,
+            }
+        )
+
+    class Client:
+        def __init__(self):
+            self.batches = []
+
+        def push(
+            self,
+            _workspace_id,
+            envelopes,
+            *,
+            idempotency_key,
+            cursor,
+            protocol_version,
+        ):
+            assert idempotency_key
+            assert cursor == 7
+            assert len(envelopes) <= 100
+            assert {item["protocol_version"] for item in envelopes} == {
+                protocol_version
+            }
+            self.batches.append((protocol_version, len(envelopes)))
+            return {
+                "accepted": [item["envelope_id"] for item in envelopes],
+                "already_present": [],
+                "rejected": [],
+            }
+
+    client = Client()
+    assert _push_pending(
+        client,
+        state=state,
+        workspace_id="workspace",
+        cursor=7,
+    ) == 235
+    assert state.status()["pending"] == 0
+    assert sum(size for _version, size in client.batches) == 235
+
+
+def test_cloud_pull_fetches_every_page_before_apply():
+    class Client:
+        def __init__(self):
+            self.cursors = []
+
+        def pull(self, _workspace_id, *, cursor, limit):
+            self.cursors.append((cursor, limit))
+            if cursor == "4":
+                return {
+                    "envelopes": [{"revision_ref": "r5"}],
+                    "cursor": "5",
+                    "has_more": False,
+                }
+            return {
+                "envelopes": [
+                    {"revision_ref": f"r{index}"} for index in range(1, 5)
+                ],
+                "cursor": "4",
+                "has_more": True,
+            }
+
+    client = Client()
+    envelopes, cursor = _pull_all(client, workspace_id="workspace", cursor=None)
+    assert [item["revision_ref"] for item in envelopes] == [
+        "r1",
+        "r2",
+        "r3",
+        "r4",
+        "r5",
+    ]
+    assert cursor == "5"
+    assert client.cursors == [("0", 500), ("4", 500)]
 
 
 def test_server_trial_entitlement_allows_push_and_normalizes_cache(tmp_path):
@@ -221,6 +307,33 @@ def test_lifecycle_queue_is_local_ciphertext_only(tmp_path):
     assert "portable project identity" not in json.dumps(pending)
     assert pending[0]["key_version"] == 1
     assert device["signing_private"] not in config.paths.sync_state.read_bytes()
+
+
+def test_lifecycle_bulk_queue_skips_known_revisions(tmp_path):
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id="acct",
+        workspace_id="ws",
+        device_id="dev",
+    )
+    config.set_workspace("ws", key_version=1)
+    keys = KeyStore(MemorySecretBackend())
+    keys.ensure_device_keys("acct")
+    keys.set_workspace_key("acct", "ws", random_key(), key_version=1)
+    first = payload(record_id="record-1")
+    second = payload(record_id="record-2", text="Keep encrypted sync idempotent.")
+
+    assert enqueue_revisions_if_enabled(
+        [first, second, first], root=tmp_path, keystore=keys
+    ) == 2
+    state = CloudState(config.paths.sync_state)
+    queued = state.pending()
+    assert len(queued) == 2
+    state.acknowledge([item["revision_ref"] for item in queued])
+    assert enqueue_revisions_if_enabled(
+        [first, second], root=tmp_path, keystore=keys
+    ) == 0
 
 
 def test_unmapped_project_never_falls_back_to_global(tmp_path):
@@ -360,7 +473,7 @@ def test_sync_refreshes_peer_keys_and_rotated_workspace_key(tmp_path):
         def latest_snapshot(self, _workspace_id):
             raise RuntimeError("no snapshot")
 
-        def pull(self, _workspace_id, *, cursor=None):
+        def pull(self, _workspace_id, *, cursor=None, limit=250):
             return {"envelopes": [envelope], "cursor": "cur_2"}
 
     result = sync_once(Client(), root=tmp_path, keystore=keys)
@@ -452,6 +565,7 @@ def test_python_cloud_routes_are_declared_by_sibling_openapi():
         "{workspace_id}": "{workspaceId}",
         "{device_id}": "{deviceId}",
         "{proposal_id}": "{proposalId}",
+        "{job_id}": "{jobId}",
     }
     normalized = set()
     for path in called:

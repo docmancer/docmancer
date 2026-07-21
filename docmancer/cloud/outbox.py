@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ class CloudState:
                 );
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS applied (revision_ref TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS published (revision_ref TEXT PRIMARY KEY, published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS idempotency (
                     operation TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -43,24 +45,50 @@ class CloudState:
             """)
 
     def enqueue(self, envelope: dict[str, Any]) -> bool:
-        value = json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+        return bool(self.enqueue_many([envelope]))
+
+    def enqueue_many(self, envelopes: Iterable[dict[str, Any]]) -> int:
+        """Queue encrypted envelopes in one transaction, excluding published refs."""
+        queued = 0
         with self._connect() as conn:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO outbox (revision_ref, envelope_json) VALUES (?, ?)",
-                (str(envelope["revision_ref"]), value),
-            )
-            return cursor.rowcount == 1
+            for envelope in envelopes:
+                revision_ref = str(envelope["revision_ref"])
+                value = json.dumps(envelope, separators=(",", ":"), sort_keys=True)
+                cursor = conn.execute(
+                    """INSERT OR IGNORE INTO outbox (revision_ref, envelope_json)
+                       SELECT ?, ? WHERE NOT EXISTS (
+                         SELECT 1 FROM published WHERE revision_ref = ?
+                       )""",
+                    (revision_ref, value, revision_ref),
+                )
+                queued += int(cursor.rowcount == 1)
+        return queued
 
     def pending(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT envelope_json FROM outbox ORDER BY created_at, revision_ref LIMIT ?", (limit,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def known_revision_refs(self) -> set[str]:
+        """Return locally queued or server-acknowledged revision references."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT revision_ref FROM outbox UNION SELECT revision_ref FROM published"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
     def acknowledge(self, revision_refs: list[str]) -> None:
         if not revision_refs:
             return
         with self._connect() as conn:
-            conn.executemany("DELETE FROM outbox WHERE revision_ref = ?", [(value,) for value in revision_refs])
+            conn.executemany(
+                "INSERT OR IGNORE INTO published (revision_ref) VALUES (?)",
+                [(value,) for value in revision_refs],
+            )
+            conn.executemany(
+                "DELETE FROM outbox WHERE revision_ref = ?",
+                [(value,) for value in revision_refs],
+            )
 
     def mark_failed(self, revision_ref: str, error: str) -> None:
         with self._connect() as conn:
