@@ -9,11 +9,12 @@ StartupScreen {
 }
 
 #startup-card {
-    width: 68;
+    width: 72;
     height: auto;
     padding: 2 4;
     background: $panel;
-    border: tall $accent;
+    border: round $border;
+    border-title-color: $accent;
     content-align: center middle;
 }
 
@@ -43,16 +44,26 @@ StartupScreen {
     height: 4;
     padding-top: 1;
     background: $panel;
-    border-bottom: solid $accent;
+    border-bottom: solid $border;
 }
 
 #mode-tabs {
     width: 1fr;
 }
 
-#mode-tabs Tab.-active {
-    background: $primary;
+#mode-tabs Tab {
+    padding: 0 2;
+    color: $text-muted;
+}
+
+#mode-tabs Tab:hover {
     color: $text;
+    text-style: bold;
+}
+
+#mode-tabs Tab.-active {
+    background: $surface-lighten-1;
+    color: $accent;
     text-style: bold;
 }
 
@@ -68,23 +79,26 @@ StartupScreen {
 #filter-pane {
     width: 20%;
     min-width: 24;
-    border-right: solid $primary-background;
-    padding: 0 1;
+    border-right: solid $border-blurred;
+    padding: 0 2;
+    background: $background;
 }
 
 #results-pane {
     width: 30%;
-    border-right: solid $primary-background;
+    border-right: solid $border-blurred;
+    padding: 0 1;
 }
 
 #inspector {
     width: 50%;
-    padding: 0 1;
+    padding: 0 2;
 }
 
 .pane-title {
     height: 2;
-    padding: 0 1;
+    padding: 1 0 0 2;
+    border-left: thick $accent;
     color: $accent;
     text-style: bold;
 }
@@ -92,6 +106,7 @@ StartupScreen {
 .filter-label {
     margin-top: 1;
     color: $text-muted;
+    text-style: bold;
 }
 
 #audit-context-label,
@@ -115,25 +130,39 @@ StartupScreen {
     width: 100%;
     height: 4;
     margin-top: 1;
-    padding: 0 1;
+    padding: 0 2;
     content-align: left middle;
+    text-align: left;
     background: $panel;
     color: $text-muted;
-    border: tall $primary-background;
+    border: none;
+    border-left: thick $surface-lighten-2;
+}
+
+.audit-hook-card:hover {
+    background: $boost;
+    border-left: thick $accent;
 }
 
 .audit-hook-card.connected {
     color: $success;
-    border: tall $success-darken-2;
+    border-left: thick $success;
 }
 
 .audit-help-button {
     width: 100%;
     height: 3;
     margin-top: 1;
-    background: $primary-background;
-    color: $text;
+    background: transparent;
+    color: $text-muted;
     border: none;
+    border-left: thick $surface-lighten-1;
+}
+
+.audit-help-button:hover {
+    background: $boost;
+    color: $text;
+    border-left: thick $accent;
 }
 
 #context-manage-label {
@@ -146,37 +175,75 @@ StartupScreen {
     width: 100%;
     height: 4;
     margin-top: 1;
-    padding: 0 1;
+    padding: 0 2;
     content-align: left middle;
+    text-align: left;
     background: $panel;
     color: $warning;
-    border: tall $warning-darken-2;
+    border: none;
+    border-left: thick $warning-darken-1;
+}
+
+.context-manage-button:hover {
+    background: $boost;
+    border-left: thick $warning;
+}
+
+.context-manage-button:disabled {
+    color: $text-disabled;
+    border-left: thick $surface-lighten-1;
 }
 
 .context-help-button {
     width: 100%;
     height: 3;
     margin-top: 1;
-    background: $primary-background;
-    color: $text;
+    background: transparent;
+    color: $text-muted;
     border: none;
+    border-left: thick $surface-lighten-1;
+}
+
+.context-help-button:hover {
+    background: $boost;
+    color: $text;
+    border-left: thick $accent;
 }
 
 #result-list {
     height: 1fr;
+    background: transparent;
+    scrollbar-size: 1 1;
 }
 
 #result-list ListItem {
-    padding: 1 1 0 1;
+    padding: 1 1 1 2;
     height: auto;
-    border-bottom: solid $primary-background;
+    background: transparent;
+    border-left: thick $surface;
+    border-bottom: solid $panel;
+}
+
+#result-list ListItem:hover {
+    background: $boost;
+}
+
+#result-list ListItem.-highlight {
+    background: $surface-lighten-1;
+    border-left: thick $accent;
+}
+
+#result-list:focus ListItem.-highlight {
+    background: $surface-lighten-1;
+    border-left: thick $accent;
 }
 
 #command-menu {
     display: none;
     height: auto;
     max-height: 16;
-    border: solid $accent;
+    padding: 0 1;
+    border: round $accent;
     background: $panel;
 }
 
@@ -186,16 +253,33 @@ StartupScreen {
 
 #pagination {
     height: 3;
+    padding: 0 1;
     align-horizontal: center;
 }
 
 #pagination Button {
     min-width: 12;
+    height: 3;
+    border: none;
+    background: $surface-lighten-1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+#pagination Button:hover {
+    background: $surface-lighten-2;
+    color: $text;
+}
+
+#pagination Button:disabled {
+    background: $surface;
+    color: $text-disabled;
 }
 
 #page-label {
     width: 1fr;
     content-align: center middle;
+    color: $text-muted;
 }
 
 #source-meta {
@@ -228,8 +312,8 @@ StartupScreen {
 #source-action-bar {
     height: 5;
     padding: 0 1;
-    background: #171b22;
-    border-top: solid #3b82f6;
+    background: $panel;
+    border-top: solid $border;
 }
 
 #source-action-header {
@@ -240,7 +324,8 @@ StartupScreen {
     width: 1fr;
     height: 1;
     padding-left: 1;
-    color: #94a3b8;
+    border-left: thick $accent;
+    color: $accent;
     text-style: bold;
 }
 
@@ -261,50 +346,63 @@ StartupScreen {
     min-width: 10;
     width: auto;
     height: 3;
-    padding: 0 1;
+    padding: 0 2;
     margin-right: 1;
     text-style: bold;
     border: none;
 }
 
+.crud-action:hover {
+    text-style: bold reverse;
+}
+
 #source-new {
-    background: #164e63;
-    color: #cffafe;
+    background: #313244;
+    color: #94e2d5;
 }
 
 #source-edit {
-    background: #273244;
-    color: #dbeafe;
+    background: #313244;
+    color: #89b4fa;
 }
 
 #source-delete {
-    background: #5f1d2a;
-    color: #ffe4e6;
+    background: #302233;
+    color: #f38ba8;
 }
 
 #source-forget {
-    background: #5a3a08;
-    color: #fef3c7;
+    background: #302a23;
+    color: #fab387;
 }
 
 #source-promote {
-    background: #14532d;
-    color: #dcfce7;
+    background: #26302a;
+    color: #a6e3a1;
 }
 
 .crud-action:focus {
-    border: tall #f8fafc;
+    outline: round $accent;
     text-style: bold;
 }
 
 #command-input {
     height: 3;
-    border-top: solid $accent;
+    margin: 0 1;
+    padding: 0 1;
+    background: $surface-lighten-1;
+    border: round $border;
+    color: $text;
+}
+
+#command-input:focus {
+    border: round $accent;
+    background: $surface-lighten-1;
 }
 
 #status-bar {
     height: 1;
-    padding: 0 1;
+    padding: 0 2;
     background: $panel;
     color: $text-muted;
 }

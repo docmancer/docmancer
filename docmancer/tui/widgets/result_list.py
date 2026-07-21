@@ -7,6 +7,36 @@ from textual.widgets import Label, ListItem, ListView
 from textual.message import Message
 
 from docmancer.tui.presentation import context_display_name, context_scope_label, source_display_location, source_display_title
+from docmancer.tui.theme import (
+    BADGE_DANGER,
+    BADGE_HARNESS,
+    BADGE_INFO,
+    BADGE_MATCH,
+    BADGE_MUTED,
+    BADGE_PENDING,
+    BADGE_SCOPE,
+    BADGE_TYPE,
+    BADGE_WARNING,
+    GLYPH,
+    SEVERITY_BADGES,
+    STYLE_ACCENT,
+    STYLE_ACTIVE,
+    STYLE_FAINT,
+    STYLE_MUTED,
+    STYLE_TITLE,
+    STYLE_WARNING,
+    badge_text,
+)
+
+
+def _dot(card: Text) -> None:
+    """Append the faint inline separator used between metadata fields."""
+    card.append(f"  {GLYPH['bullet']}  ", style=STYLE_FAINT)
+
+
+def _chip(card: Text, label: str, style: str) -> None:
+    """Append a filled badge chip."""
+    card.append(badge_text(label), style=style)
 
 
 def _age(metadata: dict) -> str:
@@ -48,52 +78,53 @@ def _source_card(source: dict, matches: list[dict]) -> Text:
     card = Text()
     number = source.get("display_number")
     if number:
-        card.append(f"{int(number)}. ", style="dim")
-    card.append(title, style="bold")
+        card.append(f"{int(number):>2}  ", style=STYLE_FAINT)
+    card.append(title, style=STYLE_TITLE)
     age = _age(source)
     if age:
-        card.append(f"  {age}", style="dim")
+        card.append(f"   {age}", style=STYLE_FAINT)
     card.append("\n")
-    card.append(str(source.get("harness") or "unknown").upper(), style="cyan")
-    card.append("  ·  ", style="dim")
-    card.append(str(source.get("scope_kind") or "unknown").upper(), style="magenta")
-    card.append("  ·  ", style="dim")
-    card.append(_size(int(source.get("chars") or 0)), style="dim")
-    card.append("  ·  ", style="dim")
-    card.append(f"{int(source.get('atom_count') or 0)} atoms", style="dim")
+    _chip(card, str(source.get("harness") or "unknown").upper(), BADGE_HARNESS)
+    card.append(" ")
+    _chip(card, str(source.get("scope_kind") or "unknown").upper(), BADGE_SCOPE)
+    card.append(f"   {_size(int(source.get('chars') or 0))}", style=STYLE_MUTED)
+    _dot(card)
+    card.append(f"{int(source.get('atom_count') or 0)} atoms", style=STYLE_MUTED)
     if source.get("security_findings"):
-        card.append("  ·  ", style="dim")
-        card.append(
-            f"{int(source['security_findings'])} security warning(s)",
-            style="bold red" if source.get("security_severity") in {"critical", "high"} else "yellow",
+        card.append(" ")
+        _chip(
+            card,
+            f"{GLYPH['warn']} {int(source['security_findings'])} SECRET(S)",
+            BADGE_DANGER if source.get("security_severity") in {"critical", "high"} else BADGE_WARNING,
         )
     card.append("\n")
     if matches:
         excerpt = " ".join(str(matches[0].get("text") or "").split())[:120]
         count = len(matches)
-        card.append(f"{count} match{'es' if count != 1 else ''}", style="bold green")
+        card.append(f"{GLYPH['match']} ", style=STYLE_ACTIVE)
+        card.append(f"{count} match{'es' if count != 1 else ''}", style=STYLE_ACTIVE)
         if excerpt:
-            card.append(f"  {excerpt}", style="dim italic")
+            card.append(f"   {excerpt}", style=STYLE_MUTED)
     else:
-        card.append(source_display_location(path, limit=64, include_filename=False), style="dim")
+        card.append(source_display_location(path, limit=64, include_filename=False), style=STYLE_FAINT)
     return card
 
 
 def _docs_source_card(result: dict) -> Text:
     source = str(result.get("source") or "Documentation")
     card = Text()
-    card.append(source, style="bold")
+    card.append(source, style=STYLE_TITLE)
     age = _age(result)
     if age:
-        card.append(f"  {age}", style="dim")
+        card.append(f"   {age}", style=STYLE_FAINT)
     card.append("\n")
-    card.append(f"{int(result.get('pages') or 0)} pages", style="cyan")
-    card.append("  ·  ", style="dim")
-    card.append(f"{int(result.get('sections') or 0)} sections", style="magenta")
+    card.append(f"{int(result.get('pages') or 0)} pages", style=STYLE_ACCENT)
+    _dot(card)
+    card.append(f"{int(result.get('sections') or 0)} sections", style=STYLE_MUTED)
     formats = ", ".join(str(value).upper() for value in (result.get("formats") or []))
     if formats:
-        card.append("  ·  ", style="dim")
-        card.append(formats, style="dim")
+        _dot(card)
+        card.append(formats, style=STYLE_FAINT)
     return card
 
 
@@ -103,33 +134,39 @@ def _security_card(result: dict) -> Text:
     occurrences = result.get("occurrences") or []
     first = occurrences[0] if occurrences else {}
     card = Text()
-    color = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow", "LOW": "cyan"}.get(severity, "dim")
-    card.append(severity, style=color)
-    card.append(f"  {finding_type}", style="bold")
+    badge = SEVERITY_BADGES.get(severity, BADGE_MUTED)
+    _chip(card, severity, badge)
+    card.append(f"  {finding_type}", style=STYLE_TITLE)
     card.append("\n")
-    card.append(_shorten(str(first.get("source_path") or "Unknown source"), 64), style="dim")
-    card.append(f":{int(first.get('line') or 0)}", style="dim")
+    card.append(_shorten(str(first.get("source_path") or "Unknown source"), 64), style=STYLE_MUTED)
+    card.append(f":{int(first.get('line') or 0)}", style=STYLE_FAINT)
     count = int(result.get("occurrence_count") or len(occurrences))
     if count > 1:
-        card.append(f"  ·  {count} occurrences", style="magenta")
+        _dot(card)
+        card.append(f"{count} occurrences", style=STYLE_MUTED)
     card.append("\n")
-    card.append(str(first.get("masked_excerpt") or "Value masked"), style="dim italic")
+    card.append(str(first.get("masked_excerpt") or "Value masked"), style=STYLE_FAINT)
     return card
 
 
 def _hook_card(result: dict) -> Text:
     card = Text()
     installed = bool(result.get("recall"))
-    card.append("CONTEXT ON" if installed else "CONTEXT OFF", style="bold green" if installed else "bold yellow")
-    card.append(f"  {str(result.get('agent') or 'agent').upper()}", style="bold")
+    if installed:
+        card.append(f"{GLYPH['on']} ", style=STYLE_ACTIVE)
+        _chip(card, "CONTEXT ON", BADGE_MATCH)
+    else:
+        card.append(f"{GLYPH['off']} ", style=STYLE_FAINT)
+        _chip(card, "CONTEXT OFF", BADGE_PENDING)
+    card.append(f"  {str(result.get('agent') or 'agent').upper()}", style=STYLE_TITLE)
     card.append("\n")
     coverage = str(result.get("context_coverage") or result.get("scope") or "off")
-    card.append("Automatic context: ", style="dim")
-    card.append(coverage, style="cyan" if installed else "dim")
+    card.append("Automatic context   ", style=STYLE_FAINT)
+    card.append(coverage, style=STYLE_ACCENT if installed else STYLE_FAINT)
     card.append("\n")
     capture = str(result.get("capture_coverage") or "off")
-    card.append("New-memory capture: ", style="dim")
-    card.append(capture, style="green" if result.get("capture") else "dim")
+    card.append("New-memory capture   ", style=STYLE_FAINT)
+    card.append(capture, style=STYLE_ACTIVE if result.get("capture") else STYLE_FAINT)
     return card
 
 
@@ -138,64 +175,68 @@ def _intelligence_card(result: dict) -> Text:
     card = Text()
     number = result.get("display_number")
     if number:
-        card.append(f"{int(number)}. ", style="dim")
+        card.append(f"{int(number):>2}  ", style=STYLE_FAINT)
     if kind == "conflict-group":
         members = list(result.get("members") or [])
-        card.append("CLAIM NEEDS REVIEW", style="bold red")
-        card.append(f"  {result.get('claim_subject') or 'claim'}", style="bold")
+        _chip(card, f"{GLYPH['warn']} NEEDS REVIEW", BADGE_DANGER)
+        card.append(f"  {result.get('claim_subject') or 'claim'}", style=STYLE_TITLE)
         card.append("\n")
         values = [str(item.get("value") or item.get("text") or "") for item in members[:3]]
-        card.append("  ↔  ".join(_shorten(value, 55) for value in values), style="dim")
+        swap = f"  {GLYPH['swap']}  "
+        card.append(swap.join(_shorten(value, 55) for value in values), style=STYLE_MUTED)
     elif kind == "orphan":
-        card.append("ORPHAN", style="bold yellow")
-        card.append(f"  {result.get('memory_type') or 'memory'}", style="dim")
-        card.append("\n" + _shorten(str(result.get("text") or ""), 150))
+        _chip(card, "ORPHAN", BADGE_WARNING)
+        card.append(f"  {result.get('memory_type') or 'memory'}", style=STYLE_FAINT)
+        card.append("\n" + _shorten(str(result.get("text") or ""), 150), style=STYLE_MUTED)
     elif kind == "recent-source":
-        card.append("CHANGED", style="bold cyan")
-        card.append(f"  {str(result.get('activity_at') or '')[:16]}", style="dim")
-        card.append(f"  {int(result.get('atom_count') or 0)} atoms", style="dim")
-        card.append("\n" + _shorten(str(result.get("source_title") or result.get("source_path") or ""), 150))
+        _chip(card, "CHANGED", BADGE_INFO)
+        card.append(f"  {str(result.get('activity_at') or '')[:16]}", style=STYLE_FAINT)
+        _dot(card)
+        card.append(f"{int(result.get('atom_count') or 0)} atoms", style=STYLE_MUTED)
+        card.append("\n" + _shorten(str(result.get("source_title") or result.get("source_path") or ""), 150), style=STYLE_MUTED)
     else:
         state = str(result.get("resolution_state") or "confirmed")
-        card.append("HISTORY", style="bold magenta")
-        card.append(f"  {state}", style="dim")
-        card.append("\n" + _shorten(str(result.get("source_text") or ""), 72))
-        card.append("  ↔  ", style="dim")
-        card.append(_shorten(str(result.get("target_text") or ""), 72))
+        _chip(card, "HISTORY", BADGE_SCOPE)
+        card.append(f"  {state}", style=STYLE_FAINT)
+        card.append("\n" + _shorten(str(result.get("source_text") or ""), 72), style=STYLE_MUTED)
+        card.append(f"  {GLYPH['swap']}  ", style=STYLE_FAINT)
+        card.append(_shorten(str(result.get("target_text") or ""), 72), style=STYLE_MUTED)
     return card
 
 
 def _context_card(result: dict) -> Text:
     card = Text()
     if result.get("view_kind") == "context-proposal":
-        card.append("PENDING REVIEW", style="bold yellow")
+        _chip(card, "PENDING REVIEW", BADGE_PENDING)
         card.append(
             f"  {context_display_name(result.get('pack_id'), result.get('context_name'))}",
-            style="cyan",
+            style=STYLE_ACCENT,
         )
-        card.append("\n" + _shorten(str(result.get("text") or ""), 150), style="dim")
+        card.append("\n" + _shorten(str(result.get("text") or ""), 150), style=STYLE_MUTED)
         return card
-    card.append(context_display_name(result.get("pack_id"), result.get("name")), style="bold")
+    card.append(context_display_name(result.get("pack_id"), result.get("name")), style=STYLE_TITLE)
     records = int(result.get("records") or 0)
     audience = str(result.get("audience_kind") or "personal")
-    card.append(f"  {records} active", style="green" if records else "dim")
+    card.append(f"   {GLYPH['on'] if records else GLYPH['off']} ", style=STYLE_ACTIVE if records else STYLE_FAINT)
+    card.append(f"{records} active", style=STYLE_ACTIVE if records else STYLE_FAINT)
     pending = int(result.get("pending") or 0)
     if pending:
-        card.append(f"  {pending} pending", style="yellow")
+        _dot(card)
+        card.append(f"{pending} pending", style=STYLE_WARNING)
     card.append("\n")
     if audience == "team" and records == 0 and not pending:
-        card.append("Not shared yet", style="dim italic")
+        card.append("Not shared yet", style=STYLE_FAINT)
     else:
-        card.append(context_scope_label(audience, result.get("applicability_kind")), style="dim")
+        card.append(context_scope_label(audience, result.get("applicability_kind")), style=STYLE_MUTED)
     return card
 
 
 def _context_record_card(result: dict) -> Text:
     card = Text()
-    card.append(str(result.get("memory_type") or "context").upper(), style="bold cyan")
-    card.append(f"  {str(result.get('record_id') or '')[:8]}", style="dim")
+    _chip(card, str(result.get("memory_type") or "context").upper(), BADGE_TYPE)
+    card.append(f"  {str(result.get('record_id') or '')[:8]}", style=STYLE_FAINT)
     card.append("\n")
-    card.append(_shorten(" ".join(str(result.get("text") or "").split()), 180))
+    card.append(_shorten(" ".join(str(result.get("text") or "").split()), 180), style=STYLE_MUTED)
     return card
 
 

@@ -26,9 +26,9 @@ class MainScreen(Screen):
                     yield Static("CONTEXT", classes="pane-title", id="results-title")
                     yield ResultList(id="result-list")
                     with Horizontal(id="pagination"):
-                        yield Button("Previous", id="previous-page")
+                        yield Button("‹  Prev", id="previous-page")
                         yield Static("Page 1 of 1", id="page-label")
-                        yield Button("Next", id="next-page")
+                        yield Button("Next  ›", id="next-page")
                 yield Inspector(id="inspector")
             yield OptionList(id="command-menu")
             yield Input(placeholder="Search context or type / for commands...", id="command-input")

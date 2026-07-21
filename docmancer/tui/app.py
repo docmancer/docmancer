@@ -29,6 +29,7 @@ from docmancer.tui.screens.settings import SettingsScreen
 from docmancer.tui.widgets import FilterPane, Inspector, ResultList, StatusBar
 from docmancer.tui.widgets.inspector import render_result
 from docmancer.tui.presentation import context_display_name, context_scope_label
+from docmancer.tui.theme import DOCMANCER_DARK, THEME_NAME
 
 
 class DocmancerTuiApp(App):
@@ -93,6 +94,8 @@ class DocmancerTuiApp(App):
         self._button_loading_tasks: set[asyncio.Task] = set()
 
     async def on_mount(self) -> None:
+        self.register_theme(DOCMANCER_DARK)
+        self.theme = THEME_NAME
         await self.push_screen("main")
         self._main_screen = self.screen
         self._update_responsive(self.size.width)

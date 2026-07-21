@@ -85,7 +85,7 @@ write_codex hybrid-retrieval-weights "Hybrid retrieval weighting" \
   "Lexical wins on exact identifiers; dense wins on paraphrased questions." \
   "The mode is switchable at runtime through /mode hybrid|lexical|dense."
 write_codex consolidation-provider "Consolidation provider order" \
-  "Consolidation defaults to direct Mistral and falls back to OpenRouter." \
+  "Consolidation runs through OpenRouter with openai/gpt-4.1-nano as the default model." \
   "The step is explicit and key-gated so the default install stays fully offline." \
   "Payloads are redacted before they leave the machine."
 write_codex offline-first-principle "Offline-first principle" \
@@ -205,7 +205,7 @@ write_codex entropy-heuristic "Entropy heuristic guard" \
   printf '# Rollout: consolidate output formatting\n\n'
   printf 'Provider-aware consolidation controls, tighter batching, and a cleaner terminal\n'
   printf 'presentation for docmancer memory consolidate.\n\n'
-  printf '## Change\n\nDirect Mistral is the default provider with OpenRouter as fallback.\n'
+  printf '## Change\n\nOpenRouter is the consolidation provider, with openai/gpt-4.1-nano as the default model.\n'
 } > "$codex_memories/rollout_summaries/2026-06-20-consolidate-output-format.md"
 
 # Multi-match file: exercises [ and ] passage navigation inside one source.
