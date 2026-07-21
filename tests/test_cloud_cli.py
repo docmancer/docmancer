@@ -124,6 +124,72 @@ def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
     assert config.account()["device_id"] == device_id
 
 
+def test_cloud_devices_lists_fingerprints_and_revokes_one_device(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    account_id = "00000000-0000-4000-8000-000000000001"
+    workspace_id = "00000000-0000-4000-8000-000000000002"
+    local_device_id = "00000000-0000-4000-8000-000000000003"
+    remote_device_id = "00000000-0000-4000-8000-000000000004"
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        device_id=local_device_id,
+        base_url="https://cloud.invalid",
+    )
+    rows = [
+        {
+            "device_id": local_device_id,
+            "state": "approved",
+            "fingerprint": "docmancer-local",
+            "key_version": 1,
+            "last_seen": "2026-07-21T08:00:00Z",
+            "created_at": "2026-07-20T08:00:00Z",
+        },
+        {
+            "device_id": remote_device_id,
+            "state": "approved",
+            "fingerprint": "browser-remote",
+            "key_version": 1,
+            "last_seen": None,
+            "created_at": "2026-07-21T08:00:00Z",
+        },
+    ]
+
+    class Client:
+        def devices(self, _workspace_id):
+            return {"devices": rows}
+
+        def revoke_device(self, _workspace_id, device_id):
+            assert device_id == remote_device_id
+            return {"device_id": device_id, "state": "revoked"}
+
+        def close(self):
+            pass
+
+    client = Client()
+    monkeypatch.setattr(
+        cloud_commands,
+        "_client",
+        lambda: (client, tmp_path, config, config.account(), KeyStore(MemorySecretBackend())),
+    )
+
+    listed = CliRunner().invoke(cli, ["cloud", "devices"])
+    assert listed.exit_code == 0, listed.output
+    assert "APPROVED (this device)" in listed.output
+    assert "docmancer-local" in listed.output
+    assert "browser-remote" in listed.output
+    assert remote_device_id in listed.output
+
+    revoked = CliRunner().invoke(
+        cli, ["cloud", "devices", "--revoke", remote_device_id, "--yes"]
+    )
+    assert revoked.exit_code == 0, revoked.output
+    assert '"state": "revoked"' in revoked.output
+
+
 def test_team_subcommands_are_registered():
     result = CliRunner().invoke(cli, ["memory", "team", "--help"])
     assert result.exit_code == 0

@@ -36,7 +36,7 @@ def test_root_and_nested_help_expose_only_the_simplified_public_surface() -> Non
     disconnect = runner.invoke(cli, ["cloud", "disconnect", "--help"])
     assert {"--create-recovery", "--recovery-key"}.issubset(set(connect.output.split()))
     assert "--approve" in set(devices.output.split())
-    assert "--revoke" not in set(devices.output.split())
+    assert {"--revoke", "--json", "--yes"}.issubset(set(devices.output.split()))
     assert {"--export", "--delete-remote"}.issubset(set(disconnect.output.split()))
 
 

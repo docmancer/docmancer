@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - Unreleased
+### Added
+
+- **Device registration management.** `docmancer cloud devices` now shows readable device IDs, trust states, fingerprints, key versions, last-seen times, enrolment times, and the current CLI registration. Individual registrations can be revoked with `--revoke <device-id>`, with confirmation by default and JSON output retained for automation.
+
 ## [0.7.6] - 2026-07-20
 ### Fixed
 

@@ -190,8 +190,12 @@ docmancer cloud
 docmancer cloud connect
 docmancer cloud sync
 docmancer cloud devices
+docmancer cloud devices --approve <device-id> --fingerprint <fingerprint>
+docmancer cloud devices --revoke <device-id>
 docmancer cloud disconnect
 ```
+
+The device list shows each registration's state, full device ID, fingerprint, key version, last-seen time, enrolment time, and which registration belongs to the current CLI. Revocation blocks that registration from future Cloud sync but cannot erase memory or keys it already held. Docmancer will not revoke the last approved device.
 
 Protocol v1 synchronizes durable record revisions and tombstones. Protocol v2 synchronizes atoms, relations, overrides, pack manifests, and review proposals as encrypted graph objects. The server receives opaque encrypted envelopes and routing metadata. It never receives plaintext memory, tags, pack content, local paths, raw local IDs, private keys, workspace keys, or recovery keys.
 

@@ -90,6 +90,8 @@ class CloudClient:
             if error_code == "ENTITLEMENT_REQUIRED" or response.status_code == 402:
                 raise EntitlementError(error_message or "cloud sync is not enabled for this account")
             raise AuthenticationError(error_message or "cloud authorization failed")
+        if response.status_code >= 400 and error_message:
+            raise CloudError(str(error_message))
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -193,6 +195,13 @@ class CloudClient:
             "POST",
             f"/v1/workspaces/{workspace_id}/devices/{device_id}/approve",
             json=payload,
+        )
+
+    def revoke_device(self, workspace_id: str, device_id: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/devices/{device_id}/revoke",
+            json={},
         )
 
     def entitlement(self, workspace_id: str) -> dict:

@@ -474,20 +474,65 @@ def link(path: Path, project_id: str | None) -> None:
     click.echo(f"{project_id} -> {path}")
 
 
-@cloud_group.command(cls=DocmancerCommand, short_help="List or approve registered devices.")
+@cloud_group.command(cls=DocmancerCommand, short_help="List, approve, or revoke registered devices.")
 @click.option("--approve", "approve_id", default=None, metavar="DEVICE_ID")
+@click.option("--revoke", "revoke_id", default=None, metavar="DEVICE_ID")
 @click.option("--fingerprint", default=None, help="Fingerprint confirmed out of band for --approve.")
-def devices(approve_id: str | None, fingerprint: str | None) -> None:
+@click.option("--yes", is_flag=True, help="Skip the revocation confirmation prompt.")
+@click.option("--json", "as_json", is_flag=True, help="Print the device list as JSON.")
+def devices(
+    approve_id: str | None,
+    revoke_id: str | None,
+    fingerprint: str | None,
+    yes: bool,
+    as_json: bool,
+) -> None:
+    if approve_id and revoke_id:
+        raise click.UsageError("choose only one of --approve or --revoke")
     if approve_id:
         if not fingerprint:
             raise click.UsageError("--fingerprint is required with --approve")
         _approve_device(approve_id, fingerprint)
         return
+    if revoke_id:
+        _revoke_device(revoke_id, yes=yes)
+        return
     client, _root_path, config, account, _keys = _client()
     try:
-        click.echo(json.dumps(client.devices(str(account["workspace_id"])), indent=2, sort_keys=True))
+        value = client.devices(str(account["workspace_id"]))
+        if as_json:
+            click.echo(json.dumps(value, indent=2, sort_keys=True))
+            return
+        _print_devices(
+            list(value.get("devices") or []),
+            current_device_id=str(account.get("device_id") or ""),
+        )
     finally:
         client.close()
+
+
+def _print_devices(rows: list[dict], *, current_device_id: str) -> None:
+    if not rows:
+        click.echo("No device registrations found.")
+        return
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            {"approved": 0, "pending": 1, "revoked": 2}.get(str(row.get("state")), 3),
+            str(row.get("created_at") or ""),
+        ),
+    )
+    for index, row in enumerate(ordered):
+        device_id = str(row.get("device_id") or row.get("id") or "unknown")
+        marker = " (this device)" if device_id == current_device_id else ""
+        if index:
+            click.echo()
+        click.echo(f"{str(row.get('state') or 'unknown').upper()}{marker}")
+        click.echo(f"  device_id:   {device_id}")
+        click.echo(f"  fingerprint: {row.get('fingerprint') or '-'}")
+        click.echo(f"  key_version: {row.get('key_version') or 0}")
+        click.echo(f"  last_seen:   {row.get('last_seen') or 'never'}")
+        click.echo(f"  enrolled:    {row.get('created_at') or 'unknown'}")
 
 
 @cloud_group.group(cls=DocmancerGroup, short_help="Approve or revoke devices.", hidden=True)
@@ -546,10 +591,32 @@ def revoke(device_id: str, yes: bool) -> None:
 
 
 def _revoke_device(device_id: str, *, yes: bool) -> None:
-    del device_id, yes
-    raise click.ClickException(
-        "device revocation is unavailable until the server can rotate every remaining wrapper atomically"
-    )
+    client, _root_path, config, account, _keys = _client()
+    try:
+        workspace_id = str(account["workspace_id"])
+        rows = list(client.devices(workspace_id).get("devices") or [])
+        target = next(
+            (row for row in rows if str(row.get("device_id") or row.get("id")) == device_id),
+            None,
+        )
+        if target is None:
+            raise click.ClickException("device registration not found")
+        if str(target.get("state")) == "revoked":
+            click.echo(f"Device {device_id} is already revoked.")
+            return
+        fingerprint = str(target.get("fingerprint") or "unknown")
+        if not yes and not click.confirm(
+            f"Revoke device {device_id} ({fingerprint})? It will lose future Cloud sync access"
+        ):
+            raise click.Abort()
+        result = client.revoke_device(workspace_id, device_id)
+        if device_id == str(account.get("device_id") or ""):
+            config.save_account(enabled=False)
+        click.echo(json.dumps(result, indent=2, sort_keys=True))
+        if device_id == str(account.get("device_id") or ""):
+            click.echo("This local device is now disconnected. Local memory and cached keys were kept.")
+    finally:
+        client.close()
 
 
 @cloud_group.command(cls=DocmancerCommand, short_help="List unresolved local sync conflicts.", hidden=True)
