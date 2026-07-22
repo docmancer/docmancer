@@ -1,6 +1,6 @@
 # Commands
 
-Docmancer exposes a small task-oriented CLI. Bare `docmancer` opens the terminal UI in an interactive terminal. Run `docmancer --help` to see the ten public command groups.
+Docmancer exposes a small task-oriented CLI. Bare `docmancer` prints the command overview. Run `docmancer web` for the local browser application, or `docmancer --help` to see the public command groups.
 
 ## Primary commands
 

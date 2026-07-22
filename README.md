@@ -32,9 +32,9 @@ The sidebar is organized into three groups:
 
 - **Operate** covers day-to-day memory. **Overview** is the local control room, showing index health, prepared context, docs, and the local-versus-cloud trust boundary at a glance. **Context** holds the deliberate packs your agents carry, which you can inspect, edit, remove, distill, and share. **Memory** browses every indexed atom with its provenance. **Sources** lists the agent memory, instructions, and rules Docmancer harvested. **Docs** keeps documentation browsing separate from memory.
 - **Review** is where you approve and clean up. **Audit** is the first-class home for masked security findings, while **Intelligence** and **Maintenance** cover proposed improvements and index upkeep.
-- **Cloud** manages the optional encrypted sync surfaces: **Personal Sync**, **Devices**, **Team**, and **Settings**.
+- **Cloud** manages the optional paid surfaces: **Personal Sync**, **Devices**, and **Team**. **Help** explains the end-to-end workflow, paid boundary, and product terminology.
 
-Press ⌘K to open the `Run or go to` palette, which runs a command such as `/sync` or `/distill` and jumps between pages. Each page also exposes a **Run command** button for the actions that apply there, and a header toggle switches between light and dark themes.
+Press ⌘K to open the `Run or go to` palette, which runs allowlisted actions such as **Sync local memory** or **Propose Personal defaults** and jumps between pages. Relevant pages also expose a **Run command** button, and a header toggle switches between light and dark themes.
 
 ## First run: activate your context
 
@@ -42,12 +42,12 @@ Seeing `0 active` on the Context page is normal after setup. Sources are evidenc
 
 In the web app:
 
-1. Open the ⌘K palette or a **Run command** button and run `/sync` to harvest current sources and reconcile them.
+1. Open the ⌘K palette or a **Run command** button and choose **Sync local memory** to harvest current sources and reconcile them.
 2. Open **Context**. If a proposal is pending review, select it to inspect the proposed statements.
 3. Approve the proposal to activate it, or reject it to discard.
-4. If there is no pending proposal, run `/distill` first, then review the new proposal.
+4. If there is no pending proposal, choose **Propose Personal defaults** first, then review the new proposal.
 
-After approval, the destination pack changes from `0 active` to the number of approved statements. A later `/sync` refreshes managed agent projections automatically. You can also run `docmancer agent refresh` explicitly.
+After approval, the destination pack changes from `0 approved` to the number of approved statements. A later memory sync refreshes managed agent projections automatically. You can also run `docmancer agent refresh` explicitly.
 
 The equivalent CLI flow is:
 

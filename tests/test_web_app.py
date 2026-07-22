@@ -57,6 +57,9 @@ class FakeRuntime:
         self.capture = dict(enabled)
         return Path("/tmp/docmancer.yaml")
 
+    async def cloud_status(self) -> dict:
+        return {"configured": False}
+
     async def resolve_memory_conflict(self, identifier: str, resolution: str, *, winner: str | None = None) -> dict:
         return {"relation_id": identifier, "resolution": resolution, "winner": winner}
 
@@ -196,3 +199,18 @@ def test_collection_routes_return_consistent_page_metadata(tmp_path: Path) -> No
         assert audit["total"] == 2
         assert audit["items"][0]["view_kind"] == "secret-finding"
         assert audit["items"][1]["view_kind"] == "hook-status"
+
+
+def test_optional_cloud_pages_return_a_graceful_disconnected_state(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        authenticate(client, app)
+        devices = client.get("/api/v1/cloud/devices")
+        assert devices.status_code == 200
+        assert devices.json()["state"] == "not_connected"
+        assert devices.json()["available"] is False
+
+        team = client.get("/api/v1/cloud/team")
+        assert team.status_code == 200
+        assert team.json()["state"] == "not_connected"
+        assert "not connected" in team.json()["message"].lower()

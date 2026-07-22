@@ -155,7 +155,6 @@ class LocalRuntime:
                 }
                 for record in records
             )
-        rows.extend(record_rows)
         rows.extend(
             {
                 "view_kind": "context-proposal",
@@ -187,6 +186,7 @@ class LocalRuntime:
             }
             for conflict in cloud_conflicts
         )
+        rows.extend(record_rows)
         return rows
 
     async def distill_context(self, pack_id: str = "personal-defaults"):

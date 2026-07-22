@@ -204,7 +204,8 @@ def test_empty_pack_explains_how_to_activate_pending_context(tmp_path, monkeypat
     assert pack["records"] == 0
     assert pack["pending"] == 1
     assert "proposal is waiting for review" in pack["rendered"]
-    assert "PENDING REVIEW" in pack["rendered"]
+    assert "Pending review" in pack["rendered"]
+    assert "local web app" in pack["rendered"]
     assert "memory review <proposal-id> --approve" in pack["rendered"]
 
 

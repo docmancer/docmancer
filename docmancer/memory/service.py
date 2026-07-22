@@ -1,4 +1,4 @@
-"""Shared application services for CLI, TUI, hooks, MCP, and cloud sync."""
+"""Shared application services for web, CLI, hooks, MCP, and cloud sync."""
 from __future__ import annotations
 
 import hashlib
@@ -86,13 +86,13 @@ class MemoryService:
                     rendered = rendered.replace(
                         "No approved context yet.",
                         f"No approved context yet. **{pending_count} proposal{' is' if pending_count == 1 else 's are'} waiting for review.**\n\n"
-                        "In the TUI, select the **PENDING REVIEW** row, inspect it, then choose **APPROVE** or **REJECT**.\n\n"
+                        "In the local web app, open **Context**, select the proposal under **Pending review**, then choose **Approve** or **Reject**.\n\n"
                         f"CLI: `docmancer memory review`, then `docmancer memory review <proposal-id> --approve`.",
                     )
                 else:
                     rendered = rendered.replace(
                         "No approved context yet.",
-                        "No approved context yet. Run `/distill` in the TUI or "
+                        "No approved context yet. Use **Run or go to** in the local web app to draft a consolidation, or run "
                         f"`docmancer memory distill --into {pack.pack_id}` to create a review proposal.",
                     )
             rows.append({

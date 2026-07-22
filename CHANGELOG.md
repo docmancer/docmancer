@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - Unreleased
+### Added
+
+- **Local Help guide.** Replaced the obsolete Settings route with a dedicated Help page that explains the local workflow, memory and context terminology, command equivalents, and the boundary between the free local product and optional paid Cloud services.
+
+### Changed
+
+- **Task-oriented web commands.** The command palette and README now use readable action names such as **Sync local memory** and **Propose Personal defaults**, while still showing the equivalent deterministic CLI commands.
+- **Proposal-first context review.** Pending context proposals now appear before approved records, with clearer proposal badges and activation guidance throughout the web app and generated context copy.
+- **Focused Cloud navigation.** The sidebar keeps Personal Sync, Devices, and Team under Cloud, while Help remains a separate local product guide.
+
+### Fixed
+
+- **Graceful optional Cloud pages.** Devices and Team now return explicit disconnected, authentication, entitlement, or unreachable states instead of allowing optional Cloud failures to break the local application.
+
 ## [0.8.0] - 2026-07-21
 ### Added
 

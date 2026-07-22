@@ -62,7 +62,7 @@ The raw corpus is never copied wholesale into agent files. Projection paths are 
 
 - Operate contains Overview, Context, Memory, Sources, and Docs.
 - Review contains Audit, Intelligence, and Maintenance.
-- Cloud contains Personal Sync, Devices, Team, and Settings.
+- Cloud contains Personal Sync, Devices, and Team. Help is a separate local guide for workflows and terminology.
 
 Context and Memory use compact paginated rows with provenance-aware inspectors. Markdown content is rendered by default, while editable local records provide Write and Preview modes. Audit findings show masked values with exact file and line locations. Intelligence separates unresolved conflicts, recent activity, orphan maintenance, and resolved history.
 

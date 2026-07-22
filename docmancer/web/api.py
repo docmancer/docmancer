@@ -382,7 +382,14 @@ class LocalApi:
         return JSONResponse(jsonable(job), status_code=202)
 
     async def cloud_devices(self, request: Request) -> JSONResponse:
-        return JSONResponse(jsonable({"items": await self.runtime.cloud_devices()}))
+        status = await self.runtime.cloud_status()
+        if not status.get("configured"):
+            return JSONResponse(cloud_unavailable("not_connected"))
+        try:
+            items = await self.runtime.cloud_devices()
+        except Exception as exc:  # A read-only Cloud page must not break the local app.
+            return JSONResponse(cloud_unavailable_from(exc))
+        return JSONResponse(jsonable({"available": True, "configured": True, "items": items}))
 
     async def cloud_device_approve(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -396,10 +403,16 @@ class LocalApi:
         return JSONResponse(jsonable(await self.runtime.cloud_revoke_device(device_id)))
 
     async def cloud_team(self, request: Request) -> JSONResponse:
-        proposals, conflicts, members = await asyncio.gather(
-            self.runtime.cloud_promotions(), self.runtime.cloud_conflicts(), self.runtime.cloud_members(),
-        )
-        return JSONResponse(jsonable({"proposals": proposals, "conflicts": conflicts, "members": members}))
+        status = await self.runtime.cloud_status()
+        if not status.get("configured"):
+            return JSONResponse(cloud_unavailable("not_connected"))
+        try:
+            proposals, conflicts, members = await asyncio.gather(
+                self.runtime.cloud_promotions(), self.runtime.cloud_conflicts(), self.runtime.cloud_members(),
+            )
+        except Exception as exc:  # Keep optional Cloud state separate from local availability.
+            return JSONResponse(cloud_unavailable_from(exc))
+        return JSONResponse(jsonable({"available": True, "configured": True, "proposals": proposals, "conflicts": conflicts, "members": members}))
 
     async def cloud_team_invite(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -496,6 +509,24 @@ def error_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, (ValueError, KeyError, TypeError)):
         return JSONResponse({"error": {"code": "INVALID_REQUEST", "message": str(exc)}}, status_code=400)
     return JSONResponse({"error": {"code": "INTERNAL", "message": "Local operation failed"}}, status_code=500)
+
+
+def cloud_unavailable(reason: str) -> dict[str, Any]:
+    messages = {
+        "not_connected": "This machine is not connected to Docmancer Cloud. Connect it when you want encrypted device or team sync.",
+        "authentication": "The Cloud session needs to be renewed. Reconnect this machine before managing shared state.",
+        "entitlement": "This account does not currently include the requested Cloud feature. Local Docmancer remains available.",
+        "unreachable": "Docmancer Cloud could not be reached. Your local memory and context are unaffected.",
+    }
+    return {"available": False, "configured": reason != "not_connected", "state": reason, "message": messages[reason]}
+
+
+def cloud_unavailable_from(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, EntitlementError):
+        return cloud_unavailable("entitlement")
+    if isinstance(exc, AuthenticationError):
+        return cloud_unavailable("authentication")
+    return cloud_unavailable("unreachable")
 
 
 __all__ = ["CAPABILITIES", "LocalApi", "error_response", "jsonable"]

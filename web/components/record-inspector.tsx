@@ -119,7 +119,7 @@ function AuditFinding({ value }: { value: JsonMap }) {
       <pre>{String(occurrence.masked_excerpt ?? "[SECRET]")}</pre>
       <div className="occurrence-meta"><span>{humanise(String(occurrence.agent ?? "local"))}</span><span>{humanise(String(occurrence.scope ?? "memory"))}</span></div>
     </article>)}</div>
-    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the file above and run <code>docmancer memory sync --recreate</code>.</li></ol></div>
+    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the file above and run <code>docmancer sync --local-only</code>.</li></ol></div>
   </section>;
 }
 
@@ -139,6 +139,8 @@ function Metadata({ value }: { value: JsonMap }) {
 
 function recordTitle(value: JsonMap, view: ViewKey): string {
   if (view === "sources") return sourceTitle(value);
+  if (view === "memory" || (view === "context" && value.view_kind === "context-record")) return semanticTitle(String(value.text ?? value.title ?? "Memory atom"));
+  if (view === "context" && value.view_kind === "context-proposal") return `Review changes for ${String(value.context_name ?? humanise(String(value.pack_id ?? "context")))}`;
   if (view === "audit" && value.view_kind === "secret-finding") return String(value.type ?? "Possible secret");
   if (view === "audit" && value.agent) return `${humanise(String(value.agent))} ${String(value.scope ?? "hook")}`;
   if (view === "intelligence" && value.intelligence_kind === "recent-source") { const title = String(value.source_title ?? ""); const sample = Array.isArray(value.samples) ? value.samples.find(isObject) : undefined; return title && !["promoted memory", "manual memory", "memory"].includes(title.toLowerCase()) ? title : String(sample?.text ?? filename(String(value.source_path ?? "Recent source"))).slice(0, 120); }
@@ -153,9 +155,23 @@ function recordSubtitle(value: JsonMap, view: ViewKey): string {
 
 function sourceTitle(value: JsonMap): string {
   const title = String(value.title ?? "");
-  if (title && title.toLowerCase() !== "manual memory") return title;
+  if (title && !["manual memory", "promoted memory", "memory", "memory atom", "docmancer memory"].includes(title.toLowerCase())) return title;
   const name = String(value.path ?? "").split("/").pop() ?? "Source file";
   return name.replace(/-[a-f0-9]{8}(?=\.[^.]+$)/, "").replace(/\.[^.]+$/, "").replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function semanticTitle(raw: string): string {
+  const value = raw.replace(/^#{1,6}\s+/gm, "").replace(/[*_`>#]/g, "").replace(/\s+/g, " ").trim();
+  const parts = value.split(/:\s+/).map((part) => part.trim()).filter(Boolean);
+  const instructionIndex = parts.findIndex((part) => /agent instructions/i.test(part));
+  if (instructionIndex >= 0) {
+    const parent = parts[instructionIndex].replace(/^.*?agent instructions\s*/i, "").trim();
+    const candidate = parts[instructionIndex + 1] ?? "";
+    return (candidate.length > 0 && candidate.length <= 58 && parts.length > instructionIndex + 2 ? candidate : parent) || "Memory atom";
+  }
+  const meaningful = parts.filter((part) => !/^(promoted memory|manual memory|memory atom)$/i.test(part));
+  const genericHeading = /^(user preferences?|user profile|what.?s in memory|older memory topics)$/i.test(meaningful[0] ?? "") || /^what.?s in memory\b/i.test(meaningful[0] ?? "");
+  return (genericHeading ? meaningful[1] : meaningful[0] ?? value).slice(0, 120);
 }
 
 function humanise(value: string): string { return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()); }

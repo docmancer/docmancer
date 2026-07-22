@@ -1,6 +1,6 @@
 """Shared provider-backed memory consolidation orchestration.
 
-CLI, MCP, and TUI callers supply presentation callbacks. This module owns
+CLI, MCP, and web callers supply presentation callbacks. This module owns
 batching and map-reduce flow and never writes a draft or changes memory.
 """
 from __future__ import annotations
