@@ -1,7 +1,9 @@
 {
   "name": "docmancer",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Local curated Markdown memory through the packaged Docmancer CLI.",
-  "author": { "name": "Docmancer" },
+  "author": {
+    "name": "Docmancer"
+  },
   "hooks": "./hooks/hooks.json"
 }
