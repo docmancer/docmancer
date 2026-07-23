@@ -1,6 +1,6 @@
 {
   "name": "@docmancer/openclaw-plugin",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "main": "./dist/index.js",
   "files": ["dist", "openclaw.plugin.json", "README.md"],

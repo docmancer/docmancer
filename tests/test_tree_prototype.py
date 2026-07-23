@@ -98,10 +98,8 @@ def test_write_context_md_produces_human_readable_directory_description(tmp_path
 
 def test_curate_real_corpus_fact_with_source_citation_without_touching_the_source(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    plan_doc = repo_root.parent / "docs" / "memory-harness" / (
-        "2026-07-22-actionable-context-workbench-and-memory-intelligence-plan.md"
-    )
-    assert plan_doc.is_file(), "expected the real plan doc to exist for this curation fixture"
+    plan_doc = repo_root / "tests" / "fixtures" / "actionable-context-plan-excerpt.md"
+    assert plan_doc.is_file(), "expected the checked-in plan excerpt to exist for this curation fixture"
     before_bytes = plan_doc.read_bytes()
 
     store = MemoryTreeStore(tmp_path / "memory")

@@ -6,6 +6,8 @@ tests/fixtures/memory-eval-private.jsonl
 .qdrant/
 .venv/
 dist/
+!docmancer/distribution/openclaw-plugin/dist/
+!docmancer/distribution/openclaw-plugin/dist/index.js
 build/
 coverage/
 .DS_Store
