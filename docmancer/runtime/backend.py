@@ -646,6 +646,237 @@ class LocalRuntime:
         self._docs_source_rows = [{"source": source, "pages": 0, "sections": 0} for source in sources]
         return self._docs_source_rows
 
+    def _tree_store(self):
+        from docmancer.memory.tree.store import TreeStore
+
+        return TreeStore(Path(self.project_path) / ".docmancer" / "tree")
+
+    def _tree_entry_payload(self, entry, *, include_body: bool = True) -> dict:
+        root = self._tree_store().root
+        outline = []
+        for line_number, line in enumerate(entry.body.splitlines(), start=1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                level = len(stripped) - len(stripped.lstrip("#"))
+                if 1 <= level <= 6 and stripped[level:].startswith(" "):
+                    outline.append({"level": level, "title": stripped[level:].strip(), "line": line_number})
+        backlinks = []
+        for candidate in self._tree_store().index.entries():
+            if candidate.memory_id == entry.memory_id:
+                continue
+            if any(target in {entry.title, entry.address} for _kind, target in candidate.relations):
+                backlinks.append({"address": candidate.address, "title": candidate.title})
+        return {
+            "address": entry.address,
+            "memory_id": entry.memory_id,
+            "title": entry.title,
+            "path": entry.path.relative_to(root).as_posix(),
+            "type": entry.type,
+            "scope": entry.scope,
+            "authority": entry.authority,
+            "project_id": entry.project_id,
+            "status": entry.status,
+            "tags": list(entry.tags),
+            "sources": list(entry.sources),
+            "relations": [{"type": kind, "target": target} for kind, target in entry.relations],
+            "backlinks": backlinks,
+            "outline": outline,
+            "content_hash": entry.content_hash,
+            "revision_id": entry.revision_id,
+            "allowed_actions": ["edit", "move", "duplicate", "trash", "open-editor"],
+            **({"markdown": entry.body} if include_body else {}),
+        }
+
+    async def tree_root(self) -> dict:
+        store = self._tree_store()
+        entries = await asyncio.to_thread(store.index.entries)
+        return {
+            "scope": "project",
+            "project_id": hashlib.sha256(self.project_path.encode()).hexdigest()[:16],
+            "display_label": Path(self.project_path).name,
+            "health": "ready",
+            "count": len(entries),
+            "allowed_actions": ["create", "reindex", "open-editor"],
+        }
+
+    async def tree_list(self) -> list[dict]:
+        store = self._tree_store()
+        entries = await asyncio.to_thread(store.index.entries)
+        return [self._tree_entry_payload(entry, include_body=False) for entry in sorted(entries, key=lambda item: str(item.path))]
+
+    async def tree_read(self, address: str) -> dict:
+        entry = await asyncio.to_thread(self._tree_store().read, address)
+        return self._tree_entry_payload(entry)
+
+    async def tree_create(self, body: dict) -> dict:
+        store = self._tree_store()
+        entry = await asyncio.to_thread(
+            store.write,
+            relative_path=str(body["path"]),
+            text=str(body["markdown"]),
+            memory_type=str(body.get("type") or "fact"),
+            scope="project",
+            authority=str(body.get("authority") or "advisory"),
+            project_id=str(body.get("project_id") or hashlib.sha256(self.project_path.encode()).hexdigest()[:16]),
+            sources=list(body.get("sources") or []),
+            tags=list(body.get("tags") or []),
+            expect="absent",
+        )
+        return self._tree_entry_payload(entry)
+
+    async def tree_mutate(self, action: str, body: dict) -> dict:
+        store = self._tree_store()
+        if action == "reindex":
+            count = await asyncio.to_thread(store.rebuild_index)
+            from docmancer.memory.tree.dense_index import TreeDenseIndex
+
+            def rebuild_dense() -> dict:
+                dense = TreeDenseIndex(store.root)
+                try:
+                    return dense.sync(store.index.entries())
+                finally:
+                    dense.close()
+
+            return {"reindexed": count, "dense": await asyncio.to_thread(rebuild_dense)}
+        address = str(body["address"])
+        expected_hash = str(body.get("expected_hash") or "")
+        if action == "edit":
+            entry = await asyncio.to_thread(store.edit, address, text=str(body["markdown"]), expected_hash=expected_hash)
+            return self._tree_entry_payload(entry)
+        if action == "move":
+            entry = await asyncio.to_thread(store.move, address, str(body["path"]), expected_hash=expected_hash)
+            return self._tree_entry_payload(entry)
+        if action == "duplicate":
+            entry = await asyncio.to_thread(store.duplicate, address, str(body["path"]), expected_hash=expected_hash)
+            return self._tree_entry_payload(entry)
+        if action == "trash":
+            token = await asyncio.to_thread(store.trash, address, expected_hash=expected_hash, actor_surface="web")
+            return {"trashed": True, "restore_token": token}
+        if action == "restore":
+            entry = await asyncio.to_thread(store.restore, str(body["restore_token"]))
+            return self._tree_entry_payload(entry)
+        if action == "open-editor":
+            entry = await asyncio.to_thread(store.read, address)
+            from docmancer.memory.tree.editor import open_in_editor
+
+            return await asyncio.to_thread(
+                open_in_editor,
+                entry.path,
+                line=int(body["line"]) if body.get("line") else None,
+                column=int(body["column"]) if body.get("column") else None,
+                allowed_root=store.root,
+            )
+        raise ValueError(f"unsupported tree action {action!r}")
+
+    async def inbox_files(self) -> list[dict]:
+        inbox = Path(self.project_path) / ".docmancer" / "inbox"
+        if not inbox.is_dir():
+            return []
+        rows = []
+        for path in sorted(inbox.glob("*.md"), key=lambda item: item.stat().st_mtime_ns, reverse=True)[:500]:
+            text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            rows.append({
+                "id": path.stem,
+                "title": next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), path.stem),
+                "preview": text[:1000],
+                "captured_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
+                "redaction_status": "applied",
+                "curation_eligible": True,
+            })
+        return rows
+
+    def _bounded_project_source(self, value: str) -> Path:
+        project_root = Path(self.project_path).resolve()
+        candidate = (project_root / value).resolve()
+        try:
+            candidate.relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError("source must stay inside the active project") from exc
+        if not candidate.exists():
+            raise ValueError("source does not exist inside the active project")
+        return candidate
+
+    async def harvest_tree(self, source: str, *, apply: bool = False) -> dict:
+        """Preview or copy bounded project Markdown into the local inbox."""
+        from docmancer.memory.tree.curation import CurationEngine
+
+        candidate = self._bounded_project_source(source)
+        files = [candidate] if candidate.is_file() else list(candidate.rglob("*.md"))
+        files = sorted(
+            path for path in files
+            if path.is_file() and path.suffix.lower() == ".md"
+            and ".docmancer/tree" not in path.as_posix()
+        )[:500]
+        before = {path: path.stat().st_mtime_ns for path in files}
+        results: list[dict] = []
+        engine = CurationEngine(self._tree_store(), Path(self.project_path) / ".docmancer" / "inbox")
+        for path in files:
+            row = {"source": str(path.relative_to(Path(self.project_path).resolve())), "status": "preview"}
+            if apply:
+                text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+                if len(text.encode("utf-8")) > 1_000_000:
+                    row["status"] = "skipped_too_large"
+                else:
+                    result = await asyncio.to_thread(engine.curate, text, source_path=path)
+                    row.update(status=result.destination, inbox_path=str(result.inbox_path or ""))
+            results.append(row)
+        if any(path.stat().st_mtime_ns != before[path] for path in files):
+            raise ValueError("a harvested source changed during the operation")
+        return {"applied": apply, "count": len(results), "results": results}
+
+    async def curate_inbox(self, inbox_id: str, relative_path: str, *, apply: bool = False) -> dict:
+        """Preview a complete-file diff, then optionally curate one inbox file."""
+        import difflib
+
+        from docmancer.memory.tree.curation import CurationEngine
+
+        if not inbox_id or Path(inbox_id).name != inbox_id:
+            raise ValueError("inbox_id must be one inbox filename stem")
+        if not relative_path.strip():
+            raise ValueError("path is required")
+        inbox = Path(self.project_path) / ".docmancer" / "inbox"
+        source = inbox / f"{inbox_id}.md"
+        if not source.is_file():
+            raise ValueError("inbox item was not found")
+        text = await asyncio.to_thread(source.read_text, encoding="utf-8")
+        diff = "\n".join(difflib.unified_diff([], text.splitlines(), fromfile="/dev/null", tofile=relative_path, lineterm=""))
+        payload: dict = {"applied": False, "source": source.name, "destination": relative_path, "diff": diff}
+        if apply:
+            result = await asyncio.to_thread(
+                CurationEngine(self._tree_store(), inbox).curate,
+                text,
+                relative_path=relative_path,
+                scope="project",
+                project_id=hashlib.sha256(self.project_path.encode()).hexdigest()[:16],
+                source_path=source,
+            )
+            payload.update(
+                applied=True,
+                outcome=result.destination,
+                address=result.entry.address if result.entry else None,
+                reason=result.reason,
+            )
+        return payload
+
+    async def ask_tree(self, task: str, *, token_budget: int = 2000, agent: str = "web") -> dict:
+        from docmancer.memory.tree.compiler import ContextRequest, compile_context
+
+        store = self._tree_store()
+        bundle = await asyncio.to_thread(
+            compile_context,
+            store.index,
+            ContextRequest(task=task, project_path=self.project_path, agent=agent, token_budget=token_budget),
+        )
+        items = list(bundle.mandatory_policies) + list(bundle.curated_memory)
+        return {
+            "answer": None,
+            "no_answer": not bool(items),
+            "items": [asdict(item) for item in items],
+            "token_estimate": bundle.token_estimate,
+            "index_revision": bundle.index_revision,
+            "timings": {},
+        }
+
     async def get_docs_source(self, source_root: str) -> dict | None:
         if source_root in self._docs_document_cache:
             return self._docs_document_cache[source_root]

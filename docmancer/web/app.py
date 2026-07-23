@@ -111,11 +111,36 @@ def create_app(
             return PlainTextResponse("The packaged web application is missing. Reinstall Docmancer.", status_code=503)
         return Response(index.read_bytes(), media_type="text/html")
 
+    async def compatibility_redirect(request: Request) -> Response:
+        """Move retired workbench routes to their canonical replacements."""
+        destinations = {
+            "context": "/agent-context/",
+            "memory": "/ask/",
+            "sources": "/inbox/",
+            "intelligence": "/maintenance/",
+        }
+        surface = request.url.path.strip("/")
+        return RedirectResponse(url=destinations[surface], status_code=308)
+
     routes = [
         Route("/", bootstrap, methods=["GET"]),
+        *[
+            Route(path, compatibility_redirect, methods=["GET", "HEAD"])
+            for surface in ("context", "memory", "sources", "intelligence")
+            for path in (f"/{surface}", f"/{surface}/")
+        ],
         Route("/api/v1/session", api.session, methods=["GET"]),
         Route("/api/v1/status", api.status, methods=["GET"]),
         Route("/api/v1/capabilities", api.capabilities, methods=["GET"]),
+        Route("/api/v1/tree/root", api.tree_root, methods=["GET"]),
+        Route("/api/v1/tree", api.tree, methods=["GET"]),
+        Route("/api/v1/tree/file", api.tree_file, methods=["GET"]),
+        Route("/api/v1/tree/file", api.tree_create, methods=["POST"]),
+        Route("/api/v1/tree/action", api.tree_action, methods=["POST"]),
+        Route("/api/v1/inbox", api.inbox, methods=["GET"]),
+        Route("/api/v1/harvest", api.harvest, methods=["POST"]),
+        Route("/api/v1/curate", api.curate, methods=["POST"]),
+        Route("/api/v1/ask", api.ask, methods=["POST"]),
         Route("/api/v1/context", api.context, methods=["GET"]),
         Route("/api/v1/context", api.context_add, methods=["POST"]),
         Route("/api/v1/context/{identifier:str}", api.context_action, methods=["POST"]),

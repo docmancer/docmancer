@@ -20,12 +20,32 @@ from docmancer.cli.commands import (
     update_cmd,
 )
 from docmancer.cli.cloud_commands import cloud_group
+from docmancer.cli.distribution_commands import package_check_cmd
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.mcp_commands import mcp_group
 from docmancer.cli.memory_commands import memory_group
 from docmancer.cli.okf_commands import okf_group
 from docmancer.cli.qdrant_commands import qdrant_group
 from docmancer.cli.surface_commands import agent_group, query_cmd, status_cmd, sync_cmd
+from docmancer.cli.tree_commands import (
+    capture_command,
+    context,
+    curate_command,
+    duplicate,
+    edit,
+    harvest_command,
+    init_tree,
+    move,
+    migrate_command,
+    read,
+    reindex_command,
+    restore,
+    search,
+    session_baseline_command,
+    tree_group,
+    trash,
+    write,
+)
 
 
 def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
@@ -111,6 +131,8 @@ docs_group.add_command(docs_query_cmd, "query")
 docs_group.add_command(list_cmd, "list")
 docs_group.add_command(update_cmd, "sync")
 docs_group.add_command(remove_cmd, "remove")
+docs_group.add_command(init_cmd, "init")
+docs_group.add_command(doctor_cmd, "doctor")
 
 
 agent_group.add_command(install_cmd, "install")
@@ -138,10 +160,29 @@ cli.add_command(query_cmd, "query")
 cli.add_command(memory_group, "memory")
 cli.add_command(docs_group, "docs")
 cli.add_command(status_cmd, "status")
+cli.add_command(doctor_cmd, "doctor")
 cli.add_command(cloud_group, "cloud")
 cli.add_command(agent_group, "agent")
 cli.add_command(mcp_group, "mcp")
 cli.add_command(web_cmd, "web")
+cli.add_command(tree_group, "tree")
+cli.add_command(init_tree, "init")
+cli.add_command(write, "write")
+cli.add_command(read, "read")
+cli.add_command(edit, "edit")
+cli.add_command(move, "move")
+cli.add_command(duplicate, "duplicate")
+cli.add_command(trash, "trash")
+cli.add_command(restore, "restore")
+cli.add_command(search, "search")
+cli.add_command(context, "context")
+cli.add_command(reindex_command, "reindex")
+cli.add_command(migrate_command, "migrate")
+cli.add_command(capture_command, "capture")
+cli.add_command(session_baseline_command, "session-baseline")
+cli.add_command(curate_command, "curate")
+cli.add_command(harvest_command, "harvest")
+cli.add_command(package_check_cmd, "package-check")
 
 for _command, _name, _replacement in (
     (add_cmd, "add", "docmancer docs add"),
@@ -150,8 +191,6 @@ for _command, _name, _replacement in (
     (list_cmd, "list", "docmancer docs list"),
     (remove_cmd, "remove", "docmancer docs remove"),
     (clear_cmd, "clear", "docmancer docs remove"),
-    (doctor_cmd, "doctor", "docmancer status --check"),
-    (init_cmd, "init", "docmancer setup"),
     (fetch_cmd, "fetch", "docmancer docs add"),
     (install_cmd, "install", "docmancer agent install"),
     (ingest_cmd, "ingest", "docmancer docs add"),

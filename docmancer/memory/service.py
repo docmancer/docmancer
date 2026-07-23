@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,29 @@ from docmancer.memory.packs import (
     render_pack,
 )
 from docmancer.memory.records import MemoryRecord, normalize_memory_text
+
+MANDATORY_TAG = "mandatory"
+_QUERY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_QUERY_STOPWORDS = {
+    "the", "a", "an", "for", "and", "or", "of", "to", "in", "on", "with",
+    "is", "are", "how", "what", "should", "we", "our", "task",
+}
+
+
+def _query_tokens(text: str) -> set[str]:
+    tokens = {token for token in _QUERY_TOKEN_RE.findall((text or "").casefold()) if len(token) > 2}
+    return tokens - _QUERY_STOPWORDS
+
+
+def _record_relevance(record: MemoryRecord, query_tokens: set[str]) -> int:
+    if not query_tokens:
+        return 0
+    haystack = _query_tokens(record.text) | {tag.casefold() for tag in record.tags}
+    return len(query_tokens & haystack)
+
+
+def _is_mandatory(record: MemoryRecord) -> bool:
+    return any(tag.casefold() == MANDATORY_TAG for tag in record.tags)
 
 
 class MemoryService:
@@ -752,33 +776,53 @@ class MemoryService:
                 semantic_suppressed.add(right)
             elif right_priority < left_priority:
                 semantic_suppressed.add(left)
+        candidate_ids = [
+            record_id
+            for pack in visible
+            for record_id in pack.record_ids
+            if record_id in by_id
+        ]
+        query_tokens = _query_tokens(query or "")
+        if query_tokens:
+            # Query-aware selection: mandatory (always-eligible) records sort
+            # first; audience/applicability priority (record_priority) stays
+            # the dominant order so an agent observation can never outrank a
+            # user or team instruction by relevance alone; lexical overlap
+            # with the task query only re-ranks candidates within the same
+            # priority tier, ahead of the token/item limit cutoff.
+            candidate_ids.sort(
+                key=lambda record_id: (
+                    0 if _is_mandatory(by_id[record_id]) else 1,
+                    record_priority.get(record_id, len(priority)),
+                    -_record_relevance(by_id[record_id], query_tokens),
+                ),
+            )
         output: list[MemoryRecord] = []
         seen: set[str] = set()
         overridden_ids: set[str] = set()
         overridden_texts: set[str] = set()
-        for pack in visible:
-            for record_id in pack.record_ids:
-                record = by_id.get(record_id)
-                if record is None or record.record_id in overridden_ids or record.record_id in semantic_suppressed:
-                    continue
-                normalized = " ".join(record.text.casefold().split())
-                if normalized in seen or normalized in overridden_texts:
-                    continue
-                seen.add(normalized)
-                output.append(record)
-                direct_overrides = {
-                    tag.split(":", 1)[1]
-                    for tag in record.tags
-                    if tag.startswith("overrides:") and tag.split(":", 1)[1]
-                }
-                overridden_ids.update(direct_overrides)
-                overridden_texts.update(
-                    " ".join(by_id[target].text.casefold().split())
-                    for target in direct_overrides
-                    if target in by_id
-                )
-                if len(output) >= limit:
-                    return output
+        for record_id in candidate_ids:
+            record = by_id.get(record_id)
+            if record is None or record.record_id in overridden_ids or record.record_id in semantic_suppressed:
+                continue
+            normalized = " ".join(record.text.casefold().split())
+            if normalized in seen or normalized in overridden_texts:
+                continue
+            seen.add(normalized)
+            output.append(record)
+            direct_overrides = {
+                tag.split(":", 1)[1]
+                for tag in record.tags
+                if tag.startswith("overrides:") and tag.split(":", 1)[1]
+            }
+            overridden_ids.update(direct_overrides)
+            overridden_texts.update(
+                " ".join(by_id[target].text.casefold().split())
+                for target in direct_overrides
+                if target in by_id
+            )
+            if len(output) >= limit:
+                return output
         return output
 
     def compiled_markdown(self, *, project_path=None, query: str | None = None, limit: int = 24) -> str:

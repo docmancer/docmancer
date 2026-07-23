@@ -1,73 +1,45 @@
 # Architecture
 
-Docmancer is a local-first memory harness with a canonical context layer above the raw evidence corpus. Documentation retrieval shares the local indexing engine but remains a separate user-facing surface.
+Docmancer separates canonical local files, disposable retrieval state, agent delivery, and optional encrypted transport.
 
-## Memory layers
+## Canonical layer
 
-1. **Sources:** Harness adapters discover agent memory, instructions, and rules. These files remain source-attributed evidence.
-2. **Atoms and graph:** The local pipeline redacts content, extracts self-contained memory atoms, merges compatible duplicates, records revision and supersedes edges, and detects contradictions.
-3. **Canonical records:** Approved statements live as independently editable and revisioned Markdown records. Deletion produces content-free tombstones.
-4. **Pack manifests:** Versioned manifests order stable record references for Personal defaults, Current project, Team standards, and Team project.
-5. **Rendered context:** Hooks and managed projections compile task-relevant approved records. Rendered output is never a source of truth.
+Curated Markdown files under `.docmancer/tree` are the source of truth. Frontmatter carries stable identity, type, scope, authority, project identity, source citations, lifecycle status, revision lineage, tags, and curation origin. Content hashes guard edits and moves.
 
-Legacy scopes map to two independent dimensions: `global` becomes personal/global, `project` becomes personal/project, and `team` becomes team/project. Team/global provides cross-project standards.
+A memory atom is one small, self-contained, source-attributed fact, decision, rule, preference, or workflow. Atoms are disposable retrieval units derived from canonical files. They are not a second writable source of truth.
 
-## Reconciliation and distillation
+Uncurated evidence lives under `.docmancer/inbox`. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
-The deterministic pipeline owns identity, provenance, lineage, duplicate removal, expiry, supersedes handling, conflict detection, and precedence. `docmancer memory distill` produces structured pack operations with source references and confidence:
+## Context Compiler
 
-- additions;
-- reworded or consolidated statements;
-- removals and supersedes;
-- project overrides;
-- unresolved contradictions.
+The compiler receives a task, project, agent, requested domains, and token budget. It selects mandatory policy first, then relevant active memory. Results include stable citations, an index revision, token estimate, and bounded retrieval trace.
 
-Exact duplicates and explicit lineage can reconcile automatically. New statements, semantic merges, conflict winners, and all team changes require approval. Default distillation covers the complete eligible corpus. An explicit operation limit creates a review batch, and later runs continue with evidence that has not yet been approved or rejected. Once the complete evidence set has been reviewed, running distillation again with unchanged evidence produces no patch.
+The default retrieval path is local Model2Vec plus sqlite-vec. Lexical matching remains available, and optional FastEmbed plus Qdrant provides the heavy path. The index can be deleted and rebuilt from Markdown with `docmancer reindex`.
 
-Direct personal Markdown edits become active manual revisions. Direct team edits become proposals. Direct deletions are reconciled into tombstones or team removal proposals, so cloud replay cannot resurrect deleted context.
+One-hop relations are an internal ranking signal only. They can help select or explain a result, but they are not recursively expanded into agent context and are not presented as independent user-authored claims.
 
-## Shared application services
+Retrieval changes must be evaluated against the repository benchmark corpus before the default engine or fusion weights change. Correct citations, required-policy retention, duplicate suppression, and no-answer behavior are release gates alongside ranking quality.
 
-The CLI, local web application, hooks, managed projections, and MCP tools call the same services for sync, query, distill, review, mutation, sharing, status, and documentation operations. This keeps terminology and decisions consistent across surfaces.
+## Capture and curation
 
-Context compilation applies this precedence:
+Lifecycle capture normalizes Claude Code and Codex hook payloads into one bounded schema. Redaction occurs before durable payload construction. Eligible checkpoints go only to the inbox, retrying the same event is idempotent, and failures never block the host agent.
 
-1. Team project.
-2. Personal project.
-3. Team standards.
-4. Personal defaults.
-5. Relevant non-canonical evidence.
+Deterministic curation performs structural extraction, exact normalized duplicate detection, explicit placement, and explicit supersession. BYOK curation is isolated behind explicit consent, strict response schemas, citation validation, advisory-only authority, provenance recording, and deterministic fallback.
 
-Project-specific statements override global defaults on the same subject. Team context overrides personal context at the same applicability level.
+## Surfaces
 
-## Local storage
+CLI, MCP, and the local web application use the same file-first services. The web server binds to `127.0.0.1`, uses a one-time browser bootstrap token, and enforces origin and CSRF checks. Local filesystem mutations cannot be requested by the hosted website.
 
-- `~/.docmancer/memory.db` stores the local atom index, graph, and sqlite-vec state.
-- Canonical Markdown records retain stable record and revision identities.
-- Pack manifests store ordered references, scope, revision lineage, and publication state.
-- Team/global records use the local team context store before encrypted sync or Markdown export.
-- Documentation uses its configured SQLite index and extracted source cache.
+Docs retrieval remains a separate user-facing surface even though it shares parts of the local indexing engine.
 
-The default embedding path uses the vendored `potion-base-8M` model through Model2Vec and sqlite-vec. The optional heavy path uses FastEmbed and Qdrant.
+The existing shell-first TUI and deterministic CLI remain supported local surfaces, but a TUI redesign is outside the Context Workbench implementation plan. The Electron desktop application is shelved. Neither TUI redesign nor Electron work is part of the workbench release gates.
 
-## Agent delivery
+## File and editor invariants
 
-Claude Code and Codex hooks request bounded task-relevant compiled context. Supported agents without hooks receive equivalent managed projections through `docmancer agent install` and `docmancer agent refresh`. Projection markers prevent duplication and make the output replaceable.
+Canonical memory files are UTF-8 Markdown text. Binary files, undecodable input, symlinks that escape an allowed root, and files above the configured size bound are rejected rather than partially indexed. Index records must retain the canonical file identity and content hash used to derive them.
 
-The raw corpus is never copied wholesale into agent files. Projection paths are excluded from discovery to prevent feedback loops.
+External editors are supported because Markdown is canonical, but they do not bypass validation. Docmancer resolves paths under the configured tree, rejects traversal and escaping symlinks, reparses frontmatter, recomputes hashes, and reports malformed files during `docmancer doctor` or `docmancer reindex`. Guarded API, CLI, and MCP edits still require the current content hash.
 
-## Local web application
+## Cloud boundary
 
-`docmancer web` serves the packaged Next.js interface through an authenticated loopback-only ASGI server. Its sidebar groups the application into these surfaces:
-
-- Operate contains Overview, Context, Memory, Sources, and Docs.
-- Review contains Audit, Intelligence, and Maintenance.
-- Cloud contains Personal Sync, Devices, and Team. Help is a separate local guide for workflows and terminology.
-
-Context and Memory use compact paginated rows with provenance-aware inspectors. Markdown content is rendered by default, while editable local records provide Write and Preview modes. Audit findings show masked values with exact file and line locations. Intelligence separates unresolved conflicts, recent activity, orphan maintenance, and resolved history.
-
-The browser never submits arbitrary shell commands or filesystem paths to a general executor. Changes call narrow local runtime methods, require same-origin CSRF protection, and keep destructive confirmation in the local interface.
-
-## Cloud protocol
-
-Protocol v1 carries encrypted record revisions. Protocol v2 graph payloads include relations, tombstones, pack revisions, and review projections. The service stores opaque envelopes and portable metadata, while plaintext context, tags, and local paths stay on approved devices.
+Cloud handles encrypted transport, managed history and recovery, approved devices, and Team coordination. Plaintext canonical memory and private keys remain local. `docmancer sync` means encrypted Cloud push and pull; local discovery and rebuilding use `harvest` and `reindex`.

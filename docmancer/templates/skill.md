@@ -1,11 +1,11 @@
 ---
 name: docmancer
-description: Search local documentation context packs with docmancer CLI. Use when the user asks about library docs, API references, vendor docs, version-specific behavior, offline docs, or wants to add docs before answering a technical question.
+description: Recall and update local agent memory, or search separately indexed documentation, with the docmancer CLI.
 ---
 
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`. The core retrieval path needs no API keys, vector database, hosted query API, or background daemon.
+Docmancer turns memory and instructions scattered across coding agents into a curated, source-attributed Markdown tree. It also maintains a separate documentation index. Use tree commands for past decisions, conventions, deliberate writes, and agent context. Use `docmancer docs ...` only for library, API, and vendor documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -13,6 +13,8 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## When to Use
 
+- Prior decisions, project conventions, or user preferences may affect the task.
+- The user explicitly asks to remember, edit, move, duplicate, trash, or restore durable memory.
 - User asks about a third-party library, SDK, or API and you need accurate documentation.
 - User references docs from a public site, GitHub repository, or local files.
 - You need to verify version-specific API behavior or exact method signatures.
@@ -20,11 +22,28 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Workflow
 
-1. Run `docmancer docs list` to see indexed docs.
-2. Run `docmancer docs query "question"` when relevant docs are present.
-3. If local docs are missing and the user approves the path, run `docmancer docs add <path>`.
-4. If URL docs are missing and the user approves the source, run `docmancer docs add <url>`.
-5. Use the returned sections as source-grounded context for the answer or code change.
+1. For project context, run `docmancer context "task" --project-path "$PWD"` or `docmancer search "question"` before answering.
+2. Read the canonical file with `docmancer read <address>` before changing it.
+3. Write durable memory only when the user asks, using an explicit path and scope.
+4. For third-party documentation, run `docmancer docs list`, then `docmancer docs query "question"`.
+5. Keep memory results and Docs results separate in the answer.
+
+## Memory Commands
+
+```bash
+docmancer init
+docmancer context "what deployment decisions apply?" --project-path "$PWD"
+docmancer search "deployment"
+docmancer read docmancer://memory/<id>
+docmancer write "# Release process\n\nDeploy on Railway." --path deployment/release.md --scope project
+docmancer edit docmancer://memory/<id> - --expected-hash <hash>
+docmancer move docmancer://memory/<id> deployment/production.md --expected-hash <hash>
+docmancer duplicate docmancer://memory/<id> deployment/copy.md --expected-hash <hash>
+docmancer trash docmancer://memory/<id> --expected-hash <hash>
+docmancer restore <restore-token>
+```
+
+Existing-file operations use the current content hash. Harvested files remain read-only evidence, ambiguous material stays in the inbox, and `docmancer://memory/<id>` citations survive moves.
 
 ## Ingest Local Documentation
 
@@ -89,7 +108,7 @@ Primary command. Returns a compact markdown context pack with source attribution
 | `docmancer docs remove <source>` | Remove a source or docset root |
 | `docmancer docs remove --all` | Clear the entire index |
 | `docmancer clear` | Wipe docmancer home, model caches used by docmancer, and managed Qdrant data (destructive; use `--dry-run`, `--keep-config`, or `--keep-models` as needed) |
-| `docmancer status --check` | Check config, loader availability, index health, and installed skills |
+| `docmancer doctor` | Check config, tree roots, indexes, providers, hooks, and installed skills |
 | `docmancer docs add <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
 
 ## Common Mistakes

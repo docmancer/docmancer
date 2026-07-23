@@ -1,6 +1,6 @@
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`.
+Docmancer maintains a curated, source-attributed Markdown memory tree and a separate documentation index. Use tree commands for prior decisions, conventions, and deliberate writes. Use `docmancer docs ...` only for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -10,16 +10,23 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 
 ## Workflow
 
-1. Run `docmancer docs list` to see indexed docs.
-2. Run `docmancer docs query "question"` when relevant docs are present.
-3. If local docs are missing and the user approves the path, run `docmancer docs add <path>`.
-4. If URL docs are missing and the user approves the source, run `docmancer docs add <url>`.
-5. Use the returned sections as source-grounded context for the answer or code change.
+1. Run `docmancer context "task" --project-path "$PWD"` when prior decisions may matter.
+2. Use `docmancer read <address>` before changing canonical memory, and write only when the user asks.
+3. Run `docmancer docs list` to see indexed docs.
+4. Run `docmancer docs query "question"` when relevant docs are present.
+5. Keep memory and Docs results separate.
 
 ## Core Commands
 
 ```bash
 docmancer setup
+docmancer context "what decisions apply?" --project-path "$PWD"
+docmancer search "deployment"
+docmancer read docmancer://memory/<id>
+docmancer write "# Decision" --path decisions/example.md --scope project
+docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>
+docmancer trash docmancer://memory/<id> --expected-hash <hash>
+docmancer restore <restore-token>
 docmancer docs add ./docs
 docmancer docs add https://docs.example.com
 docmancer docs sync
@@ -33,7 +40,7 @@ docmancer clear --dry-run
 docmancer docs list
 docmancer docs list
 docmancer docs remove <source>
-docmancer status --check
+docmancer doctor
 docmancer docs add <url> --output <dir>
 ```
 

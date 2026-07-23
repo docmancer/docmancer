@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - Unreleased
+### Added
+
+- **Canonical Markdown memory tree.** Added stable `docmancer://memory/<id>` addresses, hash-guarded write, read, edit, move, duplicate, trash, and restore operations, recoverable deletion, backlinks, relations, complete-file curation previews, bounded harvesting, lifecycle capture, and rebuildable tree indexes.
+- **Shared Context Compiler.** Added cited task-specific context compilation across CLI, MCP, hooks, and the local workbench, with mandatory-policy precedence, explicit token budgets, retrieval traces, and no-answer behavior.
+- **Tree-first local workbench.** Added Memory tree, Ask, Agent Context, and Inbox and harvest views over the same local runtime, including clickable stable addresses and source citations.
+- **Tree diagnostics and distribution checks.** Added canonical `docmancer doctor`, package artifact verification, and tree health checks for malformed files, security boundaries, and disposable index state.
+
+### Changed
+
+- **Installed agent guidance.** Updated Claude Code, Claude Desktop, Cursor, GitHub Copilot, and generic skill templates to distinguish curated memory commands from the separate Docs workflow.
+- **Versioned compatibility window.** Legacy query, memory, and tree namespace aliases remain available through 0.8.x and are scheduled for removal in 0.9.0. Retired local web routes now issue HTTP redirects to their canonical workbench replacements.
+
+### Fixed
+
+- **CLI and MCP tree parity.** Added the missing CLI duplicate, trash, and restore operations and documented MCP argument aliases.
+
 ## [0.8.1] - 2026-07-22
 ### Added
 

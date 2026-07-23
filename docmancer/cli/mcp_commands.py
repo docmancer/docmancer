@@ -40,11 +40,18 @@ def mcp_group():
 
 
 @mcp_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Run the stdio MCP server.")
-def serve():
+@click.option(
+    "--project",
+    "project_path",
+    type=click.Path(path_type=Path, file_okay=False, resolve_path=True),
+    default=None,
+    help="Pin every tree-memory tool to this project. Tool arguments cannot override it.",
+)
+def serve(project_path: Path | None):
     """Start the docmancer stdio MCP server (blocks until the client disconnects)."""
     from docmancer.mcp.server import main
 
-    main()
+    main(project_path=project_path)
 
 
 @mcp_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Check the MCP server environment.")

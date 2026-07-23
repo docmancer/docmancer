@@ -29,10 +29,11 @@ export function RecordInspector({
   reload: () => Promise<void>;
 }) {
   const value = Object.keys(state.detail).length ? state.detail : state.item;
-  const [draft, setDraft] = useState(String(value.content ?? value.text ?? value.rendered ?? ""));
+  const [draft, setDraft] = useState(String(value.markdown ?? value.content ?? value.text ?? value.rendered ?? ""));
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [editorTab, setEditorTab] = useState<"write" | "preview">("write");
+  const [confirmTreeTrash, setConfirmTreeTrash] = useState(false);
   const title = recordTitle(value, view);
   const subtitle = recordSubtitle(value, view);
 
@@ -49,12 +50,13 @@ export function RecordInspector({
     }
   }
 
-  const identifier = String(value.record_id ?? value.atom_id ?? value.id ?? "");
+  const identifier = String(value.address ?? value.record_id ?? value.atom_id ?? value.id ?? "");
   const sourceKey = String(value.source_key ?? "");
   const contextKind = String(value.view_kind ?? "");
   const canEditMemory = view === "memory" && Boolean(identifier);
   const canEditContext = view === "context" && contextKind === "context-record" && Boolean(identifier);
   const canEditSource = view === "sources" && Boolean(sourceKey && value.content_hash);
+  const canOperateTree = view === "tree" && Boolean(value.address && value.content_hash);
 
   return <div className="drawer-backdrop" onMouseDown={close}>
     <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Inspect ${title}`} onMouseDown={(event) => event.stopPropagation()}>
@@ -82,7 +84,8 @@ export function RecordInspector({
           {view === "intelligence" && (
             <IntelligenceDetail value={value}/>
           )}
-          {(value.content || value.text || value.rendered) && view !== "audit" && <section className="drawer-section content-section"><div className="section-heading"><h3>{canEditSource ? "Current file" : "Content"}</h3><button className="copy-button" onClick={() => void navigator.clipboard.writeText(String(value.content ?? value.text ?? value.rendered ?? ""))}><Copy size={13}/>Copy</button></div><MarkdownContent value={String(value.content ?? value.text ?? value.rendered)}/></section>}
+          {view === "tree" && <TreeReadingMetadata value={value}/>}
+          {(value.markdown || value.content || value.text || value.rendered) && view !== "audit" && <section className="drawer-section content-section"><div className="section-heading"><h3>{canEditSource ? "Current file" : "Content"}</h3><button className="copy-button" onClick={() => void navigator.clipboard.writeText(String(value.markdown ?? value.content ?? value.text ?? value.rendered ?? ""))}><Copy size={13}/>Copy</button></div><MarkdownContent value={String(value.markdown ?? value.content ?? value.text ?? value.rendered)}/></section>}
           <details className="drawer-details"><summary><span>Technical details</span><ChevronDown size={14}/></summary><div><Metadata value={value}/></div></details>
           {Array.isArray(value.matches) && value.matches.length > 0 && <section className="drawer-section"><h3>Search matches</h3><div className="match-list">{value.matches.map((match, index) => <article key={index}><span>Lines {String((match as JsonMap).line_start ?? "?")} to {String((match as JsonMap).line_end ?? "?")}</span><p>{String((match as JsonMap).text ?? "")}</p></article>)}</div></section>}
         </>}
@@ -91,6 +94,9 @@ export function RecordInspector({
       {!state.loading && !state.error && <footer className="drawer-footer">
         <div className="drawer-actions">
           {(canEditMemory || canEditContext || canEditSource) && mode === "view" && <button className="secondary" onClick={() => setMode("edit")}><Pencil size={14}/>Edit</button>}
+          {canOperateTree && <button className="secondary" disabled={busy} onClick={() => void run(() => mutate("/api/v1/tree", { action: "open-editor", address: value.address }, "Opened the canonical file in your editor."))}><ExternalLink size={14}/>Open in editor</button>}
+          {canOperateTree && <button className="secondary" disabled={busy} onClick={() => { const path = window.prompt("Move to project-relative path", String(value.path ?? "")); if (path) void run(() => mutate("/api/v1/tree", { action: "move", address: value.address, path, expected_hash: value.content_hash }, "Memory file moved."), true); }}><Pencil size={14}/>Move</button>}
+          {canOperateTree && <button className="secondary" disabled={busy} onClick={() => { const path = window.prompt("Duplicate to project-relative path"); if (path) void run(() => mutate("/api/v1/tree", { action: "duplicate", address: value.address, path, expected_hash: value.content_hash }, "Memory file duplicated."), true); }}><Copy size={14}/>Duplicate</button>}
           {view === "memory" && identifier && <button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "promote" }, "Memory promoted into prepared context."))}><ShieldCheck size={14}/>Promote</button>}
           {view === "context" && contextKind === "context-pack" && <><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.pack_id))}`, { action: "distill" }, "Context distillation completed."))}>Distill</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.pack_id))}`, { action: "share" }, "Team proposal created."))}>Share</button></>}
           {view === "context" && contextKind === "context-proposal" && <><button className="primary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.proposal_id))}`, { action: "approve" }, "Proposal approved."), true)}>Approve</button><button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/context/${encodeURIComponent(String(value.proposal_id))}`, { action: "reject" }, "Proposal rejected."), true)}>Reject</button></>}
@@ -102,9 +108,11 @@ export function RecordInspector({
           {canEditMemory && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm(`Forget memory ${identifier}? The source file and index will be updated.`)) void run(() => mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "forget", confirmation: identifier }, "Memory forgotten."), true); }}><Trash2 size={14}/>Forget</button>}
           {canEditContext && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm("Remove this prepared context entry?")) void run(() => mutate(`/api/v1/context/${encodeURIComponent(identifier)}`, { action: "remove", confirmation: identifier }, "Context entry removed."), true); }}><Trash2 size={14}/>Remove</button>}
           {canEditSource && <button className="danger-outline" disabled={busy} onClick={() => { if (window.confirm(`Delete ${String(value.path)}? This removes the file from disk.`)) void run(() => mutate("/api/v1/source", { source_key: sourceKey, expected_hash: value.content_hash, confirmation: sourceKey }, "Source deleted and index rebuilt.", "DELETE"), true); }}><Trash2 size={14}/>Delete file</button>}
+          {canOperateTree && !confirmTreeTrash && <button className="danger-outline" disabled={busy} onClick={() => setConfirmTreeTrash(true)}><Trash2 size={14}/>Trash</button>}
           {view === "devices" && Boolean(value.device_id ?? value.id) && <button className="danger-outline" disabled={busy} onClick={() => { const deviceId = String(value.device_id ?? value.id); if (window.confirm(`Revoke device ${deviceId}? It will no longer be able to sync.`)) void run(() => mutate(`/api/v1/cloud/devices/${encodeURIComponent(deviceId)}/revoke`, { confirmation: deviceId }, "Device revoked."), true); }}><Trash2 size={14}/>Revoke device</button>}
         </div>
       </footer>}
+      {canOperateTree && confirmTreeTrash && <section className="destructive-preview" aria-label="Confirm recoverable trash operation"><div><span className="mini-label">Recoverable destructive operation</span><h3>Move this file to trash?</h3><dl><div><dt>Target</dt><dd>{String(value.path ?? value.address)}</dd></div><div><dt>Scope</dt><dd>{String(value.scope ?? "project")}</dd></div><div><dt>Expected hash</dt><dd><code>{String(value.content_hash)}</code></dd></div><div><dt>Consequence</dt><dd>The current path stops resolving. Docmancer keeps a restore token and refuses to overwrite a newer file during restore.</dd></div></dl></div><div className="drawer-actions"><button className="secondary" disabled={busy} onClick={() => setConfirmTreeTrash(false)}>Cancel</button><button className="danger-outline" disabled={busy} onClick={() => void run(() => mutate("/api/v1/tree", { action: "trash", address: value.address, expected_hash: value.content_hash }, "Memory moved to recoverable trash."), true)}><Trash2 size={14}/>Move to trash</button></div></section>}
     </aside>
   </div>;
 }
@@ -119,7 +127,7 @@ function AuditFinding({ value }: { value: JsonMap }) {
       <pre>{String(occurrence.masked_excerpt ?? "[SECRET]")}</pre>
       <div className="occurrence-meta"><span>{humanise(String(occurrence.agent ?? "local"))}</span><span>{humanise(String(occurrence.scope ?? "memory"))}</span></div>
     </article>)}</div>
-    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the file above and run <code>docmancer sync --local-only</code>.</li></ol></div>
+    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the source file, then run <code>docmancer harvest</code> and <code>docmancer reindex</code>.</li></ol></div>
   </section>;
 }
 
@@ -131,8 +139,33 @@ function IntelligenceDetail({ value }: { value: JsonMap }) {
   return <section className="drawer-section intelligence-detail"><div className="section-heading"><h3>{conflict ? "Evidence to compare" : "Recent memory samples"}</h3><span>{entries.length} shown</span></div><div className="evidence-list">{entries.map((entry, index) => <article key={String(entry.atom_id ?? entry.node_id ?? index)}><div><span>{humanise(String(entry.memory_type ?? "memory"))}</span>{entry.value ? <strong>{String(entry.value)}</strong> : null}</div><MarkdownContent value={String(entry.text ?? "No text available.")} compact/></article>)}</div></section>;
 }
 
+function TreeReadingMetadata({ value }: { value: JsonMap }) {
+  const outline = Array.isArray(value.outline) ? value.outline.filter(isObject) : [];
+  const relations = Array.isArray(value.relations) ? value.relations.filter(isObject) : [];
+  const backlinks = Array.isArray(value.backlinks) ? value.backlinks.filter(isObject) : [];
+  const properties: JsonMap = {
+    type: value.type,
+    scope: value.scope,
+    authority: value.authority,
+    status: value.status,
+    project_id: value.project_id,
+    tags: value.tags,
+    sources: value.sources,
+    revision_id: value.revision_id,
+  };
+  return <>
+    <section className="drawer-section reading-properties">
+      <h3>Properties</h3>
+      <Metadata value={properties}/>
+    </section>
+    {outline.length > 0 && <section className="drawer-section reading-links"><h3>Outline</h3><ol>{outline.map((item, index) => <li key={`${String(item.line)}:${index}`}><span style={{ paddingLeft: `${Math.max(0, Number(item.level ?? 1) - 1) * 12}px` }}>{String(item.title ?? "Untitled heading")}</span><code>line {String(item.line ?? "?")}</code></li>)}</ol></section>}
+    {relations.length > 0 && <section className="drawer-section reading-links"><h3>Relations</h3><ul>{relations.map((item, index) => <li key={`${String(item.type)}:${String(item.target)}:${index}`}><span>{humanise(String(item.type ?? "links to"))}</span><code>{String(item.target ?? "")}</code></li>)}</ul></section>}
+    {backlinks.length > 0 && <section className="drawer-section reading-links"><h3>Backlinks</h3><ul>{backlinks.map((item, index) => <li key={`${String(item.address)}:${index}`}><span>{String(item.title ?? "Memory file")}</span><code>{String(item.address ?? "")}</code></li>)}</ul></section>}
+  </>;
+}
+
 function Metadata({ value }: { value: JsonMap }) {
-  const hidden = new Set(["content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids"]);
+  const hidden = new Set(["markdown", "content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids", "outline", "relations", "backlinks"]);
   const entries = Object.entries(value).filter(([key, item]) => !hidden.has(key) && item !== null && item !== "").slice(0, 24);
   return <dl className="inspector-definitions">{entries.map(([key, item]) => <div key={key}><dt>{humanise(key)}</dt><dd title={displayValue(item)}>{displayValue(item)}</dd></div>)}</dl>;
 }

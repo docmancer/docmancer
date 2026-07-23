@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import Counter
 from pathlib import Path
 
@@ -18,23 +19,24 @@ def _service():
     return MemoryService(MemoryAgent())
 
 
-@click.command("sync", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Refresh memory, context packs, agents, and cloud.")
-@click.option("--local-only", is_flag=True, help="Skip encrypted cloud push and pull.")
-@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
+@click.command("sync", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Push and pull encrypted Cloud revisions.")
+@click.option("--local-only", is_flag=True, help="Deprecated. Use harvest and reindex for local work.")
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, hidden=True)
 def sync_cmd(local_only: bool, project_path: Path | None) -> None:
-    """Harvest sources, reconcile memory, refresh packs and agent projections, then sync cloud."""
-    project = project_path or Path.cwd()
-    try:
-        result = _service().sync(project_path=project, local_only=local_only)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"Indexed {result['indexed']} memory atoms across {result['packs']} context packs.")
-    click.echo(f"Created {result['proposals']} proposal(s); {result['pending_reviews']} review(s) are pending.")
-    click.echo(f"Refreshed {len(result['projections'])} installed agent projection(s).")
-    if result["cloud"] is not None:
-        click.echo("Encrypted cloud sync completed.")
-    elif local_only:
-        click.echo("Cloud transfer skipped by --local-only.")
+    """Synchronize encrypted revisions with Docmancer Cloud.
+
+    Local source discovery and index refresh are deliberately separate:
+    use ``docmancer harvest`` and ``docmancer reindex``.
+    """
+    if local_only or project_path is not None:
+        raise click.UsageError(
+            "local reindexing no longer runs through `docmancer sync`; "
+            "use `docmancer harvest` to discover evidence and `docmancer reindex` "
+            "to rebuild the local curated-tree index"
+        )
+    from docmancer.cli.cloud_commands import _run_sync_command
+
+    _run_sync_command()
 
 
 @click.command("query", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Search current memory.")
@@ -98,6 +100,31 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         for name in PROJECTION_TARGETS
         if projection_path(name).exists()
     }
+    tree_root = project / ".docmancer" / "tree"
+    inbox_root = project / ".docmancer" / "inbox"
+    try:
+        from docmancer.memory.tree.store import TreeStore
+
+        tree_store = TreeStore(tree_root)
+        entries = tree_store.index.entries()
+        tree_entries = len(entries)
+        tree_revision = hashlib.sha256(
+            "\n".join(sorted(f"{entry.memory_id}:{entry.content_hash}" for entry in entries)).encode("utf-8")
+        ).hexdigest()[:16]
+    except Exception as exc:  # noqa: BLE001 - status must still report legacy health
+        tree_entries = 0
+        tree_revision = ""
+        value["tree_error"] = str(exc)
+    value["tree"] = {
+        "root": str(tree_root.resolve()),
+        "entries": tree_entries,
+        "index_revision": tree_revision,
+        "inbox": len(list(inbox_root.glob("*.md"))) if inbox_root.exists() else 0,
+        "capture_enabled": False,
+        "watcher": "native events with polling fallback",
+        "default_retrieval": "model2vec + sqlite-vec",
+        "heavy_retrieval": "optional FastEmbed + Qdrant",
+    }
     db_exists = Path(str(value["memory"].get("db_path") or "")).exists()
     value["healthy"] = bool(db_exists and not value["security_findings"])
     if as_json:
@@ -108,6 +135,7 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         click.echo(f"Pending reviews: {value['pending_reviews']}")
         click.echo(f"Security findings: {value['security_findings']}")
         click.echo(f"Agent projections: {len(value['agent_delivery'])}")
+        click.echo(f"Curated tree: {value['tree']['entries']} file(s), {value['tree']['inbox']} inbox item(s)")
         click.echo(f"Cloud: {'connected' if value['cloud_enabled'] else 'local only'}")
     if check and not value["healthy"]:
         raise click.ClickException("status checks found issues; inspect `docmancer status --json`")

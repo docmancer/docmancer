@@ -1,0 +1,117 @@
+"""Versioned distribution artifacts and drift verification."""
+from __future__ import annotations
+
+import json
+from importlib.resources import files
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from docmancer import __version__
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path.name} must contain a JSON object")
+    return value
+
+
+def verify_distribution() -> dict[str, Any]:
+    root = Path(str(files("docmancer.distribution")))
+    errors: list[str] = []
+
+    def read_json(relative_path: str) -> dict[str, Any]:
+        try:
+            return _read_json(root / relative_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid distribution JSON {relative_path}: {exc}")
+            return {}
+
+    plugin = read_json("codex-plugin/.codex-plugin/plugin.json")
+    mcp = read_json("codex-plugin/.mcp.json")
+    hooks = read_json("codex-plugin/hooks/hooks.json")
+    server = read_json("server.json")
+    claude_marketplace = read_json("claude-marketplace/.claude-plugin/marketplace.json")
+    claude_plugin = read_json("claude-marketplace/plugins/docmancer/.claude-plugin/plugin.json")
+    claude_hooks = read_json("claude-marketplace/plugins/docmancer/hooks/hooks.json")
+    openclaw_package = read_json("openclaw-plugin/package.json")
+    openclaw_manifest = read_json("openclaw-plugin/openclaw.plugin.json")
+    try:
+        smithery_value = yaml.safe_load((root / "smithery.yaml").read_text(encoding="utf-8"))
+        smithery = smithery_value if isinstance(smithery_value, dict) else {}
+        if not isinstance(smithery_value, dict):
+            errors.append("invalid distribution YAML smithery.yaml: expected an object")
+    except (OSError, yaml.YAMLError) as exc:
+        errors.append(f"invalid distribution YAML smithery.yaml: {exc}")
+        smithery = {}
+    versions = {
+        "core": __version__,
+        "codex_plugin": str(plugin.get("version") or ""),
+        "claude_plugin": str(claude_plugin.get("version") or ""),
+        "claude_marketplace": str(((claude_marketplace.get("plugins") or [{}])[0]).get("version") or ""),
+        "openclaw_plugin": str(openclaw_package.get("version") or ""),
+        "openclaw_manifest": str(openclaw_manifest.get("version") or ""),
+        "mcp_registry": str(server.get("version") or ""),
+        "mcp_registry_package": str((server.get("packages") or [{}])[0].get("version") or ""),
+        "smithery": str((smithery or {}).get("version") or ""),
+    }
+    drift = {name: version for name, version in versions.items() if version != __version__}
+    if drift:
+        errors.append(f"distribution version drift: {drift}")
+    if (mcp.get("mcpServers") or {}).get("docmancer", {}).get("command") != "docmancer-mcp":
+        errors.append("Codex MCP config must launch docmancer-mcp")
+    package = (server.get("packages") or [{}])[0]
+    if package.get("registryType") != "pypi" or package.get("identifier") != "docmancer":
+        errors.append("MCP Registry package must reference PyPI docmancer")
+    if (smithery or {}).get("startCommand", {}).get("command") != "docmancer-mcp":
+        errors.append("Smithery must launch docmancer-mcp over stdio")
+    if not str(server.get("websiteUrl") or "").startswith("https://"):
+        errors.append("MCP Registry manifest must link to HTTPS documentation")
+    if not str(smithery.get("homepage") or "").startswith("https://"):
+        errors.append("Smithery manifest must link to HTTPS documentation")
+    privacy = smithery.get("privacy") or {}
+    if privacy.get("localOnly") is not True:
+        errors.append("Smithery manifest must declare local-only plaintext handling")
+    hook_groups = hooks.get("hooks") or {}
+    for event in ("SessionStart", "PreCompact", "Stop"):
+        if not isinstance(hook_groups.get(event), list) or not hook_groups[event]:
+            errors.append(f"Codex hooks must define {event}")
+    claude_hook_groups = claude_hooks.get("hooks") or {}
+    for event in ("SessionStart", "PreCompact"):
+        if not isinstance(claude_hook_groups.get(event), list) or not claude_hook_groups[event]:
+            errors.append(f"Claude Code hooks must define {event}")
+    if ((claude_marketplace.get("plugins") or [{}])[0]).get("source") != "./plugins/docmancer":
+        errors.append("Claude marketplace must use a cache-safe relative plugin source")
+    if openclaw_manifest.get("id") != "docmancer":
+        errors.append("OpenClaw manifest must declare the docmancer plugin id")
+    if (openclaw_package.get("openclaw") or {}).get("extensions") != ["./dist/index.js"]:
+        errors.append("OpenClaw package must load compiled JavaScript")
+    openclaw_runtime = (root / "openclaw-plugin" / "dist" / "index.js").read_text(encoding="utf-8")
+    for contract in ('api.on("before_prompt_build"', '"docmancer"', '"context"'):
+        if contract not in openclaw_runtime:
+            errors.append(f"OpenClaw runtime is missing native context contract: {contract}")
+    skill = (root / "codex-plugin" / "skills" / "docmancer-memory" / "SKILL.md").read_text(encoding="utf-8")
+    for command in ("docmancer context", "docmancer write", "docmancer harvest", "docmancer curate"):
+        if command not in skill:
+            errors.append(f"Codex skill is missing current command: {command}")
+    framework_skills = {
+        "memory-writing": ("docmancer search", "docmancer write", "docmancer edit", "docmancer move"),
+        "search-before-answer": ("docmancer context", "docmancer search", "docmancer read", "docmancer docs query"),
+        "onboarding": ("docmancer init", "docmancer status", "docmancer harvest", "docmancer curate", "docmancer reindex"),
+    }
+    for name, commands in framework_skills.items():
+        path = root / "skills" / name / "SKILL.md"
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"missing framework skill {name}: {exc}")
+            continue
+        for command in commands:
+            if command not in content:
+                errors.append(f"framework skill {name} is missing current command: {command}")
+    return {"ok": not errors, "version": __version__, "versions": versions, "errors": errors}
+
+
+__all__ = ["verify_distribution"]

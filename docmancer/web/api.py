@@ -18,6 +18,9 @@ from docmancer.runtime import LocalRuntime
 
 
 CAPABILITIES = {
+    "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
+    "inbox": ["list", "harvest", "curate"],
+    "ask": ["context"],
     "context": ["browse", "add", "edit", "remove", "distill", "review", "share"],
     "memory": ["query", "recent", "add", "edit", "forget", "promote"],
     "sources": ["browse", "search", "create", "edit", "delete"],
@@ -121,6 +124,72 @@ class LocalApi:
 
     async def capabilities(self, request: Request) -> JSONResponse:
         return JSONResponse({"api_version": 1, "capabilities": CAPABILITIES})
+
+    async def tree_root(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.tree_root()))
+
+    async def tree(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(paginate(await self.runtime.tree_list(), request)))
+
+    async def tree_file(self, request: Request) -> JSONResponse:
+        address = str(request.query_params.get("address") or "")
+        if not address:
+            return error_response(ValueError("address is required"))
+        try:
+            return JSONResponse(jsonable(await self.runtime.tree_read(address)))
+        except Exception as exc:  # noqa: BLE001 - converted to shared envelope
+            return error_response(exc)
+
+    async def tree_create(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            required_text(body, "path")
+            required_text(body, "markdown")
+            return JSONResponse(jsonable(await self.runtime.tree_create(body)), status_code=201)
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def tree_action(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            action = required_text(body, "action")
+            return JSONResponse(jsonable(await self.runtime.tree_mutate(action, body)))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def inbox(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(paginate(await self.runtime.inbox_files(), request)))
+
+    async def harvest(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            return JSONResponse(jsonable(await self.runtime.harvest_tree(
+                required_text(body, "source"), apply=bool(body.get("apply", False))
+            )))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def curate(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            return JSONResponse(jsonable(await self.runtime.curate_inbox(
+                required_text(body, "inbox_id"),
+                required_text(body, "path"),
+                apply=bool(body.get("apply", False)),
+            )))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def ask(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            task = required_text(body, "task")
+            budget = int(body.get("token_budget") or 2000)
+            if budget < 1 or budget > 100_000:
+                raise ValueError("token_budget must be between 1 and 100000")
+            return JSONResponse(jsonable(await self.runtime.ask_tree(task, token_budget=budget, agent=str(body.get("agent") or "web"))))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
 
     async def context(self, request: Request) -> JSONResponse:
         items = await self.runtime.context()
@@ -500,6 +569,21 @@ def bounded_int(value: str | None, default: int, *, maximum: int = 10_000) -> in
 
 
 def error_response(exc: Exception) -> JSONResponse:
+    from docmancer.memory.tree.errors import TreeError
+
+    if isinstance(exc, TreeError):
+        payload = {
+            "code": exc.__class__.__name__.replace("Error", "").upper(),
+            "message": str(exc),
+            "retry_safe": bool(getattr(exc, "retry_safe", False)),
+            "likely_cause": str(getattr(exc, "likely_cause", "")),
+            "next_action": str(getattr(exc, "next_action", "")),
+        }
+        candidates = getattr(exc, "candidates", None)
+        if candidates:
+            payload["candidates"] = list(candidates)
+        status = 409 if exc.__class__.__name__ in {"StaleWriteError", "AlreadyExistsError", "AmbiguousAddressError"} else 404 if exc.__class__.__name__ == "AddressNotFoundError" else 400
+        return JSONResponse({"error": payload}, status_code=status)
     if isinstance(exc, EntitlementError):
         return JSONResponse({"error": {"code": "UPGRADE_REQUIRED", "message": str(exc)}}, status_code=402)
     if isinstance(exc, AuthenticationError):

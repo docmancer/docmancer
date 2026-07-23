@@ -230,6 +230,60 @@ def test_project_override_suppresses_inherited_default_in_compiled_context(tmp_p
     assert [record.text for record in compiled] == ["Use Supabase for this project."]
 
 
+def test_compile_context_selects_query_relevant_memory_while_keeping_mandatory_policy(tmp_path, monkeypatch) -> None:
+    service = _service(tmp_path, monkeypatch)
+    policy = service.add_canonical(
+        "Never commit .env files.",
+        tags=["mandatory"],
+    )["record"]
+    deployment = service.add_canonical("Deploy through the release-patch script.")["record"]
+    design = service.add_canonical("Follow the design system spacing scale.")["record"]
+
+    deployment_bundle = service.compile_context(query="How should I deploy this release?")
+    design_bundle = service.compile_context(query="What does the design system say about spacing?")
+
+    deployment_texts = [record.text for record in deployment_bundle]
+    design_texts = [record.text for record in design_bundle]
+
+    assert deployment.text in deployment_texts
+    assert deployment_texts.index(deployment.text) < deployment_texts.index(design.text)
+    assert design.text in design_texts
+    assert design_texts.index(design.text) < design_texts.index(deployment.text)
+
+    assert policy.text in deployment_texts
+    assert policy.text in design_texts
+
+
+def test_compile_context_without_query_keeps_documented_priority_baseline(tmp_path, monkeypatch) -> None:
+    service = _service(tmp_path, monkeypatch)
+    first = service.add_canonical("Always use TypeScript.")["record"]
+    second = service.add_canonical("Prefer pnpm over npm.")["record"]
+
+    without_query = [record.text for record in service.compile_context()]
+    assert without_query == [first.text, second.text]
+
+
+def test_compile_context_query_selection_never_leaks_across_projects(tmp_path, monkeypatch) -> None:
+    service = _service(tmp_path, monkeypatch)
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    pack_a = next(
+        pack.pack_id
+        for pack in service.ensure_packs(project_path=project_a)
+        if pack.audience_kind == "personal" and pack.applicability_kind == "project"
+    )
+    service.add_canonical(
+        "Deploy project A through its staging pipeline.",
+        pack_id=pack_a,
+        project_path=project_a,
+    )
+
+    bundle = service.compile_context(project_path=project_b, query="How should I deploy this?")
+    assert bundle == []
+
+
 def test_conflict_distillation_recommends_specific_project_override_with_both_sources() -> None:
     project = "/tmp/project"
     global_atom = AtomicMemoryEntry(

@@ -5,7 +5,7 @@ description: Search local documentation context packs with docmancer CLI. Use wh
 
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`.
+Docmancer maintains a curated, source-attributed Markdown memory tree and a separate documentation index. Use `docmancer search`, `read`, `write`, and `context` for prior decisions and durable memory. Use `docmancer docs ...` for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -13,11 +13,11 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Workflow
 
-1. Run `docmancer docs list` to see indexed docs.
-2. Run `docmancer docs query "question"` when relevant docs are present.
-3. If local docs are missing and the user approves the path, run `docmancer docs add <path>`.
-4. If URL docs are missing and the user approves the source, run `docmancer docs add <url>`.
-5. Use returned sections as source-grounded context for the answer or code change.
+1. Run `docmancer context "task"` when prior decisions or conventions may matter.
+2. Use `docmancer read <address>` before changing canonical memory, and write only when the user explicitly asks.
+3. Run `docmancer docs list` to see indexed docs.
+4. Run `docmancer docs query "question"` when relevant docs are present.
+5. If docs are missing and the user approves the source, use `docmancer docs add <path-or-url>`.
 
 ## Core Commands
 
@@ -31,7 +31,9 @@ Executable: `{{DOCS_KIT_CMD}}`
 - `docmancer docs query "question" --format json`: return machine-readable context.
 - `docmancer docs query "question" --allow-degraded`: in dense, sparse, or hybrid modes, fall back when vector retrieval fails instead of erroring.
 - `docmancer clear --dry-run`: preview wiping docmancer home and related caches (`--yes` to run for real; see `--keep-config` and `--keep-models`).
-- `docmancer docs list`, `docmancer docs list`, `docmancer docs remove`, `docmancer status --check`: manage the local index.
+- `docmancer search`, `docmancer read`, `docmancer write`, `docmancer context`: use the curated memory tree.
+- `docmancer duplicate`, `docmancer trash`, `docmancer restore`: perform explicit, hash-guarded file operations.
+- `docmancer docs list`, `docmancer docs remove`, `docmancer doctor`: manage and diagnose local state.
 - `docmancer docs add <url> --output <dir>`: download docs to markdown without indexing.
 
 `query` prints estimated raw docs tokens, context-pack tokens, percent saved, and agentic runway. Prefer the compact default first.

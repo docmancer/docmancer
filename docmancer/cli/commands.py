@@ -508,15 +508,22 @@ def _install_vscode_copilot_settings(dest: Path) -> None:
 
 
 _HOOK_COMMAND_MARKER = "memory hook-context"
-_CAPTURE_HOOK_COMMAND_MARKER = "memory capture-hook"
+_SESSION_BASELINE_COMMAND_MARKER = "session-baseline"
+_CAPTURE_HOOK_COMMAND_MARKER = " capture"
+_LEGACY_CAPTURE_HOOK_COMMAND_MARKER = "memory capture-hook"
 
 
 def _hook_command(agent: str, config_path: str | Path | None) -> str:
     return f"{_resolve_skill_command(config_path)} memory hook-context --agent {shlex.quote(agent)}"
 
 
+def _session_baseline_command(agent: str, config_path: str | Path | None) -> str:
+    return f"{_resolve_skill_command(config_path)} session-baseline --agent {shlex.quote(agent)}"
+
+
 def _capture_hook_command(agent: str, config_path: str | Path | None) -> str:
-    return f"{_resolve_skill_command(config_path)} memory capture-hook --agent {shlex.quote(agent)}"
+    del agent
+    return f"{_resolve_skill_command(config_path)} capture"
 
 
 def _load_json_object(path: Path) -> dict:
@@ -534,8 +541,15 @@ def _load_json_object(path: Path) -> dict:
 def _is_docmancer_hook(handler: object, marker: str | None = None) -> bool:
     command = str(handler.get("command") or "") if isinstance(handler, dict) else ""
     if marker:
+        if marker == _CAPTURE_HOOK_COMMAND_MARKER:
+            return marker in command or _LEGACY_CAPTURE_HOOK_COMMAND_MARKER in command
         return marker in command
-    return _HOOK_COMMAND_MARKER in command or _CAPTURE_HOOK_COMMAND_MARKER in command
+    return (
+        _HOOK_COMMAND_MARKER in command
+        or _SESSION_BASELINE_COMMAND_MARKER in command
+        or _CAPTURE_HOOK_COMMAND_MARKER in command
+        or _LEGACY_CAPTURE_HOOK_COMMAND_MARKER in command
+    )
 
 
 def _install_hook_json(path: Path, *, event: str, command: str, status: str, matcher: str | None = None, timeout: int = 2) -> bool:
@@ -551,7 +565,12 @@ def _install_hook_json(path: Path, *, event: str, command: str, status: str, mat
         if not isinstance(group, dict):
             continue
         handlers = group.get("hooks")
-        marker = _CAPTURE_HOOK_COMMAND_MARKER if _CAPTURE_HOOK_COMMAND_MARKER in command else _HOOK_COMMAND_MARKER
+        if _CAPTURE_HOOK_COMMAND_MARKER in command:
+            marker = _CAPTURE_HOOK_COMMAND_MARKER
+        elif _SESSION_BASELINE_COMMAND_MARKER in command:
+            marker = _SESSION_BASELINE_COMMAND_MARKER
+        else:
+            marker = _HOOK_COMMAND_MARKER
         if isinstance(handlers, list) and any(_is_docmancer_hook(handler, marker) for handler in handlers):
             return False
 
@@ -616,20 +635,22 @@ def _install_agent_hooks(agent: str, *, project: bool, config_path: str | Path |
     home = Path.home()
     if agent == "claude-code":
         path = (Path(".claude") / "settings.json") if project else (home / ".claude" / "settings.json")
-        command = _hook_command("claude-code", config_path)
+        baseline_command = _session_baseline_command("claude-code", config_path)
+        prompt_command = _hook_command("claude-code", config_path)
         installed = []
-        if _install_hook_json(path, event="SessionStart", command=command, status="Loading docmancer memories"):
+        if _install_hook_json(path, event="SessionStart", command=baseline_command, status="Loading curated docmancer context"):
             installed.append(("Installed Claude Code SessionStart hook at", path))
-        if _install_hook_json(path, event="UserPromptSubmit", command=command, status="Searching docmancer memory"):
+        if _install_hook_json(path, event="UserPromptSubmit", command=prompt_command, status="Searching docmancer memory"):
             installed.append(("Installed Claude Code UserPromptSubmit hook at", path))
         return installed or [("Docmancer hooks already present at", path)]
     if agent == "codex":
         path = (Path(".codex") / "hooks.json") if project else (home / ".codex" / "hooks.json")
-        command = _hook_command("codex", config_path)
+        baseline_command = _session_baseline_command("codex", config_path)
+        prompt_command = _hook_command("codex", config_path)
         installed = []
-        if _install_hook_json(path, event="SessionStart", command=command, status="Loading docmancer memories", matcher="startup|resume"):
+        if _install_hook_json(path, event="SessionStart", command=baseline_command, status="Loading curated docmancer context", matcher="startup|resume"):
             installed.append(("Installed Codex SessionStart hook at", path))
-        if _install_hook_json(path, event="UserPromptSubmit", command=command, status="Searching docmancer memory"):
+        if _install_hook_json(path, event="UserPromptSubmit", command=prompt_command, status="Searching docmancer memory"):
             installed.append(("Installed Codex UserPromptSubmit hook at", path))
         return installed or [("Docmancer hooks already present at", path)]
     raise click.ClickException("--hooks is currently supported for claude-code and codex.")
@@ -1110,17 +1131,17 @@ def inspect_cmd(config_path: str | None):
     context_settings=HELP_CONTEXT_SETTINGS,
     short_help="Check config, memory and docs indexes, providers, and skills.",
     epilog=format_examples(
-        "docmancer status --check",
-        "docmancer status --check --config ./docmancer.yaml",
+        "docmancer doctor",
+        "docmancer doctor --config ./docmancer.yaml",
     ),
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def doctor_cmd(config_path: str | None):
-    """Check environment, the memory and docs indexes, providers, and installed skill status."""
+    """Check environment, the curated tree, indexes, providers, and installed integrations."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     home = Path.home()
-    _emit_brand_header("docmancer status --check", "Check binary, config, memory and docs indexes, and installed skills.")
+    _emit_brand_header("docmancer doctor", "Check binary, config, curated tree, indexes, and installed integrations.")
 
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
@@ -1178,6 +1199,67 @@ def doctor_cmd(config_path: str | None):
             )
     except Exception as exc:  # noqa: BLE001 - doctor must never crash on one check
         _emit_status_line(f"unavailable ({exc})", state="warn", indent=4)
+
+    click.echo()
+    click.echo(_style("  Curated Markdown tree", fg="white", bold=True))
+    tree_root = Path.cwd() / ".docmancer" / "tree"
+    inbox_root = tree_root.parent / "inbox"
+    if not tree_root.exists():
+        _emit_status_line(
+            "not initialised for this project (run: docmancer init)",
+            state="warn",
+            indent=4,
+        )
+    elif not tree_root.is_dir():
+        _emit_status_line("tree root exists but is not a directory", state="error", indent=4)
+    else:
+        try:
+            from docmancer.memory.tree.parser import parse_tree_file
+            from docmancer.memory.tree.store import TreeStore
+
+            markdown_files = sorted(tree_root.rglob("*.md"))
+            malformed: list[str] = []
+            for path in markdown_files:
+                try:
+                    if parse_tree_file(path) is None:
+                        malformed.append(str(path.relative_to(tree_root)))
+                except Exception:  # noqa: BLE001 - report every malformed file together
+                    malformed.append(str(path.relative_to(tree_root)))
+            indexed = TreeStore(tree_root).rebuild_index()
+            _emit_status_line(
+                f"{len(markdown_files)} canonical file(s), {indexed} indexed, "
+                f"{len(list(inbox_root.glob('*.md'))) if inbox_root.exists() else 0} inbox item(s)",
+                indent=4,
+            )
+            if malformed:
+                _emit_status_line(
+                    "invalid frontmatter: " + ", ".join(malformed[:10]),
+                    state="error",
+                    indent=4,
+                )
+            else:
+                _emit_status_line("parser and disposable-index rebuild: healthy", indent=4)
+        except Exception as exc:  # noqa: BLE001 - doctor must continue through other checks
+            _emit_status_line(f"tree check failed ({exc})", state="error", indent=4)
+
+        writable = os.access(tree_root, os.R_OK | os.W_OK | os.X_OK)
+        _emit_status_line(
+            "tree permissions: readable and writable" if writable else "tree permissions need attention",
+            state="ok" if writable else "error",
+            indent=4,
+        )
+        _emit_status_line("watcher: bounded content-hash polling available", indent=4)
+        try:
+            from docmancer.memory.tree.editor import editor_command
+
+            sample = next((path for path in markdown_files if path.is_file()), None)
+            if sample is None:
+                _emit_status_line("external editor: no memory file available to probe", state="warn", indent=4)
+            else:
+                launcher = editor_command(sample, allowed_root=tree_root)[0]
+                _emit_status_line(f"external editor launcher: {display_path(launcher)}", indent=4)
+        except Exception as exc:  # noqa: BLE001 - unavailable editor is diagnostic, not fatal
+            _emit_status_line(f"external editor unavailable ({exc})", state="warn", indent=4)
 
     click.echo()
     click.echo(_style("  Local loaders", fg="white", bold=True))

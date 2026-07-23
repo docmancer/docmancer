@@ -101,8 +101,18 @@ def test_ingest_url_points_to_add():
     assert "Use `docmancer docs add` for URLs." in result.output
 
 
-def test_cli_init_creates_project_sqlite_config(tmp_path):
-    result = CliRunner().invoke(cli, ["init", "--dir", str(tmp_path)])
+def test_cli_init_creates_curated_project_tree(tmp_path):
+    root = tmp_path / ".docmancer" / "tree"
+    result = CliRunner().invoke(cli, ["init", "--root", str(root), "--project-id", "test-project"])
+    assert result.exit_code == 0
+    assert (root / "context.md").is_file()
+    assert (tmp_path / ".docmancer" / "inbox").is_dir()
+    assert (tmp_path / ".docmancer" / "trash").is_dir()
+    assert "Capture hooks remain disabled" in result.output
+
+
+def test_docs_init_creates_project_sqlite_config(tmp_path):
+    result = CliRunner().invoke(cli, ["docs", "init", "--dir", str(tmp_path)])
     assert result.exit_code == 0
     config_file = tmp_path / "docmancer.yaml"
     data = yaml.safe_load(config_file.read_text())
@@ -368,6 +378,8 @@ def test_doctor_runs():
     assert result.exit_code == 0
     assert "SQLite" in result.output
     assert "Local loaders" in result.output
+    assert "Curated Markdown tree" in result.output
+    assert "Deprecated:" not in result.output
 
 
 def test_docs_list_shows_indexed_sources():

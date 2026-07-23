@@ -58,7 +58,7 @@ def test_install_claude_code_creates_rebooted_skill_file():
         assert claude_md.exists()
         injected = claude_md.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer query" in injected
+        assert "docmancer context" in injected
         assert "docmancer bench" not in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content
@@ -66,7 +66,8 @@ def test_install_claude_code_creates_rebooted_skill_file():
         # Pre-bench hosted catalog narrative concepts must stay gone.
         assert "vault" not in content.lower()
         assert "docmancer pull" not in content
-        assert "docmancer search" not in content
+        assert "docmancer search" in content
+        assert "docmancer context" in content
         assert "from the " + "reg" + "istry" not in content.lower()
 
 
@@ -121,6 +122,7 @@ def test_install_claude_code_hooks_and_remove_preserves_other_hooks():
         blob = json.dumps(data)
         assert "echo keep" in blob
         assert "docmancer memory hook-context" not in blob
+        assert "docmancer session-baseline" not in blob
 
 
 def test_install_codex_creates_native_and_shared_skills():
@@ -138,7 +140,7 @@ def test_install_codex_creates_native_and_shared_skills():
         assert codex_agents.exists()
         injected = codex_agents.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer query" in injected
+        assert "docmancer context" in injected
 
 
 def test_install_codex_hooks_mentions_trust_flow():
@@ -155,6 +157,7 @@ def test_install_codex_hooks_mentions_trust_flow():
         assert "SessionStart" in data["hooks"]
         assert "UserPromptSubmit" in data["hooks"]
         assert "docmancer" in blob
+        assert "session-baseline --agent codex" in blob
         assert "memory hook-context --agent codex" in blob
         assert '"timeout": 2' in blob
         assert "/hooks" in result.output
@@ -174,6 +177,7 @@ def test_install_codex_hooks_use_documented_hooks_json_shape():
         prompt_group = data["hooks"]["UserPromptSubmit"][0]
         assert session_group["matcher"] == "startup|resume"
         assert session_group["hooks"][0]["type"] == "command"
+        assert "session-baseline --agent codex" in session_group["hooks"][0]["command"]
         assert prompt_group["hooks"][0]["type"] == "command"
         assert "memory hook-context --agent codex" in prompt_group["hooks"][0]["command"]
 
@@ -191,6 +195,7 @@ def test_install_and_remove_codex_capture_hooks_separately():
         assert removed.exit_code == 0, removed.output
         data = json.loads((fake_home / ".codex" / "hooks.json").read_text())
         blob = json.dumps(data)
+        assert " capture" not in blob
         assert "memory capture-hook" not in blob
         assert "memory hook-context --agent codex" in blob
 
@@ -213,6 +218,8 @@ def test_remove_hooks_removes_recall_and_capture_but_preserves_unrelated_hooks()
         assert removed.exit_code == 0, removed.output
         blob = hooks_file.read_text()
         assert "memory hook-context" not in blob
+        assert "session-baseline" not in blob
+        assert " capture" not in blob
         assert "memory capture-hook" not in blob
         assert "echo keep" in blob
 
@@ -230,7 +237,8 @@ def test_install_claude_capture_hooks_uses_compaction_and_session_events():
         blob = json.dumps(data)
         assert "PostCompact" in data["hooks"]
         assert "SessionEnd" in data["hooks"]
-        assert "memory capture-hook --agent claude-code" in blob
+        assert " capture" in blob
+        assert "memory capture-hook" not in blob
 
 
 def test_install_cursor_creates_agents_md_fallback():
@@ -265,7 +273,8 @@ def test_install_github_copilot_project_creates_repo_instructions():
         assert agents_md.exists()
         assert vscode_settings.exists()
         copilot_content = copilot_md.read_text()
-        assert "docmancer query" in copilot_content
+        assert "docmancer context" in copilot_content
+        assert "docmancer search" in copilot_content
         assert "docmancer docs add" in copilot_content
         assert "docmancer bench" not in copilot_content
         assert "--expand page" in copilot_content

@@ -341,6 +341,18 @@ textarea { min-height: 116px; padding: 9px 10px; resize: vertical; line-height: 
 .markdown-content table { width: 100%; border-collapse: collapse; }
 .markdown-content th, .markdown-content td { padding: 7px 8px; border: 1px solid var(--border); text-align: left; }
 .markdown-content a { color: var(--accent-hover); }
+.memory-link { display: inline; padding: 0; border: 0; color: var(--accent-hover); background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.blocked-image, .blocked-link { display: inline-flex; padding: 2px 6px; border: 1px solid var(--border); border-radius: 3px; color: var(--text-muted); background: var(--bg-subtle); font-size: 11px; }
+.destructive-preview { margin: 0 16px 16px; padding: 14px; border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border)); border-radius: 5px; background: var(--danger-subtle); }
+.destructive-preview h3 { margin: 4px 0 10px; font-size: 14px; }
+.destructive-preview dl { display: grid; gap: 7px; margin: 0 0 12px; }
+.destructive-preview dl div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; }
+.destructive-preview dt { color: var(--text-muted); font-size: 11px; }
+.destructive-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 11px; }
+.reading-properties .inspector-definitions > div:first-child { border-top: 0; }
+.reading-links ol, .reading-links ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.reading-links li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--text-secondary); font-size: 11px; }
+.reading-links code { max-width: 58%; overflow: hidden; color: var(--text-muted); font-family: var(--font-mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .drawer-details { border-bottom: 1px solid var(--border); }
 .drawer-details summary { display: flex; align-items: center; justify-content: space-between; padding: 11px 20px; color: var(--text-muted); cursor: pointer; font-size: 11px; font-weight: 600; list-style: none; }
 .drawer-details summary::-webkit-details-marker { display: none; }

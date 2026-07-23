@@ -1,0 +1,17 @@
+{
+  "name": "docmancer",
+  "version": "0.8.1",
+  "description": "Local curated Markdown memory for coding agents.",
+  "author": { "name": "Docmancer" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Docmancer",
+    "shortDescription": "Recall and update local curated memory.",
+    "longDescription": "Search, read, and update a source-attributed Markdown memory tree through the packaged Docmancer CLI and MCP server.",
+    "developerName": "Docmancer",
+    "category": "Developer Tools",
+    "capabilities": ["skills", "mcp", "hooks"],
+    "defaultPrompt": "Use Docmancer memory before work when prior project decisions may matter."
+  },
+  "mcpServers": "./.mcp.json"
+}

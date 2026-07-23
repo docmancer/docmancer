@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "docmancer": {
+      "command": "docmancer-mcp",
+      "args": []
+    }
+  }
+}

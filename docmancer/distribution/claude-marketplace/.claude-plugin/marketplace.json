@@ -1,0 +1,14 @@
+{
+  "name": "docmancer-plugins",
+  "owner": { "name": "Docmancer" },
+  "description": "Local-first memory plugins for coding agents.",
+  "plugins": [
+    {
+      "name": "docmancer",
+      "source": "./plugins/docmancer",
+      "description": "Recall and update local curated Markdown memory.",
+      "version": "0.8.1",
+      "category": "development"
+    }
+  ]
+}

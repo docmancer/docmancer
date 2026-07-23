@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.docmancer/docmancer",
+  "title": "Docmancer",
+  "description": "Local-only MCP server for a source-attributed curated Markdown memory tree and separate documentation retrieval.",
+  "version": "0.8.1",
+  "websiteUrl": "https://docmancer.dev/docs",
+  "repository": {"url": "https://github.com/gaurangtorvekar/docmancer", "source": "github"},
+  "packages": [{
+    "registryType": "pypi",
+    "identifier": "docmancer",
+    "version": "0.8.1",
+    "transport": {"type": "stdio"},
+    "runtimeArguments": ["-m", "docmancer.mcp.server"]
+  }]
+}

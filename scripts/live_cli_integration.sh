@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
 
-# Command to run a quick smoke test: DOCMANCER_RUN_FETCH_STEP=0 DOCMANCER_RUN_GITHUB_BLOB=0 DOCMANCER_LIVE_MAX_PAGES=1 scripts/live_cli_integration.sh
+# Quick local smoke test: DOCMANCER_SKIP_NETWORK=1 DOCMANCER_RUN_LOCAL_CORPUS=0 DOCMANCER_RUN_LOCAL_PDF_CORPUS=0 DOCMANCER_LIVE_NO_LOG=1 scripts/live_cli_integration.sh
 
 # Mirror all stdout/stderr to a log file while keeping the console. Default path is
 # scripts/live_cli_integration_YYYYMMDD_HHMMSS.log. Override with DOCMANCER_LIVE_LOG_FILE.
@@ -248,10 +248,16 @@ fi
 run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); print('docmancer=', docmancer.__file__)"
 
 print_banner "CLI help surface"
-print_info "Checking top-level help plus local indexing, install, maintenance, and Qdrant commands."
+print_info "Checking the curated tree, local docs, agent integration, maintenance, and optional heavy retrieval commands."
 run "${CLI_CMD[@]}" --help
-for command in setup add update query list inspect remove doctor init install fetch ingest memory okf qdrant mcp; do
+for command in setup sync query status agent docs cloud web init write read edit move search context session-baseline capture curate harvest reindex migrate package-check memory okf qdrant mcp; do
   run "${CLI_CMD[@]}" "$command" --help
+done
+for command in init add query list sync remove doctor; do
+  run "${CLI_CMD[@]}" docs "$command" --help
+done
+for command in init write read edit move search context capture curate harvest reindex migrate; do
+  run "${CLI_CMD[@]}" tree "$command" --help
 done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
@@ -266,10 +272,95 @@ for command in serve doctor install; do
   run "${CLI_CMD[@]}" mcp "$command" --help
 done
 
-print_banner "Initialize isolated config"
-print_info "Creating a project config in the temporary project directory."
-run "${CLI_CMD[@]}" init --dir "$PROJECT_DIR"
+print_banner "Initialize isolated docs config"
+print_info "Creating the secondary docs-index config in the temporary project directory."
+run "${CLI_CMD[@]}" docs init --dir "$PROJECT_DIR"
 run cat "$CONFIG_PATH"
+
+print_banner "Curated Markdown tree end-to-end"
+TREE_ROOT="$PROJECT_DIR/.docmancer/tree"
+INBOX_ROOT="$PROJECT_DIR/.docmancer/inbox"
+TREE_JSON="$TMP_ROOT/tree-write.json"
+TREE_READ_JSON="$TMP_ROOT/tree-read.json"
+HARVEST_SOURCE="$PROJECT_DIR/agent-memory.md"
+MIGRATION_RECORDS="$TMP_ROOT/legacy-records"
+MIGRATION_BACKUP="$TMP_ROOT/legacy-records-backup"
+MIGRATION_TREE="$TMP_ROOT/migrated-tree"
+run "${CLI_CMD[@]}" init --root "$TREE_ROOT" --project-id live-cli --json
+"${CLI_CMD[@]}" write $'# Deployment\n\nDeploy the API on Railway and keep canonical decisions in Markdown.' \
+  --root "$TREE_ROOT" --path decisions/deployment.md --scope project --project-id live-cli \
+  --source "live-cli:test" --tags deployment --json >"$TREE_JSON"
+run cat "$TREE_JSON"
+TREE_ADDRESS="$($VENV_PYTHON -c "import json; print(json.load(open('$TREE_JSON'))['address'])")"
+TREE_HASH="$($VENV_PYTHON -c "import json; print(json.load(open('$TREE_JSON'))['content_hash'])")"
+run "${CLI_CMD[@]}" read "$TREE_ADDRESS" --root "$TREE_ROOT"
+run "${CLI_CMD[@]}" read "docmancer://path/decisions/deployment.md" --root "$TREE_ROOT" --json
+run "${CLI_CMD[@]}" read "docmancer://title/Deployment" --root "$TREE_ROOT" --json
+"${CLI_CMD[@]}" edit "$TREE_ADDRESS" $'# Deployment\n\nDeploy the API on Railway. Verify the release before announcing it.' \
+  --root "$TREE_ROOT" --expected-hash "$TREE_HASH" --json >"$TREE_READ_JSON"
+run cat "$TREE_READ_JSON"
+TREE_HASH="$($VENV_PYTHON -c "import json; print(json.load(open('$TREE_READ_JSON'))['content_hash'])")"
+run "${CLI_CMD[@]}" move "$TREE_ADDRESS" decisions/release.md --root "$TREE_ROOT" --expected-hash "$TREE_HASH" --json
+run "${CLI_CMD[@]}" search "Railway release verification" --root "$TREE_ROOT" --json
+run "${CLI_CMD[@]}" context "prepare a Railway release" --root "$TREE_ROOT" --project-id live-cli --token-budget 800 --json
+run "${CLI_CMD[@]}" reindex --root "$TREE_ROOT" --json
+
+run "${CLI_CMD[@]}" write $'# Mandatory policy\n\nNever publish a release before verification.' \
+  --root "$TREE_ROOT" --path policy/release.md --scope project --project-id live-cli \
+  --authority mandatory --source "live-cli:policy" --json
+SESSION_PAYLOAD_FILE="$TMP_ROOT/session-start.json"
+SESSION_BASELINE_FILE="$TMP_ROOT/session-baseline.json"
+SESSION_BASELINE_REPEAT_FILE="$TMP_ROOT/session-baseline-repeat.json"
+cat >"$SESSION_PAYLOAD_FILE" <<EOF
+{"hookEventName":"SessionStart","sessionId":"live-session","workspace_dir":"$PROJECT_DIR","permission_mode":"never"}
+EOF
+bash -c "cat '$SESSION_PAYLOAD_FILE' | '$VENV_PYTHON' -m docmancer session-baseline --agent codex > '$SESSION_BASELINE_FILE'"
+run "$VENV_PYTHON" -c "import json; data=json.load(open('$SESSION_BASELINE_FILE')); assert 'Never publish a release before verification.' in data['hookSpecificOutput']['additionalContext']"
+bash -c "cat '$SESSION_PAYLOAD_FILE' | '$VENV_PYTHON' -m docmancer session-baseline --agent codex > '$SESSION_BASELINE_REPEAT_FILE'"
+run test ! -s "$SESSION_BASELINE_REPEAT_FILE"
+print_ok "SessionStart used the curated Context Compiler and suppressed duplicate injection."
+
+cat >"$HARVEST_SOURCE" <<'EOF'
+# Agent decision
+
+Keep the docs index separate from the curated memory tree.
+EOF
+HARVEST_HASH_BEFORE="$(shasum -a 256 "$HARVEST_SOURCE" | awk '{print $1}')"
+run "${CLI_CMD[@]}" harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --json
+run "${CLI_CMD[@]}" harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --apply --json
+HARVEST_HASH_AFTER="$(shasum -a 256 "$HARVEST_SOURCE" | awk '{print $1}')"
+run test "$HARVEST_HASH_BEFORE" = "$HARVEST_HASH_AFTER"
+run "${CLI_CMD[@]}" curate $'# Local-first rule\n\nCanonical memory remains local plaintext.' \
+  --root "$TREE_ROOT" --path principles/local-first.md --project-id live-cli --json
+run "${CLI_CMD[@]}" curate $'# Local-first rule\n\nCanonical memory remains local plaintext.' \
+  --root "$TREE_ROOT" --path principles/local-first.md --project-id live-cli --apply --json
+
+CAPTURE_PAYLOAD='{"hook_event_name":"PreCompact","session_id":"live-1","agent":"codex","cwd":"/Users/example/private-project","messages":[{"role":"assistant","content":"Remember that API_TOKEN=super-secret-value must never be stored."}]}'
+run bash -c "printf '%s' '$CAPTURE_PAYLOAD' | '$VENV_PYTHON' -m docmancer capture --root '$TREE_ROOT' --inbox '$INBOX_ROOT' --validate-only --json"
+run bash -c "printf '%s' '$CAPTURE_PAYLOAD' | '$VENV_PYTHON' -m docmancer capture --root '$TREE_ROOT' --inbox '$INBOX_ROOT' --json"
+CAPTURE_COUNT_BEFORE="$(find "$INBOX_ROOT" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+run bash -c "printf '%s' '$CAPTURE_PAYLOAD' | '$VENV_PYTHON' -m docmancer capture --root '$TREE_ROOT' --inbox '$INBOX_ROOT' --json"
+CAPTURE_COUNT_AFTER="$(find "$INBOX_ROOT" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+run test "$CAPTURE_COUNT_BEFORE" = "$CAPTURE_COUNT_AFTER"
+if grep -R -q "super-secret-value" "$TREE_ROOT" "$INBOX_ROOT"; then
+  print_warn "capture redaction leaked a seeded secret"
+  exit 1
+fi
+print_ok "Capture stayed inbox-only, redacted the seeded secret, and deduplicated retries."
+
+run "$VENV_PYTHON" -c "
+from docmancer.memory.records import MemoryRecordStore
+MemoryRecordStore('$MIGRATION_RECORDS').add('Legacy decision for migration.', scope_kind='global')
+"
+run "${CLI_CMD[@]}" migrate --records-root "$MIGRATION_RECORDS" --tree-root "$MIGRATION_TREE" --json
+run "${CLI_CMD[@]}" migrate --records-root "$MIGRATION_RECORDS" --tree-root "$MIGRATION_TREE" --backup-dir "$MIGRATION_BACKUP" --apply --json
+run "${CLI_CMD[@]}" package-check --json
+if "${CLI_CMD[@]}" sync --local-only >"$TMP_ROOT/sync-local-only.out" 2>&1; then
+  print_warn "deprecated sync --local-only unexpectedly succeeded"
+  exit 1
+fi
+run grep -q "docmancer harvest" "$TMP_ROOT/sync-local-only.out"
+print_ok "Curated tree lifecycle, harvest, curation, capture, migration, package checks, and sync guidance passed."
 
 print_banner "Setup in isolated HOME (non-interactive)"
 print_info "Installing the default local config and agent files into the temporary HOME only."

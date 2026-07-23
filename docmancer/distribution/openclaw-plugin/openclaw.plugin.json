@@ -1,0 +1,14 @@
+{
+  "id": "docmancer",
+  "name": "Docmancer",
+  "description": "Adds bounded local Docmancer context before OpenClaw model calls.",
+  "version": "0.8.1",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "tokenBudget": { "type": "integer", "minimum": 100, "maximum": 10000, "default": 2000 }
+    }
+  }
+}

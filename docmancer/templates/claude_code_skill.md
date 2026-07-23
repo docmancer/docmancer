@@ -8,7 +8,7 @@ allowed-tools:
 
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`. The core retrieval path needs no API keys, vector database, hosted query API, or background daemon.
+This skill is the Docs surface for third-party documentation. For prior decisions, project conventions, deliberate memory writes, or compiled agent context, use the separately installed `docmancer-memory` skill. Its canonical commands include `docmancer search`, `docmancer read`, `docmancer write`, `docmancer context`, `docmancer duplicate`, `docmancer trash`, and `docmancer restore`. Do not mix Docs results with memory results.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -44,7 +44,7 @@ docmancer docs list
 docmancer docs list
 docmancer docs sync
 docmancer docs remove <source>
-docmancer status --check
+docmancer doctor
 ```
 
 Use `ingest` for local files and `add` for URLs. `query` is the primary retrieval command. It returns compact, source-attributed context plus estimated token savings.

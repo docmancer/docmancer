@@ -2,13 +2,13 @@
 
 # docmancer
 
-Docmancer extracts memory atoms from the agent files already on this machine into one local, offline index, and it indexes documentation you choose on the same engine. This skill is the docs side: it ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution, so coding agents spend tokens on code, not on rereading raw docs. To recall past decisions or project context instead, use `docmancer query`.
+Docmancer maintains a curated Markdown memory tree and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 
-Use docmancer when the user asks about library docs, API references, vendor docs, version-specific behavior, offline docs, or wants to add docs before answering a technical question.
+Use `docmancer context "task"`, `search`, and `read` for memory. When the user explicitly asks to remember or manage durable context, use `write`, `edit`, `move`, `duplicate`, `trash`, or `restore` with current content hashes. Use `docmancer docs ...` for documentation.
 
 ## Workflow
 
@@ -20,6 +20,13 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 
 ## Core Commands
 
+- `docmancer context "what decisions apply?" --project-path "$PWD"`
+- `docmancer search "deployment"`
+- `docmancer read docmancer://memory/<id>`
+- `docmancer write "# Decision" --path decisions/example.md --scope project`
+- `docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>`
+- `docmancer trash docmancer://memory/<id> --expected-hash <hash>`
+- `docmancer restore <restore-token>`
 - `docmancer setup`
 - `docmancer docs add ./docs`
 - `docmancer docs add https://docs.example.com`
@@ -34,7 +41,7 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 - `docmancer docs list`
 - `docmancer docs list`
 - `docmancer docs remove <source>`
-- `docmancer status --check`
+- `docmancer doctor`
 - `docmancer docs add <url> --output <dir>`
 
 ## Common Mistakes

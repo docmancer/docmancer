@@ -1,0 +1,12 @@
+name: docmancer
+displayName: Docmancer
+description: Local curated Markdown memory and documentation retrieval for coding agents.
+version: 0.8.1
+homepage: https://docmancer.dev/docs
+startCommand:
+  type: stdio
+  command: docmancer-mcp
+  args: []
+privacy:
+  localOnly: true
+  description: Plaintext memory stays on the local machine. No remote transport is configured by this manifest.
