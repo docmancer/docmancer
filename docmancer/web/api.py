@@ -19,8 +19,12 @@ from docmancer.runtime import LocalRuntime
 
 CAPABILITIES = {
     "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
-    "inbox": ["list", "harvest", "curate"],
+    "inbox": ["list", "import", "curate"],
+    "editors": ["list", "open-markdown"],
     "ask": ["context"],
+    "common": ["recurring-memory"],
+    "delivery": ["agent-matrix", "bundle-receipts"],
+    "timeline": ["file-mutations", "diffs"],
     "context": ["browse", "add", "edit", "remove", "distill", "review", "share"],
     "memory": ["query", "recent", "add", "edit", "forget", "promote"],
     "sources": ["browse", "search", "create", "edit", "delete"],
@@ -164,7 +168,40 @@ class LocalApi:
         try:
             body = await request_json(request)
             return JSONResponse(jsonable(await self.runtime.harvest_tree(
-                required_text(body, "source"), apply=bool(body.get("apply", False))
+                str(body.get("source") or ""), apply=bool(body.get("apply", False))
+            )))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def import_markdown(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            source = required_text(body, "source")
+            return JSONResponse(jsonable(await self.runtime.import_markdown(
+                source, apply=bool(body.get("apply", True))
+            )))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def editors(self, request: Request) -> JSONResponse:
+        try:
+            path = str(request.query_params.get("path") or "")
+            if not path:
+                raise ValueError("path is required")
+            return JSONResponse({"items": jsonable(await self.runtime.available_editors(path))})
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def open_editor(self, request: Request) -> JSONResponse:
+        try:
+            body = await request_json(request)
+            path = required_text(body, "path")
+            editor_id = required_text(body, "editor")
+            return JSONResponse(jsonable(await self.runtime.open_markdown_file(
+                path,
+                editor_id=editor_id,
+                line=int(body["line"]) if body.get("line") else None,
+                column=int(body["column"]) if body.get("column") else None,
             )))
         except Exception as exc:  # noqa: BLE001
             return error_response(exc)
@@ -190,6 +227,33 @@ class LocalApi:
             return JSONResponse(jsonable(await self.runtime.ask_tree(task, token_budget=budget, agent=str(body.get("agent") or "web"))))
         except Exception as exc:  # noqa: BLE001
             return error_response(exc)
+
+    async def common(self, request: Request) -> JSONResponse:
+        rows = await self.runtime.common_memory()
+        query = (request.query_params.get("q") or "").strip().casefold()
+        if query:
+            rows = [
+                row for row in rows
+                if query in json.dumps(row, ensure_ascii=False, default=str).casefold()
+            ]
+        return JSONResponse(jsonable({**paginate(rows, request), "query": query}))
+
+    async def delivery(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(paginate(await self.runtime.context_delivery(), request)))
+
+    async def timeline(self, request: Request) -> JSONResponse:
+        rows = await self.runtime.decision_journal(
+            file_id=(request.query_params.get("file_id") or "").strip() or None,
+            operation=(request.query_params.get("operation") or "").strip() or None,
+            limit=bounded_int(request.query_params.get("limit"), 200, maximum=1000),
+        )
+        query = (request.query_params.get("q") or "").strip().casefold()
+        if query:
+            rows = [
+                row for row in rows
+                if query in json.dumps(row, ensure_ascii=False, default=str).casefold()
+            ]
+        return JSONResponse(jsonable({**paginate(rows, request), "query": query}))
 
     async def context(self, request: Request) -> JSONResponse:
         items = await self.runtime.context()
@@ -473,15 +537,62 @@ class LocalApi:
 
     async def cloud_team(self, request: Request) -> JSONResponse:
         status = await self.runtime.cloud_status()
+        preview = await self.runtime.team_file()
         if not status.get("configured"):
-            return JSONResponse(cloud_unavailable("not_connected"))
+            return JSONResponse(jsonable({
+                **cloud_unavailable("not_connected"),
+                "local_preview_available": True,
+                "team_file": preview,
+                "proposals": [],
+                "conflicts": await self.runtime.cloud_conflicts(),
+                "members": [],
+            }))
         try:
             proposals, conflicts, members = await asyncio.gather(
                 self.runtime.cloud_promotions(), self.runtime.cloud_conflicts(), self.runtime.cloud_members(),
             )
         except Exception as exc:  # Keep optional Cloud state separate from local availability.
-            return JSONResponse(cloud_unavailable_from(exc))
-        return JSONResponse(jsonable({"available": True, "configured": True, "proposals": proposals, "conflicts": conflicts, "members": members}))
+            return JSONResponse(jsonable({
+                **cloud_unavailable_from(exc),
+                "local_preview_available": True,
+                "team_file": preview,
+                "proposals": [],
+                "conflicts": await self.runtime.cloud_conflicts(),
+                "members": [],
+            }))
+        return JSONResponse(jsonable({
+            "available": True,
+            "configured": True,
+            "team_file": preview,
+            "proposals": proposals,
+            "conflicts": conflicts,
+            "members": members,
+        }))
+
+    async def cloud_team_file(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        domain = str(body.get("domain") or "standards").strip()
+        if not domain or not all(character.isalnum() or character in {"-", "_"} for character in domain):
+            raise ValueError("domain must contain only letters, numbers, hyphens, or underscores")
+        outcome = str(body.get("outcome") or "").strip()
+        if outcome:
+            result = await self.runtime.team_file_transition(
+                domain=domain,
+                outcome=outcome,
+                approver_id=str(body.get("approver_id") or "").strip() or None,
+            )
+            return JSONResponse(jsonable(result))
+        apply = bool(body.get("apply"))
+        approved = bool(body.get("approved"))
+        if apply and not approved:
+            raise ValueError("complete-file approval is required before publication")
+        result = await self.runtime.team_file(
+            domain=domain,
+            apply=apply,
+            approved=approved,
+            approver_id=str(body.get("approver_id") or "").strip() or None,
+        )
+        return JSONResponse(jsonable(result))
 
     async def cloud_team_invite(self, request: Request) -> JSONResponse:
         body = await request_json(request)

@@ -12,6 +12,12 @@ import rfc8785
 PAYLOAD_SCHEMA_VERSION = 1
 GRAPH_PAYLOAD_SCHEMA_VERSION = 2
 GRAPH_OBJECT_KINDS = {"atom", "relation", "override", "pack"}
+TREE_PAYLOAD_SCHEMA_VERSION = 3
+TREE_OBJECT_KINDS = {"tree_file", "team_file"}
+TREE_METADATA_FIELDS = {
+    "title", "scope", "authority", "status", "tags", "sources",
+    "generated", "publication_state", "exclusion_count", "approver_id",
+}
 PAYLOAD_FIELDS = (
     "schema_version",
     "record_id",
@@ -154,15 +160,84 @@ def validate_graph_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return dict(payload)
 
 
+def build_tree_payload(
+    *,
+    object_kind: str,
+    file_id: str,
+    project_id: str,
+    relative_path: str,
+    markdown: str,
+    metadata: Mapping[str, Any],
+    updated_at: str,
+    parent_revision_ids: list[str] | tuple[str, ...] = (),
+    deleted: bool = False,
+) -> dict[str, Any]:
+    safe_metadata = {key: metadata[key] for key in sorted(metadata) if key in TREE_METADATA_FIELDS}
+    payload: dict[str, Any] = {
+        "schema_version": TREE_PAYLOAD_SCHEMA_VERSION,
+        "object_kind": object_kind,
+        "file_id": str(file_id),
+        "project_id": str(project_id),
+        "relative_path": str(relative_path).replace("\\", "/"),
+        "revision_id": "",
+        "parent_revision_ids": [str(value) for value in parent_revision_ids],
+        "markdown": "" if deleted else str(markdown),
+        "content_hash": hashlib.sha256(("" if deleted else str(markdown)).encode()).hexdigest(),
+        "metadata": safe_metadata,
+        "updated_at": str(updated_at),
+        "deleted": bool(deleted),
+    }
+    payload["revision_id"] = revision_id(payload)
+    return validate_tree_payload(payload)
+
+
+def validate_tree_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    expected = {
+        "schema_version", "object_kind", "file_id", "project_id",
+        "relative_path", "revision_id", "parent_revision_ids", "markdown",
+        "content_hash", "metadata", "updated_at", "deleted",
+    }
+    if set(payload) != expected:
+        raise ValueError("invalid tree payload fields")
+    if int(payload["schema_version"]) != TREE_PAYLOAD_SCHEMA_VERSION:
+        raise ValueError("unsupported tree payload schema_version")
+    if payload["object_kind"] not in TREE_OBJECT_KINDS:
+        raise ValueError("invalid tree payload object_kind")
+    path = str(payload["relative_path"])
+    parts = path.replace("\\", "/").split("/")
+    if not path or path.startswith(("/", "\\")) or ".." in parts or any(":" in part for part in parts):
+        raise ValueError("tree payload path must be relative and portable")
+    if not str(payload["project_id"]).startswith("prj_"):
+        raise ValueError("tree payload requires a stable project_id")
+    metadata = payload["metadata"]
+    if not isinstance(metadata, dict) or set(metadata) - TREE_METADATA_FIELDS:
+        raise ValueError("tree payload metadata contains unlisted fields")
+    markdown = str(payload["markdown"])
+    if bool(payload["deleted"]) and markdown:
+        raise ValueError("tree tombstones cannot contain markdown")
+    if payload["content_hash"] != hashlib.sha256(markdown.encode()).hexdigest():
+        raise ValueError("tree payload content_hash mismatch")
+    if not isinstance(payload["parent_revision_ids"], list):
+        raise ValueError("tree payload parent_revision_ids must be a list")
+    if payload["revision_id"] != revision_id(payload):
+        raise ValueError("tree payload revision_id mismatch")
+    return dict(payload)
+
+
 __all__ = [
     "PAYLOAD_FIELDS",
     "PAYLOAD_SCHEMA_VERSION",
     "GRAPH_PAYLOAD_SCHEMA_VERSION",
     "GRAPH_OBJECT_KINDS",
+    "TREE_OBJECT_KINDS",
+    "TREE_PAYLOAD_SCHEMA_VERSION",
+    "TREE_METADATA_FIELDS",
     "build_graph_payload",
     "build_record_payload",
     "canonicalize",
     "revision_id",
     "validate_record_payload",
     "validate_graph_payload",
+    "build_tree_payload",
+    "validate_tree_payload",
 ]

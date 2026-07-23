@@ -58,7 +58,7 @@ def test_ingest_skips_reserved_files_in_bundle(tmp_path, monkeypatch):
     runner = CliRunner()
 
     r = runner.invoke(
-        cli, ["ingest", str(bundle), "--recreate", "--no-vectors", "--config", str(config)]
+        cli, ["docs", "add", str(bundle), "--recreate", "--no-vectors", "--config", str(config)]
     )
     assert r.exit_code == 0, r.output
 

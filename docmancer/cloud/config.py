@@ -89,14 +89,20 @@ class CloudConfig:
         _write_json(self.paths.workspaces, payload)
 
     def ensure_project(self, path: str | Path) -> str:
+        from docmancer.cloud.project_identity import ensure_project_identity
+
         resolved = str(Path(path).expanduser().resolve())
         value = self.workspaces()
         projects = value.setdefault("projects", {})
         for project_id, row in projects.items():
             if resolved in [str(item) for item in row.get("paths", [])]:
                 return str(project_id)
-        project_id = f"prj_{uuid.uuid4().hex}"
-        projects[project_id] = {"paths": [resolved]}
+        identity = ensure_project_identity(resolved)
+        project_id = str(identity["project_id"])
+        row = projects.setdefault(project_id, {"paths": []})
+        row["paths"] = sorted({*[str(item) for item in row.get("paths", [])], resolved})
+        row["identity_source"] = identity["identity_source"]
+        row["repository_fingerprint"] = identity.get("repository_fingerprint")
         self.save_workspaces(value)
         return project_id
 
@@ -126,6 +132,24 @@ class CloudConfig:
             if path.exists():
                 return path.resolve()
         return None
+
+    def paths_for_project(self, project_id: str) -> list[Path]:
+        row = self.workspaces().get("projects", {}).get(str(project_id))
+        if not isinstance(row, dict):
+            return []
+        return [
+            path.resolve()
+            for raw in row.get("paths", [])
+            if (path := Path(str(raw)).expanduser()).exists()
+        ]
+
+    def mapping_status(self, project_id: str) -> dict:
+        paths = self.paths_for_project(project_id)
+        return {
+            "project_id": str(project_id),
+            "state": "unmapped" if not paths else "ambiguous" if len(paths) > 1 else "mapped",
+            "paths": [str(path) for path in paths],
+        }
 
     def set_workspace(self, workspace_id: str, **metadata: Any) -> None:
         value = self.workspaces()

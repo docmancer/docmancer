@@ -29,3 +29,13 @@ def test_falls_back_to_slug_when_no_session(tmp_path):
     # Documented lossy fallback; acceptable because include/exclude also match
     # the raw scope string, and the user can correct via explicit globs.
     assert project_path_for_slug_dir(proj).startswith("/Users/x")
+
+
+def test_recovers_existing_dotted_project_path_without_session(tmp_path):
+    real_project = (tmp_path / "gaurangtorvekar.com").resolve()
+    real_project.mkdir()
+    encoded = "-" + str(real_project).lstrip("/").replace("/", "-").replace(".", "-")
+    proj = tmp_path / ".claude" / "projects" / encoded
+    proj.mkdir(parents=True)
+
+    assert project_path_for_slug_dir(proj) == str(real_project)

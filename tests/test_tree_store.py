@@ -297,3 +297,13 @@ def test_plain_markdown_with_no_frontmatter_parses(tmp_path: Path) -> None:
     entry = parse_tree_file(path)
     assert entry is not None
     assert entry.title == "Plain note"
+
+
+def test_constructing_store_does_not_create_root(tmp_path):
+    root = tmp_path / "missing" / "tree"
+
+    store = TreeStore(root)
+
+    assert store.root == root.resolve()
+    assert store.index.entries() == []
+    assert not root.exists()

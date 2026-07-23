@@ -16,6 +16,14 @@ def apply_payload(
     state: CloudState | None = None,
     store: MemoryRecordStore | None = None,
 ) -> str:
+    if int(payload.get("schema_version") or 1) == 3:
+        from docmancer.cloud.tree_sync import apply_tree_payload
+
+        return apply_tree_payload(
+            payload,
+            root=root,
+            state=state or CloudState(CloudConfig(root).paths.sync_state),
+        )
     if int(payload.get("schema_version") or 1) == 2:
         if payload.get("object_kind") == "pack":
             from docmancer.memory.packs import ContextPackStore

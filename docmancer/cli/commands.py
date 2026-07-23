@@ -1193,7 +1193,7 @@ def doctor_cmd(config_path: str | None):
             )
         else:
             _emit_status_line(
-                "no memory indexed yet (run: docmancer memory sync)",
+                "no memory indexed yet (run: docmancer setup)",
                 state="warn",
                 indent=4,
             )
@@ -1202,11 +1202,13 @@ def doctor_cmd(config_path: str | None):
 
     click.echo()
     click.echo(_style("  Curated Markdown tree", fg="white", bold=True))
-    tree_root = Path.cwd() / ".docmancer" / "tree"
+    from docmancer.memory.tree.project import resolve_project_root
+
+    tree_root = resolve_project_root() / ".docmancer" / "tree"
     inbox_root = tree_root.parent / "inbox"
     if not tree_root.exists():
         _emit_status_line(
-            "not initialised for this project (run: docmancer init)",
+            "not initialised for this project (run: docmancer web)",
             state="warn",
             indent=4,
         )
@@ -1422,7 +1424,21 @@ def doctor_cmd(config_path: str | None):
     ]
     for label, install_target, path in skill_locations:
         if path.exists():
-            _emit_status_line(f"{label}: {display_path(path)}", indent=4)
+            stale = False
+            if path.suffix.lower() == ".md":
+                try:
+                    content = path.read_text(encoding="utf-8")
+                    stale = "docmancer ask" not in content
+                except (OSError, UnicodeDecodeError):
+                    stale = True
+            if stale:
+                _emit_status_line(
+                    f"{label}: installed guidance is stale (refresh with: docmancer setup)",
+                    state="warn",
+                    indent=4,
+                )
+            else:
+                _emit_status_line(f"{label}: {display_path(path)}", indent=4)
         else:
             _emit_status_line(f"{label}: not installed (run: docmancer agent install {install_target})", state="warn", indent=4)
 
@@ -1842,6 +1858,11 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
 
     def refresh_projection() -> None:
         """Best-effort delivery of already approved context after installation."""
+        if _INSTALL_QUIET:
+            # Machine-wide setup installs integrations from whatever directory
+            # the user happens to be in. It must not register that directory as
+            # a project or create repository-local Docmancer state.
+            return
         try:
             from docmancer.memory import MemoryAgent, default_memory_db
             from docmancer.memory.projections import refresh_projections
@@ -2234,7 +2255,7 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
         click.echo('  Try: docmancer memory query "..."')
     else:
         _emit_status_line(
-            "No agent memory found yet. Once your agents write memory, run: docmancer memory sync",
+            "No agent memory found yet. Changed sources refresh when you open `docmancer web` or run `docmancer ask`.",
             state="info",
         )
 
@@ -2296,7 +2317,7 @@ def setup_cmd(
 
     if not selected:
         _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
-        _emit_next_step("Run `docmancer` to explore memory and documentation interactively.")
+        _emit_next_step("Change to a project and run `docmancer web`.")
         return
 
     unique_targets = list(dict.fromkeys(selected))
@@ -2311,11 +2332,14 @@ def setup_cmd(
         for target in unique_targets:
             target_started = monotonic()
             _emit_status_line(f"Installing integration for {target}...", state="info")
-            ctx.invoke(install_cmd, agent=target, project=(target == "github-copilot"), config_path=str(config_file))
+            # Machine-wide setup must never modify the repository that happens
+            # to be the current working directory. Project integrations remain
+            # an explicit `agent install ... --project` action.
+            ctx.invoke(install_cmd, agent=target, project=False, config_path=str(config_file))
             _emit_status_line(f"Finished integration for {target} ({monotonic() - target_started:.1f}s).")
     finally:
         _INSTALL_QUIET = False
 
     _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
     click.echo()
-    _emit_next_step("Run `docmancer` to explore memory and documentation interactively.")
+    _emit_next_step("Change to a project and run `docmancer web`.")

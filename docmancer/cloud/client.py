@@ -268,6 +268,9 @@ class CloudClient:
     def promotion_proposals(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/promotions")
 
+    def create_promotion(self, workspace_id: str, payload: dict) -> dict:
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/promotions", json=payload)
+
     def review_promotion(self, workspace_id: str, proposal_id: str, payload: dict) -> dict:
         return self._request("POST", f"/v1/workspaces/{workspace_id}/promotions/{proposal_id}/reviews", json=payload)
 

@@ -1,6 +1,6 @@
 # docmancer
 
-Docmancer maintains a curated, source-attributed Markdown memory tree and a separate documentation index. Use tree commands for prior decisions, conventions, and deliberate writes. Use `docmancer docs ...` only for third-party documentation.
+Docmancer maintains local agent memory and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Use `docmancer docs ...` only for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -10,18 +10,21 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 
 ## Workflow
 
-1. Run `docmancer context "task" --project-path "$PWD"` when prior decisions may matter.
-2. Use `docmancer read <address>` before changing canonical memory, and write only when the user asks.
-3. Run `docmancer docs list` to see indexed docs.
-4. Run `docmancer docs query "question"` when relevant docs are present.
-5. Keep memory and Docs results separate.
+1. Run `docmancer ask "task" --agent github-copilot` when prior decisions may matter.
+2. Use `docmancer common`, `delivery`, or `timeline` for recurring memory, delivery proof, or canonical change history.
+3. Use `docmancer read <address>` before changing canonical memory, and write only when the user asks.
+4. Run `docmancer docs list` to see indexed docs.
+5. Run `docmancer docs query "question"` when relevant docs are present.
+6. Keep memory and Docs results separate.
 
 ## Core Commands
 
 ```bash
 docmancer setup
-docmancer context "what decisions apply?" --project-path "$PWD"
-docmancer search "deployment"
+docmancer ask "what decisions apply?" --agent github-copilot
+docmancer common
+docmancer delivery
+docmancer timeline
 docmancer read docmancer://memory/<id>
 docmancer write "# Decision" --path decisions/example.md --scope project
 docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>
@@ -36,12 +39,10 @@ docmancer docs query "how to authenticate" --expand
 docmancer docs query "how to authenticate" --expand page
 docmancer docs query "how to authenticate" --format json
 docmancer docs query "how to authenticate" --allow-degraded
-docmancer clear --dry-run
-docmancer docs list
 docmancer docs list
 docmancer docs remove <source>
 docmancer doctor
-docmancer docs add <url> --output <dir>
+docmancer docs download <url> --output <dir>
 ```
 
 `query` prints estimated raw docs tokens, context-pack tokens, percent saved, and agentic runway. Prefer the compact default. Use `--expand` for adjacent sections; use `--expand page` only when the surrounding page is necessary. Use `--allow-degraded` in dense, sparse, or hybrid modes when vector retrieval is down or misconfigured and you still need lexical results.

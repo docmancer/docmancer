@@ -2,13 +2,13 @@
 
 # docmancer
 
-Docmancer maintains a curated Markdown memory tree and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
+Docmancer maintains local agent memory and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 
-Use `docmancer context "task"`, `search`, and `read` for memory. When the user explicitly asks to remember or manage durable context, use `write`, `edit`, `move`, `duplicate`, `trash`, or `restore` with current content hashes. Use `docmancer docs ...` for documentation.
+Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `delivery`, and `timeline` to inspect recurring cross-agent memory, delivery proof, and canonical changes. When the user explicitly asks to remember or manage durable context, use `write`, `edit`, or `move` with current content hashes. Use `docmancer docs ...` for documentation.
 
 ## Workflow
 
@@ -20,8 +20,10 @@ Use `docmancer context "task"`, `search`, and `read` for memory. When the user e
 
 ## Core Commands
 
-- `docmancer context "what decisions apply?" --project-path "$PWD"`
-- `docmancer search "deployment"`
+- `docmancer ask "what decisions apply?" --agent cursor`
+- `docmancer common`
+- `docmancer delivery`
+- `docmancer timeline`
 - `docmancer read docmancer://memory/<id>`
 - `docmancer write "# Decision" --path decisions/example.md --scope project`
 - `docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>`
@@ -37,12 +39,10 @@ Use `docmancer context "task"`, `search`, and `read` for memory. When the user e
 - `docmancer docs query "how to authenticate" --expand page`
 - `docmancer docs query "how to authenticate" --format json`
 - `docmancer docs query "how to authenticate" --allow-degraded`
-- `docmancer clear --dry-run`
-- `docmancer docs list`
 - `docmancer docs list`
 - `docmancer docs remove <source>`
 - `docmancer doctor`
-- `docmancer docs add <url> --output <dir>`
+- `docmancer docs download <url> --output <dir>`
 
 ## Common Mistakes
 

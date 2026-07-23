@@ -8,7 +8,12 @@ from typing import Any, Mapping
 
 from docmancer.cloud import PROTOCOL_VERSION
 from docmancer.cloud.crypto import b64decode, b64encode, decrypt, encrypt, opaque_ref, sign, verify
-from docmancer.cloud.serialize import canonicalize, validate_graph_payload, validate_record_payload
+from docmancer.cloud.serialize import (
+    canonicalize,
+    validate_graph_payload,
+    validate_record_payload,
+    validate_tree_payload,
+)
 
 
 def build_envelope(
@@ -18,8 +23,12 @@ def build_envelope(
     _envelope_id: str | None = None,
     _client_created_at: str | None = None,
 ) -> dict[str, Any]:
-    protocol_version = 2 if int(payload.get("schema_version") or 1) == 2 else 1
-    if protocol_version == 2:
+    protocol_version = int(payload.get("schema_version") or 1)
+    if protocol_version == 3:
+        record = validate_tree_payload(payload)
+        kind = "tree_tombstone" if record["deleted"] else f"{record['object_kind']}_revision"
+        object_id = record["file_id"]
+    elif protocol_version == 2:
         record = validate_graph_payload(payload)
         kind = f"{record['object_kind']}_revision"
         object_id = record["object_id"]
@@ -88,7 +97,7 @@ def open_envelope(
     if set(envelope) != required:
         raise ValueError("invalid cloud envelope fields")
     protocol_version = int(envelope["protocol_version"])
-    if protocol_version not in {1, 2}:
+    if protocol_version not in {1, 2, 3}:
         raise ValueError("unsupported cloud protocol version")
     associated = {
         key: envelope[key]
@@ -106,9 +115,15 @@ def open_envelope(
         ciphertext, workspace_key, nonce=nonce, aad=aad,
     )
     raw_payload = json.loads(plaintext)
-    payload = validate_graph_payload(raw_payload) if protocol_version == 2 else validate_record_payload(raw_payload)
+    payload = (
+        validate_tree_payload(raw_payload)
+        if protocol_version == 3
+        else validate_graph_payload(raw_payload)
+        if protocol_version == 2
+        else validate_record_payload(raw_payload)
+    )
     workspace_id = str(envelope["workspace_id"])
-    object_id = payload["object_id"] if protocol_version == 2 else payload["record_id"]
+    object_id = payload["file_id"] if protocol_version == 3 else payload["object_id"] if protocol_version == 2 else payload["record_id"]
     if envelope["record_ref"] != opaque_ref(
         object_id, workspace_key, workspace_id=workspace_id, kind="record"
     ):
@@ -124,6 +139,9 @@ def open_envelope(
     if list(envelope["parent_refs"]) != expected_parents:
         raise ValueError("cloud envelope parent refs mismatch")
     expected_kind = (
+        "tree_tombstone" if protocol_version == 3 and payload["deleted"]
+        else f"{payload['object_kind']}_revision" if protocol_version == 3
+        else
         f"{payload['object_kind']}_revision"
         if protocol_version == 2
         else "record_tombstone" if payload["deleted"] else "record_revision"

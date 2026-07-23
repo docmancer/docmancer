@@ -4,7 +4,7 @@ Docmancer maintains two local corpora: memory and instructions discovered from c
 
 ## Memory evidence
 
-`docmancer sync` discovers agent-written memory, user-authored instruction files, and project rule directories. This raw corpus remains source-attributed evidence for canonical context packs.
+`docmancer setup` performs the initial machine-wide discovery of agent-written memory, user-authored instruction files, and project rule directories. Opening `docmancer web` or running `docmancer ask` refreshes the index when those sources change. This raw corpus remains source-attributed evidence.
 
 | Kind | Examples |
 |------|----------|

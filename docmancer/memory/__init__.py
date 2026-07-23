@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import tempfile
 from difflib import SequenceMatcher
@@ -225,22 +226,18 @@ class MemoryAgent:
             for atom in atoms:
                 atom.status = states.get(atom.atom_id, atom.status)
             self._enqueue_cloud_graph_projection()
-            # Memory is a dedicated index, so every sync rebuilds the atom projection
-            # from harvested sources. This prevents stale atom records after source
-            # files are edited or removed.
-            self._drop_vectors()
-            self._clear_embedding_bookkeeping()
+            # Rebuild canonical FTS rows so removed sources disappear, while
+            # retaining vector bookkeeping. The vector pipeline compares
+            # content hashes, reuses unchanged embeddings, and prunes points
+            # whose rebuilt chunk rows no longer exist.
             progress("index", f"Rebuilding the local search index with {len(atoms):,} memory atoms")
-            if not atoms:
-                self._agent.store.add_documents([], recreate=True)
-            else:
-                docs = [atom.to_document() for atom in atoms]
-                self._agent.ingest_documents(
-                    docs,
-                    recreate=True,
-                    with_vectors=True,
-                    embeddings_provider=self._embedding_provider,
-                )
+            docs = [atom.to_document() for atom in atoms]
+            self._agent.ingest_documents(
+                docs,
+                recreate=True,
+                with_vectors=True,
+                embeddings_provider=self._embedding_provider,
+            )
             progress("finalize", "Writing provenance and schema metadata")
             from docmancer.harness.base import MemoryEntry
 
@@ -264,6 +261,76 @@ class MemoryAgent:
             self._stamp_schema()
             progress("done", f"Indexed {len(atoms):,} memory atoms")
             return len(atoms)
+
+    def sources_changed(self) -> bool:
+        """Return whether discovered agent sources differ from the last index.
+
+        This is a cheap metadata/content gate before the expensive graph and
+        embedding pipeline. It intentionally ignores Docmancer-owned records,
+        which are indexed at write time.
+        """
+        snapshot = self._read_source_snapshot()
+        rows = snapshot.get("sources") if isinstance(snapshot.get("sources"), list) else []
+        if not rows or not Path(self.db_path).is_file():
+            return True
+
+        ignored_kinds = {"docmancer-memory", "team-memory"}
+        indexed = {
+            (
+                str(row.get("harness") or ""),
+                str(row.get("scope") or ""),
+                str(row.get("kind") or "agent-memory"),
+                str(row.get("path") or ""),
+                hashlib.sha256(str(row.get("content") or "").encode("utf-8")).hexdigest(),
+            )
+            for row in rows
+            if str(row.get("kind") or "agent-memory") not in ignored_kinds
+        }
+        current = set()
+        for entry in self.preview():
+            clean = self.privacy.clean(entry)
+            kind = str(clean.extra.get("kind", "agent-memory"))
+            current.add(
+                (
+                    str(clean.harness),
+                    str(clean.scope),
+                    kind,
+                    str(clean.path),
+                    hashlib.sha256((clean.content or "").encode("utf-8")).hexdigest(),
+                )
+            )
+        return current != indexed
+
+    def refresh_if_changed(self, *, progress_callback=None) -> bool:
+        """Refresh the recall index only when its discovered sources changed."""
+        if not self.sources_changed():
+            self._last_sync_stats = {"refreshed": False, "reason": "sources_unchanged"}
+            return False
+        artifacts = [
+            candidate
+            for path in self.memory_paths()
+            for candidate in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm"))
+        ]
+        with tempfile.TemporaryDirectory(prefix="docmancer-refresh-") as backup_dir:
+            backup_root = Path(backup_dir)
+            backups: dict[Path, Path] = {}
+            for index, path in enumerate(artifacts):
+                if path.is_file():
+                    backup = backup_root / str(index)
+                    shutil.copy2(path, backup)
+                    backups[path] = backup
+            try:
+                self.sync(progress_callback=progress_callback)
+            except Exception:
+                self._close()
+                for path in artifacts:
+                    path.unlink(missing_ok=True)
+                for path, backup in backups.items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup, path)
+                raise
+        self._last_sync_stats["refreshed"] = True
+        return True
 
     @contextmanager
     def _sync_lock(self):
@@ -786,6 +853,10 @@ class MemoryAgent:
                 row["chars"] = max(int(row["chars"] or 0), int(meta.get("source_chars") or item.get("chars") or 0))
                 row["atoms"] += 1
             rows = list(grouped.values())
+            rows = [
+                row for row in rows
+                if self.privacy.allows_path_scope(str(row["path"]), str(row["scope"]))
+            ]
         rows.sort(key=lambda r: (r["agent"], r["scope"], r["path"]))
         return rows
 
@@ -1104,6 +1175,17 @@ class MemoryAgent:
             )
         return documents
 
+    def is_indexed_source_path(self, path: str | Path) -> bool:
+        """Return whether a path is one of the exact source files in the index."""
+        candidate = Path(path).expanduser().resolve()
+        for document in self._indexed_source_documents():
+            try:
+                if Path(document.path).expanduser().resolve() == candidate:
+                    return True
+            except OSError:
+                continue
+        return False
+
     @staticmethod
     def _source_summary(document: MemorySourceDocument) -> MemorySourceSummary:
         values = asdict(document)
@@ -1176,6 +1258,54 @@ class MemoryAgent:
         if limit is not None:
             atoms = atoms[: max(0, limit)]
         return atoms
+
+    def common_memory(
+        self,
+        *,
+        project_path: str | Path | None = None,
+        threshold: float = 0.82,
+    ) -> list[dict]:
+        """Return recurring memories supported by independent harness sources."""
+        from docmancer.memory.common import recurring_memory
+
+        # The persisted search projection intentionally collapses equivalent
+        # atoms. Common Memory needs the source-level wording that existed
+        # before that collapse, so prefer the sync cache and add indexed-only
+        # records such as manually curated memory.
+        atoms: list[AtomicMemoryEntry] = []
+        seen: set[tuple[str, str]] = set()
+        for records in self._load_atom_cache().values():
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                try:
+                    atom = AtomicMemoryEntry(**record)
+                except (TypeError, ValueError):
+                    continue
+                key = (atom.source_path, atom.content_hash)
+                if key not in seen:
+                    atoms.append(atom)
+                    seen.add(key)
+        for atom in self.indexed_atoms():
+            key = (atom.source_path, atom.content_hash)
+            if key not in seen:
+                atoms.append(atom)
+                seen.add(key)
+
+        source_harnesses = {
+            str(row.get("path") or ""): str(
+                row.get("harness") or row.get("agent") or "unknown"
+            )
+            for row in self.sources()
+            if row.get("path")
+        }
+        return recurring_memory(
+            atoms,
+            embed_texts=self._embed_fn(),
+            source_harnesses=source_harnesses,
+            project_path=project_path,
+            threshold=threshold,
+        )
 
     def _atom_from_provenance(self, item: dict) -> AtomicMemoryEntry | None:
         meta = item.get("metadata", {}) or {}

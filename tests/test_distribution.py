@@ -3,10 +3,11 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
-from docmancer.distribution import verify_distribution
+from docmancer.distribution import sync_distribution_versions, verify_distribution
 
 
 def test_distribution_artifacts_match_core_version():
@@ -56,11 +57,37 @@ def test_package_verification_rejects_malformed_hooks_json(tmp_path: Path):
 def test_framework_skills_use_canonical_commands():
     root = Path("docmancer/distribution/skills")
     expected = {
-        "memory-writing": ["docmancer search", "docmancer write", "docmancer edit", "docmancer move"],
-        "search-before-answer": ["docmancer context", "docmancer search", "docmancer read", "docmancer docs query"],
-        "onboarding": ["docmancer init", "docmancer status", "docmancer harvest", "docmancer curate", "docmancer reindex"],
+        "memory-writing": ["docmancer ask", "docmancer write", "docmancer edit", "docmancer move"],
+        "search-before-answer": ["docmancer ask", "docmancer read", "docmancer docs query"],
+        "onboarding": ["docmancer setup", "docmancer web", "docmancer status", "docmancer import"],
     }
     for name, commands in expected.items():
         content = (root / name / "SKILL.md").read_text(encoding="utf-8")
         for command in commands:
             assert command in content
+
+
+def test_distribution_versions_can_be_updated_atomically_from_one_source(tmp_path: Path):
+    source = Path("docmancer/distribution")
+    copied = tmp_path / "distribution"
+    shutil.copytree(source, copied)
+
+    changed = sync_distribution_versions("9.8.7", root=copied)
+
+    assert set(changed) == {
+        "codex-plugin/.codex-plugin/plugin.json",
+        "claude-marketplace/plugins/docmancer/.claude-plugin/plugin.json",
+        "claude-marketplace/.claude-plugin/marketplace.json",
+        "openclaw-plugin/package.json",
+        "openclaw-plugin/openclaw.plugin.json",
+        "server.json",
+        "smithery.yaml",
+    }
+    assert json.loads((copied / "codex-plugin/.codex-plugin/plugin.json").read_text())["version"] == "9.8.7"
+    assert json.loads((copied / "server.json").read_text())["packages"][0]["version"] == "9.8.7"
+    assert "version: 9.8.7" in (copied / "smithery.yaml").read_text()
+
+
+def test_distribution_version_sync_rejects_non_release_versions(tmp_path: Path):
+    with pytest.raises(ValueError, match="MAJOR.MINOR.PATCH"):
+        sync_distribution_versions("next", root=tmp_path)

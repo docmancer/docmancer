@@ -52,13 +52,13 @@ def test_install_claude_code_creates_rebooted_skill_file():
         # The memory skill lands alongside the docs skill.
         mem_skill = fake_home / ".claude" / "skills" / "docmancer-memory" / "SKILL.md"
         assert mem_skill.exists()
-        assert "docmancer query" in mem_skill.read_text()
+        assert "docmancer ask" in mem_skill.read_text()
         # Recall instruction injected into the always-loaded CLAUDE.md.
         claude_md = fake_home / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
         injected = claude_md.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer context" in injected
+        assert "docmancer ask" in injected
         assert "docmancer bench" not in content
         assert "Advanced: API Tools via MCP" not in content
         assert "docmancer " + "m" + "c" + "p" not in content
@@ -66,8 +66,7 @@ def test_install_claude_code_creates_rebooted_skill_file():
         # Pre-bench hosted catalog narrative concepts must stay gone.
         assert "vault" not in content.lower()
         assert "docmancer pull" not in content
-        assert "docmancer search" in content
-        assert "docmancer context" in content
+        assert "docmancer ask" in content
         assert "from the " + "reg" + "istry" not in content.lower()
 
 
@@ -140,7 +139,7 @@ def test_install_codex_creates_native_and_shared_skills():
         assert codex_agents.exists()
         injected = codex_agents.read_text()
         assert "<!-- docmancer:start -->" in injected
-        assert "docmancer context" in injected
+        assert "docmancer ask" in injected
 
 
 def test_install_codex_hooks_mentions_trust_flow():
@@ -273,8 +272,7 @@ def test_install_github_copilot_project_creates_repo_instructions():
         assert agents_md.exists()
         assert vscode_settings.exists()
         copilot_content = copilot_md.read_text()
-        assert "docmancer context" in copilot_content
-        assert "docmancer search" in copilot_content
+        assert "docmancer ask" in copilot_content
         assert "docmancer docs add" in copilot_content
         assert "docmancer bench" not in copilot_content
         assert "--expand page" in copilot_content
@@ -282,7 +280,7 @@ def test_install_github_copilot_project_creates_repo_instructions():
         assert "github.copilot.chat.codeGeneration.useInstructionFiles" in vscode_settings.read_text()
 
 
-def test_setup_detects_vscode_and_installs_github_copilot_project_files():
+def test_setup_detects_vscode_without_writing_project_files():
     runner = CliRunner()
     with runner.isolated_filesystem() as tmp_dir:
         fake_home = _home(tmp_dir)
@@ -294,8 +292,11 @@ def test_setup_detects_vscode_and_installs_github_copilot_project_files():
              patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
             result = runner.invoke(cli, ["setup"])
         assert result.exit_code == 0, result.output
-        assert (Path(".github") / "copilot-instructions.md").exists()
-        assert (Path(".vscode") / "settings.json").exists()
+        assert (fake_home / ".copilot" / "copilot-instructions.md").exists()
+        assert not (Path(".github") / "copilot-instructions.md").exists()
+        assert not Path("AGENTS.md").exists()
+        assert not (Path(".vscode") / "settings.json").exists()
+        assert not Path(".docmancer").exists()
 
 
 def test_install_claude_desktop_creates_zip():

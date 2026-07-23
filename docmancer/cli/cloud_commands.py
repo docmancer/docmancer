@@ -31,6 +31,13 @@ def cloud_status(root: str | Path | None = None) -> dict:
     state = CloudState(config.paths.sync_state)
     account = config.account()
     workspace = config.workspace()
+    recovery = {"configured": False, "verified": False}
+    if config.paths.recovery_status.is_file():
+        try:
+            recovery.update(json.loads(config.paths.recovery_status.read_text(encoding="utf-8")))
+            recovery["configured"] = True
+        except (OSError, json.JSONDecodeError):
+            pass
     return {
         "configured": config.enabled(),
         "account_id": account.get("account_id"),
@@ -39,6 +46,7 @@ def cloud_status(root: str | Path | None = None) -> dict:
         "base_url": account.get("base_url"),
         "continuous_audit": bool(workspace and workspace[1].get("continuous_audit")),
         "entitlement": read_entitlement(root=base).get("state", "unknown"),
+        "recovery": recovery,
         **state.status(),
     }
 

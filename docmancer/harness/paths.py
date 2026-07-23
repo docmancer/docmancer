@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,35 @@ _MAX_LINES_SCANNED = 400
 def _unslug(name: str) -> str:
     """Lossy fallback: ``-Users-x-app`` -> ``/Users/x/app``."""
     return "/" + name.lstrip("-").replace("-", "/")
+
+
+def _existing_path_from_slug(name: str) -> str | None:
+    """Resolve a Claude slug against real directories when the match is unique.
+
+    Claude replaces both path separators and punctuation such as ``.`` with
+    hyphens. Walking the existing directory tree lets
+    ``gaurangtorvekar-com`` resolve to ``gaurangtorvekar.com`` without
+    guessing that it means two nested directories.
+    """
+    tokens = [token for token in name.lstrip("-").split("-") if token]
+    candidates: list[tuple[Path, int]] = [(Path("/"), 0)]
+    matches: list[Path] = []
+    while candidates:
+        parent, offset = candidates.pop()
+        if offset == len(tokens):
+            matches.append(parent)
+            continue
+        try:
+            children = [child for child in parent.iterdir() if child.is_dir()]
+        except OSError:
+            continue
+        for child in children:
+            encoded = re.sub(r"[^A-Za-z0-9_]+", "-", child.name).strip("-")
+            child_tokens = [token for token in encoded.split("-") if token]
+            if child_tokens and tokens[offset : offset + len(child_tokens)] == child_tokens:
+                candidates.append((child, offset + len(child_tokens)))
+    resolved = {str(path.resolve()) for path in matches}
+    return next(iter(resolved)) if len(resolved) == 1 else None
 
 
 def _cwds_from_jsonl(session: Path) -> list[str]:
@@ -129,6 +159,9 @@ def project_path_for_slug_dir(proj_dir: Path) -> str:
                             return cwd
         except (OSError, UnicodeDecodeError):
             continue
+    existing = _existing_path_from_slug(proj_dir.name)
+    if existing:
+        return existing
     fallback = _unslug(proj_dir.name)
     logger.debug("no cwd in session files for %s; using lossy slug %s", proj_dir.name, fallback)
     return fallback

@@ -42,6 +42,12 @@ class CloudState:
                     resolved_at TEXT, resolution TEXT,
                     UNIQUE(record_ref, remote_revision_id)
                 );
+                CREATE TABLE IF NOT EXISTS tree_heads (
+                    project_id TEXT NOT NULL, file_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL, relative_path TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(project_id, file_id)
+                );
             """)
 
     def enqueue(self, envelope: dict[str, Any]) -> bool:
@@ -158,6 +164,29 @@ class CloudState:
             pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
             conflicts = conn.execute("SELECT COUNT(*) FROM conflicts WHERE resolved_at IS NULL").fetchone()[0]
         return {"pending": pending, "conflicts": conflicts, "cursor": self.get_meta("cursor")}
+
+    def tree_heads(self, project_id: str) -> dict[str, dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tree_heads WHERE project_id=? ORDER BY file_id",
+                (str(project_id),),
+            ).fetchall()
+        return {str(row["file_id"]): dict(row) for row in rows}
+
+    def set_tree_head(
+        self, *, project_id: str, file_id: str, revision_id: str,
+        relative_path: str, deleted: bool,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO tree_heads(project_id,file_id,revision_id,relative_path,deleted)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(project_id,file_id) DO UPDATE SET
+                     revision_id=excluded.revision_id,
+                     relative_path=excluded.relative_path,
+                     deleted=excluded.deleted""",
+                (project_id, file_id, revision_id, relative_path, int(deleted)),
+            )
 
 
 __all__ = ["CloudState"]

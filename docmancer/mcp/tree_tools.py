@@ -27,17 +27,16 @@ root can never collide with the ``.md`` record files the legacy
   share a parent.
 
 Each call constructs its own ``TreeStore`` pinned to the resolved root.
-``TreeStore.__init__`` creates that directory if missing (this is the
-store's own documented behaviour, not something added here) but never
-touches memory content for read-only tools.
+Constructing the store is read-only and does not create a missing tree.
+Mutation methods create only the parent directories needed for the requested
+write.
 """
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
 from pathlib import Path
 
-from docmancer.memory.tree.compiler import ContextRequest, compile_context
+from docmancer.memory.tree.compiler import ContextRequest, compile_context, context_bundle_payload
 from docmancer.memory.tree.errors import TreeError
 from docmancer.memory.tree.parser import TreeMemoryFile
 from docmancer.memory.tree.store import TreeStore
@@ -145,6 +144,7 @@ def write_memory(
             tags=tags,
             curation_origin=curation_origin,
             expect=expect,
+            actor_surface="mcp",
         )
     except TreeError as exc:
         return _error_payload(exc)
@@ -194,7 +194,7 @@ def edit_memory(
     """
     try:
         store = _store_for(project_path)
-        entry = store.edit(address, text=text, expected_hash=expected_hash)
+        entry = store.edit(address, text=text, expected_hash=expected_hash, actor_surface="mcp")
     except TreeError as exc:
         return _error_payload(exc)
     payload = _entry_payload(entry)
@@ -221,7 +221,12 @@ def move_memory(
     """
     try:
         store = _store_for(project_path)
-        entry = store.move(address, new_relative_path, expected_hash=expected_hash)
+        entry = store.move(
+            address,
+            new_relative_path,
+            expected_hash=expected_hash,
+            actor_surface="mcp",
+        )
     except TreeError as exc:
         return _error_payload(exc)
     payload = _entry_payload(entry)
@@ -270,7 +275,12 @@ def duplicate_memory(
 ) -> dict:
     """Duplicate a memory file under a new stable identity. MUTATING."""
     try:
-        entry = _store_for(project_path).duplicate(address, new_relative_path, expected_hash=expected_hash)
+        entry = _store_for(project_path).duplicate(
+            address,
+            new_relative_path,
+            expected_hash=expected_hash,
+            actor_surface="mcp",
+        )
     except TreeError as exc:
         return _error_payload(exc)
     payload = _entry_payload(entry)
@@ -290,7 +300,7 @@ def trash_memory(address: str, *, expected_hash: str, project_path: str | None =
 def restore_memory(restore_token: str, *, project_path: str | None = None) -> dict:
     """Restore one previously trashed memory file. MUTATING."""
     try:
-        entry = _store_for(project_path).restore(restore_token)
+        entry = _store_for(project_path).restore(restore_token, actor_surface="mcp")
     except TreeError as exc:
         return _error_payload(exc)
     payload = _entry_payload(entry)
@@ -333,7 +343,74 @@ def build_context(
         bundle = compile_context(store.index, request)
     except TreeError as exc:
         return _error_payload(exc)
-    return asdict(bundle)
+    return context_bundle_payload(bundle)
+
+
+def ask_memory(
+    task: str,
+    *,
+    project_path: str | None = None,
+    token_budget: int = 2000,
+    limit: int = 8,
+    include_history: bool = False,
+    agent: str = "mcp-client",
+) -> dict:
+    """Recall curated memory plus supporting indexed agent evidence."""
+    from docmancer.memory.ask import ask
+
+    return ask(
+        task,
+        project_path=project_path,
+        tree_root=_resolve_root(project_path),
+        token_budget=token_budget,
+        limit=limit,
+        include_history=include_history,
+        agent_name=agent,
+        surface="mcp",
+        integration_mode="mcp",
+    )
+
+
+def common_memory(*, project_path: str | None = None) -> list[dict]:
+    """Return recurring memory across independent local agent harnesses."""
+    from docmancer.memory import MemoryAgent
+
+    return MemoryAgent().common_memory(project_path=project_path)
+
+
+def context_delivery(*, project_path: str | None = None) -> list[dict]:
+    """Return the local integration and latest-delivery matrix."""
+    from docmancer.memory.delivery import delivery_matrix, inspect_hook_status
+    from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
+
+    project = Path(project_path).expanduser().resolve() if project_path else Path.cwd().resolve()
+    projections = {
+        agent: str(projection_path(agent))
+        for agent in PROJECTION_TARGETS
+        if projection_path(agent).is_file()
+    }
+    return delivery_matrix(
+        project,
+        hook_rows=inspect_hook_status(project),
+        projections=projections,
+    )
+
+
+def decision_timeline(
+    *,
+    project_path: str | None = None,
+    file_id: str | None = None,
+    operation: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Return append-only canonical tree mutation events."""
+    from docmancer.memory.tree.journal import DecisionJournal
+
+    return DecisionJournal(_resolve_root(project_path)).events(
+        file_id=file_id,
+        operation=operation,
+        limit=limit,
+    )
 
 
 __all__ = [
@@ -345,5 +422,9 @@ __all__ = [
     "trash_memory",
     "restore_memory",
     "search_memory",
+    "ask_memory",
     "build_context",
+    "common_memory",
+    "context_delivery",
+    "decision_timeline",
 ]

@@ -1,0 +1,12 @@
+{
+  "locomo": {
+    "filename": "locomo10.json",
+    "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+    "source": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
+  },
+  "longmemeval-s": {
+    "filename": "longmemeval_s_cleaned.json",
+    "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "source": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
+  }
+}

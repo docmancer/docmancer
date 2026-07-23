@@ -8,18 +8,20 @@ Each curated file has a stable `docmancer://memory/<id>` address, source citatio
 
 ```bash
 docmancer setup
-docmancer init
-docmancer harvest ./agent-notes
-docmancer curate --source ./agent-notes/release.md --path decisions/release.md
-docmancer curate --source ./agent-notes/release.md --path decisions/release.md --apply
-docmancer context "prepare a production release" --project-path "$PWD"
+cd /path/to/your-project
+docmancer web
+docmancer write "# Release decision" --path decisions/release.md
+docmancer ask "prepare a production release"
 ```
 
-- **Harvest** reads supported agent sources without rewriting them.
-- **Inbox** holds ambiguous harvested evidence and opt-in lifecycle checkpoints.
-- **Curate** previews or applies one complete Markdown-file operation.
-- **Context Compiler** selects mandatory policy and relevant curated memory for a task and token budget.
-- **Workbench** provides the same local workflow through `docmancer web`.
+- **Setup** discovers supported agent sources machine-wide and installs user-level integrations.
+- **Workbench** safely creates or adopts project memory and refreshes changed agent sources.
+- **Ask** returns mandatory policy, curated memory, and supporting indexed evidence under one budget.
+- **Shared memory** shows what recurs across independent agents while excluding generated integration copies.
+- **Context delivery** proves how each agent receives memory and records the last observed bundle revision and hash.
+- **Decision timeline** shows canonical file mutations, revision lineage, actors, sources, and readable diffs.
+- **Import** is optional and only copies an arbitrary Markdown path into the inbox.
+- **Inbox** holds imported Markdown and opt-in lifecycle checkpoints.
 - **Docs** remain a separate search surface under `docmancer docs`.
 - **Cloud** is optional encrypted continuity and Team coordination; it never gates local use.
 

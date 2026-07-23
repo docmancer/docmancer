@@ -139,6 +139,17 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     if not workspace_key:
         raise ValueError("workspace key is unavailable on this device")
     state = CloudState(config.paths.sync_state)
+    from docmancer.cloud.tree_sync import queue_tree_changes
+
+    tree_changes = {"changed": 0, "queued": 0}
+    for project_id, row in config.workspaces().get("projects", {}).items():
+        mapping = config.mapping_status(str(project_id))
+        if mapping["state"] == "mapped":
+            update = queue_tree_changes(mapping["paths"][0], root=root, keystore=keys)
+            tree_changes = {
+                "changed": tree_changes["changed"] + update["changed"],
+                "queued": tree_changes["queued"] + update["queued"],
+            }
     entitlement = cache_entitlement(client.entitlement(workspace_id), root=root)
     can_push = remote_transfer_allowed(entitlement)
     if metadata.get("policy_enabled"):
@@ -175,7 +186,13 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
         device_public_keys=public_keys,
         cursor=pull_cursor,
     )
-    return {"pushed": pushed, "paused": not can_push, **applied, **state.status()}
+    return {
+        "pushed": pushed,
+        "paused": not can_push,
+        "tree_changes": tree_changes,
+        **applied,
+        **state.status(),
+    }
 
 
 __all__ = ["sync_once"]

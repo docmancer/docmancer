@@ -153,5 +153,5 @@ Qdrant remains supported for users who explicitly configure the heavy backend, b
 ## Notes
 
 - Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
-- Project-local configs are created by `docmancer init` and point to `.docmancer/docmancer.db` inside the project.
+- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Users do not need a separate initialization step.
 - If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.

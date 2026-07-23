@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
@@ -219,10 +221,29 @@ def test_tree_init_creates_tree_inbox_trash_without_enabling_capture(tmp_path):
     result = runner.invoke(cli, ["tree", "init", "--root", root, "--project-id", "project-a", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    assert payload["created"] is True
     assert payload["capture_enabled"] is False
     assert (tmp_path / "tree" / "context.md").is_file()
     assert (tmp_path / "inbox").is_dir()
     assert (tmp_path / "trash").is_dir()
+
+    repeated = runner.invoke(
+        cli,
+        ["tree", "init", "--root", root, "--project-id", "project-a", "--json"],
+    )
+    assert repeated.exit_code == 0, repeated.output
+    repeated_payload = json.loads(repeated.output)
+    assert repeated_payload["created"] is False
+    assert repeated_payload["adopted"] is True
+
+
+def test_tree_init_rejects_denied_root_without_creating_state(tmp_path):
+    root = tmp_path / ".ssh" / "tree"
+    result = CliRunner().invoke(cli, ["tree", "init", "--root", str(root), "--json"])
+
+    assert result.exit_code != 0
+    assert "sensitive or denied root" in result.output
+    assert not root.exists()
 
 
 def test_top_level_capture_reads_one_event_from_stdin_and_writes_only_inbox(tmp_path):
@@ -280,16 +301,78 @@ def test_harvest_is_read_only_and_preview_first(tmp_path):
     source = tmp_path / "source.md"
     source.write_text("# Evidence\n\nKeep this source unchanged.\n", encoding="utf-8")
     before = source.read_bytes()
-    preview = runner.invoke(cli, ["harvest", str(source), "--root", str(tmp_path / "tree"), "--json"])
+    preview = runner.invoke(cli, ["tree", "harvest", str(source), "--root", str(tmp_path / "tree"), "--json"])
     assert preview.exit_code == 0, preview.output
     assert json.loads(preview.output)["applied"] is False
     assert not (tmp_path / "inbox").exists()
 
     applied = runner.invoke(
         cli,
-        ["harvest", str(source), "--root", str(tmp_path / "tree"), "--inbox", str(tmp_path / "inbox"), "--apply", "--json"],
+        ["tree", "harvest", str(source), "--root", str(tmp_path / "tree"), "--inbox", str(tmp_path / "inbox"), "--apply", "--json"],
     )
     assert applied.exit_code == 0, applied.output
     assert json.loads(applied.output)["count"] == 1
     assert source.read_bytes() == before
     assert list((tmp_path / "inbox").glob("*.md"))
+
+
+def test_import_copies_markdown_to_project_inbox_without_rewriting_source(tmp_path):
+    source = tmp_path / "notes"
+    source.mkdir()
+    note = source / "decision.md"
+    original = "# Decision\n\nUse Railway.\n"
+    note.write_text(original)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = CliRunner().invoke(
+        cli,
+        ["import", str(source), "--project", str(project), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["imported"] is True
+    assert payload["count"] == 1
+    inbox_path = Path(payload["results"][0]["inbox_path"])
+    assert inbox_path.is_file()
+    assert "Use Railway." in inbox_path.read_text()
+    assert note.read_text() == original
+    assert (project / ".docmancer" / "tree" / "context.md").is_file()
+
+
+def test_bare_harvest_previews_registered_sources_for_current_project(tmp_path, monkeypatch):
+    from docmancer.memory.tree.harvest import ProjectHarvestSource
+
+    project = tmp_path / "project"
+    source_root = tmp_path / "agent-memory"
+    project.mkdir()
+    source_root.mkdir()
+    note = source_root / "decision.md"
+    note.write_text("# Decision\n\nUse the local workbench.\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(
+        "docmancer.memory.MemoryAgent",
+        lambda: SimpleNamespace(config=SimpleNamespace(discovery=None)),
+    )
+    monkeypatch.setattr(
+        "docmancer.memory.tree.harvest.discover_project_harvest_sources",
+        lambda *_args, **_kwargs: [
+            ProjectHarvestSource(
+                source_root,
+                "claude-code",
+                f"project:{project.resolve()}",
+                (note.resolve(),),
+            )
+        ],
+    )
+
+    result = CliRunner().invoke(cli, ["tree", "harvest", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["selection"] == "current-project"
+    assert payload["applied"] is False
+    assert payload["count"] == 1
+    assert payload["results"][0]["source"] == str(note.resolve())
+    assert not (project / ".docmancer" / "inbox").exists()

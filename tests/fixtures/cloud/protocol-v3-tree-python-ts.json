@@ -1,0 +1,50 @@
+{
+  "name": "protocol-v3-tree-python-ts-vector",
+  "workspace_key_b64": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "signing_private_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "signing_public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "payload": {
+    "schema_version": 3,
+    "object_kind": "team_file",
+    "file_id": "team_engineering",
+    "project_id": "prj_cross_language_0001",
+    "relative_path": "team/engineering.md",
+    "revision_id": "rev_gtidhtf4gtjibxtpxef4mhatdlc5jo5gttrfereiq5ygarjrsphq",
+    "parent_revision_ids": [],
+    "markdown": "# Team Engineering\n\nUse reviewed release checklists.\n",
+    "content_hash": "dff0eac32cb63971490d26a020b2dff24f2a9e23a7d9c613959bc925d5e82685",
+    "metadata": {
+      "approver_id": "reviewer_opaque_1",
+      "authority": "mandatory",
+      "exclusion_count": 2,
+      "generated": true,
+      "publication_state": "approved",
+      "scope": "project",
+      "sources": ["src_0123456789abcdef0123"],
+      "status": "active",
+      "title": "Team Engineering"
+    },
+    "updated_at": "2026-07-23T10:00:00+00:00",
+    "deleted": false
+  },
+  "canonical_utf8": "{\"content_hash\":\"dff0eac32cb63971490d26a020b2dff24f2a9e23a7d9c613959bc925d5e82685\",\"deleted\":false,\"file_id\":\"team_engineering\",\"markdown\":\"# Team Engineering\\n\\nUse reviewed release checklists.\\n\",\"metadata\":{\"approver_id\":\"reviewer_opaque_1\",\"authority\":\"mandatory\",\"exclusion_count\":2,\"generated\":true,\"publication_state\":\"approved\",\"scope\":\"project\",\"sources\":[\"src_0123456789abcdef0123\"],\"status\":\"active\",\"title\":\"Team Engineering\"},\"object_kind\":\"team_file\",\"parent_revision_ids\":[],\"project_id\":\"prj_cross_language_0001\",\"relative_path\":\"team/engineering.md\",\"revision_id\":\"rev_gtidhtf4gtjibxtpxef4mhatdlc5jo5gttrfereiq5ygarjrsphq\",\"schema_version\":3,\"updated_at\":\"2026-07-23T10:00:00+00:00\"}",
+  "revision_id": "rev_gtidhtf4gtjibxtpxef4mhatdlc5jo5gttrfereiq5ygarjrsphq",
+  "associated_data_b64": "eyJhbGdvcml0aG0iOiJ4Y2hhY2hhMjBwb2x5MTMwNS1pZXRmIiwia2V5X3ZlcnNpb24iOjEsImtpbmQiOiJ0ZWFtX2ZpbGVfcmV2aXNpb24iLCJwcm90b2NvbF92ZXJzaW9uIjozLCJyZWNvcmRfcmVmIjoia2x6RVlkQis2NXNBL1ZiZzlKWGNCcTJITXdoN2tDYk5iVDVFVHNZVURmdz0iLCJyZXZpc2lvbl9yZWYiOiJTUWVLd3VsTnRTa2FXUExhTTFHaVBTUjl5NE1HeGtkSVhiWE84UDBXWVN3PSIsIndvcmtzcGFjZV9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJ9",
+  "signature_input_sha256": "07c7b3d8c198dc72bddcdec720e1bd1cc563b2915066ba18bcf8b4f0706968db",
+  "envelope": {
+    "protocol_version": 3,
+    "workspace_id": "00000000-0000-4000-8000-000000000001",
+    "envelope_id": "00000000-0000-4000-8000-000000000003",
+    "record_ref": "klzEYdB+65sA/Vbg9JXcBq2HMwh7kCbNbT5ETsYUDfw=",
+    "revision_ref": "SQeKwulNtSkaWPLaM1GiPSR9y4MGxkdIXbXO8P0WYSw=",
+    "parent_refs": [],
+    "kind": "team_file_revision",
+    "key_version": 1,
+    "algorithm": "xchacha20poly1305-ietf",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
+    "ciphertext": "zCvnnltMYjdjsSNcIDsZxDp7ew3oiyb0vzyRAEK6P8eJ01YQ6VMtmJiPBMMVS4pjOW1HJCF6MhMW9RIFN5e95gow1W0D8HQWs6S9Gd+kr9kRc4g+X6AMzxaf+FYZtjzrD8HFyHOa9ULtdU7k2hc02jx0qTNwgLWDUTCfOmtc9JFrLT2hcG4lRiYNQJF8Zrfw9tVZMhlbNQPsTGkouFIpIgVypl+FhlCDJ6lMR3dsI/9AZkDHQo7EiHvpNRUjh9m8lKttQS1RNz2jBBp7v8+9BCd5EOREwB6LJrj4anD/ytkgh4OiMl6EMSmnu5tZMLnBLeZDpoGpc6LrRgSPJ3Cqsn4qvgKTBfxN9cRbox7WDpVYO40W17GfjiLMbyhNgsfyb2ofBEza7Xoezkuf791OXaqozfjL1rLC4/YVqAM0VfpVS1gm1kRinDjDmkAYjxaH6+y9jIOXo7yRU8xLZgJQWQdCGRI8VRZPz3+w85VQb5ATXBa9tbG8ZKEkQRuXN2iPuzfN9WxH1cVhA4fxzwGpdrlZ0MGqSruglB2u5RY3HZm0iJ317/tjS3SiJLIChUoMwdN96rUCUdBWrbAxe9OIe3JmaAIpyk7AAJsBygViKu/igqVGQKepYSM6my1dUF691Xo2vvRp2Z24EsJ6k8TPLVJDqMHaQ3EvHq8b/JsUsxTigBEV7ntPod81j5xZfIV5YzSB4PylpAMQKv2lzHp2uQAtWJ4Wrivdg2JdCEnfv+o+H/GC5/7lpYjDV/5HMeIcJIiApsv/fZ9+py+3wYt2Hlb0zvPHzcx5NhSlgdjDZa2SgqS45xqXyTOPTiZARq2nJH2pACQSnZ9rXuyIWLbeCzxos6v8vSmf3pBLVB/wzrHdaJq5mUAlhVxHEUQoSxD35M18BM0v4E1nDTkF9Ts9wBdnW+XtELjPe5O1VyS0S6aCXgykfXbnqbf8Xv4=",
+    "created_by_device_id": "00000000-0000-4000-8000-000000000002",
+    "signature": "L7gOrC/tUsOwb4mp77EQPBw6wolo02rE9HlP1JD8LpI8aDhQAjmyCm50ivrsGWOUpC5+2b8/DFGxqpUWDsMkAA==",
+    "client_created_at": "2026-07-23T10:00:00.000Z"
+  }
+}

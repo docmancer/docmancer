@@ -72,6 +72,49 @@ def test_checked_cross_language_protocol_vector():
     ) == vector["payload"]
 
 
+def test_checked_cross_language_tree_protocol_vector():
+    vector = json.loads(
+        (Path(__file__).parent / "fixtures/cloud/protocol-v3-tree-python-ts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    associated = {
+        key: vector["envelope"][key]
+        for key in (
+            "algorithm", "key_version", "kind", "protocol_version",
+            "record_ref", "revision_ref", "workspace_id",
+        )
+    }
+    aad = canonicalize(associated)
+    signature_input = (
+        b"docmancer-envelope-v3\0"
+        + aad
+        + b"\0"
+        + b64decode(vector["envelope"]["nonce"])
+        + b64decode(vector["envelope"]["ciphertext"])
+    )
+    assert canonicalize(vector["payload"]).decode() == vector["canonical_utf8"]
+    assert b64encode(aad) == vector["associated_data_b64"]
+    assert hashlib.sha256(signature_input).hexdigest() == vector["signature_input_sha256"]
+    rebuilt = build_envelope(
+        vector["payload"],
+        workspace_id=vector["envelope"]["workspace_id"],
+        device_id=vector["envelope"]["created_by_device_id"],
+        workspace_key=b64decode(vector["workspace_key_b64"]),
+        signing_private_key=b64decode(vector["signing_private_key_b64"]),
+        _nonce=b64decode(vector["envelope"]["nonce"]),
+        _envelope_id=vector["envelope"]["envelope_id"],
+        _client_created_at=vector["envelope"]["client_created_at"],
+    )
+    assert rebuilt == vector["envelope"]
+    assert open_envelope(
+        vector["envelope"],
+        workspace_key=b64decode(vector["workspace_key_b64"]),
+        signing_public_key=b64decode(vector["signing_public_key_b64"]),
+    ) == vector["payload"]
+    assert "/Users/" not in json.dumps(vector["envelope"])
+
+
 def test_envelope_round_trip_and_tamper_detection():
     signing_private, signing_public = signing_keypair()
     workspace_key = random_key()

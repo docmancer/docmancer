@@ -1,9 +1,8 @@
-"""Curated Markdown tree commands.
+"""Curated Markdown tree commands and advanced recovery operations.
 
-The commands are canonical at the root (``docmancer write``, ``read``,
-``edit``, ``move``, ``search``, and ``context``). The ``docmancer tree``
-group remains as a compatibility namespace for scripts written during the
-transition.
+Write, read, edit, and move are everyday root commands. Search, context,
+harvest, and init remain compatibility implementations during the 0.8
+transition to unified ask, import, and automatic project initialization.
 """
 from __future__ import annotations
 
@@ -32,11 +31,19 @@ def _default_tree_root() -> Path:
     # through MCP with project_path set to that same directory, and vice
     # versa. This is deliberate: Release A's stated goal is one shared
     # tree, not two divergent default roots.
-    return Path.cwd() / ".docmancer" / "tree"
+    from docmancer.memory.tree.project import tree_paths
+
+    return tree_paths()[0]
 
 
-def _store(root: str | None) -> TreeStore:
-    return TreeStore(Path(root) if root else _default_tree_root())
+def _store(root: str | None, *, ensure: bool = False) -> TreeStore:
+    if root:
+        return TreeStore(Path(root))
+    if ensure:
+        from docmancer.memory.tree.project import ensure_project
+
+        return TreeStore(ensure_project().tree_root)
+    return TreeStore(_default_tree_root())
 
 
 def _read_text(text: str | None) -> str:
@@ -115,48 +122,27 @@ def tree_group() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def init_tree(root: str | None, project_id: str | None, as_json: bool) -> None:
     """Create the standard tree directories without enabling capture hooks."""
-    tree_root = Path(root) if root else _default_tree_root()
-    inbox = tree_root.parent / "inbox"
-    trash = tree_root.parent / "trash"
-    tree_root.mkdir(parents=True, exist_ok=True)
-    inbox.mkdir(parents=True, exist_ok=True)
-    trash.mkdir(parents=True, exist_ok=True)
-    context_path = tree_root / "context.md"
-    existing_files = list(tree_root.rglob("*.md"))
-    adopted = bool(existing_files)
-    malformed: list[str] = []
-    if adopted:
-        from docmancer.memory.tree.parser import parse_tree_file
+    from docmancer.memory.tree.project import ensure_project
 
-        for path in existing_files:
-            try:
-                if parse_tree_file(path) is None:
-                    malformed.append(str(path))
-            except Exception:  # noqa: BLE001 - report all malformed files together
-                malformed.append(str(path))
-    if malformed:
-        raise click.ClickException(
-            "cannot adopt this tree because Markdown memory files have invalid frontmatter: "
-            + ", ".join(malformed[:10])
-        )
-    if not context_path.exists():
-        body = "# Project context\n\nCurated project memory lives in this tree.\n"
-        TreeStore(tree_root).write(
-            relative_path="context.md",
-            text=body,
-            memory_type="context",
-            scope="project" if project_id else "global",
-            project_id=project_id,
-            expect="absent",
-        )
+    try:
+        if root:
+            tree_root = Path(root).expanduser().resolve()
+            project_root = tree_root.parent
+        else:
+            tree_root = None
+            project_root = None
+        project = ensure_project(project_root, project_id=project_id, tree_root=tree_root)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     payload = {
-        "root": str(tree_root.resolve()),
-        "inbox": str(inbox.resolve()),
-        "trash": str(trash.resolve()),
+        "root": str(project.tree_root),
+        "inbox": str(project.inbox_root),
+        "trash": str(project.trash_root),
         "project_id": project_id,
-        "adopted": adopted,
+        "created": project.created,
+        "adopted": project.adopted,
         "capture_enabled": False,
-        "files_adopted": len(existing_files),
+        "files_adopted": len(list(project.tree_root.rglob("*.md"))) - (0 if project.adopted else 1),
     }
     if as_json:
         _emit_json(payload)
@@ -368,18 +354,33 @@ def curate_command(
 @click.option("--apply", is_flag=True, help="Write harvested evidence to the inbox. Preview is the default.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def harvest_command(sources: tuple[Path, ...], root: str | None, inbox_path: str | None, apply: bool, as_json: bool) -> None:
-    """Discover bounded Markdown files and optionally copy them into the uncurated inbox."""
+    """Preview project sources, or import an explicit Markdown path."""
     from docmancer.memory.tree.curation import CurationEngine
+    from docmancer.memory.tree.harvest import discover_project_harvest_sources, markdown_files
 
+    selection = "explicit"
+    discovered: list[dict] = []
     if not sources:
-        raise click.UsageError("provide at least one file or directory")
-    files: list[Path] = []
-    for source in sources:
-        if source.is_file() and source.suffix.lower() == ".md":
-            files.append(source)
-        elif source.is_dir():
-            files.extend(path for path in source.rglob("*.md") if path.is_file())
-    files = sorted(dict.fromkeys(path.resolve() for path in files))[:500]
+        selection = "current-project"
+        config = None
+        try:
+            from docmancer.memory import MemoryAgent
+
+            config = MemoryAgent().config.discovery
+        except Exception:  # noqa: BLE001 - discovery still works with defaults
+            pass
+        registered = discover_project_harvest_sources(Path.cwd(), config=config)
+        sources = tuple(path for item in registered for path in item.files)
+        discovered = [
+            {
+                "harness": item.harness,
+                "root": str(item.root),
+                "scope": item.scope,
+                "file_count": len(item.files),
+            }
+            for item in registered
+        ]
+    files = markdown_files(sources)
     before = {path: path.stat().st_mtime_ns for path in files}
     results: list[dict] = []
     if apply:
@@ -393,13 +394,79 @@ def harvest_command(sources: tuple[Path, ...], root: str | None, inbox_path: str
         results = [{"source": str(path), "status": "preview"} for path in files]
     if any(path.stat().st_mtime_ns != before[path] for path in files):
         raise click.ClickException("a harvested source changed during the operation; no source rewrite was attempted")
-    payload = {"applied": apply, "count": len(results), "results": results}
+    payload = {
+        "applied": apply,
+        "selection": selection,
+        "project": str(Path.cwd().resolve()),
+        "registered_sources": discovered,
+        "count": len(results),
+        "results": results,
+    }
     if as_json:
         _emit_json(payload)
     else:
         click.echo(f"Found {len(results)} Markdown source(s).")
+        if selection == "current-project" and not discovered:
+            click.echo("No registered sources matched this project. Import an arbitrary directory with: docmancer import ./notes")
         if not apply:
             click.echo("Preview only. Re-run with --apply to write inbox copies.")
+
+
+@tree_group.command("import", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import an arbitrary Markdown file or directory into the project inbox.")
+@click.argument("sources", nargs=-1, required=True, type=click.Path(path_type=Path, exists=True))
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
+@click.option("--dry-run", is_flag=True, help="List matching files without writing inbox copies.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def import_command(
+    sources: tuple[Path, ...],
+    project_path: Path | None,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Copy arbitrary Markdown evidence into the current project's inbox.
+
+    Source files are read-only and never moved or rewritten.
+    """
+    from docmancer.memory.tree.curation import CurationEngine
+    from docmancer.memory.tree.harvest import markdown_files
+    from docmancer.memory.tree.project import ensure_project, resolve_project_root
+
+    project_root = resolve_project_root(project_path)
+    files = markdown_files(sources)
+    before = {path: (path.stat().st_mtime_ns, path.stat().st_size) for path in files}
+    results: list[dict] = []
+    if dry_run:
+        results = [{"source": str(path), "status": "preview"} for path in files]
+    else:
+        project = ensure_project(project_root)
+        engine = CurationEngine(TreeStore(project.tree_root), project.inbox_root)
+        for path in files:
+            result = engine.curate(
+                path.read_text(encoding="utf-8")[:MAX_STDIN_BYTES],
+                source_path=path,
+            )
+            results.append(
+                {
+                    "source": str(path),
+                    "inbox_path": str(result.inbox_path),
+                    "status": result.destination,
+                }
+            )
+    if any((path.stat().st_mtime_ns, path.stat().st_size) != before[path] for path in files):
+        raise click.ClickException("an imported source changed during the operation; no source rewrite was attempted")
+    payload = {
+        "imported": not dry_run,
+        "project": str(project_root),
+        "count": len(results),
+        "results": results,
+    }
+    if as_json:
+        _emit_json(payload)
+    else:
+        action = "Would import" if dry_run else "Imported"
+        click.echo(f"{action} {len(results)} Markdown file(s).")
+        if not files:
+            click.echo("No Markdown files found.")
 
 
 @tree_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a new or updated curated memory file.")
@@ -434,7 +501,7 @@ def write(
     Prints the resulting stable address, content hash, and revision.
     """
     body = _read_text(text)
-    store = _store(root)
+    store = _store(root, ensure=True)
     try:
         entry = store.write(
             relative_path=relative_path,
@@ -447,6 +514,7 @@ def write(
             status=status,
             tags=list(tags),
             expect=expect,
+            actor_surface="cli",
         )
     except TreeError as exc:
         raise _fail(exc) from exc
@@ -499,7 +567,7 @@ def edit(address: str, text: str | None, root: str | None, expected_hash: str, a
     body = _read_text(text)
     store = _store(root)
     try:
-        entry = store.edit(address, text=body, expected_hash=expected_hash)
+        entry = store.edit(address, text=body, expected_hash=expected_hash, actor_surface="cli")
     except TreeError as exc:
         raise _fail(exc) from exc
     if as_json:
@@ -520,7 +588,7 @@ def move(address: str, new_relative_path: str, root: str | None, expected_hash: 
     """Move or rename ADDRESS to NEW_RELATIVE_PATH inside the same tree root."""
     store = _store(root)
     try:
-        entry = store.move(address, new_relative_path, expected_hash=expected_hash)
+        entry = store.move(address, new_relative_path, expected_hash=expected_hash, actor_surface="cli")
     except TreeError as exc:
         raise _fail(exc) from exc
     if as_json:
@@ -540,7 +608,12 @@ def move(address: str, new_relative_path: str, root: str | None, expected_hash: 
 def duplicate(address: str, new_relative_path: str, root: str | None, expected_hash: str, as_json: bool) -> None:
     """Copy ADDRESS to NEW_RELATIVE_PATH with a new stable memory ID."""
     try:
-        entry = _store(root).duplicate(address, new_relative_path, expected_hash=expected_hash)
+        entry = _store(root).duplicate(
+            address,
+            new_relative_path,
+            expected_hash=expected_hash,
+            actor_surface="cli",
+        )
     except TreeError as exc:
         raise _fail(exc) from exc
     payload = _entry_dict(entry)
@@ -579,7 +652,7 @@ def trash(address: str, root: str | None, expected_hash: str, as_json: bool) -> 
 def restore(restore_token: str, root: str | None, as_json: bool) -> None:
     """Restore one trashed file without overwriting a newer destination."""
     try:
-        entry = _store(root).restore(restore_token)
+        entry = _store(root).restore(restore_token, actor_surface="cli")
     except TreeError as exc:
         raise _fail(exc) from exc
     payload = _entry_dict(entry)
@@ -647,7 +720,7 @@ def context(
     as_json: bool,
 ) -> None:
     """Compile the mandatory-policy plus curated-memory ContextBundle for TASK."""
-    from docmancer.memory.tree.compiler import ContextRequest, compile_context
+    from docmancer.memory.tree.compiler import ContextRequest, compile_context, context_bundle_payload
 
     store = _store(root)
     request = ContextRequest(
@@ -662,27 +735,7 @@ def context(
     bundle = compile_context(store.index, request)
 
     if as_json:
-        _emit_json(
-            {
-                "mandatory_policies": [
-                    {"address": i.address, "title": i.title, "excerpt": i.excerpt, "authority": i.authority}
-                    for i in bundle.mandatory_policies
-                ],
-                "curated_memory": [
-                    {"address": i.address, "title": i.title, "excerpt": i.excerpt, "authority": i.authority}
-                    for i in bundle.curated_memory
-                ],
-                "token_estimate": bundle.token_estimate,
-                "index_revision": bundle.index_revision,
-                "generated_at": bundle.generated_at,
-                "retrieval_trace": {
-                    "channel": bundle.retrieval_trace.channel,
-                    "query_tokens": bundle.retrieval_trace.query_tokens,
-                    "candidates_considered": bundle.retrieval_trace.candidates_considered,
-                    "excluded_over_budget": bundle.retrieval_trace.excluded_over_budget,
-                },
-            }
-        )
+        _emit_json(context_bundle_payload(bundle))
         return
 
     click.echo(f"Task: {task}")

@@ -177,7 +177,13 @@ def build_hook_context(
 
     agent = MemoryAgent()
     service = MemoryService(agent)
-    canonical = service.compile_context(project_path=payload.cwd or None, query=query, limit=16)
+    canonical = []
+    if payload.cwd and (Path(payload.cwd).expanduser() / ".docmancer" / "tree").is_dir():
+        # Canonical packs belong to an initialized project tree. Hook payloads
+        # can reference deleted, remote, or synthetic working directories, so
+        # never initialize project state or spend the hook budget compiling a
+        # tree that does not exist.
+        canonical = service.compile_context(project_path=payload.cwd, query=query, limit=16)
     chunks = service.query(
         query,
         limit=max(limit * 3, limit),

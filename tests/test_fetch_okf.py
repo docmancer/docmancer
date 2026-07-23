@@ -1,4 +1,4 @@
-"""`docmancer fetch --format okf` writes an OKF bundle instead of bare .md."""
+"""`docmancer docs download --format okf` writes an OKF bundle instead of bare .md."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def test_fetch_okf_writes_conformant_bundle(tmp_path, monkeypatch):
     _patch_fetcher(monkeypatch)
     out = tmp_path / "docs.okf"
     r = CliRunner().invoke(
-        cli, ["fetch", "https://docs.example.com", "--format", "okf", "--output", str(out)]
+        cli, ["docs", "download", "https://docs.example.com", "--format", "okf", "--output", str(out)]
     )
     assert r.exit_code == 0, r.output
 
@@ -53,7 +53,7 @@ def test_fetch_okf_writes_conformant_bundle(tmp_path, monkeypatch):
 def test_fetch_default_still_writes_plain_markdown(tmp_path, monkeypatch):
     _patch_fetcher(monkeypatch)
     out = tmp_path / "plain"
-    r = CliRunner().invoke(cli, ["fetch", "https://docs.example.com", "--output", str(out)])
+    r = CliRunner().invoke(cli, ["docs", "download", "https://docs.example.com", "--output", str(out)])
     assert r.exit_code == 0, r.output
     # No frontmatter, no okf_version: default behavior is unchanged.
     assert not (out / "index.md").exists() or "okf_version" not in (out / "index.md").read_text()

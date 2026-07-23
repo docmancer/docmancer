@@ -22,19 +22,23 @@ class PrivacyFilter:
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
 
-    def _targets(self, e: MemoryEntry) -> list[str]:
-        path = e.path or ""
-        scope = e.scope or ""
+    @staticmethod
+    def _targets(path: str | None, scope: str | None) -> list[str]:
+        path = path or ""
+        scope = scope or ""
         return [path, path.lower(), scope, scope.lower()]
 
-    def allows(self, e: MemoryEntry) -> bool:
-        targets = self._targets(e)
+    def allows_path_scope(self, path: str | None, scope: str | None) -> bool:
+        targets = self._targets(path, scope)
         for pat in list(_DEFAULT_EXCLUDES) + list(self.exclude):
             if any(fnmatch(t, pat) for t in targets):
                 return False
         if self.include:
             return any(fnmatch(t, pat) for t in targets for pat in self.include)
         return True
+
+    def allows(self, e: MemoryEntry) -> bool:
+        return self.allows_path_scope(e.path, e.scope)
 
     def clean(self, e: MemoryEntry) -> MemoryEntry:
         e.content = redact_secrets(e.content)

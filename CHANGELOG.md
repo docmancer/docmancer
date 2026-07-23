@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - Unreleased
+### Added
+
+- **Installed-editor picker.** Markdown files in the local workbench can be opened in any detected graphical editor, including VS Code, Cursor, Sublime Text, Zed, TextMate, Obsidian, Typora, or the system default, through a narrow allowlisted local API.
+- **Unified ask.** `docmancer ask` and MCP `ask_memory` now return one bounded local bundle containing mandatory policy, curated Markdown memory, and supporting indexed agent evidence.
+- **Direct Markdown import.** `docmancer import <path>` and the workbench import panel copy explicitly selected Markdown into the project inbox without rewriting source files.
+- **Public local retrieval benchmarks.** Added reproducible LoCoMo and LongMemEval-S harnesses, pinned dataset hashes, checkpointed runs, category and loss reporting, latency, and text-free checked-in result artifacts. The complete 2026-07-23 runs made zero provider calls and cost $0.
+- **Encrypted tree-file continuity.** Added stable path-free project identity, device-local mappings, signed encrypted Protocol v3 tree revisions, tombstones, conflict preservation, safe local application, and multi-device convergence coverage.
+- **Generated Team files.** Added local privacy filtering, cited-source selection, one complete Markdown file and diff, an exclusion report, one whole-file approval, and encrypted Team publication metadata without a per-memory review queue.
+- **Shared memory view.** Added CLI `common`, MCP `common_memory`, a local API, and a workbench view that clusters equivalent memory across normalized agent scopes, excludes generated integration copies, and retains harness and source provenance without labeling recurrence as consensus.
+- **Context delivery receipts.** Added CLI `delivery`, MCP `context_delivery`, and a workbench matrix showing integration mode, hook state, last successful recall, tree revision, and bundle hash for each supported agent.
+- **Decision journal.** Added CLI `timeline`, MCP `decision_timeline`, and a workbench timeline over an append-only local JSONL journal of canonical tree creates, edits, moves, duplicates, trash operations, and restores with actors, sources, lineage, and readable diffs.
+
+### Changed
+
+- **Direct onboarding.** The primary quickstart now runs `setup`, changes into a project, and opens `web`. The workbench safely creates or adopts project memory and refreshes changed agent sources automatically.
+- **Smaller public CLI.** Top-level help now focuses on `setup`, `web`, `ask`, write/read/edit/move, `import`, status/doctor, and `cloud sync`. Recovery, migration, Docs, MCP, and agent integration commands remain callable as advanced surfaces.
+- **Incremental source refresh.** Source fingerprints skip graph and embedding work when registered agent files are unchanged. Changed and deleted files trigger a rebuild that reuses extraction and embedding caches and removes stale recall.
+- **Structured workbench recall.** Ask results now separate mandatory policy, approved curated memory, and supporting agent evidence instead of presenting unlike sources in one undifferentiated list.
+- **Project-aware source import.** Advanced `docmancer agent import-sources` previews the exact registered agent memory and instruction files associated with the current project. `docmancer import <path>` remains available for arbitrary Markdown.
+- **Simplified installed guidance.** Agent templates and packaged plugins now teach `ask`, safe file operations, and `import`, while keeping documentation retrieval separate.
+- **Cloud workbench surfaces.** Personal Sync now shows stable mapping and conflict state, Devices exposes explicit revocation, and Team keeps plaintext generation and review local while the hosted account UI remains ciphertext-oriented.
+- **Content-derived tree revisions.** Context bundles now identify the exact canonical tree content revision instead of reporting only the number of eligible files.
+
+### Fixed
+
+- **Setup directory safety.** Machine-wide `setup` now installs GitHub Copilot guidance at user scope and never creates `.github`, `.vscode`, `AGENTS.md`, or `.docmancer` in the current directory.
+- **Read-only tree access.** Constructing or querying a missing tree no longer creates directories as a side effect.
+- **Consistent project roots.** CLI and workbench project defaults walk to the nearest Git or Docmancer marker before selecting local state.
+- **Accurate project matching.** Claude project slugs containing punctuation such as dots now resolve against existing directories when no session metadata is available.
+- **Stored source filtering.** Include and exclude rules now apply consistently to both live previews and already indexed source inventories.
+
+### Removed
+
+- **Expired 0.8 aliases.** Removed the old root `query`, `search`, `context`, `sync`, `init`, `harvest`, and relocated Docs and install aliases after their documented 0.8 compatibility window. Removed MCP `build_context`; agents now use `ask_memory`.
+
 ## [0.8.2] - 2026-07-23
 ### Added
 

@@ -27,9 +27,10 @@ memory unavailable.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from docmancer.memory.tree.addressing import AddressIndex
 from docmancer.memory.tree.contracts import MANDATORY_AUTHORITY
@@ -62,6 +63,13 @@ def _tokens(text: str) -> set[str]:
 
 def _document_text(entry: TreeMemoryFile) -> str:
     return entry.body + " " + entry.title + " " + " ".join(entry.tags)
+
+
+def index_revision(corpus: list[TreeMemoryFile]) -> str:
+    material = "\n".join(
+        sorted(f"{entry.memory_id}:{entry.revision_id}:{entry.content_hash}" for entry in corpus)
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
 
 
 def build_idf(corpus: list[TreeMemoryFile]) -> dict[str, float]:
@@ -123,11 +131,24 @@ class ConflictWarning:
 
 
 @dataclass
+class CandidateScore:
+    address: str
+    lexical_score: float
+    lexical_normalized: float
+    dense_score: float
+    fused_score: float
+    selected: bool
+    exclusion_reason: str | None
+
+
+@dataclass
 class RetrievalTrace:
     channel: str
     query_tokens: list[str]
     candidates_considered: int
     excluded_over_budget: int
+    candidate_scores: list[CandidateScore]
+    candidate_scores_truncated: int
 
 
 @dataclass
@@ -151,6 +172,11 @@ class ContextBundle:
     index_revision: str
     generated_at: str
     retrieval_trace: RetrievalTrace
+
+
+def context_bundle_payload(bundle: ContextBundle) -> dict:
+    """Return the one machine-readable ContextBundle shape used by CLI and MCP."""
+    return asdict(bundle)
 
 
 def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBundle:
@@ -195,16 +221,34 @@ def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBund
         lexical_normalized = lexical[entry.memory_id] / lexical_max if lexical_max > 0 else 0.0
         vector_score = vector_scores.get(entry.memory_id, 0.0)
         overlap = len(query_tokens & _tokens(_document_text(entry)))
-        scored.append((entry, fuse_scores(vector_score, lexical_normalized), overlap, vector_score))
-    scored.sort(key=lambda row: (0 if row[0].authority == MANDATORY_AUTHORITY else 1, -row[1]))
+        fused_score = fuse_scores(vector_score, lexical_normalized)
+        scored.append(
+            (
+                entry,
+                fused_score,
+                overlap,
+                vector_score,
+                lexical[entry.memory_id],
+                lexical_normalized,
+            )
+        )
+    scored.sort(
+        key=lambda row: (
+            0 if row[0].authority == MANDATORY_AUTHORITY else 1,
+            -row[1],
+            row[0].address,
+        )
+    )
 
     mandatory_items: list[ContextItem] = []
     curated_items: list[ContextItem] = []
+    candidate_outcomes: dict[str, tuple[bool, str | None]] = {}
     used_tokens = 0
     excluded_over_budget = 0
-    for entry, score, overlap, vector_score in scored:
+    for entry, score, overlap, vector_score, _lexical_score, _lexical_normalized in scored:
         is_mandatory = entry.authority == MANDATORY_AUTHORITY
         if not is_mandatory and query_tokens and overlap <= 0 and vector_score < 0.35:
+            candidate_outcomes[entry.memory_id] = (False, "not_relevant")
             continue
         item = ContextItem(
             address=entry.address,
@@ -219,12 +263,36 @@ def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBund
             # budget (plan section 6, checklist "mandatory-policy overflow").
             mandatory_items.append(item)
             used_tokens += item.token_estimate
+            candidate_outcomes[entry.memory_id] = (True, None)
             continue
         if used_tokens + item.token_estimate > request.token_budget:
             excluded_over_budget += 1
+            candidate_outcomes[entry.memory_id] = (False, "token_budget")
             continue
         curated_items.append(item)
         used_tokens += item.token_estimate
+        candidate_outcomes[entry.memory_id] = (True, None)
+
+    trace_limit = 20
+    candidate_scores = [
+        CandidateScore(
+            address=entry.address,
+            lexical_score=round(raw_lexical, 6),
+            lexical_normalized=round(normalized_lexical, 6),
+            dense_score=round(vector_score, 6),
+            fused_score=round(fused_score, 6),
+            selected=candidate_outcomes[entry.memory_id][0],
+            exclusion_reason=candidate_outcomes[entry.memory_id][1],
+        )
+        for (
+            entry,
+            fused_score,
+            _overlap,
+            vector_score,
+            raw_lexical,
+            normalized_lexical,
+        ) in scored[:trace_limit]
+    ]
 
     return ContextBundle(
         mandatory_policies=mandatory_items,
@@ -232,12 +300,14 @@ def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBund
         relevant_evidence=[],
         conflict_warnings=[],
         token_estimate=used_tokens,
-        index_revision=str(len(corpus)),
+        index_revision=index_revision(corpus),
         generated_at=now_iso(),
         retrieval_trace=RetrievalTrace(
             channel="hybrid-model2vec-lexical" if dense_available else "lexical-idf",
             query_tokens=sorted(query_tokens),
             candidates_considered=len(corpus),
             excluded_over_budget=excluded_over_budget,
+            candidate_scores=candidate_scores,
+            candidate_scores_truncated=max(0, len(scored) - trace_limit),
         ),
     )

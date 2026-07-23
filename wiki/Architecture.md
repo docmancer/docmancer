@@ -10,11 +10,19 @@ A memory atom is one small, self-contained, source-attributed fact, decision, ru
 
 Uncurated evidence lives under `.docmancer/inbox`. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
+## Derived outcome views
+
+Shared memory is recomputed from active indexed atoms. It normalizes agent-specific global and project scopes before semantic clustering, requires evidence from at least two independent harnesses, excludes generated Docmancer integration copies, and retains every contributing source. It is a recurrence view, not a consensus, confidence, or truth layer.
+
+Context delivery receipts live under `.docmancer/state/delivery.json`. Each receipt stores the agent, integration mode, successful recall time, canonical tree revision, bounded bundle hash, and item count. The delivery matrix combines those receipts with live hook and managed-projection inspection. It does not store recalled plaintext beyond the canonical memory and existing index.
+
+Canonical tree mutations append to `.docmancer/state/decision-journal.jsonl`. Each event identifies the stable file, revision and parent, time, actor surface or harness, sources, operation, before and after paths and hashes, and a readable unified diff. This is a narrow file-revision journal. It is not a claims event ledger, confidence workflow, or as-of reconstruction engine.
+
 ## Context Compiler
 
 The compiler receives a task, project, agent, requested domains, and token budget. It selects mandatory policy first, then relevant active memory. Results include stable citations, an index revision, token estimate, and bounded retrieval trace.
 
-The default retrieval path is local Model2Vec plus sqlite-vec. Lexical matching remains available, and optional FastEmbed plus Qdrant provides the heavy path. The index can be deleted and rebuilt from Markdown with `docmancer reindex`.
+The default retrieval path is local Model2Vec plus sqlite-vec. Lexical matching remains available, and optional FastEmbed plus Qdrant provides the heavy path. `docmancer ask` joins the curated tree with supporting indexed agent evidence under one token budget. The tree index can be deleted and rebuilt from Markdown with the advanced `docmancer reindex` command.
 
 One-hop relations are an internal ranking signal only. They can help select or explain a result, but they are not recursively expanded into agent context and are not presented as independent user-authored claims.
 
@@ -32,7 +40,7 @@ CLI, MCP, and the local web application use the same file-first services. The we
 
 Docs retrieval remains a separate user-facing surface even though it shares parts of the local indexing engine.
 
-The existing shell-first TUI and deterministic CLI remain supported local surfaces, but a TUI redesign is outside the Context Workbench implementation plan. The Electron desktop application is shelved. Neither TUI redesign nor Electron work is part of the workbench release gates.
+The deterministic CLI and packaged localhost workbench are the supported local surfaces. The former Textual TUI was removed, and the Electron desktop application is shelved. Neither a new TUI nor Electron work is part of the workbench release gates.
 
 ## File and editor invariants
 
@@ -42,4 +50,4 @@ External editors are supported because Markdown is canonical, but they do not by
 
 ## Cloud boundary
 
-Cloud handles encrypted transport, managed history and recovery, approved devices, and Team coordination. Plaintext canonical memory and private keys remain local. `docmancer sync` means encrypted Cloud push and pull; local discovery and rebuilding use `harvest` and `reindex`.
+Cloud handles encrypted transport, managed history and recovery, approved devices, and Team coordination. Plaintext canonical memory and private keys remain local. `docmancer cloud sync` is the only normal sync command. Registered local sources refresh automatically when the workbench opens or `ask` runs, while `reindex` remains an advanced recovery operation.

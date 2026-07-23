@@ -385,6 +385,44 @@ class LocalRuntime:
     async def memory_recent(self, since: datetime) -> list[dict]:
         return await asyncio.to_thread(self._require_memory().recent, since=since, limit=200)
 
+    async def common_memory(self) -> list[dict]:
+        return await asyncio.to_thread(
+            self._require_memory().common_memory,
+            project_path=self.project_path,
+        )
+
+    async def context_delivery(self) -> list[dict]:
+        from docmancer.memory.delivery import delivery_matrix
+        from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
+
+        hooks = await self.hook_status()
+        projections = {
+            agent: str(projection_path(agent))
+            for agent in PROJECTION_TARGETS
+            if projection_path(agent).is_file()
+        }
+        return delivery_matrix(
+            self.project_path,
+            hook_rows=hooks,
+            projections=projections,
+        )
+
+    async def decision_journal(
+        self,
+        *,
+        file_id: str | None = None,
+        operation: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        from docmancer.memory.tree.journal import DecisionJournal
+
+        return await asyncio.to_thread(
+            DecisionJournal(self._tree_store().root).events,
+            file_id=file_id,
+            operation=operation,
+            limit=limit,
+        )
+
     async def ingest_docs(self, path_or_url: str, progress_callback=None) -> int:
         progress = progress_callback or (lambda _name, _data: None)
         progress("prepare", {"detail": f"Resolving {path_or_url}"})
@@ -671,6 +709,7 @@ class LocalRuntime:
             "memory_id": entry.memory_id,
             "title": entry.title,
             "path": entry.path.relative_to(root).as_posix(),
+            "editor_path": str(entry.path.resolve()),
             "type": entry.type,
             "scope": entry.scope,
             "authority": entry.authority,
@@ -721,6 +760,8 @@ class LocalRuntime:
             sources=list(body.get("sources") or []),
             tags=list(body.get("tags") or []),
             expect="absent",
+            actor_surface="web",
+            actor_harness=str(body.get("agent") or "web"),
         )
         return self._tree_entry_payload(entry)
 
@@ -741,19 +782,51 @@ class LocalRuntime:
         address = str(body["address"])
         expected_hash = str(body.get("expected_hash") or "")
         if action == "edit":
-            entry = await asyncio.to_thread(store.edit, address, text=str(body["markdown"]), expected_hash=expected_hash)
+            entry = await asyncio.to_thread(
+                store.edit,
+                address,
+                text=str(body["markdown"]),
+                expected_hash=expected_hash,
+                actor_surface="web",
+                actor_harness=str(body.get("agent") or "web"),
+            )
             return self._tree_entry_payload(entry)
         if action == "move":
-            entry = await asyncio.to_thread(store.move, address, str(body["path"]), expected_hash=expected_hash)
+            entry = await asyncio.to_thread(
+                store.move,
+                address,
+                str(body["path"]),
+                expected_hash=expected_hash,
+                actor_surface="web",
+                actor_harness=str(body.get("agent") or "web"),
+            )
             return self._tree_entry_payload(entry)
         if action == "duplicate":
-            entry = await asyncio.to_thread(store.duplicate, address, str(body["path"]), expected_hash=expected_hash)
+            entry = await asyncio.to_thread(
+                store.duplicate,
+                address,
+                str(body["path"]),
+                expected_hash=expected_hash,
+                actor_surface="web",
+                actor_harness=str(body.get("agent") or "web"),
+            )
             return self._tree_entry_payload(entry)
         if action == "trash":
-            token = await asyncio.to_thread(store.trash, address, expected_hash=expected_hash, actor_surface="web")
+            token = await asyncio.to_thread(
+                store.trash,
+                address,
+                expected_hash=expected_hash,
+                actor_surface="web",
+                actor_harness=str(body.get("agent") or "web"),
+            )
             return {"trashed": True, "restore_token": token}
         if action == "restore":
-            entry = await asyncio.to_thread(store.restore, str(body["restore_token"]))
+            entry = await asyncio.to_thread(
+                store.restore,
+                str(body["restore_token"]),
+                actor_surface="web",
+                actor_harness=str(body.get("agent") or "web"),
+            )
             return self._tree_entry_payload(entry)
         if action == "open-editor":
             entry = await asyncio.to_thread(store.read, address)
@@ -777,6 +850,7 @@ class LocalRuntime:
             text = await asyncio.to_thread(path.read_text, encoding="utf-8")
             rows.append({
                 "id": path.stem,
+                "path": str(path.resolve()),
                 "title": next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), path.stem),
                 "preview": text[:1000],
                 "captured_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
@@ -796,22 +870,35 @@ class LocalRuntime:
             raise ValueError("source does not exist inside the active project")
         return candidate
 
-    async def harvest_tree(self, source: str, *, apply: bool = False) -> dict:
-        """Preview or copy bounded project Markdown into the local inbox."""
+    async def harvest_tree(self, source: str = "", *, apply: bool = False) -> dict:
+        """Preview registered project sources or an explicit project path."""
         from docmancer.memory.tree.curation import CurationEngine
+        from docmancer.memory.tree.harvest import discover_project_harvest_sources, markdown_files
 
-        candidate = self._bounded_project_source(source)
-        files = [candidate] if candidate.is_file() else list(candidate.rglob("*.md"))
-        files = sorted(
-            path for path in files
-            if path.is_file() and path.suffix.lower() == ".md"
-            and ".docmancer/tree" not in path.as_posix()
-        )[:500]
+        selection = "explicit"
+        registered = []
+        if source.strip():
+            roots = [self._bounded_project_source(source)]
+        else:
+            selection = "current-project"
+            registered = discover_project_harvest_sources(
+                self.project_path,
+                config=getattr(self._require_memory().config, "discovery", None),
+            )
+            roots = [path for item in registered for path in item.files]
+        files = [
+            path for path in markdown_files(roots)
+            if ".docmancer/tree" not in path.as_posix()
+        ]
         before = {path: path.stat().st_mtime_ns for path in files}
         results: list[dict] = []
         engine = CurationEngine(self._tree_store(), Path(self.project_path) / ".docmancer" / "inbox")
         for path in files:
-            row = {"source": str(path.relative_to(Path(self.project_path).resolve())), "status": "preview"}
+            try:
+                display_path = str(path.relative_to(Path(self.project_path).resolve()))
+            except ValueError:
+                display_path = str(path)
+            row = {"source": display_path, "status": "preview"}
             if apply:
                 text = await asyncio.to_thread(path.read_text, encoding="utf-8")
                 if len(text.encode("utf-8")) > 1_000_000:
@@ -822,7 +909,109 @@ class LocalRuntime:
             results.append(row)
         if any(path.stat().st_mtime_ns != before[path] for path in files):
             raise ValueError("a harvested source changed during the operation")
-        return {"applied": apply, "count": len(results), "results": results}
+        return {
+            "applied": apply,
+            "selection": selection,
+            "registered_sources": [
+                {
+                    "harness": item.harness,
+                    "root": str(item.root),
+                    "scope": item.scope,
+                    "file_count": len(item.files),
+                }
+                for item in registered
+            ],
+            "count": len(results),
+            "results": results,
+        }
+
+    async def import_markdown(self, source: str, *, apply: bool = True) -> dict:
+        """Preview or copy one explicitly selected Markdown path."""
+        value = source.strip()
+        if not value:
+            raise ValueError("source is required")
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(self.project_path) / candidate
+        candidate = candidate.resolve()
+        if not candidate.exists():
+            raise ValueError("source does not exist")
+        project_tree = Path(self.project_path).resolve() / ".docmancer" / "tree"
+        if candidate == project_tree or project_tree in candidate.parents:
+            raise ValueError("the curated tree cannot be imported into its own inbox")
+
+        from docmancer.memory.tree.curation import CurationEngine
+        from docmancer.memory.tree.harvest import markdown_files
+
+        files = markdown_files([candidate])
+        before = {path: (path.stat().st_mtime_ns, path.stat().st_size) for path in files}
+        results = []
+        engine = CurationEngine(self._tree_store(), Path(self.project_path) / ".docmancer" / "inbox")
+        for path in files:
+            row = {"source": str(path), "status": "preview"}
+            if apply:
+                text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+                if len(text.encode("utf-8")) > 1_000_000:
+                    row["status"] = "skipped_too_large"
+                else:
+                    result = await asyncio.to_thread(engine.curate, text, source_path=path)
+                    row.update(status=result.destination, inbox_path=str(result.inbox_path or ""))
+            results.append(row)
+        if any((path.stat().st_mtime_ns, path.stat().st_size) != before[path] for path in files):
+            raise ValueError("an imported source changed during the operation")
+        return {
+            "imported": apply,
+            "selection": "explicit",
+            "count": len(results),
+            "results": results,
+        }
+
+    def _allowed_markdown_path(self, value: str) -> Path:
+        candidate = Path(value).expanduser().resolve()
+        if candidate.suffix.lower() not in {".md", ".markdown", ".mdc"} or not candidate.is_file():
+            raise ValueError("only existing Markdown files can be opened")
+        project = Path(self.project_path).resolve()
+        local_state = Path.home() / ".docmancer"
+        within_project = candidate == project or project in candidate.parents
+        within_local_state = candidate == local_state or local_state in candidate.parents
+        indexed = self._require_memory().is_indexed_source_path(candidate)
+        docs_indexed = False
+        for row in self._docs_source_rows:
+            raw = str(row.get("source") or "")
+            if not raw or raw.startswith(("http://", "https://")):
+                continue
+            source = Path(raw).expanduser().resolve()
+            if source == candidate or (source.is_dir() and source in candidate.parents):
+                docs_indexed = True
+                break
+        if not (within_project or within_local_state or indexed or docs_indexed):
+            raise ValueError("file is outside the active project and is not an indexed source")
+        return candidate
+
+    async def available_editors(self, path: str) -> list[dict]:
+        from docmancer.memory.tree.editor import available_editors
+
+        candidate = self._allowed_markdown_path(path)
+        return await asyncio.to_thread(available_editors, candidate)
+
+    async def open_markdown_file(
+        self,
+        path: str,
+        *,
+        editor_id: str,
+        line: int | None = None,
+        column: int | None = None,
+    ) -> dict:
+        from docmancer.memory.tree.editor import open_in_editor
+
+        candidate = self._allowed_markdown_path(path)
+        return await asyncio.to_thread(
+            open_in_editor,
+            candidate,
+            editor_id=editor_id,
+            line=line,
+            column=column,
+        )
 
     async def curate_inbox(self, inbox_id: str, relative_path: str, *, apply: bool = False) -> dict:
         """Preview a complete-file diff, then optionally curate one inbox file."""
@@ -859,21 +1048,32 @@ class LocalRuntime:
         return payload
 
     async def ask_tree(self, task: str, *, token_budget: int = 2000, agent: str = "web") -> dict:
-        from docmancer.memory.tree.compiler import ContextRequest, compile_context
+        from docmancer.memory.ask import ask
 
-        store = self._tree_store()
         bundle = await asyncio.to_thread(
-            compile_context,
-            store.index,
-            ContextRequest(task=task, project_path=self.project_path, agent=agent, token_budget=token_budget),
+            ask,
+            task,
+            project_path=self.project_path,
+            token_budget=token_budget,
+            agent_name=agent,
+            surface="web",
+            integration_mode="workbench-preview",
         )
-        items = list(bundle.mandatory_policies) + list(bundle.curated_memory)
+        items = [
+            *bundle["mandatory_policies"],
+            *bundle["curated_memory"],
+            *bundle["relevant_evidence"],
+        ]
         return {
             "answer": None,
             "no_answer": not bool(items),
-            "items": [asdict(item) for item in items],
-            "token_estimate": bundle.token_estimate,
-            "index_revision": bundle.index_revision,
+            "items": items,
+            "mandatory_policies": bundle["mandatory_policies"],
+            "curated_memory": bundle["curated_memory"],
+            "relevant_evidence": bundle["relevant_evidence"],
+            "token_estimate": bundle["token_estimate"],
+            "index_revision": bundle["index_revision"],
+            "refresh": bundle["refresh"],
             "timings": {},
         }
 
@@ -949,7 +1149,7 @@ class LocalRuntime:
                     "scope": scope,
                     "path": str(path),
                     "exists": path.is_file(),
-                    "recall": "memory hook-context" in blob,
+                    "recall": "memory hook-context" in blob or "session-baseline" in blob,
                     "capture": "memory capture-hook" in blob,
                     "events": events,
                     "error": error,
@@ -989,9 +1189,104 @@ class LocalRuntime:
 
     async def cloud_status(self) -> dict:
         from docmancer.cli.cloud_commands import cloud_status
+        from docmancer.cloud.config import CloudConfig
 
         root = Path(self._require_memory().db_path).parent
-        return await asyncio.to_thread(cloud_status, root)
+        value = await asyncio.to_thread(cloud_status, root)
+        config = CloudConfig(root)
+        project_id = await asyncio.to_thread(config.ensure_project, self.project_path)
+        value["project_mapping"] = config.mapping_status(project_id)
+        return value
+
+    async def team_file(
+        self,
+        *,
+        domain: str = "standards",
+        apply: bool = False,
+        approved: bool = False,
+        approver_id: str | None = None,
+    ) -> dict:
+        """Preview or approve one privacy-filtered generated Team file."""
+        from docmancer.cloud.team_files import generate_team_file
+
+        root = Path(self._require_memory().db_path).parent
+        result = await asyncio.to_thread(
+            generate_team_file,
+            self.project_path,
+            domain=domain,
+            apply=apply,
+            approved=approved,
+            approver_id=approver_id,
+            root=root,
+        )
+        if apply and result.get("published"):
+            from docmancer.cloud.config import CloudConfig
+            from docmancer.cloud.crypto import opaque_ref
+            from docmancer.cloud.keystore import KeyStore
+            from docmancer.cloud.outbox import CloudState
+
+            config = CloudConfig(root)
+            account = config.account()
+            workspace = config.workspace()
+            keys = KeyStore()
+            if workspace is not None:
+                workspace_id = workspace[0]
+                workspace_key = keys.workspace_key(str(account["account_id"]), workspace_id)
+                if workspace_key:
+                    revision_ref = opaque_ref(
+                        str(result["revision_id"]),
+                        workspace_key,
+                        workspace_id=workspace_id,
+                        kind="revision",
+                    )
+                    state = CloudState(config.paths.sync_state)
+                    envelope = next(
+                        (
+                            item for item in state.pending()
+                            if item.get("revision_ref") == revision_ref
+                            and item.get("kind") == "team_file_revision"
+                        ),
+                        None,
+                    )
+                    if envelope:
+                        client, selected_workspace = await asyncio.to_thread(self._cloud_client)
+                        try:
+                            result["proposal"] = await asyncio.to_thread(
+                                client.create_promotion,
+                                selected_workspace,
+                                {
+                                    **envelope,
+                                    "approval_scope": "complete_file",
+                                    "privacy_attestation": {
+                                        "local_checks_passed": True,
+                                        "selected_count": int(result["selected_count"]),
+                                        "exclusion_count": len(result["excluded"]),
+                                    },
+                                },
+                            )
+                        finally:
+                            await asyncio.to_thread(client.close)
+        result["cloud"] = await self.cloud_status()
+        return result
+
+    async def team_file_transition(
+        self,
+        *,
+        domain: str,
+        outcome: str,
+        approver_id: str | None = None,
+    ) -> dict:
+        from docmancer.cloud.team_files import transition_team_file
+
+        memory = self._require_memory()
+        return await asyncio.to_thread(
+            transition_team_file,
+            self.project_path,
+            domain=domain,
+            outcome=outcome,
+            approver_id=approver_id,
+            root=Path(memory.db_path).parent,
+        )
 
     async def cloud_conflicts(self) -> list[dict]:
         from docmancer.cloud.config import CloudConfig
@@ -1161,7 +1456,7 @@ class LocalRuntime:
     async def cloud_review_promotion(self, proposal_id: str, decision: str, *, text: str | None = None) -> dict:
         client, workspace_id = await asyncio.to_thread(self._cloud_client)
         try:
-            payload = {"decision": decision}
+            payload = {"decision": decision, "approval_scope": "complete_file"}
             if text is not None:
                 payload["text"] = text
             return await asyncio.to_thread(client.review_promotion, workspace_id, proposal_id, payload)

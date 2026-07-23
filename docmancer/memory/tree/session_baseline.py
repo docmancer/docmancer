@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from docmancer.memory.tree.addressing import AddressIndex
-from docmancer.memory.tree.compiler import ContextRequest, compile_context
+from docmancer.memory.tree.compiler import ContextRequest, compile_context, index_revision
 
 REFERENCE_DATA_OPEN = "<docmancer-recalled-memory>"
 REFERENCE_DATA_CLOSE = "</docmancer-recalled-memory>"
@@ -95,6 +95,25 @@ def build_session_baseline_safe(
         if baseline is not None and state_dir is not None and session_id:
             state_dir.mkdir(parents=True, exist_ok=True)
             _seen_marker(state_dir, session_id).write_text("", encoding="utf-8")
+        if baseline is not None and project_path:
+            from docmancer.memory.delivery import record_delivery
+
+            corpus = list(index.entries())
+            record_delivery(
+                project_path,
+                agent=agent,
+                surface="session-start",
+                integration_mode="hook",
+                bundle={
+                    "mandatory_policies": [{"excerpt": baseline}],
+                    "curated_memory": [],
+                    "relevant_evidence": [],
+                    "conflict_warnings": [],
+                    "token_estimate": max(1, len(baseline) // 4),
+                    "token_budget": token_budget,
+                    "index_revision": index_revision(corpus),
+                },
+            )
         return baseline
     except Exception:
         return None

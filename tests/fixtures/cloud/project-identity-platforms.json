@@ -1,0 +1,16 @@
+{
+  "remote_variants": [
+    "git@github.com:Docmancer/Docmancer.git",
+    "https://github.com/docmancer/docmancer.git",
+    "ssh://git@github.com/docmancer/docmancer.git"
+  ],
+  "normalized_remote": "github.com/docmancer/docmancer",
+  "project_id": "prj_4c4a4f1ea1d5073068c2c4df9a0a8f5b",
+  "device_local_paths": {
+    "macos": "/Users/alice/code/docmancer",
+    "linux": "/home/alice/code/docmancer",
+    "windows": "C:\\Users\\alice\\code\\docmancer",
+    "moved": "/Users/alice/work/docmancer",
+    "duplicate_checkout": "/Users/alice/scratch/docmancer"
+  }
+}

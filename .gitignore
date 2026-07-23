@@ -21,6 +21,9 @@ docs/
 scripts/*.log
 output/playwright/
 .playwright-cli/
+benchmarks/data/
+benchmarks/results/
+benchmarks/.cache/
 web/node_modules/
 web/.next/
 web/out/

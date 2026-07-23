@@ -108,6 +108,11 @@ def test_session_baseline_cli_emits_hook_envelope_and_deduplicates(tmp_path: Pat
     assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     assert "Deploy production on Railway." in context
     assert REFERENCE_DATA_OPEN in context
+    delivery = json.loads(
+        (project / ".docmancer" / "state" / "delivery.json").read_text(encoding="utf-8")
+    )
+    assert delivery["agents"]["codex"]["integration_mode"] == "hook"
+    assert delivery["agents"]["codex"]["bundle_hash"]
     assert second.exit_code == 0
     assert second.output == ""
 

@@ -127,3 +127,33 @@ def test_no_answer_state_when_nothing_clears_the_relevance_floor(tmp_path: Path)
 def test_fuse_scores_matches_the_documented_formula() -> None:
     assert fuse_scores(0.8, 0.2) == 0.8 + 0.3 * 0.2
     assert fuse_scores(0.0, 0.5) == 0.5
+
+
+def test_retrieval_trace_exposes_bounded_native_scores_and_outcomes(tmp_path: Path) -> None:
+    store = TreeStore(tmp_path / "tree")
+    for index in range(25):
+        topic = "railway deployment" if index == 0 else f"unrelated topic {index}"
+        store.write(
+            relative_path=f"notes/{index}.md",
+            text=f"# Note {index}\n\n{topic}\n",
+            expect="absent",
+        )
+
+    bundle = compile_context(
+        store.index,
+        ContextRequest(task="railway deployment", token_budget=1000),
+    )
+
+    trace = bundle.retrieval_trace
+    assert trace.candidates_considered == 25
+    assert len(trace.candidate_scores) == 20
+    assert trace.candidate_scores_truncated == 5
+    selected = trace.candidate_scores[0]
+    assert selected.address.startswith("docmancer://memory/")
+    assert selected.lexical_score > 0
+    assert selected.lexical_normalized == 1.0
+    assert 0 <= selected.dense_score <= 1
+    assert selected.fused_score >= selected.lexical_normalized
+    assert selected.selected is True
+    assert selected.exclusion_reason is None
+    assert any(score.exclusion_reason == "not_relevant" for score in trace.candidate_scores)

@@ -1329,6 +1329,31 @@ def hook_context(agent: str, limit: int, max_chars: int, threshold: float, debug
         context = build_hook_context(payload, limit=max(0, limit), max_chars=max(1, max_chars), threshold=threshold)
         output = hook_output(payload.event, context)
         if output:
+            if payload.cwd and (Path(payload.cwd).expanduser() / ".docmancer").is_dir():
+                try:
+                    from docmancer.memory.delivery import record_delivery
+                    from docmancer.memory.tree.compiler import index_revision
+                    from docmancer.memory.tree.store import TreeStore
+
+                    project = Path(payload.cwd).expanduser().resolve()
+                    tree = TreeStore(project / ".docmancer" / "tree")
+                    record_delivery(
+                        project,
+                        agent=payload.agent,
+                        surface=payload.event,
+                        integration_mode="hook",
+                        bundle={
+                            "mandatory_policies": [],
+                            "curated_memory": [],
+                            "relevant_evidence": [{"excerpt": context}],
+                            "conflict_warnings": [],
+                            "token_estimate": max(1, len(context) // 4),
+                            "index_revision": index_revision(tree.index.entries()),
+                        },
+                        task=payload.prompt,
+                    )
+                except OSError:
+                    pass
             click.echo(output)
     except _HookTimeout:
         if debug:

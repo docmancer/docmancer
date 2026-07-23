@@ -1,17 +1,13 @@
 from copy import copy
-from types import MethodType
 
 import click
 
 from docmancer import __version__
 from docmancer.cli.commands import (
     add_cmd,
-    clear_cmd,
     doctor_cmd,
     fetch_cmd,
-    ingest_cmd,
     init_cmd,
-    inspect_cmd,
     install_cmd,
     list_cmd,
     query_cmd as docs_query_cmd,
@@ -26,21 +22,25 @@ from docmancer.cli.mcp_commands import mcp_group
 from docmancer.cli.memory_commands import memory_group
 from docmancer.cli.okf_commands import okf_group
 from docmancer.cli.qdrant_commands import qdrant_group
-from docmancer.cli.surface_commands import agent_group, query_cmd, status_cmd, sync_cmd
+from docmancer.cli.surface_commands import (
+    agent_group,
+    ask_cmd,
+    common_cmd,
+    delivery_cmd,
+    status_cmd,
+    timeline_cmd,
+)
 from docmancer.cli.tree_commands import (
     capture_command,
-    context,
     curate_command,
     duplicate,
     edit,
-    harvest_command,
-    init_tree,
+    import_command,
     move,
     migrate_command,
     read,
     reindex_command,
     restore,
-    search,
     session_baseline_command,
     tree_group,
     trash,
@@ -62,11 +62,10 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     epilog=format_examples(
         "docmancer setup",
         "docmancer web",
-        "docmancer sync",
-        'docmancer query "what deployment decisions have we recorded?"',
-        "docmancer memory distill",
-        "docmancer agent install claude-code --hooks",
-        'docmancer docs query "How do I authenticate?"',
+        'docmancer ask "what deployment decisions have we recorded?"',
+        'docmancer write "# Release\\n\\nDeploy through Railway." --path decisions/release.md',
+        "docmancer import ./notes",
+        "docmancer cloud sync",
     ),
 )
 @click.option(
@@ -96,7 +95,7 @@ def cli(ctx, config_path: str | None):
     "--project",
     "project_path",
     type=click.Path(path_type=str, file_okay=False, resolve_path=True),
-    default=".",
+    default=None,
     show_default="current directory",
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
@@ -105,19 +104,30 @@ def web_cmd(
     ctx: click.Context,
     port: int,
     no_open: bool,
-    project_path: str,
+    project_path: str | None,
     config_path: str | None,
 ) -> None:
     """Open the full local Docmancer interface on a loopback-only server."""
     if config_path is None and ctx.parent and ctx.parent.obj:
         config_path = ctx.parent.obj.get("config_path")
+    from docmancer.memory.tree.project import ensure_project
     from docmancer.web import run_web
 
+    project = ensure_project(project_path)
+    try:
+        from docmancer.memory import MemoryAgent
+
+        MemoryAgent().refresh_if_changed()
+    except Exception as exc:  # noqa: BLE001 - the workbench remains usable with its last valid index
+        click.echo(
+            f"Agent-source refresh failed; opening with the last valid local index. {exc}",
+            err=True,
+        )
     run_web(
         port=port,
         open_browser=not no_open,
         config_path=config_path,
-        project_path=project_path,
+        project_path=str(project.project_root),
     )
 
 
@@ -127,6 +137,7 @@ def docs_group() -> None:
 
 
 docs_group.add_command(add_cmd, "add")
+docs_group.add_command(fetch_cmd, "download")
 docs_group.add_command(docs_query_cmd, "query")
 docs_group.add_command(list_cmd, "list")
 docs_group.add_command(update_cmd, "sync")
@@ -139,65 +150,47 @@ agent_group.add_command(install_cmd, "install")
 agent_group.add_command(remove_cmd, "remove")
 
 
-def _add_deprecated_root_alias(command: click.Command, name: str, replacement: str) -> None:
-    alias = copy(command)
-    alias.name = name
-    alias.hidden = True
-    original_invoke = alias.invoke
-
-    def invoke(self, ctx: click.Context):
-        if not bool(ctx.params.get("as_json")):
-            click.echo(f"Deprecated: `docmancer {name}` moved to `{replacement}`.", err=True)
-        return original_invoke(ctx)
-
-    alias.invoke = MethodType(invoke, alias)
-    cli.add_command(alias, name)
+def _add_hidden_root_command(command: click.Command, name: str) -> None:
+    hidden = copy(command)
+    hidden.name = name
+    hidden.hidden = True
+    cli.add_command(hidden, name)
 
 
 cli.add_command(setup_cmd, "setup")
-cli.add_command(sync_cmd, "sync")
-cli.add_command(query_cmd, "query")
-cli.add_command(memory_group, "memory")
-cli.add_command(docs_group, "docs")
+cli.add_command(ask_cmd, "ask")
+cli.add_command(common_cmd, "common")
+cli.add_command(delivery_cmd, "delivery")
+cli.add_command(timeline_cmd, "timeline")
 cli.add_command(status_cmd, "status")
 cli.add_command(doctor_cmd, "doctor")
 cli.add_command(cloud_group, "cloud")
-cli.add_command(agent_group, "agent")
-cli.add_command(mcp_group, "mcp")
 cli.add_command(web_cmd, "web")
-cli.add_command(tree_group, "tree")
-cli.add_command(init_tree, "init")
+cli.add_command(import_command, "import")
 cli.add_command(write, "write")
 cli.add_command(read, "read")
 cli.add_command(edit, "edit")
 cli.add_command(move, "move")
-cli.add_command(duplicate, "duplicate")
-cli.add_command(trash, "trash")
-cli.add_command(restore, "restore")
-cli.add_command(search, "search")
-cli.add_command(context, "context")
-cli.add_command(reindex_command, "reindex")
-cli.add_command(migrate_command, "migrate")
-cli.add_command(capture_command, "capture")
-cli.add_command(session_baseline_command, "session-baseline")
-cli.add_command(curate_command, "curate")
-cli.add_command(harvest_command, "harvest")
-cli.add_command(package_check_cmd, "package-check")
 
-for _command, _name, _replacement in (
-    (add_cmd, "add", "docmancer docs add"),
-    (update_cmd, "update", "docmancer docs sync"),
-    (inspect_cmd, "inspect", "docmancer docs list"),
-    (list_cmd, "list", "docmancer docs list"),
-    (remove_cmd, "remove", "docmancer docs remove"),
-    (clear_cmd, "clear", "docmancer docs remove"),
-    (fetch_cmd, "fetch", "docmancer docs add"),
-    (install_cmd, "install", "docmancer agent install"),
-    (ingest_cmd, "ingest", "docmancer docs add"),
-    (okf_group, "okf", "docmancer memory export"),
-    (qdrant_group, "qdrant", "docmancer docs"),
+for _command, _name in (
+    (memory_group, "memory"),
+    (docs_group, "docs"),
+    (agent_group, "agent"),
+    (mcp_group, "mcp"),
+    (tree_group, "tree"),
+    (okf_group, "okf"),
+    (qdrant_group, "qdrant"),
+    (duplicate, "duplicate"),
+    (trash, "trash"),
+    (restore, "restore"),
+    (reindex_command, "reindex"),
+    (migrate_command, "migrate"),
+    (capture_command, "capture"),
+    (session_baseline_command, "session-baseline"),
+    (curate_command, "curate"),
+    (package_check_cmd, "package-check"),
 ):
-    _add_deprecated_root_alias(_command, _name, _replacement)
+    _add_hidden_root_command(_command, _name)
 
 
 if __name__ == "__main__":

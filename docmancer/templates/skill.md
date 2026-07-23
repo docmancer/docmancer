@@ -5,7 +5,7 @@ description: Recall and update local agent memory, or search separately indexed 
 
 # docmancer
 
-Docmancer turns memory and instructions scattered across coding agents into a curated, source-attributed Markdown tree. It also maintains a separate documentation index. Use tree commands for past decisions, conventions, deliberate writes, and agent context. Use `docmancer docs ...` only for library, API, and vendor documentation.
+Docmancer combines curated project Markdown with memory, instructions, and rules discovered from local coding agents. It also maintains a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for memory. Use `docmancer docs ...` only for library, API, and vendor documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -22,18 +22,20 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Workflow
 
-1. For project context, run `docmancer context "task" --project-path "$PWD"` or `docmancer search "question"` before answering.
+1. For project context, run `docmancer ask "task"` before answering.
 2. Read the canonical file with `docmancer read <address>` before changing it.
 3. Write durable memory only when the user asks, using an explicit path and scope.
-4. For third-party documentation, run `docmancer docs list`, then `docmancer docs query "question"`.
-5. Keep memory results and Docs results separate in the answer.
+4. Use `docmancer common`, `delivery`, or `timeline` when the user asks what recurs across agents, how context reached an agent, or how a decision changed.
+5. For third-party documentation, run `docmancer docs list`, then `docmancer docs query "question"`.
+6. Keep memory results and Docs results separate in the answer.
 
 ## Memory Commands
 
 ```bash
-docmancer init
-docmancer context "what deployment decisions apply?" --project-path "$PWD"
-docmancer search "deployment"
+docmancer ask "what deployment decisions apply?"
+docmancer common
+docmancer delivery
+docmancer timeline
 docmancer read docmancer://memory/<id>
 docmancer write "# Release process\n\nDeploy on Railway." --path deployment/release.md --scope project
 docmancer edit docmancer://memory/<id> - --expected-hash <hash>
@@ -41,6 +43,7 @@ docmancer move docmancer://memory/<id> deployment/production.md --expected-hash 
 docmancer duplicate docmancer://memory/<id> deployment/copy.md --expected-hash <hash>
 docmancer trash docmancer://memory/<id> --expected-hash <hash>
 docmancer restore <restore-token>
+docmancer import ./notes
 ```
 
 Existing-file operations use the current content hash. Harvested files remain read-only evidence, ambiguous material stays in the inbox, and `docmancer://memory/<id>` citations survive moves.
@@ -107,9 +110,9 @@ Primary command. Returns a compact markdown context pack with source attribution
 | `docmancer docs sync [source]` | Re-fetch and re-index all sources, or one specific source |
 | `docmancer docs remove <source>` | Remove a source or docset root |
 | `docmancer docs remove --all` | Clear the entire index |
-| `docmancer clear` | Wipe docmancer home, model caches used by docmancer, and managed Qdrant data (destructive; use `--dry-run`, `--keep-config`, or `--keep-models` as needed) |
+| `docmancer docs remove --all` | Remove every indexed documentation source after explicit confirmation. |
 | `docmancer doctor` | Check config, tree roots, indexes, providers, hooks, and installed skills |
-| `docmancer docs add <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
+| `docmancer docs download <url> --output <dir>` | Download docs to markdown without indexing (add `--format okf` for an OKF bundle) |
 
 ## Common Mistakes
 

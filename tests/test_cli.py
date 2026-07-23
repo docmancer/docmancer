@@ -53,8 +53,12 @@ class FakeDocmancerConfig:
 
 PUBLIC_COMMAND_HELP_CASES = [
     (["setup"], ["docmancer setup"]),
-    (["sync"], ["--local-only"]),
-    (["query"], ["approved context", "--history"]),
+    (["web"], ["--project"]),
+    (["ask"], ["--token-budget", "--history"]),
+    (["common"], ["recurring"]),
+    (["delivery"], ["bundle"]),
+    (["timeline"], ["--file-id", "--operation"]),
+    (["import"], ["--dry-run"]),
     (["memory"], ["distill", "review", "share"]),
     (["docs"], ["add", "query", "sync"]),
     (["status"], ["--check"]),
@@ -70,9 +74,13 @@ def test_cli_help():
     assert "recall the memory your coding agents already wrote" in result.output
     assert "docs" in result.output
     assert "setup" in result.output
-    # The memory/docs MCP server group is a real command now (not the old
-    # API-pack compiler, which stays gone).
-    assert "mcp" in result.output
+    assert "ask" in result.output
+    assert "common" in result.output
+    assert "delivery" in result.output
+    assert "timeline" in result.output
+    assert "import" in result.output
+    # Advanced integration surfaces remain callable but stay out of everyday help.
+    assert "\n  mcp " not in result.output
     assert "qdrant" not in result.output
     assert "install" + "-pack" not in result.output
     assert "un" + "install" not in result.output
@@ -95,20 +103,46 @@ def test_public_commands_have_examples_in_help():
             assert fragment in result.output
 
 
-def test_ingest_url_points_to_add():
-    result = CliRunner().invoke(cli, ["ingest", "https://docs.example.com"])
-    assert result.exit_code != 0
-    assert "Use `docmancer docs add` for URLs." in result.output
+def test_expired_root_aliases_are_removed_in_0_9():
+    runner = CliRunner()
+    for command in (
+        "query",
+        "search",
+        "context",
+        "sync",
+        "init",
+        "harvest",
+        "add",
+        "update",
+        "inspect",
+        "list",
+        "remove",
+        "clear",
+        "fetch",
+        "install",
+        "ingest",
+    ):
+        result = runner.invoke(cli, [command])
+        assert result.exit_code != 0
+        assert f"No such command '{command}'" in result.output
 
 
-def test_cli_init_creates_curated_project_tree(tmp_path):
-    root = tmp_path / ".docmancer" / "tree"
-    result = CliRunner().invoke(cli, ["init", "--root", str(root), "--project-id", "test-project"])
-    assert result.exit_code == 0
-    assert (root / "context.md").is_file()
-    assert (tmp_path / ".docmancer" / "inbox").is_dir()
-    assert (tmp_path / ".docmancer" / "trash").is_dir()
-    assert "Capture hooks remain disabled" in result.output
+def test_web_resolves_git_root_initializes_tree_and_refreshes(tmp_path, monkeypatch):
+    project = tmp_path / "repo"
+    nested = project / "src" / "feature"
+    (project / ".git").mkdir(parents=True)
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    memory = MagicMock()
+
+    with patch("docmancer.memory.MemoryAgent", return_value=memory), \
+         patch("docmancer.web.run_web") as run_web:
+        result = CliRunner().invoke(cli, ["web", "--no-open"])
+
+    assert result.exit_code == 0, result.output
+    assert (project / ".docmancer" / "tree" / "context.md").is_file()
+    memory.refresh_if_changed.assert_called_once_with()
+    assert run_web.call_args.kwargs["project_path"] == str(project.resolve())
 
 
 def test_docs_init_creates_project_sqlite_config(tmp_path):
@@ -213,7 +247,8 @@ def test_ingest_shows_total_and_calls_agent(tmp_path):
         result = runner.invoke(
             cli,
             [
-                "ingest",
+                "docs",
+                "add",
                 str(tmp_path),
                 "--include",
                 "guides/**",

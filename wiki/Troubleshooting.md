@@ -23,16 +23,17 @@ Remove an older user-site installation or put the intended pipx or virtual-envir
 
 The package requires Python 3.11 through 3.13. On Apple Silicon, confirm the interpreter reports `arm64` and recreate the environment with a native Homebrew Python when `pydantic_core` or another native wheel reports an architecture mismatch.
 
-## Sync finds no sources
+## Agent memory is missing
 
-Confirm at least one supported agent has written memory, instructions, or rules on this machine. Then run:
+Confirm at least one supported agent has written memory, instructions, or rules on this machine. Opening the workbench or asking a question refreshes changed registered sources automatically:
 
 ```bash
-docmancer sync --local-only
+docmancer web
+docmancer ask "What decisions have we made in this project?"
 docmancer status --json
 ```
 
-Check the `discovery.disabled` configuration list if an expected harness is absent. Repo-level instructions can only be recovered for projects an agent has previously recorded or that are explicitly in scope.
+Check the `discovery.disabled` configuration list if an expected harness is absent. Repo-level instructions can only be recovered for projects an agent has previously recorded or that are explicitly in scope. Advanced diagnosis is available through `docmancer agent refresh`.
 
 ## Distillation proposes nothing
 
@@ -48,7 +49,7 @@ Inspect it with `docmancer memory review <proposal>`. Use `--edit <operation-ind
 
 ## A deleted record returned
 
-Run `docmancer memory show <id> --history` and `docmancer cloud sync`. Canonical removal writes a tombstone and cloud replay must not resurrect an older live revision. If the source is agent-owned rather than canonical, delete or correct the source evidence and run `docmancer sync` so the canonical layer can propose the corresponding change.
+Run `docmancer memory show <id> --history` and `docmancer cloud sync`. Canonical removal writes a tombstone and cloud replay must not resurrect an older live revision. If the source is agent-owned rather than canonical, delete or correct the original source evidence. The next workbench open or `docmancer ask` refreshes the changed source automatically.
 
 ## Context differs between agents
 
@@ -65,20 +66,20 @@ Claude Code and Codex hooks receive task-relevant context dynamically. Other sup
 
 Confirm the project is linked on the current device and that the team proposal is approved. `docmancer memory show team-standards` should list the record, while `docmancer memory show team-project:<project-id>` shows explicit project exceptions. Team project and personal project values take precedence over global standards.
 
-## Memory query returns no result
+## Ask returns no result
 
-Run `docmancer sync --local-only`, then use a more specific question. `docmancer query` omits weak matches below its relevance floor. `--min-score 0` is useful only for retrieval diagnosis and does not make weak evidence trustworthy.
+Use a more specific question and confirm the source appears in `docmancer status --json`. `docmancer ask` omits weak matches below its relevance floor rather than presenting them as trustworthy context.
 
 Use `--history` when the requested fact may have been superseded or expired:
 
 ```bash
-docmancer query "<question>" --history
+docmancer ask "<question>" --history
 docmancer memory show <record-id> --relations --history
 ```
 
 ## Conflicts or orphaned evidence are missing
 
-Run `docmancer sync --local-only` first, then inspect the review filters:
+Open `docmancer web` to refresh changed sources, then inspect the advanced review filters:
 
 ```bash
 docmancer memory review --conflicts
@@ -89,7 +90,7 @@ Project-specific differences may be classified as explicit overrides instead of 
 
 ## Security warning appears in Audit
 
-The local web Audit page shows the likely credential type, severity, exact source file and line, and a masked excerpt. Use `docmancer status --json` for the complete local report, then rotate the credential if it is real, remove it from its original source, and run `docmancer sync --local-only`. Docmancer never prints the complete detected value.
+The local web Audit page shows the likely credential type, severity, exact source file and line, and a masked excerpt. Use `docmancer status --json` for the complete local report, then rotate the credential if it is real and remove it from its original source. The next workbench open or `docmancer ask` refreshes the changed source. Docmancer never prints the complete detected value.
 
 ## Documentation fetch is incomplete
 
@@ -107,8 +108,8 @@ The vector path may be unavailable, may not have been populated, or may be confi
 
 ## Cloud sync is unavailable
 
-Local memory remains fully operational. Check the footer or run `docmancer cloud`, reconnect with `docmancer cloud connect` when needed, and use `docmancer sync --local-only` until connectivity returns. Cloud and semantic conflicts appear in the Context review queue.
+Local memory remains fully operational. Check the footer or run `docmancer cloud`, then reconnect with `docmancer cloud connect` when needed. Local source refresh through the workbench and `docmancer ask` does not depend on Cloud connectivity. Cloud and semantic conflicts appear in the Context review queue.
 
-## Old commands still work but print warnings
+## An old command is no longer recognized
 
-The previous root, memory, and cloud surfaces are hidden compatibility aliases for one release. Follow the replacement printed to stderr. They are scheduled for removal in the next minor release.
+The 0.8 root aliases were removed in 0.9. Use `ask` for recall, `web` for project onboarding, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for their respective advanced operations.

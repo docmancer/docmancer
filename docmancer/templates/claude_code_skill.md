@@ -8,7 +8,7 @@ allowed-tools:
 
 # docmancer
 
-This skill is the Docs surface for third-party documentation. For prior decisions, project conventions, deliberate memory writes, or compiled agent context, use the separately installed `docmancer-memory` skill. Its canonical commands include `docmancer search`, `docmancer read`, `docmancer write`, `docmancer context`, `docmancer duplicate`, `docmancer trash`, and `docmancer restore`. Do not mix Docs results with memory results.
+This skill is the Docs surface for third-party documentation. For prior decisions, project conventions, deliberate memory writes, or agent context, use the separately installed `docmancer-memory` skill. Its normal commands are `docmancer ask`, `read`, `write`, `edit`, `move`, and `import`. Do not mix Docs results with memory results.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -39,15 +39,13 @@ docmancer docs query "how to authenticate" --expand
 docmancer docs query "how to authenticate" --expand page
 docmancer docs query "how to authenticate" --format json
 docmancer docs query "how to authenticate" --allow-degraded
-docmancer clear --dry-run
-docmancer docs list
 docmancer docs list
 docmancer docs sync
 docmancer docs remove <source>
 docmancer doctor
 ```
 
-Use `ingest` for local files and `add` for URLs. `query` is the primary retrieval command. It returns compact, source-attributed context plus estimated token savings.
+`docs query` is the primary documentation retrieval command. It returns compact, source-attributed context plus estimated token savings.
 
 ## Common Mistakes
 

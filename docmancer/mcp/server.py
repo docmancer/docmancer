@@ -405,23 +405,63 @@ def build_server(project_path: str | Path | None = None):
 
     @server.tool(
         description=(
-            "READ-ONLY: compile task-relevant context (mandatory policy plus query-relevant curated "
-            "memory) -- the same compiler operation as CLI `context`. Returns an empty bundle, not an "
-            "error, when the tree has no relevant or mandatory memory yet. Example: task='prepare a "
-            "production release', token_budget=2000. Aliases: query for task, budget for token_budget."
+            "READ-ONLY: show memories recurring across two or more independent agent harnesses. "
+            "Generated Docmancer integration copies are excluded. Results are recurrence evidence, "
+            "not consensus or truth."
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def build_context(
-        task: str | None = None,
+    def common_memory(project_path: str | None = None) -> list[dict] | dict:
+        project_path, error = tree_project(project_path)
+        if error:
+            return error
+        return tree_tools.common_memory(project_path=project_path)
+
+    @server.tool(
+        description=(
+            "READ-ONLY: show each supported agent's integration mode, hook status, and latest "
+            "observed context bundle revision and hash."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def context_delivery(project_path: str | None = None) -> list[dict] | dict:
+        project_path, error = tree_project(project_path)
+        if error:
+            return error
+        return tree_tools.context_delivery(project_path=project_path)
+
+    @server.tool(
+        description=(
+            "READ-ONLY: show the append-only timeline of canonical memory file creates, edits, "
+            "moves, duplicates, trash operations, and restores, including human-readable diffs."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def decision_timeline(
         project_path: str | None = None,
-        project_id: str | None = None,
-        agent: str = "unknown",
-        session_id: str | None = None,
-        token_budget: int | None = None,
-        requested_domains: list[str] | None = None,
-        query: str | None = None,
-        budget: int | None = None,
+        file_id: str | None = None,
+        operation: str | None = None,
+        limit: int = 100,
+    ) -> list[dict] | dict:
+        project_path, error = tree_project(project_path)
+        if error:
+            return error
+        return tree_tools.decision_timeline(
+            project_path=project_path,
+            file_id=file_id,
+            operation=operation,
+            limit=limit,
+        )
+
+    def _ask_memory_impl(
+        task: str | None,
+        project_path: str | None,
+        token_budget: int | None,
+        include_history: bool,
+        limit: int,
+        query: str | None,
+        budget: int | None,
+        agent: str,
     ) -> dict:
         task, error = _pick_argument("task", task, query)
         if error:
@@ -432,15 +472,35 @@ def build_server(project_path: str | Path | None = None):
         project_path, error = tree_project(project_path)
         if error:
             return error
-        return tree_tools.build_context(
+        return tree_tools.ask_memory(
             task,
             project_path=project_path,
-            project_id=project_id,
-            agent=agent,
-            session_id=session_id,
             token_budget=token_budget or 2000,
-            requested_domains=requested_domains,
+            limit=limit,
+            include_history=include_history,
+            agent=agent,
         )
+
+    @server.tool(
+        name="ask_memory",
+        description=(
+            "READ-ONLY: recall one bounded bundle of mandatory policy, curated memory, and supporting "
+            "indexed agent evidence for a task. Returns an empty bundle when no relevant local memory "
+            "exists. Aliases: query for task, budget for token_budget."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def ask_memory_tool(
+        task: str | None = None,
+        project_path: str | None = None,
+        token_budget: int | None = None,
+        include_history: bool = False,
+        limit: int = 8,
+        query: str | None = None,
+        budget: int | None = None,
+        agent: str = "mcp-client",
+    ) -> dict:
+        return _ask_memory_impl(task, project_path, token_budget, include_history, limit, query, budget, agent)
 
     return server
 

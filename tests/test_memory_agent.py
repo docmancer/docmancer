@@ -207,6 +207,71 @@ def test_incremental_sync_reextracts_only_changed_source(tmp_path, monkeypatch):
     assert stats["sources_reused"] == stats["sources_total"] - 1
 
 
+def test_refresh_if_changed_skips_unchanged_sources(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _write_two_sources(home)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+    from docmancer.memory import MemoryAgent
+
+    MemoryAgent().sync()
+    agent = MemoryAgent()
+
+    assert agent.refresh_if_changed() is False
+    assert agent.last_sync_stats() == {
+        "refreshed": False,
+        "reason": "sources_unchanged",
+    }
+
+
+def test_refresh_if_changed_detects_edit_and_deletion(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _write_two_sources(home)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "mem.db"))
+
+    from docmancer.memory import MemoryAgent
+
+    MemoryAgent().sync()
+    memory_root = home / ".claude" / "projects" / "-Users-x-app" / "memory"
+    (memory_root / "b.md").write_text("# Testing\n\nUse pytest from the repository root.\n")
+    edited = MemoryAgent()
+    assert edited.refresh_if_changed() is True
+    assert edited.last_sync_stats()["sources_extracted"] == 1
+
+    (memory_root / "a.md").unlink()
+    deleted = MemoryAgent()
+    assert deleted.refresh_if_changed() is True
+    assert all("Railway" not in chunk.text for chunk in deleted.query("Railway deployment"))
+
+
+def test_refresh_failure_restores_last_valid_index(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    _write_two_sources(home)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    db = tmp_path / "mem.db"
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(db))
+
+    from docmancer.memory import MemoryAgent
+
+    MemoryAgent().sync()
+    before = {path: path.read_bytes() for path in MemoryAgent().memory_paths() if path.is_file()}
+    changed = home / ".claude" / "projects" / "-Users-x-app" / "memory" / "b.md"
+    changed.write_text("# Testing\n\nThis change triggers refresh.\n")
+    agent = MemoryAgent()
+
+    def broken_sync(**_kwargs):
+        db.write_bytes(b"partial-index")
+        raise RuntimeError("simulated refresh failure")
+
+    monkeypatch.setattr(agent, "sync", broken_sync)
+    with pytest.raises(RuntimeError, match="simulated refresh failure"):
+        agent.refresh_if_changed()
+
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_recreate_ignores_cache(tmp_path, monkeypatch):
     home = tmp_path / "home"
     _write_two_sources(home)

@@ -1,75 +1,77 @@
 # Commands
 
-Bare `docmancer` prints the command overview. The canonical local memory commands are top-level; `docmancer tree ...` remains a compatibility namespace.
+Bare `docmancer` prints the everyday command overview.
+
+## Normal workflow
+
+```bash
+pipx install docmancer
+docmancer setup
+cd /path/to/project
+docmancer web
+```
+
+`setup` performs machine-wide source discovery and installs user-level integrations. `web` resolves the project root, safely creates or adopts `.docmancer/{tree,inbox,trash}`, refreshes changed agent sources, and opens the local workbench.
 
 | Command | Purpose |
 | --- | --- |
-| `docmancer setup` | Discover supported agents and install local skills. |
-| `docmancer init` | Create or safely adopt the current project's curated tree. |
+| `docmancer setup` | Initial machine-wide discovery and user-level integration installation. |
+| `docmancer web` | Open the project workbench and refresh changed agent sources. |
+| `docmancer ask "task"` | Recall policy, curated memory, and supporting agent evidence. |
+| `docmancer common` | Show memory recurring across independent agent harnesses. |
+| `docmancer delivery` | Show integration state and the last observed context bundle per agent. |
+| `docmancer timeline` | Show canonical memory mutations with revision lineage and diffs. |
 | `docmancer write` | Write one curated Markdown file at an explicit relative path. |
-| `docmancer read` | Resolve a stable ID, `docmancer://` address, path, or exact title. |
-| `docmancer edit` | Replace a file body with a required current content hash. |
-| `docmancer move` | Move or rename a file while preserving its stable address. |
-| `docmancer search` | Search active curated memory. |
-| `docmancer context` | Compile bounded task-specific context with citations. |
-| `docmancer harvest` | Preview or copy bounded evidence to the inbox without rewriting sources. |
-| `docmancer curate` | Preview or apply one complete deterministic or BYOK curation operation. |
-| `docmancer capture` | Validate or process one bounded lifecycle event from stdin. |
-| `docmancer reindex` | Rebuild disposable local indexes from Markdown files. |
-| `docmancer migrate` | Inventory, preview, apply, or roll back legacy-record migration. |
-| `docmancer status` | Report tree, inbox, retrieval, agent, security, and Cloud state. |
-| `docmancer web` | Open the authenticated loopback-only Context Workbench. |
-| `docmancer mcp` | Run or install the local MCP server. |
-| `docmancer docs` | Manage the separate documentation index. |
-| `docmancer sync` | Push and pull encrypted Cloud revisions only. |
+| `docmancer read` | Resolve a stable address, path, or exact title. |
+| `docmancer edit` | Replace a body using the current content hash. |
+| `docmancer move` | Move a file while preserving its stable address. |
+| `docmancer import <path>` | Copy arbitrary Markdown into the project inbox. |
+| `docmancer status` | Report local memory, sources, security, and Cloud state. |
+| `docmancer doctor` | Diagnose configuration, indexes, integrations, and project state. |
+| `docmancer cloud sync` | Push and pull optional encrypted Cloud revisions. |
 
-## Common flow
+## Agent workflow
+
+Agents use the same commands:
 
 ```bash
-docmancer init --project-id my-project
-docmancer write $'# Deploy\n\nDeploy on Railway.' --path decisions/deploy.md --scope project --project-id my-project
-docmancer context "deploy production" --project-path "$PWD" --json
+docmancer ask "prepare the production release" --json
+docmancer common --json
+docmancer delivery --json
+docmancer timeline --json
 docmancer read docmancer://memory/<id> --json
+docmancer write $'# Release\n\nDeploy on Railway.' --path decisions/release.md --scope project
 docmancer edit docmancer://memory/<id> - --expected-hash <hash>
-docmancer reindex --json
+docmancer move docmancer://memory/<id> decisions/hosting.md --expected-hash <hash>
 ```
 
-## Curation
+The MCP equivalent of `ask` is `ask_memory`. The corresponding outcome tools are `common_memory`, `context_delivery`, and `decision_timeline`. Documentation search remains a separate `docmancer_docs_search` tool.
 
-Preview is the default and does not write:
+## Advanced commands
 
-```bash
-docmancer curate --source ./notes.md --path decisions/notes.md
-docmancer curate --source ./notes.md --path decisions/notes.md --apply
-```
+These commands remain callable but are intentionally absent from top-level help:
 
-BYOK curation is opt-in per operation:
+- `docmancer duplicate`, `trash`, and `restore` provide explicit file recovery operations.
+- `docmancer reindex` rebuilds disposable curated-tree retrieval state.
+- `docmancer curate` exposes the complete-file curation engine.
+- `docmancer agent` manages installed integrations and registered-source inbox imports.
+- `docmancer mcp` installs or runs the local MCP server.
+- `docmancer docs` manages the separate documentation index.
+- `docmancer memory` exposes compatibility and diagnostic operations over the older atom and record layer.
+- `docmancer capture`, `session-baseline`, and `migrate` support hooks and migration.
 
-```bash
-docmancer curate --source ./notes.md --llm --yes-provider --apply
-```
+## Upgrading to 0.9
 
-If the provider is unavailable or returns invalid output, Docmancer reports the reason and falls back to deterministic local curation. Evidence without an explicit destination goes to the inbox.
+The old root aliases were removed after the 0.8 compatibility window:
 
-## Migration
+| Old command | Replacement |
+| --- | --- |
+| `docmancer query` | `docmancer ask` |
+| `docmancer search` | `docmancer ask` |
+| `docmancer context` | `docmancer ask` |
+| `docmancer sync` | `docmancer cloud sync` |
+| `docmancer init` | `docmancer web` for normal onboarding |
+| `docmancer harvest <path>` | `docmancer import <path>` |
+| bare `docmancer harvest` | `docmancer agent import-sources` |
 
-```bash
-docmancer migrate --records-root /legacy --tree-root /new-tree --json
-docmancer migrate --records-root /legacy --tree-root /new-tree --backup-dir /backup --apply --json
-docmancer migrate --records-root /legacy --tree-root /new-tree --backup-dir /backup --rollback --json
-```
-
-All roots are explicit. Apply requires a backup directory. The default is a dry run.
-
-## Docs
-
-```bash
-docmancer docs init --dir .
-docmancer docs add ./docs
-docmancer docs query "authentication"
-docmancer docs list
-docmancer docs sync
-docmancer docs remove <source>
-```
-
-Older root docs commands and the older `docmancer memory ...` record workflow remain compatibility surfaces through the 0.8.x line. They are scheduled for removal in 0.9.0, with replacement warnings emitted before removal. The local web routes `/context`, `/memory`, `/sources`, and `/intelligence` return HTTP 308 redirects to their canonical workbench destinations.
+External Markdown sources are never rewritten. Existing-file mutations remain hash guarded.

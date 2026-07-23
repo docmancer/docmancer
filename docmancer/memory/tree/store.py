@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import uuid
 from dataclasses import asdict
@@ -36,6 +37,8 @@ from docmancer.memory.tree.parser import (
     parse_tree_file,
     render_tree_file,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -84,11 +87,51 @@ class TreeStore:
     """File-first mutation service pinned to one memory root."""
 
     def __init__(self, root: Path, *, trash_root: Path | None = None) -> None:
-        self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.root = self.root.resolve()
+        # Resolving a store is intentionally read-only. Callers such as
+        # `status`, `read`, and `search` must not create a project tree merely
+        # because they inspected a directory.
+        self.root = Path(root).resolve()
         self.index = AddressIndex(self.root)
         self.trash_root = Path(trash_root).resolve() if trash_root else self.root.parent / "trash"
+
+    def _record_journal(
+        self,
+        *,
+        entry: TreeMemoryFile,
+        operation: str,
+        actor_surface: str,
+        actor_harness: str | None,
+        before: TreeMemoryFile | None,
+        before_path: str | None,
+        after_path: str | None,
+        before_hash: str | None,
+        after_hash: str | None,
+        before_body: str,
+        after_body: str,
+    ) -> None:
+        from docmancer.memory.tree.journal import DecisionJournal
+
+        try:
+            DecisionJournal(self.root).append(
+                file_id=entry.memory_id,
+                revision_id=entry.revision_id,
+                parent_revision_ids=list(entry.parent_revision_ids),
+                operation=operation,
+                actor_surface=actor_surface,
+                actor_harness=actor_harness,
+                sources=list(entry.sources or (before.sources if before else [])),
+                before_path=before_path,
+                after_path=after_path,
+                before_hash=before_hash,
+                after_hash=after_hash,
+                before_body=before_body,
+                after_body=after_body,
+            )
+        except OSError as exc:
+            # Canonical Markdown remains authoritative. A journal filesystem
+            # failure must not make a completed file-first mutation look
+            # rolled back to the caller.
+            logger.warning("could not append decision journal event: %s", exc)
 
     # -- create / read / write ------------------------------------------------
 
@@ -106,6 +149,10 @@ class TreeStore:
         tags: list[str] | None = None,
         curation_origin: str = "deliberate_write",
         expect: str | None = None,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+        operation: str | None = None,
+        parent_revision_ids: list[str] | None = None,
     ) -> TreeMemoryFile:
         """Create or update. ``expect`` is ``"absent"`` for a create-only
         write, a content-hash string for a guarded update, or ``None`` --
@@ -139,7 +186,11 @@ class TreeStore:
             sources=sources if sources is not None else (existing.sources if existing else []),
             status=status,
             revision_id=existing.revision_id if existing else "",
-            parent_revision_ids=existing.parent_revision_ids if existing else [],
+            parent_revision_ids=(
+                existing.parent_revision_ids
+                if existing
+                else list(parent_revision_ids or [])
+            ),
             tags=tags if tags is not None else (existing.tags if existing else []),
             curation_origin=curation_origin,
             extra_frontmatter=existing.extra_frontmatter if existing else {},
@@ -153,11 +204,28 @@ class TreeStore:
             return existing
 
         candidate.revision_id = new_id()
-        candidate.parent_revision_ids = [existing.revision_id] if existing and existing.revision_id else []
+        candidate.parent_revision_ids = (
+            [existing.revision_id]
+            if existing and existing.revision_id
+            else list(parent_revision_ids or [])
+        )
         data = render_tree_file(candidate)
         _atomic_write(path, data)
         candidate.content_hash = hashlib.sha256(data).hexdigest()
         self.index.note_write(candidate)
+        self._record_journal(
+            entry=candidate,
+            operation=operation or ("edit" if existing else "create"),
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            before=existing,
+            before_path=str(path.relative_to(self.root)) if existing else None,
+            after_path=str(path.relative_to(self.root)),
+            before_hash=existing.content_hash if existing else None,
+            after_hash=candidate.content_hash,
+            before_body=existing.body if existing else "",
+            after_body=candidate.body,
+        )
         return candidate
 
     def read(self, address: str) -> TreeMemoryFile:
@@ -165,7 +233,15 @@ class TreeStore:
 
     # -- edit / move / duplicate ----------------------------------------------
 
-    def edit(self, address: str, *, text: str, expected_hash: str) -> TreeMemoryFile:
+    def edit(
+        self,
+        address: str,
+        *,
+        text: str,
+        expected_hash: str,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+    ) -> TreeMemoryFile:
         """Replace body only, preserving all other frontmatter."""
         entry = self.index.read(address)
         relative_path = entry.path.relative_to(self.root)
@@ -181,9 +257,20 @@ class TreeStore:
             tags=entry.tags,
             curation_origin=entry.curation_origin,
             expect=expected_hash,
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            operation="edit",
         )
 
-    def move(self, address: str, new_relative_path: str | Path, *, expected_hash: str) -> TreeMemoryFile:
+    def move(
+        self,
+        address: str,
+        new_relative_path: str | Path,
+        *,
+        expected_hash: str,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+    ) -> TreeMemoryFile:
         entry = self.index.read(address)
         current_hash = hashlib.sha256(entry.path.read_bytes()).hexdigest()
         if expected_hash != current_hash:
@@ -199,9 +286,30 @@ class TreeStore:
         self.index.note_move(entry.memory_id, destination)
         moved = parse_tree_file(destination)
         assert moved is not None
+        self._record_journal(
+            entry=moved,
+            operation="move",
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            before=entry,
+            before_path=str(old_path.relative_to(self.root)),
+            after_path=str(destination.relative_to(self.root)),
+            before_hash=current_hash,
+            after_hash=moved.content_hash,
+            before_body=entry.body,
+            after_body=moved.body,
+        )
         return moved
 
-    def duplicate(self, address: str, new_relative_path: str | Path, *, expected_hash: str) -> TreeMemoryFile:
+    def duplicate(
+        self,
+        address: str,
+        new_relative_path: str | Path,
+        *,
+        expected_hash: str,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+    ) -> TreeMemoryFile:
         """Create a new memory (new stable ID) with the same content and
         source attribution as ``address``."""
         entry = self.index.read(address)
@@ -220,11 +328,22 @@ class TreeStore:
             tags=entry.tags,
             curation_origin=entry.curation_origin,
             expect="absent",
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            operation="duplicate",
+            parent_revision_ids=[entry.revision_id] if entry.revision_id else [],
         )
 
     # -- trash / restore --------------------------------------------------------
 
-    def trash(self, address: str, *, expected_hash: str, actor_surface: str = "local") -> str:
+    def trash(
+        self,
+        address: str,
+        *,
+        expected_hash: str,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+    ) -> str:
         """Move a file to recoverable trash. Returns a restore token
         (the memory_id, which is sufficient to locate the trashed file)."""
         entry = self.index.read(address)
@@ -247,9 +366,28 @@ class TreeStore:
         _atomic_write(manifest_path, json.dumps(manifest, indent=2).encode("utf-8"))
         _unlink_durable(entry.path)
         self.index.note_delete(entry.memory_id)
+        self._record_journal(
+            entry=entry,
+            operation="trash",
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            before=entry,
+            before_path=str(entry.path.relative_to(self.root)),
+            after_path=None,
+            before_hash=current_hash,
+            after_hash=None,
+            before_body=entry.body,
+            after_body="",
+        )
         return entry.memory_id
 
-    def restore(self, token: str) -> TreeMemoryFile:
+    def restore(
+        self,
+        token: str,
+        *,
+        actor_surface: str = "local",
+        actor_harness: str | None = None,
+    ) -> TreeMemoryFile:
         trashed_path = self.trash_root / f"{token}.md"
         manifest_path = self.trash_root / f"{token}.manifest.json"
         if not trashed_path.is_file() or not manifest_path.is_file():
@@ -267,6 +405,19 @@ class TreeStore:
         self.index.note_write(parse_tree_file(destination))
         restored = parse_tree_file(destination)
         assert restored is not None
+        self._record_journal(
+            entry=restored,
+            operation="restore",
+            actor_surface=actor_surface,
+            actor_harness=actor_harness,
+            before=None,
+            before_path=None,
+            after_path=str(destination.relative_to(self.root)),
+            before_hash=None,
+            after_hash=restored.content_hash,
+            before_body="",
+            after_body=restored.body,
+        )
         return restored
 
     # -- index lifecycle --------------------------------------------------------

@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { JsonMap } from "@/lib/api";
 import type { ViewKey } from "./workspace-app";
 import { MarkdownContent } from "./markdown-content";
+import { OpenInMenu } from "./open-in-menu";
 
 type Mutate = (path: string, body: JsonMap, success: string, method?: string) => Promise<JsonMap | undefined>;
 
@@ -57,6 +58,7 @@ export function RecordInspector({
   const canEditContext = view === "context" && contextKind === "context-record" && Boolean(identifier);
   const canEditSource = view === "sources" && Boolean(sourceKey && value.content_hash);
   const canOperateTree = view === "tree" && Boolean(value.address && value.content_hash);
+  const editorPath = markdownPath(value);
 
   return <div className="drawer-backdrop" onMouseDown={close}>
     <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Inspect ${title}`} onMouseDown={(event) => event.stopPropagation()}>
@@ -94,7 +96,7 @@ export function RecordInspector({
       {!state.loading && !state.error && <footer className="drawer-footer">
         <div className="drawer-actions">
           {(canEditMemory || canEditContext || canEditSource) && mode === "view" && <button className="secondary" onClick={() => setMode("edit")}><Pencil size={14}/>Edit</button>}
-          {canOperateTree && <button className="secondary" disabled={busy} onClick={() => void run(() => mutate("/api/v1/tree", { action: "open-editor", address: value.address }, "Opened the canonical file in your editor."))}><ExternalLink size={14}/>Open in editor</button>}
+          {editorPath && <OpenInMenu path={editorPath}/>}
           {canOperateTree && <button className="secondary" disabled={busy} onClick={() => { const path = window.prompt("Move to project-relative path", String(value.path ?? "")); if (path) void run(() => mutate("/api/v1/tree", { action: "move", address: value.address, path, expected_hash: value.content_hash }, "Memory file moved."), true); }}><Pencil size={14}/>Move</button>}
           {canOperateTree && <button className="secondary" disabled={busy} onClick={() => { const path = window.prompt("Duplicate to project-relative path"); if (path) void run(() => mutate("/api/v1/tree", { action: "duplicate", address: value.address, path, expected_hash: value.content_hash }, "Memory file duplicated."), true); }}><Copy size={14}/>Duplicate</button>}
           {view === "memory" && identifier && <button className="secondary" disabled={busy} onClick={() => void run(() => mutate(`/api/v1/memory/${encodeURIComponent(identifier)}`, { action: "promote" }, "Memory promoted into prepared context."))}><ShieldCheck size={14}/>Promote</button>}
@@ -127,7 +129,7 @@ function AuditFinding({ value }: { value: JsonMap }) {
       <pre>{String(occurrence.masked_excerpt ?? "[SECRET]")}</pre>
       <div className="occurrence-meta"><span>{humanise(String(occurrence.agent ?? "local"))}</span><span>{humanise(String(occurrence.scope ?? "memory"))}</span></div>
     </article>)}</div>
-    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the source file, then run <code>docmancer harvest</code> and <code>docmancer reindex</code>.</li></ol></div>
+    <div className="remediation"><strong>Recommended next step</strong><ol><li>Confirm whether this is a live credential.</li><li>Rotate or revoke it at the provider.</li><li>Delete it from the source file, then reopen the workbench or run <code>docmancer ask refresh-memory</code>.</li></ol></div>
   </section>;
 }
 
@@ -165,7 +167,7 @@ function TreeReadingMetadata({ value }: { value: JsonMap }) {
 }
 
 function Metadata({ value }: { value: JsonMap }) {
-  const hidden = new Set(["markdown", "content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids", "outline", "relations", "backlinks"]);
+  const hidden = new Set(["markdown", "content", "text", "rendered", "matches", "atoms", "operations", "metadata_json", "record_ids", "outline", "relations", "backlinks", "editor_path"]);
   const entries = Object.entries(value).filter(([key, item]) => !hidden.has(key) && item !== null && item !== "").slice(0, 24);
   return <dl className="inspector-definitions">{entries.map(([key, item]) => <div key={key}><dt>{humanise(key)}</dt><dd title={displayValue(item)}>{displayValue(item)}</dd></div>)}</dl>;
 }
@@ -216,3 +218,10 @@ function displayValue(value: unknown): string {
 }
 function isObject(value: unknown): value is JsonMap { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function filename(value: string): string { return value.split("/").pop() || value; }
+function markdownPath(value: JsonMap): string {
+  for (const raw of [value.editor_path, value.path, value.source_path, value.source]) {
+    const path = typeof raw === "string" ? raw : "";
+    if (path.startsWith("/") && /\.(md|markdown|mdc)$/i.test(path)) return path;
+  }
+  return "";
+}

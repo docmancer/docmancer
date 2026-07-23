@@ -125,6 +125,21 @@ def test_sources_json_and_filter(tmp_path, monkeypatch):
     assert "chars" in data[0] and "path" in data[0] and "display_path" in data[0]
 
 
+def test_sources_include_filter_applies_to_stored_index(tmp_path, monkeypatch):
+    _env(monkeypatch, tmp_path)
+    runner = CliRunner()
+    sync = runner.invoke(cli, ["memory", "sync"])
+    assert sync.exit_code == 0, sync.output
+
+    excluded = runner.invoke(
+        cli,
+        ["memory", "sources", "--json", "--include", "*/not-this-project/*"],
+    )
+
+    assert excluded.exit_code == 0, excluded.output
+    assert json.loads(excluded.output) == []
+
+
 def test_audit_reports_no_findings(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     r = CliRunner().invoke(cli, ["memory", "audit"])

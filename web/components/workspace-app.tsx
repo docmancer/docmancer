@@ -3,7 +3,7 @@
 import {
   Activity, AlertTriangle, Archive, BookOpen, BrainCircuit, ChevronLeft, ChevronRight,
   CircleCheck, CircleHelp, Cloud, Command, Database, FileSearch, Fingerprint, Gauge, KeyRound,
-  LoaderCircle, Moon, Play, Plus, RefreshCw, Search, ShieldCheck, Sparkles,
+  History, LoaderCircle, Moon, Play, Plus, Radio, RefreshCw, Search, Share2, ShieldCheck, Sparkles,
   Sun, Users, WandSparkles, WifiOff, X,
 } from "lucide-react";
 import Link from "next/link";
@@ -12,19 +12,21 @@ import { apiGet, apiMutation, establishSession, type JsonMap } from "@/lib/api";
 import { RecordInspector, type InspectorState } from "./record-inspector";
 import { InboxWorkbench } from "./inbox-workbench";
 
-export type ViewKey = "overview" | "tree" | "ask" | "agent-context" | "inbox" | "context" | "memory" | "sources" | "intelligence" | "docs" | "audit" | "maintenance" | "sync" | "devices" | "team" | "help";
+export type ViewKey = "overview" | "tree" | "ask" | "common" | "delivery" | "timeline" | "agent-context" | "inbox" | "context" | "memory" | "sources" | "intelligence" | "docs" | "audit" | "maintenance" | "sync" | "devices" | "team" | "help";
 
 const NAV = [
   { key: "overview", label: "Home", icon: Gauge }, { key: "tree", label: "Memory tree", icon: Archive },
-  { key: "ask", label: "Ask", icon: Search }, { key: "agent-context", label: "Agent Context", icon: BrainCircuit },
-  { key: "inbox", label: "Inbox and harvest", icon: Database }, { key: "docs", label: "Docs", icon: BookOpen },
+  { key: "ask", label: "Ask", icon: Search }, { key: "common", label: "Shared memory", icon: Share2 },
+  { key: "delivery", label: "Context delivery", icon: Radio }, { key: "timeline", label: "Decision timeline", icon: History },
+  { key: "agent-context", label: "Agent Context", icon: BrainCircuit },
+  { key: "inbox", label: "Inbox and import", icon: Database }, { key: "docs", label: "Docs", icon: BookOpen },
   { key: "audit", label: "Audit", icon: ShieldCheck }, { key: "maintenance", label: "Activity", icon: WandSparkles },
   { key: "sync", label: "Personal Sync", icon: Cloud }, { key: "devices", label: "Devices", icon: Fingerprint },
   { key: "team", label: "Team", icon: Users }, { key: "help", label: "Help", icon: CircleHelp },
 ] as const;
 
 const NAV_SECTIONS = [
-  { label: "Local memory", keys: ["overview", "tree", "ask", "agent-context", "inbox"] },
+  { label: "Local memory", keys: ["overview", "tree", "ask", "common", "delivery", "timeline", "agent-context", "inbox"] },
   { label: "Reference", keys: ["docs", "audit", "maintenance"] },
   { label: "Cloud", keys: ["sync", "devices", "team"] },
   { label: "Learn", keys: ["help"] },
@@ -32,6 +34,7 @@ const NAV_SECTIONS = [
 
 const ENDPOINTS: Record<ViewKey, string> = {
   overview: "/api/v1/status", tree: "/api/v1/tree", ask: "/api/v1/tree/root",
+  common: "/api/v1/common", delivery: "/api/v1/delivery", timeline: "/api/v1/timeline",
   "agent-context": "/api/v1/tree/root", inbox: "/api/v1/inbox", docs: "/api/v1/docs", audit: "/api/v1/audit",
   context: "/api/v1/context", memory: "/api/v1/memory", sources: "/api/v1/sources", intelligence: "/api/v1/intelligence?view=review", maintenance: "/api/v1/jobs",
   sync: "/api/v1/cloud", devices: "/api/v1/cloud/devices", team: "/api/v1/cloud/team",
@@ -42,18 +45,21 @@ const VIEW_COPY: Record<ViewKey, { eyebrow: string; title: string; description: 
   overview: { eyebrow: "Local 127.0.0.1", title: "Your curated Markdown memory tree", description: "Open durable files, inspect the uncurated inbox, and preview the exact context an agent receives." },
   tree: { eyebrow: "Canonical memory", title: "Browse the files your agents share", description: "Each item is a source-attributed Markdown file with a stable address, hash-guarded writes, relations, backlinks, and citations." },
   ask: { eyebrow: "Context Compiler", title: "Ask your local memory", description: "Get a cited evidence brief from the same compiler used by CLI and MCP. No model is required." },
+  common: { eyebrow: "Cross-agent recurrence", title: "See what your agents repeatedly know", description: "Equivalent memory from independent harness sources, with generated integration copies excluded. Recurrence is evidence, not consensus or truth." },
+  delivery: { eyebrow: "Activation proof", title: "See how context reaches every agent", description: "Inspect integration modes, hook state, the last successful recall, tree revision, and delivered bundle hash." },
+  timeline: { eyebrow: "Decision journal", title: "See what changed and when", description: "Follow canonical Markdown creates, edits, moves, duplicates, trash operations, and restores with actors, sources, lineage, and readable diffs." },
   "agent-context": { eyebrow: "Delivery preview", title: "Preview what one agent receives", description: "Inspect mandatory policy and relevant curated memory within an explicit token budget." },
-  inbox: { eyebrow: "Uncurated evidence", title: "Review capture and harvested sources", description: "Ambiguous material stays visible here without becoming a per-item review queue." },
+  inbox: { eyebrow: "Uncurated evidence", title: "Review captured and imported Markdown", description: "Optional imports stay visible here until you turn a complete file into durable memory." },
   context: { eyebrow: "Compatibility route", title: "Agent Context", description: "This route is retained for one release and now points users toward the Context Compiler preview." },
   memory: { eyebrow: "Compatibility route", title: "Ask local memory", description: "This route is retained for one release while the product moves from atom browsing to file-backed memory." },
-  sources: { eyebrow: "Compatibility route", title: "Inbox and harvest", description: "This route is retained for one release while harvested evidence moves into the new workbench." },
+  sources: { eyebrow: "Compatibility route", title: "Inbox and import", description: "This route is retained for one release while optional imports move into the new workbench." },
   docs: { eyebrow: "Reference library", title: "Keep documentation separate from memory", description: "Browse indexed documentation, search its sections, or add another local path or public documentation site." },
   audit: { eyebrow: "Local safeguards", title: "Find risky content before it travels", description: "See each masked finding with its type, exact file, line, and remediation. Source content stays on this machine." },
   intelligence: { eyebrow: "Compatibility route", title: "Activity", description: "Claims-era Intelligence is retired. Existing URLs remain readable for one release." },
   maintenance: { eyebrow: "Local maintenance", title: "Rebuild, consolidate, diagnose, and apply", description: "Run the small set of allowlisted maintenance operations and inspect their results." },
   sync: { eyebrow: "Optional Pro feature", title: "Encrypted continuity across machines", description: "Sync signed encrypted revisions between devices. Local capture, recall, MCP, and this interface remain free." },
   devices: { eyebrow: "Device trust", title: "Control which machines can sync", description: "Connect Cloud first, then verify pending devices by fingerprint or revoke approved devices explicitly." },
-  team: { eyebrow: "Shared context", title: "Review team memory together", description: "Connect Cloud first, then invite members and review encrypted proposals before they enter shared context." },
+  team: { eyebrow: "Shared context", title: "Publish one reviewed Team file", description: "Generate a privacy-filtered file locally, inspect one complete diff, then approve that file for encrypted publication." },
   help: { eyebrow: "Product guide", title: "Understand the whole memory workflow", description: "Start with the guided path, then use workflows and the glossary whenever a Docmancer term is unclear." },
 };
 
@@ -207,13 +213,20 @@ function Overview({ data, counts }: { data: JsonMap; counts: JsonMap }) {
 }
 
 function AskView(props: ViewProps) {
-  const [result, setResult] = useState<JsonMap>({}); const [busy, setBusy] = useState(false); const [tokenBudget, setTokenBudget] = useState(2000); const items = extractItems(result, props.view);
+  const [result, setResult] = useState<JsonMap>({}); const [busy, setBusy] = useState(false); const [tokenBudget, setTokenBudget] = useState(2000);
+  const sections = [
+    { key: "mandatory_policies", label: "Mandatory policy", title: "Rules that always apply", note: "Highest-precedence instructions retained even when they exceed the requested budget.", items: arrayObjects(result.mandatory_policies) },
+    { key: "curated_memory", label: "Curated memory", title: "Approved project context", note: "Canonical Markdown selected from the current project and applicable parent scopes.", items: arrayObjects(result.curated_memory) },
+    { key: "relevant_evidence", label: "Agent evidence", title: "Relevant source evidence", note: "Task-relevant memory and instructions refreshed from registered coding agents.", items: arrayObjects(result.relevant_evidence) },
+  ];
+  const structuredItems = sections.flatMap((section) => section.items);
+  const items = structuredItems.length > 0 ? structuredItems : extractItems(result, props.view);
   const run = async () => { if (!props.composer.trim()) return; setBusy(true); try { setResult(await apiMutation("/api/v1/ask", { task: props.composer, agent: props.view === "agent-context" ? (props.secondary || "codex") : "web", token_budget: tokenBudget })); } finally { setBusy(false); } };
-  return <div className="workspace-grid"><section className="collection"><div className="composer"><span className="mini-label">Cited local retrieval</span><h2>{props.view === "agent-context" ? "Compile an agent bundle" : "Ask a question"}</h2><label>Task<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="How do we deploy this project?"/></label>{props.view === "agent-context" && <label>Agent<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label>}<label>Token budget<input type="number" min={100} max={100000} step={100} value={tokenBudget} onChange={(event) => setTokenBudget(Math.min(100000, Math.max(100, Number(event.target.value) || 100)))}/><small>The compiler always retains mandatory policy, even when it alone exceeds this budget.</small></label><button className="primary" disabled={busy || !props.composer.trim()} onClick={run}>{busy ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}Compile context</button></div><div className="collection-head"><span>{items.length} cited items</span><span>{result.token_estimate ? `${result.token_estimate} of ${tokenBudget} estimated tokens` : `Budget ${tokenBudget} tokens`}</span></div>{result.no_answer ? <EmptyState view={props.view}/> : <div className="rows">{items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div>}</section><aside className="action-panel"><BoundaryCard/></aside></div>;
+  return <div className="workspace-grid"><section className="collection"><div className="composer"><span className="mini-label">Cited local retrieval</span><h2>{props.view === "agent-context" ? "Compile an agent bundle" : "Ask a question"}</h2><label>Task<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="How do we deploy this project?"/></label>{props.view === "agent-context" && <label>Agent<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label>}<label>Token budget<input type="number" min={100} max={100000} step={100} value={tokenBudget} onChange={(event) => setTokenBudget(Math.min(100000, Math.max(100, Number(event.target.value) || 100)))}/><small>The compiler always retains mandatory policy, even when it alone exceeds this budget.</small></label><button className="primary" disabled={busy || !props.composer.trim()} onClick={run}>{busy ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}Compile context</button></div><div className="collection-head"><span>{items.length} cited items</span><span>{result.token_estimate ? `${result.token_estimate} of ${tokenBudget} estimated tokens` : `Budget ${tokenBudget} tokens`}</span></div>{result.no_answer ? <EmptyState view={props.view}/> : structuredItems.length > 0 ? <div className="ask-sections">{sections.filter((section) => section.items.length > 0).map((section) => <section className="context-level" key={section.key}><header><div><span className="mini-label">{section.label}</span><h2>{section.title}</h2></div><p>{section.note}</p></header><div className="rows">{section.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div></section>)}</div> : <div className="rows">{items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div>}</section><aside className="action-panel"><BoundaryCard/></aside></div>;
 }
 
 function CollectionView(props: ViewProps) {
-  const items = extractItems(props.data, props.view); const searchable = ["memory", "sources", "docs", "intelligence"].includes(props.view);
+  const items = extractItems(props.data, props.view); const searchable = ["memory", "sources", "docs", "intelligence", "common", "timeline"].includes(props.view);
   const total = Number(props.data.total ?? items.length); const page = Number(props.data.page ?? 1); const pages = Number(props.data.total_pages ?? 1);
   return <div className="workspace-grid"><section className="collection">
     {props.view === "audit" && (
@@ -294,14 +307,132 @@ function ActionComposer(props: ViewProps) {
 
 function Maintenance(props: ViewProps) {
   const jobs = extractItems(props.data, "maintenance"); const [page, setPage] = useState(1); const paged = clientPage(jobs, page);
-  return <div className="workspace-grid"><section className="collection"><div className="tool-grid"><Tool icon={<RefreshCw/>} title="Rebuild local memory" command="docmancer memory sync" text="Harvest, redact, merge, index, and finalise local memory." action="Run sync" onClick={() => props.mutate("/api/v1/maintenance", { action: "sync" }, "Memory sync queued.")}/><Tool icon={<Sparkles/>} title="Draft consolidation" command="docmancer memory consolidate" text="Prepare a reviewable draft from indexed memory." action="Create draft" onClick={() => props.mutate("/api/v1/maintenance", { action: "consolidate", query: props.composer || null }, "Consolidation queued.")}/><Tool icon={<FileSearch/>} title="Run diagnostics" command="docmancer doctor" text="Inspect Python, index, docs, and project state." action="Run doctor" onClick={async () => { const result = await props.mutate("/api/v1/maintenance", { action: "doctor" }, "Diagnostics completed."); if (result) await props.inspect({ title: "Diagnostics result", ...result }); }}/></div><div className="collection-head"><span>Recent jobs</span><span>{jobs.length}</span></div><div className="rows">{paged.items.length ? paged.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view="maintenance" inspect={() => void props.inspect(item)}/>) : <EmptyState view="maintenance"/>}</div><Pagination page={paged.page} pages={paged.pages} total={jobs.length} label="maintenance" go={setPage}/></section><aside className="action-panel"><div className="composer"><span className="mini-label">Consolidate or apply</span><h2>Turn memory into agent context</h2><p>Draft a focused consolidation, or apply the current reviewed memory to an installed agent.</p><label>Optional consolidation focus<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="Focus on decisions from this project."/></label><button className="primary" onClick={() => props.mutate("/api/v1/maintenance", { action: "consolidate", query: props.composer || null }, "Consolidation queued.")}><Play size={14}/>Run consolidation</button><label>Apply to<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label><button className="secondary" onClick={() => props.mutate("/api/v1/maintenance", { action: "apply", agent: props.secondary || "codex" }, "Context apply queued.")}><WandSparkles size={14}/>Apply managed context</button></div></aside></div>;
+  return <div className="workspace-grid"><section className="collection"><div className="tool-grid"><Tool icon={<RefreshCw/>} title="Refresh agent sources" command="Automatic when web or ask opens" text="Check source fingerprints and rebuild only when local agent files changed." action="Refresh now" onClick={() => props.mutate("/api/v1/maintenance", { action: "sync" }, "Agent sources refreshed.")}/><Tool icon={<Sparkles/>} title="Draft consolidation" command="Advanced local operation" text="Prepare a reviewable draft from indexed memory." action="Create draft" onClick={() => props.mutate("/api/v1/maintenance", { action: "consolidate", query: props.composer || null }, "Consolidation queued.")}/><Tool icon={<FileSearch/>} title="Run diagnostics" command="docmancer doctor" text="Inspect Python, index, docs, and project state." action="Run doctor" onClick={async () => { const result = await props.mutate("/api/v1/maintenance", { action: "doctor" }, "Diagnostics completed."); if (result) await props.inspect({ title: "Diagnostics result", ...result }); }}/></div><div className="collection-head"><span>Recent jobs</span><span>{jobs.length}</span></div><div className="rows">{paged.items.length ? paged.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view="maintenance" inspect={() => void props.inspect(item)}/>) : <EmptyState view="maintenance"/>}</div><Pagination page={paged.page} pages={paged.pages} total={jobs.length} label="maintenance" go={setPage}/></section><aside className="action-panel"><div className="composer"><span className="mini-label">Consolidate or apply</span><h2>Turn memory into agent context</h2><p>Draft a focused consolidation, or apply the current reviewed memory to an installed agent.</p><label>Optional consolidation focus<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="Focus on decisions from this project."/></label><button className="primary" onClick={() => props.mutate("/api/v1/maintenance", { action: "consolidate", query: props.composer || null }, "Consolidation queued.")}><Play size={14}/>Run consolidation</button><label>Apply to<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label><button className="secondary" onClick={() => props.mutate("/api/v1/maintenance", { action: "apply", agent: props.secondary || "codex" }, "Context apply queued.")}><WandSparkles size={14}/>Apply managed context</button></div></aside></div>;
 }
 
-function SyncView(props: ViewProps) { const configured = Boolean(props.data.configured); return <div className="split-grid"><Panel title="Connection" icon={<Cloud size={16}/>}><div className={configured ? "state-banner connected" : "state-banner"}><span>{configured ? "CONNECTED" : "LOCAL ONLY"}</span><strong>{configured ? "Encrypted sync is configured" : "Nothing leaves this machine"}</strong><p>{configured ? `Workspace ${String(props.data.workspace_id ?? "")}` : "Connect from the CLI once, then run sync here."}</p></div>{configured ? <button className="primary" onClick={() => props.mutate("/api/v1/cloud/sync", {}, "Encrypted sync queued.")}><RefreshCw size={15}/>Push and pull</button> : <code className="command-line">docmancer cloud connect</code>}</Panel><Panel title="What Pro pays for" icon={<KeyRound size={16}/>}><ul className="check-list"><li>Encrypted transport between approved devices</li><li>Managed revision history and recovery wrappers</li><li>Team membership, review events, policy, and retention</li></ul><a className="text-link" href="https://docmancer.dev/account" target="_blank" rel="noreferrer">Plans and billing ↗</a></Panel></div>; }
+function SyncView(props: ViewProps) {
+  const configured = Boolean(props.data.configured);
+  const mapping = objectAt(props.data, "project_mapping");
+  const mappingState = String(mapping.state || "unmapped");
+  const recovery = objectAt(props.data, "recovery");
+  const [recoveryKey, setRecoveryKey] = useState("");
+  return <div className="split-grid">
+    <Panel title="Connection" icon={<Cloud size={16}/>}>
+      <div className={configured ? "state-banner connected" : "state-banner"}><span>{configured ? "CONNECTED" : "LOCAL ONLY"}</span><strong>{configured ? "Encrypted sync is configured" : "Nothing leaves this machine"}</strong><p>{configured ? `Workspace ${String(props.data.workspace_id ?? "")}` : "Connect from the CLI once, then run sync here."}</p></div>
+      {configured ? <button className="primary" onClick={() => props.mutate("/api/v1/cloud/sync", {}, "Encrypted file revisions synced.")}><RefreshCw size={15}/>Push and pull</button> : <code className="command-line">docmancer cloud connect --base-url https://api.docmancer.dev</code>}
+    </Panel>
+    <Panel title="This project" icon={<KeyRound size={16}/>}>
+      <div className={mappingState === "mapped" ? "state-banner connected" : "state-banner"}>
+        <span>{mappingState.toUpperCase()}</span>
+        <strong>{mappingState === "mapped" ? "Stable project mapping is ready" : mappingState === "ambiguous" ? "More than one checkout matches" : "No local checkout is mapped"}</strong>
+        <p>{mappingState === "ambiguous" ? "Docmancer preserves incoming revisions as conflicts until you choose a checkout." : "Only a stable project ID and encrypted content travel. Absolute local paths remain on this device."}</p>
+      </div>
+      <ul className="check-list"><li>{Number(props.data.pending ?? 0)} encrypted revisions waiting to upload</li><li>{Number(props.data.conflicts ?? 0)} unresolved sync conflicts</li><li>Recovery keys and plaintext files never reach the service</li></ul>
+      <div className="composer">
+        <span className="mini-label">Recovery</span>
+        <p>{recovery.verified ? "This recovery key has been verified on this device." : "Verify the offline recovery key before you need to restore another device."}</p>
+        <label>Recovery key<input type="password" value={recoveryKey} onChange={(event) => setRecoveryKey(event.target.value)}/></label>
+        <button className="secondary" disabled={!configured || !recoveryKey.trim()} onClick={() => props.mutate("/api/v1/cloud/recovery/verify", { recovery_key: recoveryKey }, "Recovery key verified.")}><KeyRound size={15}/>Verify recovery</button>
+      </div>
+    </Panel>
+  </div>;
+}
 
-function DevicesView(props: ViewProps) { const devices = Array.isArray(props.data.items) ? props.data.items.filter(isObject) : []; const [page, setPage] = useState(1); const paged = clientPage(devices, page); if (props.data.available === false) return <CloudUnavailable surface="devices" state={String(props.data.state ?? "not_connected")} message={String(props.data.message ?? "Connect this machine before managing device trust.")}/>; return <div className="workspace-grid"><section className="collection"><div className="collection-head"><span>Registered devices</span><span>{devices.length}</span></div><div className="rows">{paged.items.length ? paged.items.map((device, index) => <DataRow key={rowKey(device, index)} item={device} view="devices" inspect={() => void props.inspect(device)}/>) : <EmptyState view="devices"/>}</div><Pagination page={paged.page} pages={paged.pages} total={devices.length} label="devices" go={setPage}/></section><aside className="action-panel"><div className="composer"><span className="mini-label">Approve registration</span><h2>Verify a pending device</h2><p>Compare the fingerprint on both machines before approving access.</p><label>Device ID<input value={props.secondary} onChange={(event) => props.setSecondary(event.target.value)}/></label><label>Fingerprint<input value={props.composer} onChange={(event) => props.setComposer(event.target.value)}/></label><button className="primary" disabled={!props.secondary || !props.composer} onClick={() => props.mutate(`/api/v1/cloud/devices/${encodeURIComponent(props.secondary)}/approve`, { fingerprint: props.composer }, "Device approved.")}><Fingerprint size={15}/>Verify and approve</button></div></aside></div>; }
+function DevicesView(props: ViewProps) {
+  const devices = Array.isArray(props.data.items) ? props.data.items.filter(isObject) : [];
+  const [page, setPage] = useState(1);
+  const paged = clientPage(devices, page);
+  if (props.data.available === false) return <CloudUnavailable surface="devices" state={String(props.data.state ?? "not_connected")} message={String(props.data.message ?? "Connect this machine before managing device trust.")}/>;
+  return <div className="workspace-grid">
+    <section className="collection">
+      <div className="collection-head"><span>Registered devices</span><span>{devices.length}</span></div>
+      <div className="rows">{paged.items.length ? paged.items.map((device, index) => {
+        const id = String(device.device_id ?? device.id ?? "");
+        const state = String(device.state ?? "unknown");
+        return <div className="device-admin-row" key={rowKey(device, index)}>
+          <DataRow item={device} view="devices" inspect={() => void props.inspect(device)}/>
+          {state !== "revoked" && <button className="danger-link" onClick={() => {
+            if (window.confirm("Revoke this device from future encrypted sync?")) {
+              void props.mutate(`/api/v1/cloud/devices/${encodeURIComponent(id)}/revoke`, { confirmation: id }, "Device revoked.");
+            }
+          }}>Revoke</button>}
+        </div>;
+      }) : <EmptyState view="devices"/>}</div>
+      <Pagination page={paged.page} pages={paged.pages} total={devices.length} label="devices" go={setPage}/>
+    </section>
+    <aside className="action-panel"><div className="composer"><span className="mini-label">Approve registration</span><h2>Verify a pending device</h2><p>Compare the fingerprint on both machines before approving access.</p><label>Device ID<input value={props.secondary} onChange={(event) => props.setSecondary(event.target.value)}/></label><label>Fingerprint<input value={props.composer} onChange={(event) => props.setComposer(event.target.value)}/></label><button className="primary" disabled={!props.secondary || !props.composer} onClick={() => props.mutate(`/api/v1/cloud/devices/${encodeURIComponent(props.secondary)}/approve`, { fingerprint: props.composer }, "Device approved.")}><Fingerprint size={15}/>Verify and approve</button></div></aside>
+  </div>;
+}
 
-function TeamView(props: ViewProps) { const proposals = Array.isArray(props.data.proposals) ? props.data.proposals.filter(isObject) : []; const members = Array.isArray(props.data.members) ? props.data.members.filter(isObject) : []; const [proposalPage, setProposalPage] = useState(1); const [memberPage, setMemberPage] = useState(1); const pagedProposals = clientPage(proposals, proposalPage); const pagedMembers = clientPage(members, memberPage); if (props.data.available === false) return <CloudUnavailable surface="team" state={String(props.data.state ?? "not_connected")} message={String(props.data.message ?? "Connect this machine before opening the shared workspace.")}/>; return <div className="workspace-grid"><section className="collection"><div className="collection-head"><span>Proposals awaiting a team decision</span><span>{proposals.length}</span></div><div className="rows">{pagedProposals.items.length ? pagedProposals.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view="team" inspect={() => void props.inspect(item)}/>) : <EmptyState view="team"/>}</div><Pagination page={pagedProposals.page} pages={pagedProposals.pages} total={proposals.length} label="team proposals" go={setProposalPage}/><div className="collection-head"><span>Workspace members</span><span>{members.length}</span></div><div className="rows">{pagedMembers.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view="team" inspect={() => void props.inspect(item)}/>)}</div><Pagination page={pagedMembers.page} pages={pagedMembers.pages} total={members.length} label="team members" go={setMemberPage}/></section><aside className="action-panel"><div className="composer"><span className="mini-label">Paid team seat</span><h2>Invite a member</h2><p>Invited members consume a seat after they join the workspace.</p><label>Email<input type="email" value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="person@example.com"/></label><label>Role<select value={props.secondary || "member"} onChange={(event) => props.setSecondary(event.target.value)}><option value="member">Member</option><option value="reviewer">Reviewer</option><option value="admin">Administrator</option></select></label><button className="primary" disabled={!props.composer.trim()} onClick={() => props.mutate("/api/v1/cloud/team/invitations", { email: props.composer, role: props.secondary || "member" }, "Invitation created.")}><Users size={15}/>Invite</button><a className="text-link" href="https://docmancer.dev/account" target="_blank" rel="noreferrer">Manage billing and seats ↗</a></div></aside></div>; }
+function TeamView(props: ViewProps) {
+  const proposals = Array.isArray(props.data.proposals) ? props.data.proposals.filter(isObject) : [];
+  const members = Array.isArray(props.data.members) ? props.data.members.filter(isObject) : [];
+  const cloudAvailable = props.data.available !== false;
+  const [teamFile, setTeamFile] = useState<JsonMap>(objectAt(props.data, "team_file"));
+  const [domain, setDomain] = useState("standards");
+  const [working, setWorking] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const excluded = Array.isArray(teamFile.excluded) ? teamFile.excluded.filter(isObject) : [];
+  const affectedAgents = Array.isArray(teamFile.affected_agents) ? teamFile.affected_agents.map(String) : [];
+
+  const generate = async (publish: boolean) => {
+    setWorking(true); setLocalError("");
+    try {
+      const result = await apiMutation("/api/v1/cloud/team/file", { domain, apply: publish, approved: publish });
+      setTeamFile(result);
+    } catch (reason) { setLocalError(messageOf(reason)); }
+    finally { setWorking(false); }
+  };
+  const transition = async (outcome: string) => {
+    setWorking(true); setLocalError("");
+    try {
+      const result = await apiMutation("/api/v1/cloud/team/file", { domain, outcome });
+      setTeamFile({...teamFile, ...result});
+    } catch (reason) { setLocalError(messageOf(reason)); }
+    finally { setWorking(false); }
+  };
+
+  return <div className="team-layout">
+    <section className="team-file-review">
+      <div className="collection-head"><span>Generated Team file</span><span>{String(objectAt(teamFile, "approval").granularity || "complete-file")}</span></div>
+      <div className="team-file-controls">
+        <label>Shared standards domain<input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="standards"/></label>
+        <button className="secondary" disabled={working || !domain.trim()} onClick={() => void generate(false)}><RefreshCw size={14}/>Regenerate preview</button>
+      </div>
+      {localError && <div className="alert error"><AlertTriangle size={15}/><span>{localError}</span></div>}
+      <div className="privacy-grid">
+        <span><strong>{Number(teamFile.selected_count ?? 0)}</strong> eligible files</span>
+        <span><strong>{excluded.length}</strong> excluded files</span>
+        <span><strong>Local</strong> privacy checks</span>
+        <span><strong>{teamFile.published ? "Queued" : teamFile.applied ? "Approved" : "Preview"}</strong> state</span>
+      </div>
+      <p className="quiet-copy">New engineers receive this generated file through: {affectedAgents.length ? affectedAgents.join(", ") : "no installed agent projection detected yet"}.</p>
+      <div className="team-diff">
+        <span className="mini-label">Complete plaintext diff, local only</span>
+        <pre>{String(teamFile.diff || "No eligible change from the current generated file.")}</pre>
+      </div>
+      <div className="team-exclusions">
+        <h3>Exclusion report</h3>
+        {excluded.length ? <ul>{excluded.map((item, index) => <li key={rowKey(item, index)}><strong>{String(item.title || "Untitled")}</strong><span>{String(item.reason || "Excluded by policy")}</span></li>)}</ul> : <p>No files were excluded.</p>}
+      </div>
+      <div className="whole-file-approval">
+        <div><span className="mini-label">One decision</span><h3>Approve this complete file revision</h3><p>This encrypts the generated file locally and queues only ciphertext. There are no per-memory approval controls.</p></div>
+        <button className="primary" disabled={working || !cloudAvailable || !String(teamFile.diff || "")} onClick={() => void generate(true)}><ShieldCheck size={15}/>Approve and queue</button>
+      </div>
+      {Boolean(teamFile.applied) && <div className="team-file-controls">
+        <span className="mini-label">File publication outcome</span>
+        <button className="secondary" disabled={working || !cloudAvailable} onClick={() => void transition("withdrawn")}>Withdraw</button>
+        <button className="secondary" disabled={working || !cloudAvailable} onClick={() => void transition("superseded")}>Supersede</button>
+        <button className="secondary" disabled={working || !cloudAvailable} onClick={() => void transition("blocked")}>Block</button>
+        <button className="secondary" disabled={working || !cloudAvailable} onClick={() => void transition("restored")}>Restore</button>
+      </div>}
+      {!cloudAvailable && <div className="state-banner"><span>PREVIEW ONLY</span><strong>Cloud is not connected</strong><p>The complete local preview still works. Connect Cloud only when you are ready to publish encrypted Team files.</p></div>}
+    </section>
+    <aside className="action-panel">
+      <div className="composer"><span className="mini-label">Team administration</span><h2>Invite a member</h2><p>Member and device administration stays hosted. Plaintext file review stays here.</p><label>Email<input type="email" value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="person@example.com"/></label><label>Role<select value={props.secondary || "member"} onChange={(event) => props.setSecondary(event.target.value)}><option value="member">Member</option><option value="reviewer">Reviewer</option><option value="admin">Administrator</option></select></label><button className="primary" disabled={!cloudAvailable || !props.composer.trim()} onClick={() => props.mutate("/api/v1/cloud/team/invitations", { email: props.composer, role: props.secondary || "member" }, "Invitation created.")}><Users size={15}/>Invite</button><p>{members.length} members, {proposals.length} encrypted file records</p><a className="text-link" href="https://docmancer.dev/account" target="_blank" rel="noreferrer">Manage billing and seats ↗</a></div>
+    </aside>
+  </div>;
+}
 
 function CloudUnavailable({ surface, state, message }: { surface: "devices" | "team"; state: string; message: string }) { const unreachable = state === "unreachable"; const title = unreachable ? "Cloud is unavailable right now" : surface === "devices" ? "Connect Cloud to manage devices" : "Connect Cloud to open a team workspace"; const label = unreachable ? "SERVICE UNAVAILABLE" : state === "authentication" ? "SIGN IN REQUIRED" : state === "entitlement" ? "PLAN REQUIRED" : "NOT CONNECTED"; return <div className="split-grid cloud-unavailable"><Panel title={title} icon={<WifiOff size={16}/>}><div className="state-banner"><span>{label}</span><strong>Your local workspace is still fully available</strong><p>{message}</p></div>{unreachable ? <p className="quiet-copy">No local action is required. Try this page again when the hosted service is available.</p> : <code className="command-line">docmancer cloud connect --base-url https://api.docmancer.dev</code>}</Panel><Panel title="What remains local and free" icon={<ShieldCheck size={16}/>}><ul className="check-list"><li>Read, write, search, and compile curated Markdown</li><li>Harvest and curate evidence locally</li><li>Use the CLI, MCP server, and local web app</li><li>Audit sources and rebuild disposable indexes</li></ul><a className="text-link" href="https://docmancer.dev/account" target="_blank" rel="noreferrer">Create an account or manage billing ↗</a></Panel></div>; }
 
@@ -309,10 +440,10 @@ function HelpView() {
   const [section, setSection] = useState("start");
   const tabs = [["start", "Start here"], ["workflow", "Core workflow"], ["cloud", "Cloud and teams"], ["glossary", "Glossary"]];
   return <div className="help-layout"><nav className="help-tabs" aria-label="Help sections">{tabs.map(([key, label], index) => <button key={key} className={section === key ? "active" : ""} onClick={() => setSection(key)}><span>{String(index + 1).padStart(2, "0")}</span>{label}</button>)}</nav><section className="help-content">
-    {section === "start" && <><div className="help-intro"><span className="mini-label">Your current workspace</span><h2>From scattered files to deliberate agent context</h2><p>Docmancer keeps curated Markdown as canonical memory and compiles only the cited context a task needs. Harvested sources remain read-only evidence, while ambiguous material stays in the inbox.</p></div><ol className="guide-steps"><GuideStep number="1" title="Harvest local sources" text="Preview supported memory, instructions, and rules without rewriting them. Apply only when you want bounded copies in the inbox." command="docmancer harvest ./path"/><GuideStep number="2" title="Curate complete files" text="Preview the destination, citations, exclusions, and complete Markdown diff before applying." command="docmancer curate --source note.md --path decisions/note.md"/><GuideStep number="3" title="Compile context" text="Ask one task-specific question and inspect the exact mandatory policy, relevant memory, citations, and token accounting." command="docmancer context &quot;prepare release&quot;"/><GuideStep number="4" title="Deliver it to agents" text="Installed recall hooks and managed projections use the same Context Compiler as CLI, MCP, Ask, and Agent Context." command="docmancer agent refresh"/></ol></>}
-    {section === "workflow" && <div className="help-sections"><HelpSection title="Capture and harvest" text="Agent files remain read-only evidence. Opt-in capture is bounded, redacted, deduplicated, and inbox-only." links={[["Open Inbox", "/inbox/"], ["Open Memory tree", "/tree/"]]}/><HelpSection title="Curate and recall" text="Complete-file curation creates durable Markdown. Search and Ask use the same Context Compiler as CLI and MCP." links={[["Ask Memory", "/ask/"], ["Preview Agent Context", "/agent-context/"]]}/><HelpSection title="Maintain and audit" text="Audit locates masked risks. Reindex rebuilds disposable local state without changing canonical files or creating history." links={[["Open Audit", "/audit/"], ["Run Maintenance", "/maintenance/"]]}/><HelpSection title="Keep Docs separate" text="Library and vendor documentation stays in the Docs surface so documentation results never masquerade as project memory." links={[["Open Docs", "/docs/"]]}/></div>}
-    {section === "cloud" && <div className="help-sections"><HelpSection title="What is paid" text="Personal sync, device continuity, recovery, hosted revision history, team membership, and team review are paid services. The local product remains free."/><HelpSection title="What reaches the service" text="Approved devices exchange signed encrypted envelopes and routing metadata. Plaintext memory, local file paths, private keys, workspace keys, and recovery keys stay local."/><HelpSection title="Connect a device" text="Create or sign in to an account, then connect this machine. Devices and Team render a setup state until a valid local Cloud session exists." links={[["Open Personal Sync", "/sync/"], ["Account and billing", "https://docmancer.dev/account"]]}/><HelpSection title="Team review" text="Sharing creates a proposal. A reviewer approves, rejects, or edits it before team-owned context changes. Invited members consume paid seats after joining." links={[["Open Team", "/team/"]]}/></div>}
-    {section === "glossary" && <dl className="glossary"><GlossaryTerm term="Curated memory" text="One canonical Markdown file with stable identity, sources, revision lineage, and guarded writes."/><GlossaryTerm term="Source" text="An original agent-owned file harvested as read-only evidence."/><GlossaryTerm term="Inbox" text="Visible uncurated evidence that has no safe durable destination yet. It is not a per-item task queue."/><GlossaryTerm term="Context Compiler" text="The shared selector used by CLI, MCP, hooks, projections, Ask, and Agent Context."/><GlossaryTerm term="Stable address" text="A docmancer://memory identifier that survives file moves and renames."/><GlossaryTerm term="Personal Sync" text="Optional paid encrypted transport and recovery between approved devices."/></dl>}
+    {section === "start" && <><div className="help-intro"><span className="mini-label">Your current workspace</span><h2>From scattered files to useful shared memory</h2><p>Opening the workbench refreshes changed agent sources automatically. Write durable Markdown here, or ask one question across curated memory and supporting evidence.</p></div><ol className="guide-steps"><GuideStep number="1" title="Ask what is already known" text="Recall project policy, curated memory, and supporting agent evidence in one result." command="docmancer ask &quot;why did we choose Railway?&quot;"/><GuideStep number="2" title="Write durable memory" text="Create a complete Markdown file in the Memory tree. The file remains readable outside Docmancer." command="docmancer write &quot;# Decision&#10;&#10;Use Railway.&quot; --path decisions/hosting.md"/><GuideStep number="3" title="Open files in your editor" text="Every Markdown file view includes an Open in menu for editors installed on this machine." command="docmancer web"/><GuideStep number="4" title="Import only when needed" text="Copy an arbitrary Markdown file or directory into the inbox for whole-file review." command="docmancer import ./notes"/></ol></>}
+    {section === "workflow" && <div className="help-sections"><HelpSection title="Automatic source refresh" text="Setup discovers agent sources machine-wide. Opening the workbench or asking a question refreshes only when those sources changed." links={[["Ask Memory", "/ask/"], ["Open Inbox", "/inbox/"]]}/><HelpSection title="Write and recall" text="Complete Markdown files are durable memory. Ask uses the same bounded local recall contract as CLI and MCP." links={[["Open Memory tree", "/tree/"], ["Preview Agent Context", "/agent-context/"]]}/><HelpSection title="Maintain and audit" text="Audit locates masked risks. Recovery operations rebuild disposable local state without changing canonical files." links={[["Open Audit", "/audit/"], ["Run Maintenance", "/maintenance/"]]}/><HelpSection title="Keep Docs separate" text="Library and vendor documentation stays in the Docs surface so documentation results never masquerade as project memory." links={[["Open Docs", "/docs/"]]}/></div>}
+    {section === "cloud" && <div className="help-sections"><HelpSection title="What is paid" text="Personal sync, device continuity, recovery, hosted revision history, team membership, and encrypted Team publication are paid services. The local product remains free."/><HelpSection title="What reaches the service" text="Approved devices exchange signed encrypted file envelopes and routing metadata. Plaintext memory, complete diffs, exclusion details, local file paths, private keys, workspace keys, and recovery keys stay local."/><HelpSection title="Connect a device" text="Create or sign in to an account, then connect this machine. Team-file previews remain available locally before Cloud is connected." links={[["Open Personal Sync", "/sync/"], ["Account and billing", "https://docmancer.dev/account"]]}/><HelpSection title="Team files" text="Docmancer selects eligible project memory, filters it locally, and generates one file per standards domain. When approval is enabled, one reviewer approves the complete file revision. No per-memory review queue exists." links={[["Open Team", "/team/"]]}/></div>}
+    {section === "glossary" && <dl className="glossary"><GlossaryTerm term="Curated memory" text="One canonical Markdown file with stable identity, sources, revision lineage, and guarded writes."/><GlossaryTerm term="Source" text="An original agent-owned file indexed as read-only evidence."/><GlossaryTerm term="Inbox" text="Optional imported or captured Markdown awaiting whole-file review."/><GlossaryTerm term="Ask" text="The shared bounded recall operation used by CLI, MCP, hooks, and the workbench."/><GlossaryTerm term="Stable address" text="A docmancer://memory identifier that survives file moves and renames."/><GlossaryTerm term="Personal Sync" text="Optional paid encrypted transport and recovery between approved devices."/></dl>}
   </section></div>;
 }
 
@@ -346,7 +477,7 @@ function Loading() { return <div className="loading"><LoaderCircle className="sp
 function CommandPalette({ close, run }: { close: () => void; run: (command: string) => Promise<void> }) {
   const [filter, setFilter] = useState(""); const needle = filter.toLowerCase();
   const pages = NAV.filter((item) => item.label.toLowerCase().includes(needle));
-  const commands = [{ key: "reindex", label: "Rebuild local index", cli: "docmancer reindex", icon: RefreshCw }, { key: "doctor", label: "Run diagnostics", cli: "docmancer status --check", icon: FileSearch }, { key: "cloudSync", label: "Run encrypted sync", cli: "docmancer sync", icon: Cloud }].filter((item) => `${item.label} ${item.cli}`.toLowerCase().includes(needle));
+  const commands = [{ key: "reindex", label: "Rebuild local index", cli: "docmancer reindex", icon: RefreshCw }, { key: "doctor", label: "Run diagnostics", cli: "docmancer status --check", icon: FileSearch }, { key: "cloudSync", label: "Run encrypted sync", cli: "docmancer cloud sync", icon: Cloud }].filter((item) => `${item.label} ${item.cli}`.toLowerCase().includes(needle));
   return <div className="palette-backdrop" onMouseDown={close}><div className="palette command-center" onMouseDown={(event) => event.stopPropagation()}><header><Command size={16}/><input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Search pages and safe local commands"/><kbd>ESC</kbd></header><div className="command-results">{commands.length > 0 && <section><p>Run locally</p>{commands.map(({ key, label, cli, icon: Icon }) => <button key={key} onClick={() => void run(key)}><Icon size={16}/><span><strong>{label}</strong><code>{cli}</code></span><b>Run</b></button>)}</section>}{pages.length > 0 && <section><p>Go to</p>{pages.map(({ key, label, icon: Icon }) => <Link key={key} href={key === "overview" ? "/" : `/${key}/`} onClick={close}><Icon size={16}/><span><strong>{label}</strong><small>Open page</small></span><ChevronRight size={14}/></Link>)}</section>}{!commands.length && !pages.length && <div className="command-empty">No matching page or command.</div>}</div></div></div>;
 }
 
@@ -358,7 +489,11 @@ function extractItems(data: JsonMap, view: ViewKey): JsonMap[] {
   return [];
 }
 function normalizeItem(item: JsonMap, view: ViewKey): JsonMap { if (view === "sources" && isObject(item.source)) return { ...item.source, matches: item.matches }; return item; }
+function arrayObjects(value: unknown): JsonMap[] { return Array.isArray(value) ? value.filter(isObject) : []; }
 function rowTitle(item: JsonMap, view: ViewKey): string {
+  if (view === "common") return memoryPresentation(item).title;
+  if (view === "delivery") return humanise(String(item.agent ?? "Agent"));
+  if (view === "timeline") return `${humanise(String(item.operation ?? "change"))}: ${humaniseFilename(String(item.after_path ?? item.before_path ?? item.file_id ?? "memory file"))}`;
   if (view === "sources") { const title = String(item.title ?? ""); if (title && !isGenericSourceTitle(title)) return title; return humaniseFilename(String(item.path ?? "Source file")); }
   if (view === "context" && item.view_kind === "context-pack") return String(item.name ?? "Context pack");
   if (view === "context" && item.view_kind === "context-proposal") return `Review changes for ${String(item.context_name ?? humanise(String(item.pack_id ?? "context")))}`;
@@ -374,6 +509,9 @@ function rowTitle(item: JsonMap, view: ViewKey): string {
   return String(item.name ?? item.title ?? item.text ?? item.fingerprint ?? item.email ?? item.source ?? item.path ?? item.id ?? `${humanise(view)} record`);
 }
 function rowSubtitle(item: JsonMap, view: ViewKey): string {
+  if (view === "common") return `${Number(item.harness_count ?? 0)} harnesses · ${Number(item.source_count ?? 0)} independent sources · ${scopeLabel(String(item.normalized_scope ?? "local"))}`;
+  if (view === "delivery") return `${humanise(String(item.integration_mode ?? "unknown"))} · ${String(item.last_successful_recall ?? "No successful recall observed")}`;
+  if (view === "timeline") return `${String(item.timestamp ?? "")} · ${String(item.actor_harness ?? item.actor_surface ?? "unknown")} · revision ${String(item.revision_id ?? "").slice(0, 12)}`;
   if (view === "sources") return `${String(item.kind ?? "source")} · ${String(item.harness ?? "local")} · ${Number(item.atom_count ?? 0)} atoms · ${compactPath(String(item.path ?? ""))}`;
   if (view === "context" && item.view_kind === "context-proposal") return `${Array.isArray(item.operations) ? item.operations.length : 0} proposed changes`;
   if (view === "context") return compactPath(String(item.source_path ?? ""));
@@ -386,7 +524,7 @@ function rowSubtitle(item: JsonMap, view: ViewKey): string {
   if (view === "intelligence") return `${humanise(String(item.intelligence_kind ?? "analysis"))} · ${scopeLabel(String(item.scope ?? item.source_scope ?? "local"))}`;
   return String(item.source_path ?? item.scope ?? item.memory_type ?? item.kind ?? item.state ?? item.updated_at ?? "Local record");
 }
-function rowText(item: JsonMap, view: ViewKey): string { if (view === "sources" && Array.isArray(item.matches)) { const match = item.matches.find(isObject); const sample = match ? memoryPresentation(match).summary : ""; return sample || `${item.matches.length} matching atoms. Open to inspect excerpts and edit the full file.`; } if (view === "memory" || (view === "context" && item.view_kind === "context-record")) return memoryPresentation(item).summary; if (view === "context" && item.view_kind === "context-proposal") return memoryPresentation(item).summary; if (view === "context" && item.view_kind === "context-pack") return contextPackPurpose(String(item.name ?? "Context pack")); if (view === "audit" && item.view_kind === "secret-finding") return String(firstOccurrence(item)?.masked_excerpt ?? "Masked value"); if (view === "audit" && item.path) return item.exists ? `Recall ${item.recall ? "installed" : "not installed"}; capture ${item.capture ? "installed" : "not installed"}.` : "Configuration file not found."; if (view === "intelligence" && Array.isArray(item.samples)) return item.samples.filter(isObject).map((sample) => String(sample.text ?? "")).filter(Boolean).slice(0, 2).join(" · "); if (view === "intelligence" && Array.isArray(item.members)) return item.members.filter(isObject).map((member) => String(member.text ?? member.value ?? "")).filter(Boolean).slice(0, 2).join(" ↔ "); return String(item.text ?? item.rendered ?? item.detail ?? item.summary ?? ""); }
+function rowText(item: JsonMap, view: ViewKey): string { if (view === "sources" && Array.isArray(item.matches)) { const match = item.matches.find(isObject); const sample = match ? memoryPresentation(match).summary : ""; return sample || `${item.matches.length} matching atoms. Open to inspect excerpts and edit the full file.`; } if (view === "common") return String(item.text ?? ""); if (view === "delivery") return item.bundle_hash ? `Delivered bundle ${String(item.bundle_hash).slice(0, 16)} from tree revision ${String(item.tree_revision ?? "-")}; ${Number(item.item_count ?? 0)} items.` : "No successful context delivery has been observed for this agent in the active project."; if (view === "timeline") return String(item.diff ?? `${item.operation ?? "Changed"} ${item.after_path ?? item.before_path ?? "memory file"}`); if (view === "memory" || (view === "context" && item.view_kind === "context-record")) return memoryPresentation(item).summary; if (view === "context" && item.view_kind === "context-proposal") return memoryPresentation(item).summary; if (view === "context" && item.view_kind === "context-pack") return contextPackPurpose(String(item.name ?? "Context pack")); if (view === "audit" && item.view_kind === "secret-finding") return String(firstOccurrence(item)?.masked_excerpt ?? "Masked value"); if (view === "audit" && item.path) return item.exists ? `Recall ${item.recall ? "installed" : "not installed"}; capture ${item.capture ? "installed" : "not installed"}.` : "Configuration file not found."; if (view === "intelligence" && Array.isArray(item.samples)) return item.samples.filter(isObject).map((sample) => String(sample.text ?? "")).filter(Boolean).slice(0, 2).join(" · "); if (view === "intelligence" && Array.isArray(item.members)) return item.members.filter(isObject).map((member) => String(member.text ?? member.value ?? "")).filter(Boolean).slice(0, 2).join(" ↔ "); return String(item.text ?? item.rendered ?? item.detail ?? item.summary ?? ""); }
 function rowKicker(item: JsonMap, view: ViewKey): string { if (view === "tree") return String(item.path ?? "Curated memory"); if (view === "inbox") return "Uncurated inbox"; if (view === "ask" || view === "agent-context") return String(item.authority ?? "advisory"); return ""; }
 function isObject(value: unknown): value is JsonMap { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function objectAt(value: unknown, key: string): JsonMap { if (!isObject(value)) return {}; const nested = value[key]; return isObject(nested) ? nested : {}; }
@@ -442,6 +580,9 @@ function isGenericSourceTitle(value: string): boolean { return ["promoted memory
 function contextPackPurpose(value: string): string { const purposes: Record<string, string> = { "Personal defaults": "Your durable preferences and working rules across every project.", "Current project": "Project-specific decisions and exceptions for this working directory.", "Team standards": "Shared rules that apply across the team and all linked projects.", "Team project": "Shared decisions and exceptions for this linked project." }; return purposes[value] ?? "Approved context compiled for installed agents."; }
 function fullRowSubtitle(item: JsonMap, view: ViewKey): string { if (view === "audit" && item.view_kind === "secret-finding") { const first = firstOccurrence(item); return `${String(first?.source_path ?? "")}:${String(first?.line ?? "?")}`; } return String(item.source_path ?? item.path ?? item.source ?? rowSubtitle(item, view)); }
 function rowBadges(item: JsonMap, view: ViewKey): Array<{ label: string; tone: string }> {
+  if (view === "common") return arrayObjects(item.sources).slice(0, 3).map((source) => ({ label: humanise(String(source.harness ?? "agent")), tone: "accent" }));
+  if (view === "delivery") return [{ label: String(item.status ?? "not-observed") === "delivered" ? "Delivered" : "Not observed", tone: String(item.status ?? "") === "delivered" ? "success" : "warning" }, { label: String(item.hook_status ?? "not-installed") === "installed" ? "Hook on" : humanise(String(item.integration_mode ?? "manual")), tone: String(item.hook_status ?? "") === "installed" ? "success" : "neutral" }];
+  if (view === "timeline") return [{ label: humanise(String(item.operation ?? "change")), tone: "accent" }, { label: humanise(String(item.actor_harness ?? item.actor_surface ?? "local")), tone: "neutral" }];
   if (view === "audit" && item.view_kind === "secret-finding") return [{ label: String(item.severity ?? "finding"), tone: `severity-${String(item.severity ?? "medium")}` }, { label: `${Number(item.occurrence_count ?? 1)} occurrence${Number(item.occurrence_count ?? 1) === 1 ? "" : "s"}`, tone: "neutral" }];
   if (view === "audit" && item.view_kind === "hook-status") return [{ label: item.recall ? "Recall on" : "Recall off", tone: item.recall ? "success" : "warning" }, { label: item.capture ? "Capture on" : "Capture off", tone: item.capture ? "success" : "neutral" }];
   if (view === "context" && item.view_kind === "context-proposal") return [{ label: "Proposal", tone: "neutral" }, { label: "Pending review", tone: "warning" }];

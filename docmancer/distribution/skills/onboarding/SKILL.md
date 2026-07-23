@@ -1,14 +1,13 @@
 ---
 name: docmancer-onboarding
-description: Create or adopt a local curated Markdown tree without forcing a taxonomy or enabling capture.
+description: Set up machine-wide agent memory and open the local project workbench.
 ---
 
-# Onboard a project to Docmancer
+# Onboard Docmancer
 
-1. Run `docmancer init` from the project root. Existing valid Markdown files are adopted rather than rewritten.
-2. Run `docmancer status` to inspect the tree, inbox, local index, integrations, and optional Cloud state.
-3. Preview existing agent evidence with `docmancer harvest <path>`. Add `--apply` only when the user wants a bounded copy placed in the uncurated inbox.
-4. Use `docmancer curate` to preview one complete file diff. Apply only the complete accepted operation.
-5. Run `docmancer reindex` after external edits when automatic watching is unavailable.
+1. Run `docmancer setup` once on the machine.
+2. Change to the project and run `docmancer web`. The workbench safely creates or adopts the project tree and refreshes changed agent sources.
+3. Run `docmancer status` to inspect local health.
+4. Use `docmancer import <path>` only when the user asks to copy arbitrary Markdown into the project inbox.
 
-Onboarding does not enable capture hooks, connect Cloud, publish Team memory, or create a universal folder taxonomy. Canonical memory remains readable Markdown under `.docmancer/tree`.
+Onboarding does not enable capture hooks, connect Cloud, publish Team memory, or rewrite existing memory files.

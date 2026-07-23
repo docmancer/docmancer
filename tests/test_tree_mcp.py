@@ -43,7 +43,10 @@ def test_build_server_lists_existing_and_new_tree_tools(monkeypatch):
         "trash_memory",
         "restore_memory",
         "search_memory",
-        "build_context",
+        "ask_memory",
+        "common_memory",
+        "context_delivery",
+        "decision_timeline",
     } <= names
 
 
@@ -131,17 +134,68 @@ def test_search_memory_with_no_matches_returns_empty_result(tmp_path, monkeypatc
     assert payload == []
 
 
-def test_build_context_returns_empty_bundle_when_no_relevant_memory(tmp_path, monkeypatch):
+def test_ask_memory_returns_empty_bundle_when_no_relevant_memory(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(tmp_path / "harness-home"))
     from docmancer.mcp.server import build_server
 
     server = build_server()
-    result = asyncio.run(server.call_tool("build_context", {"task": "anything at all"}))
+    result = asyncio.run(server.call_tool("ask_memory", {"task": "anything at all"}))
     payload = _tool_result_payload(result)
     assert payload["mandatory_policies"] == []
     assert payload["curated_memory"] == []
+    assert payload["relevant_evidence"] == []
     assert "retrieval_trace" in payload
+
+
+def test_cli_and_mcp_context_return_the_exact_same_machine_shape(tmp_path, monkeypatch):
+    import json
+
+    from click.testing import CliRunner
+
+    from docmancer.cli.__main__ import cli
+    from docmancer.mcp.tree_tools import build_context
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    project = tmp_path / "project"
+    tree = project / ".docmancer" / "tree"
+    project.mkdir()
+    written = CliRunner().invoke(
+        cli,
+        [
+            "write",
+            "# Deploy\n\nUse Railway for deployment.",
+            "--root",
+            str(tree),
+            "--path",
+            "deploy.md",
+            "--json",
+        ],
+    )
+    assert written.exit_code == 0, written.output
+
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "tree",
+            "context",
+            "railway deployment",
+            "--root",
+            str(tree),
+            "--project-path",
+            str(project),
+            "--json",
+        ],
+    )
+    assert cli_result.exit_code == 0, cli_result.output
+    cli_payload = json.loads(cli_result.output)
+    mcp_payload = build_context("railway deployment", project_path=str(project))
+
+    cli_payload.pop("generated_at")
+    mcp_payload.pop("generated_at")
+    assert cli_payload == mcp_payload
+    assert cli_payload["retrieval_trace"]["candidate_scores"]
 
 
 def test_read_memory_missing_address_returns_structured_error(tmp_path, monkeypatch):
@@ -175,7 +229,7 @@ def test_documented_argument_aliases_are_normalised_strictly(tmp_path, monkeypat
     assert "alias-safe" in read["body"]
 
     context = _tool_result_payload(asyncio.run(server.call_tool(
-        "build_context", {"query": "alias-safe schema", "budget": 500}
+        "ask_memory", {"query": "alias-safe schema", "budget": 500}
     )))
     assert context["curated_memory"]
 

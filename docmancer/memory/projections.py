@@ -1,6 +1,7 @@
 """Disposable managed context projections for agents without recall hooks."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from docmancer.cli.managed_block import upsert_block
@@ -50,6 +51,23 @@ def refresh_projections(
             continue
         action, backup = upsert_block(target, body, begin=PROJECTION_BEGIN, end=PROJECTION_END)
         output.append({"agent": agent, "path": str(target), "action": action, "backup": str(backup) if backup else None})
+        if project_path is not None:
+            from docmancer.memory.delivery import record_delivery
+
+            record_delivery(
+                project_path,
+                agent=agent,
+                surface="managed-projection",
+                integration_mode="managed-projection",
+                bundle={
+                    "mandatory_policies": [],
+                    "curated_memory": [{"excerpt": body}],
+                    "relevant_evidence": [],
+                    "conflict_warnings": [],
+                    "token_estimate": max(1, len(body) // 4),
+                    "index_revision": hashlib.sha256(body.encode("utf-8")).hexdigest()[:20],
+                },
+            )
     return output
 
 
