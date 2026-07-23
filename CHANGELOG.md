@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.2] - Unreleased
+## [0.8.2] - 2026-07-23
 ### Added
 
 - **Canonical Markdown memory tree.** Added stable `docmancer://memory/<id>` addresses, hash-guarded write, read, edit, move, duplicate, trash, and restore operations, recoverable deletion, backlinks, relations, complete-file curation previews, bounded harvesting, lifecycle capture, and rebuildable tree indexes.
