@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.1] - Unreleased
+## [0.9.1] - 2026-07-26
 ### Added
 
 - **Grounded Ask answers.** `docmancer ask` can now generate streamed prose through a configured provider while preserving the providerless cited bundle. Answers carry inline citations, provider and cost metadata, and separate checks for citation validity, quote fidelity, retrieval sufficiency, evidence use, conflict coverage, and claim support. Normative questions refuse when no mandatory source was retrieved.

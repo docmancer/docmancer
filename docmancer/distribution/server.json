@@ -3,7 +3,7 @@
   "name": "dev.docmancer/docmancer",
   "title": "Docmancer",
   "description": "Local-only MCP server for a source-attributed curated Markdown memory tree and separate documentation retrieval.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "websiteUrl": "https://docmancer.dev/docs",
   "repository": {
     "url": "https://github.com/gaurangtorvekar/docmancer",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "docmancer",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "transport": {
         "type": "stdio"
       },
