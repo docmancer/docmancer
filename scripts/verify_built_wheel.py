@@ -63,8 +63,45 @@ if expected_version and __version__ != expected_version:
 static_root = Path(web_app.__file__).with_name("static")
 if not (static_root / "index.html").is_file() or not (static_root / "asset-manifest.json").is_file():
     raise SystemExit("packaged localhost interface is missing from installed wheel")
-if getattr(openrouter_client, "_PREFLIGHT_MAX_TOKENS", None) != 16:
-    raise SystemExit("OpenRouter preflight token floor is missing from installed wheel")
+
+class _ModelsResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"data": [{"id": "openai/gpt-4.1-nano"}]}
+
+class _ModelsClient:
+    last_get_url = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def get(self, url, *, headers):
+        self.__class__.last_get_url = url
+        return _ModelsResponse()
+
+    def post(self, *args, **kwargs):
+        raise SystemExit("OpenRouter preflight attempted a paid completion")
+
+original_httpx_client = openrouter_client.httpx.Client
+openrouter_client.httpx.Client = _ModelsClient
+try:
+    client = openrouter_client.OpenRouterClient(
+        api_key="wheel-smoke",
+        model="openai/gpt-4.1-nano",
+    )
+    client.preflight()
+finally:
+    openrouter_client.httpx.Client = original_httpx_client
+if _ModelsClient.last_get_url != "https://openrouter.ai/api/v1/models":
+    raise SystemExit("OpenRouter no-cost model-catalog preflight is missing from installed wheel")
 
 if getattr(hooks, "DEFAULT_HOOK_TIMEOUT_MS", None) != 1000:
     raise SystemExit("hook timeout hardening is missing from installed wheel")
