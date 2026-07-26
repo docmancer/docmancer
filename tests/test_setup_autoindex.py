@@ -42,13 +42,17 @@ def test_setup_indexes_memory(tmp_path, monkeypatch):
 
 
 def test_setup_dry_run_previews_only(tmp_path, monkeypatch):
-    _isolate(tmp_path, monkeypatch)
+    home = _isolate(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--dry-run"])
     assert r.exit_code == 0, r.output
     assert "Discovering memory and instruction files" in r.output
     assert "Would index 1 source file" in r.output
+    assert "Would connect 1 agent integration" in r.output
     assert "Setup complete" in r.output
     assert not (tmp_path / "mem.db").exists()
+    assert not (home / ".docmancer" / "docmancer.yaml").exists()
+    assert not (home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()
+    assert not (home / ".codex" / "AGENTS.md").exists()
 
 
 def test_setup_no_index_memory_skips(tmp_path, monkeypatch):

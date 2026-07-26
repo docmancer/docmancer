@@ -132,8 +132,31 @@ def assert_provider_conforms(provider: TextCompletionProvider) -> None:
 
 
 __all__ = [
+    "options_for_role",
     "CompletionOptions",
     "TextResult",
     "TextCompletionProvider",
     "assert_provider_conforms",
 ]
+
+
+def options_for_role(role: str, providers_config, *, mode: str = "normal") -> CompletionOptions:
+    """Build call options from the per-role config in `providers.generation`.
+
+    These values were declared in config and served to the web UI but never
+    read, so editing them had no effect. Falls back to the ask defaults when a
+    role is absent.
+    """
+    roles = getattr(providers_config, "generation", None) or {}
+    role_config = roles.get(role) if hasattr(roles, "get") else None
+    if role_config is None:
+        return CompletionOptions(mode=mode)
+    return CompletionOptions(
+        # `temperature` is intentionally absent from CompletionOptions: prose
+        # roles use top_p, and the schema-constrained `consolidate` path sets
+        # temperature through `parse()` rather than here.
+        top_p=getattr(role_config, "top_p", None) or 0.95,
+        max_output_tokens=getattr(role_config, "max_output_tokens", 4096),
+        reasoning_effort=getattr(role_config, "reasoning_effort", "low"),
+        mode=mode,
+    )

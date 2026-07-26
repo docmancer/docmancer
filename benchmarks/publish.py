@@ -7,7 +7,16 @@ import json
 from pathlib import Path
 
 
-PRIVATE_RESULT_FIELDS = {"question", "answer"}
+# Anything that quotes or paraphrases dataset text. `generated_answer` and
+# `judge_reason` come from the answer arm and would otherwise republish the
+# reference text the retrieval arm is careful to strip.
+PRIVATE_RESULT_FIELDS = {
+    "question",
+    "answer",
+    "generated_answer",
+    "judge_reason",
+    "reference_answer",
+}
 
 
 def public_row(row: dict) -> dict:
@@ -22,7 +31,15 @@ def publish(source: Path, destination: Path) -> dict:
     report = json.loads(source.read_text(encoding="utf-8"))
     rows = [public_row(row) for row in report["results"]]
     report["results"] = rows
-    report["losses"] = [row for row in rows if not row.get("excluded") and not row.get("rank")]
+    # The answer arm names this field `retrieval_rank`, so keying only on
+    # `rank` classified every answer row as a loss.
+    report["losses"] = [
+        row
+        for row in rows
+        if not row.get("excluded")
+        and not row.get("rank")
+        and not row.get("retrieval_rank")
+    ]
     report["publication_note"] = (
         "Question and answer text are omitted. Download the pinned official dataset "
         "and join on case ID to reproduce or inspect a case."

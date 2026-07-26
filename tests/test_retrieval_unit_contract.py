@@ -6,6 +6,7 @@ See docs/contracts/retrieval-unit-contract.md.
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 from docmancer.harness.base import MemoryEntry
@@ -133,3 +134,23 @@ def test_overlapping_return_windows_collapse_without_changing_best_score(tmp_pat
 
 def test_retrieval_strategy_has_an_explicit_schema_identity():
     assert RETRIEVAL_UNIT_STRATEGY == "rank-turn-return-window-v1"
+
+
+def test_collapse_happens_before_the_limit_slice_so_results_are_not_starved():
+    """Collapse must not silently shrink a result set below the caller's limit.
+
+    Two adjacent turns expand to nearly the same window and collapse to one
+    passage. Because recall over-fetches (``requested_limit * 4``) and truncates
+    to the limit *after* collapsing, a caller asking for N still gets N whenever
+    N distinct passages exist. Pinned here because the ordering is the whole
+    reason it works, and reordering those two steps would look harmless.
+    """
+    import docmancer.memory as memory_module
+
+    source = inspect.getsource(memory_module.MemoryAgent.query)
+    collapse_at = source.index("_collapse_context_windows")
+    slice_at = source.index("unique_chunks[:requested_limit]")
+    assert collapse_at < slice_at, (
+        "the limit slice must come after window collapse, or collapse eats results"
+    )
+    assert "requested_limit * 4" in source, "recall must over-fetch before collapsing"

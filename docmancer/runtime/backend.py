@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import sys
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +41,12 @@ class LocalRuntime:
         self._docs_document_cache: dict[str, dict] = {}
         self._audit_source_state: tuple[tuple[str, int, int, int], ...] | None = None
         self._audit_report: dict | None = None
+        self._library_catalog_instance: Any | None = None
+        self._library_rebuild_task: asyncio.Task | None = None
+        self._library_rebuild_error: str | None = None
+        self._library_bootstrap_checked = False
+        self._tree_store_instance: Any | None = None
+        self._provider_model_refresh_tasks: dict[str, asyncio.Task] = {}
         self.model_label = "local"
 
     async def initialize(self) -> dict:
@@ -94,22 +101,23 @@ class LocalRuntime:
     async def counts(self) -> dict:
         memory = self._require_memory()
         docs = self._require_docs()
-        memory_status, docs_status = await asyncio.gather(
+        memory_status, docs_status, source_rows = await asyncio.gather(
             asyncio.to_thread(memory.status),
             docs.collection_stats(),
+            asyncio.to_thread(memory.sources, live_preview=False),
         )
-        memory_page, instructions_page = await asyncio.gather(
-            asyncio.to_thread(memory.browse_sources, MemorySourceFilters(kinds=("agent-memory", "docmancer-memory", "team-memory")), page=1, page_size=1),
-            asyncio.to_thread(memory.browse_sources, MemorySourceFilters(kinds=("instructions", "rules")), page=1, page_size=1),
-        )
+        memory_kinds = {"agent-memory", "docmancer-memory", "team-memory"}
+        instruction_kinds = {"instructions", "rules"}
+        memory_count = sum(1 for row in source_rows if str(row.get("type") or "") in memory_kinds)
+        instruction_count = sum(1 for row in source_rows if str(row.get("type") or "") in instruction_kinds)
         return {
-            "memory": int(memory_page.total),
-            "instructions": int(instructions_page.total),
+            "memory": memory_count,
+            "instructions": instruction_count,
             "atoms": int(memory_status.get("atoms") or 0),
             "docs": int(docs_status.get("sources_count") or 0),
             "intelligence": int(memory_status.get("conflicts") or 0),
             "context": len(self._require_service().list_context(project_path=self.project_path)),
-            "sources": int(memory_page.total) + int(instructions_page.total),
+            "sources": memory_count + instruction_count,
         }
 
     async def context(self) -> list[dict]:
@@ -392,6 +400,17 @@ class LocalRuntime:
         )
 
     async def context_delivery(self) -> list[dict]:
+        setup = await self.agent_setup_plan()
+        return [
+            {
+                **item,
+                "agent": item["id"],
+                "status": "delivered" if item.get("last_successful_recall") else "not-observed",
+            }
+            for item in setup["items"]
+        ]
+
+    async def _raw_context_delivery(self) -> list[dict]:
         from docmancer.memory.delivery import delivery_matrix
         from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
 
@@ -436,6 +455,7 @@ class LocalRuntime:
         self._docs_source_rows = []
         self._docs_document_cache.clear()
         progress("index", {"detail": f"Indexed {total} document section(s)"})
+        self._schedule_library_rebuild()
         return total
 
     def _config_file(self) -> Path:
@@ -492,6 +512,174 @@ class LocalRuntime:
         return await asyncio.to_thread(
             lambda: [provider_status(spec.id, config=config) for spec in PROVIDERS]
         )
+
+    def _provider_model_cache_path(self) -> Path:
+        return Path(self.project_path) / ".docmancer" / "index" / "provider-models.json"
+
+    @staticmethod
+    def _generation_model(model_id: str) -> bool:
+        lowered = model_id.casefold()
+        excluded = (
+            "embedding", "embed-", "moderation", "whisper", "transcri",
+            "tts", "speech", "dall-e", "image", "rerank", "reranker",
+            "guard", "safety", "vision-embedding",
+        )
+        return bool(model_id.strip()) and not any(token in lowered for token in excluded)
+
+    @staticmethod
+    def _fallback_provider_models(provider_id: str) -> list[str]:
+        return {
+            "openrouter": [
+                "openai/gpt-5-mini", "anthropic/claude-sonnet-4.5",
+                "google/gemini-2.5-flash", "openai/gpt-4.1-mini",
+            ],
+            "openai": ["gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4.1"],
+            "anthropic": [
+                "claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-3-5",
+            ],
+            "google": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+            "mistral": ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"],
+            "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.3-70b-versatile"],
+            "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+            "xai": ["grok-3-mini", "grok-3", "grok-4"],
+            "cohere": ["command-a-03-2025", "command-r-plus-08-2024", "command-r-08-2024"],
+            "ollama": ["llama3.2", "qwen3", "gemma3"],
+        }.get(provider_id, [])
+
+    def _read_provider_model_cache(self) -> dict:
+        path = self._provider_model_cache_path()
+        if not path.is_file():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _write_provider_model_cache(self, value: dict) -> None:
+        path = self._provider_model_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+
+    def _discover_provider_models(self, provider_id: str) -> list[str]:
+        import httpx
+
+        from docmancer.ai.providers.catalog import get_provider
+        from docmancer.ai.providers.credentials import resolve_credential
+
+        spec = get_provider(provider_id)
+        config = self._require_memory().config.providers
+        credential = resolve_credential(spec)
+        if spec.auth_kind == "api_key" and not credential.value:
+            raise ValueError(f"{spec.label} needs a configured key before its live model catalog can be loaded")
+        base_url = str(config.base_urls.get(provider_id) or spec.base_url)
+        for suffix in ("/chat/completions", "/messages", "/chat"):
+            if base_url.endswith(suffix):
+                models_url = base_url[: -len(suffix)] + "/models"
+                break
+        else:
+            models_url = base_url.rstrip("/") + "/models"
+        headers = {"Accept": "application/json"}
+        if credential.value:
+            if provider_id == "anthropic":
+                headers.update({
+                    "x-api-key": credential.value,
+                    "anthropic-version": "2023-06-01",
+                })
+            else:
+                headers["Authorization"] = f"Bearer {credential.value}"
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(models_url, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        raw_items = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(raw_items, list) and isinstance(payload, dict):
+            raw_items = payload.get("models")
+        if not isinstance(raw_items, list):
+            raise ValueError(f"{spec.label} returned an unsupported model catalog")
+        model_ids = []
+        for item in raw_items:
+            if isinstance(item, str):
+                model_id = item
+            elif isinstance(item, dict):
+                model_id = str(item.get("id") or item.get("name") or "")
+                if model_id.startswith("models/"):
+                    model_id = model_id.split("/", 1)[1]
+            else:
+                continue
+            if self._generation_model(model_id):
+                model_ids.append(model_id)
+        if not model_ids:
+            raise ValueError(f"{spec.label} returned no generation models")
+        return sorted(set(model_ids), key=str.casefold)
+
+    async def provider_models(self, provider_id: str, *, refresh: bool = False) -> dict:
+        """Return a searchable generation-model catalog with stale fallback."""
+        from docmancer.ai.providers.catalog import get_provider
+        from docmancer.ai.providers.factory import provider_status
+
+        spec = get_provider(provider_id)
+        config = self._require_memory().config.providers
+        status = provider_status(provider_id, config=config)
+        configured = config.models.get(provider_id)
+        cache = await asyncio.to_thread(self._read_provider_model_cache)
+        cached = cache.get(provider_id) if isinstance(cache.get(provider_id), dict) else {}
+        cached_items = [
+            str(item) for item in cached.get("items", [])
+            if isinstance(item, str) and self._generation_model(item)
+        ]
+        fetched_at = str(cached.get("fetched_at") or "")
+        fresh = False
+        if fetched_at:
+            try:
+                age = datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)
+                fresh = age < timedelta(hours=1)
+            except ValueError:
+                fresh = False
+
+        error = ""
+        live_items: list[str] = []
+        should_fetch = refresh or not fresh
+        if should_fetch:
+            try:
+                live_items = await asyncio.to_thread(self._discover_provider_models, provider_id)
+                fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                cache[provider_id] = {"items": live_items, "fetched_at": fetched_at}
+                await asyncio.to_thread(self._write_provider_model_cache, cache)
+            except Exception as exc:
+                error = str(exc)
+        source_items = live_items or cached_items or self._fallback_provider_models(provider_id)
+        ordered = list(dict.fromkeys(
+            item for item in [configured, spec.default_model, *source_items]
+            if item and self._generation_model(str(item))
+        ))
+        preferred = {value for value in (configured, spec.default_model) if value}
+        records = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "source": "configured" if model_id == configured else "recommended" if model_id in preferred else "provider",
+            }
+            for model_id in ordered[:2]
+        ]
+        existing = {str(item["id"]) for item in records}
+        records.extend(
+            {"id": model_id, "label": model_id, "source": "provider" if live_items or cached_items else "fallback"}
+            for model_id in sorted(ordered, key=str.casefold)
+            if model_id not in existing
+        )
+        return {
+            "provider": provider_id,
+            "source": spec.models_source,
+            "items": records,
+            "state": "ready" if live_items or fresh else "stale" if cached_items else "fallback",
+            "fetched_at": fetched_at,
+            "stale": bool(cached_items and not fresh and not live_items),
+            "refresh_error": error,
+            "provider_ready": str(status.get("key_state") or "") != "missing",
+        }
 
     async def provider_key(
         self,
@@ -601,10 +789,300 @@ class LocalRuntime:
         config.output_mode = output_mode
         return path
 
+    async def agent_settings(self) -> dict:
+        """Return the one human-facing Docmancer agent configuration."""
+        defaults = await self.ai_defaults()
+        path = self._config_file()
+        data: dict[str, Any] = {}
+        if path.is_file():
+            import yaml
+
+            loaded = await asyncio.to_thread(yaml.safe_load, path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and isinstance(loaded.get("agent"), dict):
+                data = dict(loaded["agent"])
+        generation = defaults.get("generation", {})
+        selected = str(defaults.get("default_llm") or "openrouter")
+        selected_generation = generation.get("ask", {}) if isinstance(generation, dict) else {}
+        return {
+            "name": "Docmancer",
+            "instructions": str(data.get("instructions") or defaults.get("preference") or (
+                "Help me understand what my coding agents know, preserve source attribution, "
+                "and carry useful context safely between agents. Be direct, practical, and honest "
+                "about uncertainty."
+            )),
+            "provider": selected,
+            "model": defaults.get("models", {}).get(selected),
+            "output_mode": str(data.get("output_mode") or defaults.get("output_mode") or "normal"),
+            "reasoning_effort": str(data.get("reasoning_effort") or "medium"),
+            "max_output_tokens": int(data.get("max_output_tokens") or selected_generation.get("max_output_tokens") or 4096),
+            "context_budget": int(data.get("context_budget") or 12000),
+            "top_p": float(data.get("top_p") or selected_generation.get("top_p") or 0.95),
+            "safeguards": [
+                "Source attribution stays visible.",
+                "Sensitive findings are masked before display.",
+                "Destructive changes require explicit confirmation.",
+                "Local data stays on this machine unless you enable encrypted sync.",
+            ],
+        }
+
+    async def save_agent_settings(self, value: dict) -> Path:
+        from docmancer.cli.provider_commands import _atomic_update
+
+        instructions = str(value.get("instructions") or "").strip()
+        if not instructions:
+            raise ValueError("agent instructions cannot be empty")
+        effort = str(value.get("reasoning_effort") or "medium")
+        if effort not in {"low", "medium", "high"}:
+            raise ValueError("reasoning_effort must be low, medium, or high")
+        max_output = max(256, min(65536, int(value.get("max_output_tokens") or 4096)))
+        context_budget = max(1000, min(1000000, int(value.get("context_budget") or 12000)))
+        top_p = max(0.01, min(1.0, float(value.get("top_p") or 0.95)))
+        output_mode = str(value.get("output_mode") or "normal")
+        if output_mode not in {"concise", "normal", "thorough"}:
+            raise ValueError("output_mode must be concise, normal, or thorough")
+        path = self._config_file()
+
+        def transform(data: dict) -> None:
+            data["agent"] = {
+                "instructions": instructions,
+                "reasoning_effort": effort,
+                "max_output_tokens": max_output,
+                "context_budget": context_budget,
+                "top_p": top_p,
+                "output_mode": output_mode,
+            }
+            providers = data.setdefault("providers", {})
+            providers["preference"] = instructions
+            providers["output_mode"] = output_mode
+            generation = providers.setdefault("generation", {})
+            ask = generation.setdefault("ask", {})
+            ask.update({
+                "reasoning_effort": effort,
+                "max_output_tokens": max_output,
+                "top_p": top_p,
+            })
+
+        await asyncio.to_thread(_atomic_update, path, transform)
+        config = self._require_memory().config.providers
+        config.preference = instructions
+        config.output_mode = output_mode
+        from docmancer.core.config import GenerationRoleConfig
+
+        config.generation["ask"] = GenerationRoleConfig(
+            reasoning_effort=effort,
+            max_output_tokens=max_output,
+            top_p=top_p,
+        )
+        return path
+
+    async def agent_setup_plan(self) -> dict:
+        from docmancer.cli.commands import _detect_setup_targets
+        from docmancer.harness.integration_status import inspect_integrations
+
+        detected, hooks, deliveries = await asyncio.gather(
+            asyncio.to_thread(_detect_setup_targets),
+            self.hook_status(),
+            self._raw_context_delivery(),
+        )
+        items = await asyncio.to_thread(
+            inspect_integrations,
+            detected_targets=detected,
+            hook_rows=hooks,
+            delivery_rows=deliveries,
+        )
+        recommended = [
+            str(item["id"])
+            for item in items
+            if item["detected"] and item.get("action_kind") == "automatic"
+        ]
+        return {
+            "items": items,
+            "recommended": recommended,
+            "commands": {
+                "setup": "docmancer setup",
+                "all": "docmancer setup --all",
+                "context_preview": "docmancer context refresh --dry-run",
+                "context_build": "docmancer context refresh",
+            },
+        }
+
+    async def run_agent_setup(
+        self,
+        targets: list[str],
+        *,
+        recall_hooks: bool = True,
+        capture_hooks: bool = False,
+        progress_callback=None,
+    ) -> dict:
+        from docmancer.cli.commands import INSTALL_TARGETS
+
+        progress = progress_callback or (lambda _name, _data: None)
+        selected = list(dict.fromkeys(str(item).lower() for item in targets))
+        unknown = [item for item in selected if item not in INSTALL_TARGETS]
+        if unknown:
+            raise ValueError(f"unsupported agent integration: {', '.join(unknown)}")
+        if not selected:
+            raise ValueError("select at least one coding agent")
+
+        async def run(args: list[str], label: str) -> str:
+            progress("setup", {"detail": label})
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "docmancer",
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output, _ = await process.communicate()
+            text = output.decode("utf-8", errors="replace")
+            if process.returncode:
+                raise RuntimeError(text.strip() or f"{label} failed")
+            return text
+
+        setup_args = ["setup"]
+        for target in selected:
+            setup_args.extend(["--agent", target])
+        if self.config_path:
+            setup_args.extend(["--config", str(self.config_path)])
+        output = [await run(setup_args, "Indexing memory and installing Docmancer skills")]
+        hook_targets = [
+            target for target in selected
+            if target in {"claude-code", "codex", "codex-app", "codex-desktop"}
+        ]
+        if recall_hooks:
+            for target in hook_targets:
+                output.append(await run(
+                    ["agent", "install", target, "--hooks", *(
+                        ["--config", str(self.config_path)] if self.config_path else []
+                    )],
+                    f"Installing recall hooks for {target}",
+                ))
+        if capture_hooks:
+            for target in hook_targets:
+                output.append(await run(
+                    ["agent", "install", target, "--capture-hooks", *(
+                        ["--config", str(self.config_path)] if self.config_path else []
+                    )],
+                    f"Installing capture hooks for {target}",
+                ))
+        progress("done", {"detail": "Docmancer is connected to the selected agents"})
+        verified = await self.agent_setup_plan()
+        selected_families = {
+            "codex" if target in {"codex", "codex-app", "codex-desktop"} else target
+            for target in selected
+        }
+        selected_states = [
+            item for item in verified["items"]
+            if str(item["id"]) in selected_families
+        ]
+        self._schedule_library_rebuild()
+        return {
+            "targets": selected,
+            "recall_hooks": recall_hooks,
+            "capture_hooks": capture_hooks,
+            "items": selected_states,
+            "verified": all(
+                item["integration_state"] in {"connected", "manual-step"}
+                for item in selected_states
+            ),
+            "output": "\n".join(output)[-12000:],
+        }
+
+    async def distillation_preview(self) -> dict:
+        """Plan an AI Context build without calling a provider or writing files."""
+        memory = self._require_memory()
+        defaults, providers, status, sources, plan = await asyncio.gather(
+            self.ai_defaults(),
+            self.provider_catalog(),
+            asyncio.to_thread(memory.status),
+            asyncio.to_thread(memory.sources, live_preview=False),
+            asyncio.to_thread(self._context_engine().build, dry_run=True),
+        )
+        provider_id = str(defaults.get("default_llm") or "openrouter")
+        provider = next((row for row in providers if row.get("id") == provider_id), {})
+        models = defaults.get("models") if isinstance(defaults.get("models"), dict) else {}
+        return {
+            "available": str(provider.get("key_state") or "") != "missing",
+            "status": "ready" if str(provider.get("key_state") or "") != "missing" else "provider-required",
+            "atoms": int(status.get("atoms") or 0),
+            "sources": len(sources),
+            "provider": provider_id,
+            "provider_label": provider.get("label") or provider_id.replace("-", " ").title(),
+            "model": models.get(provider_id),
+            "provider_ready": str(provider.get("key_state") or "") != "missing",
+            "clusters": int(plan.get("clusters") or 0),
+            "estimated_provider_calls": int(plan.get("estimated_provider_calls") or 0),
+            "estimated_input_tokens": int(plan.get("estimated_input_tokens") or 0),
+            "estimated_output_tokens": int(plan.get("estimated_output_tokens") or 0),
+            "estimated_cost_usd": plan.get("estimated_cost_usd"),
+            "revision_id": plan.get("revision_id"),
+            "writes": list(plan.get("writes") or []),
+            "outputs": [
+                "Personal defaults",
+                "Project decisions",
+                "Preferences and working rules",
+                "Team context",
+            ],
+            "message": (
+                "Ready to build readable Context with the selected provider."
+                if str(provider.get("key_state") or "") != "missing"
+                else "Configure this provider before starting AI distillation."
+            ),
+            "privacy_note": (
+                "Only the evidence needed for each Context topic is sent to the selected provider. "
+                "Credentials remain in the operating-system keyring."
+            ),
+        }
+
     def _context_engine(self):
         from docmancer.memory.context_engine import ContextEngine
 
         return ContextEngine(self.project_path, agent=self._require_memory())
+
+    async def _humanize_context_topics(self, topics: list[dict]) -> list[dict]:
+        atoms = await asyncio.to_thread(self._require_memory().indexed_atoms)
+        by_address: dict[str, Any] = {}
+        for atom in atoms:
+            by_address[f"memory://atom/{atom.atom_id}"] = atom
+            if atom.record_id:
+                by_address[f"memory://record/{atom.record_id}"] = atom
+        humanized = []
+        for topic in topics:
+            source_rows = []
+            for address in topic.get("source_addresses") or topic.get("member_addresses") or []:
+                atom = by_address.get(str(address))
+                if atom is None:
+                    continue
+                source_rows.append({
+                    "title": Path(str(atom.source_path or "")).name or str(atom.title or "Memory source"),
+                    "agent": str(atom.harness or "Unknown agent").replace("-", " ").title(),
+                    "project": str(atom.scope or "").split(":", 1)[-1] or Path(self.project_path).name,
+                    "scope": str(atom.scope or ""),
+                    "updated_at": atom.timestamp,
+                })
+            unique_sources = list({
+                (row["title"], row["agent"], row["project"], row["scope"], row["updated_at"]): row
+                for row in source_rows
+            }.values())
+            summary = str(topic.get("summary") or topic.get("text") or "").strip()
+            humanized.append({
+                **{
+                    key: value for key, value in topic.items()
+                    if key not in {"source_addresses", "member_addresses", "artifact_path", "path", "artifact_hash", "body"}
+                },
+                "title": str(topic.get("topic_label") or topic.get("title") or "Knowledge topic"),
+                "summary": summary,
+                "sources": unique_sources,
+                "source_count": len(unique_sources) or int(topic.get("member_count") or len(source_rows)),
+                "has_readable_summary": bool(summary),
+                "diagnostics": {
+                    "cluster_id": topic.get("cluster_id"),
+                    "source_addresses": list(topic.get("source_addresses") or []),
+                    "artifact_path": topic.get("artifact_path") or topic.get("path"),
+                },
+            })
+        return humanized
 
     async def context_artifact(self) -> dict:
         engine = self._context_engine()
@@ -612,6 +1090,9 @@ class LocalRuntime:
             asyncio.to_thread(engine.latest),
             asyncio.to_thread(engine.revisions),
         )
+        if latest is not None:
+            latest = dict(latest)
+            latest["topics"] = await self._humanize_context_topics(list(latest.get("topics") or []))
         return {
             "available": latest is not None,
             "current": latest,
@@ -903,9 +1384,28 @@ class LocalRuntime:
         self.last_latency = monotonic() - started
         return [self._chunk_dict(chunk) for chunk in chunks]
 
-    async def query_docs(self, text: str, *, expand: str | None = None, limit: int = 30) -> list[dict]:
+    async def query_docs(
+        self,
+        text: str,
+        *,
+        expand: str | None = None,
+        limit: int = 30,
+        source: str | None = None,
+    ) -> list[dict]:
         started = monotonic()
-        chunks = await self._require_docs().query(text, expand=expand, limit=limit)
+        filters = None
+        if source:
+            document = await self.get_docs_source(source)
+            page_sources = [
+                str(page.get("source") or "")
+                for page in (document or {}).get("pages", [])
+                if str(page.get("source") or "")
+            ]
+            filters = {"source": {"in": page_sources}} if page_sources else {"source": {"in": []}}
+        query_options: dict[str, Any] = {"expand": expand, "limit": limit}
+        if filters is not None:
+            query_options["filters"] = filters
+        chunks = await self._require_docs().query(text, **query_options)
         self.last_latency = monotonic() - started
         results = [self._chunk_dict(chunk) for chunk in chunks]
         if not self._docs_source_rows:
@@ -931,12 +1431,327 @@ class LocalRuntime:
         self._docs_source_rows = [{"source": source, "pages": 0, "sections": 0} for source in sources]
         return self._docs_source_rows
 
+    def _library_catalog(self):
+        if self._library_catalog_instance is None:
+            from docmancer.web.library_catalog import LibraryCatalog
+
+            path = Path(self.project_path) / ".docmancer" / "index" / "library.sqlite"
+            self._library_catalog_instance = LibraryCatalog(path)
+        return self._library_catalog_instance
+
+    @staticmethod
+    def _readable_markdown_preview(body: str, *, limit: int = 360) -> str:
+        import re
+
+        lines = []
+        in_frontmatter = body.startswith("---\n")
+        for line in body.splitlines():
+            stripped = line.strip()
+            if in_frontmatter:
+                if stripped == "---" and lines:
+                    in_frontmatter = False
+                elif stripped == "---":
+                    lines.append("")
+                continue
+            if not stripped or stripped.startswith(("#", "<!--")):
+                continue
+            if stripped.startswith(("-", "*", ">")):
+                stripped = stripped[1:].strip()
+            lines.append(stripped)
+            if len(" ".join(lines)) >= limit:
+                break
+        preview = " ".join(lines).strip()
+        preview = re.sub(r"memory://atom/[A-Za-z0-9._:-]+", "indexed memory source", preview)
+        preview = re.sub(
+            r"(?:[A-Za-z]:\\|/)(?:Users|home|var|private|tmp)[\\/][^\s`\"')\],;]+",
+            "a local file",
+            preview,
+        )
+        return preview[:limit]
+
+    @staticmethod
+    def _human_scope_label(value: object) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        prefix, separator, detail = raw.partition(":")
+        if not separator:
+            return raw.replace("-", " ").title()
+        if prefix == "project":
+            project_name = Path(detail.rstrip("/\\")).name.replace("_", " ").replace("-", " ")
+            return f"Project: {project_name or 'local project'}"
+        return prefix.replace("-", " ").title()
+
+    async def _library_records(self) -> list[dict]:
+        from docmancer.memory.sources import memory_source_key
+
+        store = self._tree_store()
+        memory = self._require_memory()
+        self._require_docs()
+        tree_entries, evidence, docs = await asyncio.gather(
+            asyncio.to_thread(store.index.entries),
+            asyncio.to_thread(memory.sources, live_preview=False),
+            self.docs_sources(),
+        )
+        records: list[dict] = []
+        for entry in tree_entries:
+            relative = entry.path.relative_to(store.root)
+            if relative.parts and relative.parts[0] == "context":
+                continue
+            if (
+                relative.as_posix() == "context.md"
+                and not entry.sources
+                and entry.title.strip() == "Project context"
+                and self._readable_markdown_preview(entry.body).strip()
+                == "Curated project memory lives in this tree."
+            ):
+                continue
+            records.append({
+                "corpus": "memory",
+                "record_id": entry.memory_id,
+                "title": entry.title,
+                "summary": self._readable_markdown_preview(entry.body),
+                "kind": entry.type,
+                "agent": "",
+                "project_label": Path(self.project_path).name,
+                "scope_label": self._human_scope_label(entry.scope),
+                "updated_at": str(entry.updated_at or ""),
+                "source_count": len(entry.sources),
+                "section_count": 0,
+                "content_fingerprint": entry.content_hash,
+                "detail_key": entry.address,
+            })
+        for row in evidence:
+            source_key = memory_source_key(
+                harness=str(row.get("agent") or "unknown"),
+                scope=str(row.get("scope") or "unknown"),
+                kind=str(row.get("type") or "agent-memory"),
+                path=str(row.get("path") or ""),
+            )
+            path = Path(str(row.get("path") or ""))
+            records.append({
+                "corpus": "evidence",
+                "record_id": source_key,
+                "title": str(row.get("title") or path.name or "Agent evidence"),
+                "summary": f"{int(row.get('atoms') or 0):,} indexed memory atoms from {str(row.get('agent') or 'an agent')}.",
+                "kind": str(row.get("type") or "agent-memory"),
+                "agent": str(row.get("agent") or ""),
+                "project_label": path.parent.name if path.parent.name else Path(self.project_path).name,
+                "scope_label": self._human_scope_label(row.get("scope")),
+                "updated_at": str(row.get("updated_at") or ""),
+                "source_count": int(row.get("atoms") or 0),
+                "section_count": 0,
+                "content_fingerprint": "",
+                "detail_key": source_key,
+            })
+        for row in docs:
+            source = str(row.get("source") or "")
+            record_id = "docs_" + hashlib.sha256(source.encode()).hexdigest()[:24]
+            records.append({
+                "corpus": "docs",
+                "record_id": record_id,
+                "title": str(row.get("title") or source or "Documentation"),
+                "summary": f"{int(row.get('pages') or 0):,} pages and {int(row.get('sections') or 0):,} searchable sections.",
+                "kind": "documentation",
+                "agent": "",
+                "project_label": "",
+                "scope_label": "Reference",
+                "updated_at": str(row.get("ingested_at") or ""),
+                "source_count": int(row.get("pages") or 0),
+                "section_count": int(row.get("sections") or 0),
+                "content_fingerprint": "",
+                "detail_key": source,
+            })
+        return records
+
+    async def rebuild_library_catalog(self) -> dict:
+        records = await self._library_records()
+        return await asyncio.to_thread(self._library_catalog().replace, records)
+
+    def _schedule_library_rebuild(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._library_rebuild_task and not self._library_rebuild_task.done():
+            return
+        async def rebuild() -> None:
+            self._library_rebuild_error = None
+            try:
+                await self.rebuild_library_catalog()
+            except Exception as exc:  # The last valid catalog remains usable.
+                self._library_rebuild_error = str(exc)
+
+        self._library_rebuild_task = loop.create_task(rebuild())
+
+    async def library(
+        self,
+        *,
+        corpus: str,
+        query: str = "",
+        cursor: str | None = None,
+        limit: int = 30,
+    ) -> dict:
+        if corpus not in {"memory", "evidence", "docs"}:
+            raise ValueError("Library corpus must be memory, evidence, or docs")
+        catalog = self._library_catalog()
+        if not self._library_bootstrap_checked:
+            self._library_bootstrap_checked = True
+            self._schedule_library_rebuild()
+        result = await asyncio.to_thread(
+            catalog.list,
+            corpus=corpus,
+            query=query,
+            cursor=cursor,
+            limit=limit,
+        )
+        if corpus == "memory":
+            result["items"] = [
+                item for item in result["items"]
+                if not (
+                    str(item.get("title") or "").strip().casefold() == "project context"
+                    and str(item.get("summary") or "").strip()
+                    == "Curated project memory lives in this tree."
+                )
+            ]
+        task = self._library_rebuild_task
+        has_records = await asyncio.to_thread(catalog.has_records)
+        result["index_state"] = (
+            "building" if task and not task.done()
+            else "error" if self._library_rebuild_error
+            else "ready"
+        )
+        result["refreshing"] = bool(task and not task.done() and has_records)
+        if self._library_rebuild_error:
+            result["refresh_error"] = self._library_rebuild_error
+        return result
+
+    async def library_detail(self, corpus: str, record_id: str) -> dict | None:
+        catalog_item = await asyncio.to_thread(self._library_catalog().record, corpus, record_id)
+        if not catalog_item:
+            return None
+        detail_key = str(catalog_item["detail_key"])
+        if corpus == "memory":
+            item = await self.tree_read(detail_key)
+            source_count = len(item.get("sources") or [])
+            return {
+                "record_id": record_id,
+                "title": catalog_item["title"],
+                "summary": self._readable_markdown_preview(str(item.get("markdown") or ""), limit=1200),
+                "kind": item["type"],
+                "scope_label": catalog_item["scope_label"],
+                "source_count": source_count,
+                "provenance_label": (
+                    f"{source_count} source{'s' if source_count != 1 else ''}"
+                    if source_count
+                    else "Created directly in curated memory"
+                ),
+                "access_surfaces": [
+                    "Library",
+                    "Docmancer Ask",
+                    "Connected coding agents",
+                ],
+                "diagnostics": {
+                    "address": item["address"],
+                    "content_hash": item["content_hash"],
+                    "revision_id": item["revision_id"],
+                },
+            }
+        if corpus == "evidence":
+            item = await self.get_memory_source(detail_key)
+            if item is None:
+                return None
+            return {
+                "record_id": record_id,
+                "title": catalog_item["title"],
+                "summary": self._readable_markdown_preview(str(item.get("content") or ""), limit=1200),
+                "kind": item.get("kind"),
+                "agent": item.get("harness"),
+                "scope_label": catalog_item["scope_label"],
+                "source_count": item.get("atom_count"),
+                "diagnostics": {
+                    "source_key": item.get("source_key"),
+                    "path": item.get("path"),
+                    "source_hash": item.get("source_hash"),
+                },
+            }
+        item = await self.get_docs_source(detail_key)
+        if item is None:
+            return None
+        pages = list(item.get("pages") or [])
+        row = next(
+            (value for value in self._docs_source_rows if str(value.get("source") or "") == detail_key),
+            {},
+        )
+        formats = sorted({
+            str(page.get("format") or "")
+            for page in pages
+            if str(page.get("format") or "")
+        })
+        origin = detail_key
+        if origin.startswith(("http://", "https://")):
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(origin)
+            origin_label = parts.netloc or origin
+        else:
+            origin_label = Path(origin).name or "Local documentation"
+        return {
+            "record_id": record_id,
+            "title": catalog_item["title"],
+            "summary": (
+                f"Searchable technical reference with {int(row.get('sections') or sum(len(page.get('sections') or []) for page in pages)):,} indexed sections."
+            ),
+            "kind": "documentation",
+            "source_count": len(pages),
+            "page_count": int(row.get("pages") or len(pages)),
+            "section_count": int(row.get("sections") or sum(len(page.get("sections") or []) for page in pages)),
+            "formats": list(row.get("formats") or formats),
+            "origin": origin,
+            "origin_label": origin_label,
+            "ingested_at": str(row.get("ingested_at") or max((str(page.get("ingested_at") or "") for page in pages), default="")),
+            "last_indexed_at": str(row.get("ingested_at") or ""),
+            "refresh_state": "current",
+            "access_surfaces": [
+                "Library documentation search",
+                "docmancer docs query",
+                "Connected coding agents using the Docmancer skill",
+            ],
+            "context_policy": "Documentation stays separate from personal memory and is not automatically injected into Context.",
+            "diagnostics": {"source": detail_key},
+        }
+
     def _tree_store(self):
         from docmancer.memory.tree.store import TreeStore
 
-        return TreeStore(Path(self.project_path) / ".docmancer" / "tree")
+        if self._tree_store_instance is None:
+            self._tree_store_instance = TreeStore(Path(self.project_path) / ".docmancer" / "tree")
+        return self._tree_store_instance
 
-    def _tree_entry_payload(self, entry, *, include_body: bool = True) -> dict:
+    @staticmethod
+    def _tree_backlinks(entries) -> dict[str, list[dict]]:
+        targets: dict[str, str] = {}
+        for entry in entries:
+            targets[entry.title] = entry.memory_id
+            targets[entry.address] = entry.memory_id
+        backlinks: dict[str, list[dict]] = {entry.memory_id: [] for entry in entries}
+        for candidate in entries:
+            for _kind, target in candidate.relations:
+                target_id = targets.get(target)
+                if target_id and target_id != candidate.memory_id:
+                    backlinks[target_id].append({
+                        "address": candidate.address,
+                        "title": candidate.title,
+                    })
+        return backlinks
+
+    def _tree_entry_payload(
+        self,
+        entry,
+        *,
+        include_body: bool = True,
+        backlinks: dict[str, list[dict]] | None = None,
+    ) -> dict:
         root = self._tree_store().root
         outline = []
         for line_number, line in enumerate(entry.body.splitlines(), start=1):
@@ -945,12 +1760,6 @@ class LocalRuntime:
                 level = len(stripped) - len(stripped.lstrip("#"))
                 if 1 <= level <= 6 and stripped[level:].startswith(" "):
                     outline.append({"level": level, "title": stripped[level:].strip(), "line": line_number})
-        backlinks = []
-        for candidate in self._tree_store().index.entries():
-            if candidate.memory_id == entry.memory_id:
-                continue
-            if any(target in {entry.title, entry.address} for _kind, target in candidate.relations):
-                backlinks.append({"address": candidate.address, "title": candidate.title})
         return {
             "address": entry.address,
             "memory_id": entry.memory_id,
@@ -965,10 +1774,11 @@ class LocalRuntime:
             "tags": list(entry.tags),
             "sources": list(entry.sources),
             "relations": [{"type": kind, "target": target} for kind, target in entry.relations],
-            "backlinks": backlinks,
+            "backlinks": (backlinks or {}).get(entry.memory_id, []),
             "outline": outline,
             "content_hash": entry.content_hash,
             "revision_id": entry.revision_id,
+            "curation_origin": entry.curation_origin,
             "allowed_actions": ["edit", "move", "duplicate", "trash", "open-editor"],
             **({"markdown": entry.body} if include_body else {}),
         }
@@ -988,11 +1798,19 @@ class LocalRuntime:
     async def tree_list(self) -> list[dict]:
         store = self._tree_store()
         entries = await asyncio.to_thread(store.index.entries)
-        return [self._tree_entry_payload(entry, include_body=False) for entry in sorted(entries, key=lambda item: str(item.path))]
+        backlink_map = self._tree_backlinks(entries)
+        return [
+            self._tree_entry_payload(entry, include_body=False, backlinks=backlink_map)
+            for entry in sorted(entries, key=lambda item: str(item.path))
+        ]
 
     async def tree_read(self, address: str) -> dict:
-        entry = await asyncio.to_thread(self._tree_store().read, address)
-        return self._tree_entry_payload(entry)
+        store = self._tree_store()
+        entries = await asyncio.to_thread(store.index.entries)
+        entry = next((item for item in entries if item.address == address), None)
+        if entry is None:
+            entry = await asyncio.to_thread(store.read, address)
+        return self._tree_entry_payload(entry, backlinks=self._tree_backlinks(entries))
 
     async def tree_create(self, body: dict) -> dict:
         store = self._tree_store()
@@ -1010,6 +1828,7 @@ class LocalRuntime:
             actor_surface="web",
             actor_harness=str(body.get("agent") or "web"),
         )
+        self._schedule_library_rebuild()
         return self._tree_entry_payload(entry)
 
     async def tree_mutate(self, action: str, body: dict) -> dict:
@@ -1025,7 +1844,9 @@ class LocalRuntime:
                 finally:
                     dense.close()
 
-            return {"reindexed": count, "dense": await asyncio.to_thread(rebuild_dense)}
+            result = {"reindexed": count, "dense": await asyncio.to_thread(rebuild_dense)}
+            self._schedule_library_rebuild()
+            return result
         address = str(body["address"])
         expected_hash = str(body.get("expected_hash") or "")
         if action == "edit":
@@ -1037,6 +1858,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "move":
             entry = await asyncio.to_thread(
@@ -1047,6 +1869,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "duplicate":
             entry = await asyncio.to_thread(
@@ -1057,6 +1880,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "trash":
             token = await asyncio.to_thread(
@@ -1066,6 +1890,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._schedule_library_rebuild()
             return {"trashed": True, "restore_token": token}
         if action == "restore":
             entry = await asyncio.to_thread(
@@ -1074,6 +1899,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "open-editor":
             entry = await asyncio.to_thread(store.read, address)
@@ -1156,6 +1982,8 @@ class LocalRuntime:
             results.append(row)
         if any(path.stat().st_mtime_ns != before[path] for path in files):
             raise ValueError("a harvested source changed during the operation")
+        if apply:
+            self._schedule_library_rebuild()
         return {
             "applied": apply,
             "selection": selection,
@@ -1206,6 +2034,8 @@ class LocalRuntime:
             results.append(row)
         if any((path.stat().st_mtime_ns, path.stat().st_size) != before[path] for path in files):
             raise ValueError("an imported source changed during the operation")
+        if apply:
+            self._schedule_library_rebuild()
         return {
             "imported": apply,
             "selection": "explicit",
@@ -1292,6 +2122,7 @@ class LocalRuntime:
                 address=result.entry.address if result.entry else None,
                 reason=result.reason,
             )
+            self._schedule_library_rebuild()
         return payload
 
     async def ask_tree(
@@ -1364,11 +2195,13 @@ class LocalRuntime:
         }
 
     async def sync(self, progress_callback=None) -> dict:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._require_service().sync,
             project_path=self.project_path,
             progress_callback=progress_callback,
         )
+        self._schedule_library_rebuild()
+        return result
 
     async def audit(self) -> dict:
         source_state = await asyncio.to_thread(self._audit_source_signature)

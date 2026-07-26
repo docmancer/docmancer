@@ -114,9 +114,19 @@ def create_app(
     async def compatibility_redirect(request: Request) -> Response:
         """Move retired workbench routes to their canonical replacements."""
         destinations = {
-            "memory": "/ask/",
-            "sources": "/inbox/",
-            "intelligence": "/maintenance/",
+            "ask": "/",
+            "agent-context": "/",
+            "memory": "/library/?tab=evidence",
+            "tree": "/library/?tab=memory",
+            "inbox": "/library/?tab=memory",
+            "sources": "/library/?tab=evidence",
+            "docs": "/library/?tab=docs",
+            "common": "/context/?tab=knowledge",
+            "delivery": "/context/?tab=delivery",
+            "timeline": "/context/?tab=history",
+            "audit": "/settings/?section=safeguards",
+            "maintenance": "/settings/?section=maintenance",
+            "intelligence": "/context/?tab=knowledge",
         }
         surface = request.url.path.strip("/")
         return RedirectResponse(url=destinations[surface], status_code=308)
@@ -134,12 +144,16 @@ def create_app(
         Route("/", bootstrap, methods=["GET"]),
         *[
             Route(path, application_page, methods=["GET", "HEAD"])
-            for surface in ("context", "settings")
+            for surface in ("context", "library", "settings", "help")
             for path in (f"/{surface}", f"/{surface}/")
         ],
         *[
             Route(path, compatibility_redirect, methods=["GET", "HEAD"])
-            for surface in ("memory", "sources", "intelligence")
+            for surface in (
+                "ask", "agent-context", "memory", "tree", "inbox", "sources",
+                "docs", "common", "delivery", "timeline", "audit",
+                "maintenance", "intelligence",
+            )
             for path in (f"/{surface}", f"/{surface}/")
         ],
         Route("/api/v1/session", api.session, methods=["GET"]),
@@ -147,6 +161,8 @@ def create_app(
         Route("/api/v1/capabilities", api.capabilities, methods=["GET"]),
         Route("/api/v1/tree/root", api.tree_root, methods=["GET"]),
         Route("/api/v1/tree", api.tree, methods=["GET"]),
+        Route("/api/v1/library", api.library, methods=["GET"]),
+        Route("/api/v1/library/{corpus:str}/{record_id:str}", api.library_detail, methods=["GET"]),
         Route("/api/v1/tree/file", api.tree_file, methods=["GET"]),
         Route("/api/v1/tree/file", api.tree_create, methods=["POST"]),
         Route("/api/v1/tree/action", api.tree_action, methods=["POST"]),
@@ -190,6 +206,10 @@ def create_app(
         Route("/api/v1/providers/{provider_id:str}/test", api.provider_test, methods=["POST"]),
         Route("/api/v1/providers/{provider_id:str}/models", api.provider_models, methods=["GET"]),
         Route("/api/v1/settings/ai-defaults", api.ai_defaults, methods=["GET", "PUT"]),
+        Route("/api/v1/agent", api.agent_settings, methods=["GET", "PUT"]),
+        Route("/api/v1/agent/setup", api.agent_setup_plan, methods=["GET"]),
+        Route("/api/v1/agent/setup", api.agent_setup, methods=["POST"]),
+        Route("/api/v1/context/distillation-preview", api.distillation_preview, methods=["GET"]),
         Route("/api/v1/maintenance", api.maintenance, methods=["POST"]),
         Route("/api/v1/jobs", api.jobs_list, methods=["GET"]),
         Route("/api/v1/jobs/{job_id:str}", api.job, methods=["GET"]),

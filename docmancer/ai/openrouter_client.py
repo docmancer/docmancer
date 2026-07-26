@@ -268,7 +268,12 @@ class OpenRouterClient:
         )
 
     def preflight(self, *, model: str | None = None) -> None:
-        del model
+        """Validate credentials and, when a model is named, that it exists.
+
+        The model argument was previously discarded, so a typo'd or
+        decommissioned `--model` cleared preflight and failed later, part-way
+        through a consolidation that had already spent tokens.
+        """
         models_url = self.base_url.rsplit("/chat/completions", 1)[0] + "/models"
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.get(models_url, headers=self._headers())
@@ -276,6 +281,20 @@ class OpenRouterClient:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise self._status_error(response) from exc
+        target = (model or self.model or "").strip()
+        if not target:
+            return
+        try:
+            listed = response.json().get("data") or []
+            known = {str(row.get("id") or "") for row in listed if isinstance(row, dict)}
+        except (ValueError, AttributeError):
+            # An unparseable catalogue is not evidence the model is wrong.
+            return
+        if known and target not in known:
+            raise OpenRouterRequestError(
+                f"model {target!r} is not offered by this provider; "
+                "run `docmancer providers list` to see available models"
+            )
 
 
 __all__ = [

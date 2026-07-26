@@ -14,6 +14,16 @@ class FakeRuntime:
     def __init__(self) -> None:
         self.added: list[tuple[str, str]] = []
         self.capture = {"codex": True, "claude-code": False}
+        self.agent = {
+            "name": "Docmancer",
+            "instructions": "Be direct.",
+            "output_mode": "normal",
+            "reasoning_effort": "medium",
+            "max_output_tokens": 4096,
+            "context_budget": 12000,
+            "top_p": 0.95,
+            "safeguards": ["Keep sources visible."],
+        }
 
     async def initialize(self) -> dict:
         return {"ready": True}
@@ -95,6 +105,87 @@ class FakeRuntime:
     async def save_capture_settings(self, enabled: dict[str, bool]) -> Path:
         self.capture = dict(enabled)
         return Path("/tmp/docmancer.yaml")
+
+    async def agent_settings(self) -> dict:
+        return dict(self.agent)
+
+    async def save_agent_settings(self, value: dict) -> Path:
+        self.agent.update(value)
+        return Path("/tmp/docmancer.yaml")
+
+    async def agent_setup_plan(self) -> dict:
+        return {
+            "items": [{
+                "id": "codex",
+                "family": "codex",
+                "label": "Codex",
+                "detected": True,
+                "detected_surfaces": ["codex"],
+                "integration_state": "ready-to-connect",
+                "connected": False,
+                "skill_installed": False,
+                "instructions_installed": False,
+                "instructions_stale": False,
+                "recall_hook": False,
+                "capture_hook": False,
+                "last_successful_recall": None,
+                "manual_step": None,
+                "action_kind": "automatic",
+                "manual_actions": [],
+                "artifact_ready": False,
+                "can_install_from_web": True,
+            }],
+            "recommended": ["codex"],
+            "commands": {"setup": "docmancer setup"},
+        }
+
+    async def distillation_preview(self) -> dict:
+        return {
+            "available": True,
+            "status": "ready",
+            "atoms": 3,
+            "sources": 2,
+            "provider": "openai",
+            "provider_label": "OpenAI",
+            "model": "gpt-5-mini",
+            "provider_ready": True,
+            "outputs": ["Personal defaults", "Project decisions"],
+            "clusters": 2,
+            "estimated_provider_calls": 2,
+            "estimated_input_tokens": 800,
+            "estimated_output_tokens": 800,
+            "estimated_cost_usd": 0.001,
+            "message": "Ready to build readable Context.",
+        }
+
+    async def library(self, *, corpus: str, query: str = "", cursor=None, limit: int = 30) -> dict:
+        return {
+            "items": [{
+                "corpus": corpus,
+                "record_id": "record-1",
+                "title": "Release",
+                "summary": "Use Railway.",
+                "kind": "decision",
+            }],
+            "next_cursor": None,
+            "index_state": "ready",
+            "last_indexed_at": "2026-07-26T18:00:00+00:00",
+        }
+
+    async def library_detail(self, corpus: str, record_id: str) -> dict | None:
+        if record_id != "record-1":
+            return None
+        return {
+            "record_id": record_id,
+            "title": "Release",
+            "summary": "Use Railway.",
+            "kind": "decision",
+            "source_count": 2,
+            "diagnostics": {"corpus": corpus},
+        }
+
+    async def provider_models(self, provider_id: str) -> list[str]:
+        return ["gpt-5-mini"] if provider_id == "openai" else []
 
     async def cloud_status(self) -> dict:
         return {"configured": False}
@@ -258,9 +349,9 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
     with client:
         authenticate(client, app)
         expected = {
-            "/memory/": "/ask/",
-            "/sources/": "/inbox/",
-            "/intelligence/": "/maintenance/",
+            "/memory/": "/library/?tab=evidence",
+            "/sources/": "/library/?tab=evidence",
+            "/intelligence/": "/context/?tab=knowledge",
         }
         for source, destination in expected.items():
             response = client.get(source, follow_redirects=False)
@@ -269,6 +360,59 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
         context = client.get("/context/", follow_redirects=False)
         assert context.status_code == 200
         assert "location" not in context.headers
+
+
+def test_human_agent_settings_and_setup_plan_are_exposed(tmp_path: Path) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        agent = client.get("/api/v1/agent")
+        assert agent.status_code == 200
+        assert agent.json()["name"] == "Docmancer"
+
+        saved = client.put(
+            "/api/v1/agent",
+            json={**runtime.agent, "instructions": "Prefer short, sourced answers."},
+            headers={
+                "origin": "http://127.0.0.1:48123",
+                "x-docmancer-csrf": csrf,
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["instructions"] == "Prefer short, sourced answers."
+
+        setup = client.get("/api/v1/agent/setup")
+        assert setup.status_code == 200
+        assert setup.json()["recommended"] == ["codex"]
+
+        models = client.get("/api/v1/providers/openai/models")
+        assert models.status_code == 200
+        assert models.json()["items"] == [{
+            "id": "gpt-5-mini",
+            "label": "gpt-5-mini",
+            "source": "runtime",
+        }]
+
+
+def test_library_and_distillation_preview_are_exposed(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        authenticate(client, app)
+        library = client.get("/api/v1/library?corpus=memory&limit=30")
+        assert library.status_code == 200
+        assert library.json()["items"][0]["title"] == "Release"
+        assert library.json()["index_state"] == "ready"
+
+        detail = client.get("/api/v1/library/memory/record-1")
+        assert detail.status_code == 200
+        assert detail.json()["summary"] == "Use Railway."
+        assert client.get("/api/v1/library/memory/missing").status_code == 404
+
+        preview = client.get("/api/v1/context/distillation-preview")
+        assert preview.status_code == 200
+        assert preview.json()["available"] is True
+        assert preview.json()["status"] == "ready"
+        assert preview.json()["estimated_provider_calls"] == 2
 
 
 def test_harvest_and_curation_are_interactive_local_operations(tmp_path: Path) -> None:

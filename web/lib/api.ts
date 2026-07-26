@@ -8,10 +8,11 @@ export async function establishSession(): Promise<void> {
   csrfToken = String(data.csrf_token ?? "");
 }
 
-export async function apiGet(path: string): Promise<JsonMap> {
+export async function apiGet(path: string, signal?: AbortSignal): Promise<JsonMap> {
   const response = await fetch(path, {
     credentials: "same-origin",
     headers: { Accept: "application/json" },
+    signal,
   });
   return decode(response);
 }

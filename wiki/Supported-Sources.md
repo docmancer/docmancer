@@ -1,46 +1,36 @@
 # Supported Sources
 
-Docmancer maintains two local corpora: memory and instructions discovered from coding agents, plus documentation explicitly added by the user.
+Docmancer keeps three kinds of knowledge distinct because they have different levels of trust and different uses.
 
-## Memory evidence
+## Agent evidence
 
-`docmancer setup` performs the initial machine-wide discovery of agent-written memory, user-authored instruction files, and project rule directories. Opening `docmancer web` or running `docmancer ask` refreshes the index when those sources change. This raw corpus remains source-attributed evidence.
+`docmancer setup` discovers memory, instructions, rules, and eligible session evidence that supported coding agents already wrote. Opening `docmancer web` or running `docmancer ask` refreshes registered sources when they change.
 
 | Kind | Examples |
-|------|----------|
+| --- | --- |
 | Agent memory | Claude Code project memory, Codex memory and rollout summaries, and supported agent memory stores. |
 | Instructions | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, and equivalent global or project files. |
 | Rules | `.cursor/rules`, `.claude/rules`, `.windsurf/rules`, and other supported rule directories. |
 
-Secrets are redacted before indexing or distillation. `docmancer status` reports source counts and masked security findings. The local web Sources page shows exact provenance, while Audit shows the credential category, severity, masked excerpt, file, and line.
+This material is attributable evidence, not automatically trusted truth. Docmancer retains the contributing agent, project, source, and update time, and excludes generated integration copies from recurrence analysis.
 
-## Canonical records
+## Curated memory and Context
 
-Approved statements are individual revisioned Markdown records. Pack manifests group those records into Personal defaults, Current project, Team standards, and Team project. Agent-owned source files remain evidence; managed agent projections are excluded so generated context cannot feed back into the corpus.
+Curated memory is ordinary Markdown under `.docmancer/tree`. It is created deliberately, retains provenance, and uses stable addresses and content hashes.
 
-## Documentation URLs
+Context is a separate revisioned output. It consolidates useful evidence into readable topics and can be built with a configured generation provider or through deterministic local clustering. Generated Context does not feed back into agent evidence or appear as curated memory.
 
-| Source | Strategy | Command |
-|--------|----------|---------|
-| GitBook sites | `/llms-full.txt`, then `/llms.txt` | `docmancer docs add <url> --provider gitbook` |
-| Mintlify sites | `/llms-full.txt`, then `/llms.txt`, then `/sitemap.xml` | `docmancer docs add <url> --provider mintlify` |
-| Generic web docs | Documentation roots, sitemaps, navigation crawl, filters, and readability extraction | `docmancer docs add <url> --provider web` |
-| GitHub repositories and blobs | README and documentation Markdown paths | `docmancer docs add <github-url> --provider github` |
-| Crawl4AI-backed sites | Browser-style extraction for difficult sites | `docmancer docs add <url> --provider crawl4ai` |
+## Documentation
 
-`--provider auto` is the default. `--max-pages` bounds discovery across one add operation, and `--browser` enables Playwright fallback for JavaScript-heavy sites.
+Documentation stays in a separate Library corpus. Connected agents can search it through the Docmancer skill or `docmancer docs query`, but it is not automatically injected into personal Context.
 
-## Local documentation formats
+| Source | Command |
+| --- | --- |
+| GitBook, Mintlify, and generic documentation sites | `docmancer docs add <url>` |
+| GitHub repositories and Markdown blobs | `docmancer docs add <github-url>` |
+| Local files and directories | `docmancer docs add <path>` |
+| JavaScript-heavy sites | `docmancer docs add <url> --browser` |
 
-All local loaders ship in the core install.
+Supported local formats include Markdown, plain text, HTML, PDF, DOCX, and RTF. Run `docmancer docs sync` to refresh all documentation sources, or pass one source to refresh it selectively.
 
-| Format | Loader notes |
-|--------|--------------|
-| `.md` and `.markdown` | Heading-aware Markdown chunking. |
-| `.txt` | Paragraph and sliding-window chunking with encoding detection. |
-| `.html` and `.htm` | Readability-based extraction. |
-| `.pdf` | `pypdf` with `pdfplumber` fallback. |
-| `.docx` | Heading styles mapped to Markdown headings. |
-| `.rtf` | Paragraph-based extraction through `striprtf`. |
-
-Run `docmancer docs sync` to refresh every documentation source, or pass one indexed source to refresh it selectively.
+Likely secrets are redacted before indexing or AI processing. `docmancer status` and the local app report masked findings without printing complete detected values.

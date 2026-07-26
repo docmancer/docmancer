@@ -21,9 +21,9 @@ Most users only need these:
 | `DOCMANCER_HOME` | Override the storage root. Defaults to `~/.docmancer`. |
 | `DOCMANCER_MEMORY_DB` | Override the memory index database path. |
 | `DOCMANCER_HOOK_TIMEOUT_MS` | Bound automatic hook recall. Default: `1000`. |
-| `OPENROUTER_API_KEY` | Enable optional model-assisted wording in advanced compatibility workflows. Deterministic reconciliation remains authoritative. |
+| Provider-specific API variables | Optional fallback for generation providers when no key is stored in the operating-system keyring. |
 
-Do not put real keys in `docmancer.yaml`. docmancer reads provider keys from the shell environment.
+Do not put real keys in `docmancer.yaml`. Store generation credentials from the workbench Settings page or with `docmancer providers key <provider>`. Docmancer stores them in the operating-system keyring. A provider-specific environment variable remains a fallback.
 
 ## YAML reference
 
@@ -129,7 +129,7 @@ The default stack needs no provider keys. These settings are for explicit opt-in
 
 | Use case | Variables or config |
 |----------|---------------------|
-| Optional model assistance | `OPENROUTER_API_KEY` for advanced compatibility workflows. |
+| Grounded answers and AI Context | Choose a provider and model in Settings or with `docmancer providers set`, then store a key with `docmancer providers key`. |
 | Cloud embeddings | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VOYAGE_API_KEY`, or `COHERE_API_KEY`, depending on `embeddings.provider`. |
 | FTS5-only operation | `DOCMANCER_AUTO_VECTORS=0`; the hidden one-release ingest alias also retains `--no-vectors`. |
 | FastEmbed cache override | `DOCMANCER_FASTEMBED_CACHE_DIR`. |
@@ -155,3 +155,4 @@ Qdrant remains supported for users who explicitly configure the heavy backend, b
 - Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
 - `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Users do not need a separate initialization step.
 - If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.
+- Provider model catalogs are cached locally. Providers with discovery endpoints refresh their generation-capable models in the background; maintained catalogs and custom model IDs remain available when live discovery is unavailable.

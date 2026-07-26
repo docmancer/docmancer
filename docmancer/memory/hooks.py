@@ -235,11 +235,15 @@ def build_hook_context(
             break
     if should_dedupe:
         _save_seen(payload.session_id, seen_order)
+    # Canonical (mandatory and curated) memory comes first. The tail of this
+    # string is hard-truncated at max_chars, so anything after a large section
+    # can be silently cut; putting the unbounded baseline first meant standing
+    # policy could be dropped before the agent ever saw it.
     sections = [
         value
         for value in (
-            _current_baseline(payload),
             _format_canonical(canonical),
+            _current_baseline(payload),
             _format_context(selected, max_chars=max_chars) if selected else "",
         )
         if value

@@ -554,19 +554,25 @@ def refresh_stale_instruction_blocks(*, config_path: str | Path | None = None, h
         if not row["stale"]:
             continue
         target = next(t for t in _instruction_block_targets(home) if t["agent"] == row["agent"])
-        content = _build_skill_content(target["template"], effective_config_path)
-        # Always back up here, even though a routine reinstall of an already
-        # foreign-marked file would not: this is an unattended refresh
-        # triggered by setup/status/doctor rather than an explicit install,
-        # so the prior content is worth keeping one copy of no matter what.
-        upsert_block(
-            target["path"],
-            content,
-            begin=_AGENTS_MD_START,
-            end=_AGENTS_MD_END,
-            backup_policy="always",
-            version=__version__,
-        )
+        try:
+            content = _build_skill_content(target["template"], effective_config_path)
+            # Always back up here, even though a routine reinstall of an already
+            # foreign-marked file would not: this is an unattended refresh
+            # triggered by setup/status/doctor rather than an explicit install,
+            # so the prior content is worth keeping one copy of no matter what.
+            upsert_block(
+                target["path"],
+                content,
+                begin=_AGENTS_MD_START,
+                end=_AGENTS_MD_END,
+                backup_policy="always",
+                version=__version__,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # One unreadable template or read-only target must not take down
+            # status, doctor, and setup. Report the failure as unresolved drift.
+            refreshed.append({**row, "refreshed_to": None, "error": str(exc)})
+            continue
         refreshed.append({**row, "refreshed_to": __version__})
     return refreshed
 
@@ -2288,6 +2294,25 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
         _emit_status_line("Memory indexing skipped (--no-index-memory).", state="info")
         return
 
+    if dry_run:
+        try:
+            from docmancer.memory import MemoryAgent
+
+            preview_started = monotonic()
+            preview_status = LiveStatus(started_at=preview_started)
+            preview_status.start("Discovering memory and instruction files...")
+            try:
+                source_count = len(MemoryAgent().preview())
+            finally:
+                preview_status.stop()
+            _emit_status_line(
+                f"Would index {source_count:,} source file(s) from your agents "
+                f"({monotonic() - preview_started:.1f}s)."
+            )
+        except Exception as exc:  # noqa: BLE001 - setup preview must stay non-fatal
+            _emit_status_line(f"Could not preview agent memory ({exc}).", state="warn")
+        return
+
     # Warm the default static model once so the first real query is instant.
     # model2vec only; never trigger the heavy FastEmbed path here.
     if config.embeddings.provider == "model2vec":
@@ -2312,20 +2337,6 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
         from docmancer.memory import MemoryAgent
 
         agent = MemoryAgent()
-        if dry_run:
-            preview_started = monotonic()
-            preview_status = LiveStatus(started_at=preview_started)
-            preview_status.start("Discovering memory and instruction files...")
-            try:
-                source_count = len(agent.preview())
-            finally:
-                preview_status.stop()
-            _emit_status_line(
-                f"Would index {source_count:,} source file(s) from your agents "
-                f"({monotonic() - preview_started:.1f}s)."
-            )
-            return
-
         sync_started = monotonic()
         live_status = LiveStatus(started_at=sync_started)
 
@@ -2389,14 +2400,29 @@ def setup_cmd(
     config_status.start("Preparing the local configuration and SQLite index...")
     try:
         config_path = _effective_config(config_path)
-        config_file = _ensure_config_and_db(config_path)
+        if dry_run:
+            if config_path:
+                config_file = Path(config_path).expanduser().resolve()
+            elif Path("docmancer.yaml").is_file():
+                config_file = Path("docmancer.yaml").resolve()
+            else:
+                config_file = _get_user_config_path().resolve()
+            config = (
+                _get_config_class().from_yaml(config_file)
+                if config_file.is_file()
+                else _build_user_bootstrap_config()
+            )
+        else:
+            config_file = _ensure_config_and_db(config_path)
+            config = _get_config_class().from_yaml(config_file)
     finally:
         config_status.stop()
-    _emit_status_line(f"Config: {display_path(config_file)}")
-    config = _get_config_class().from_yaml(config_file)
-    _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")
+    prefix = "Would use" if dry_run else "Config"
+    _emit_status_line(f"{prefix}: {display_path(config_file)}")
+    index_prefix = "Would use SQLite index" if dry_run else "SQLite index"
+    _emit_status_line(f"{index_prefix}: {display_path(config.index.db_path)}")
 
-    refreshed_blocks = refresh_stale_instruction_blocks(config_path=config_file)
+    refreshed_blocks = [] if dry_run else refresh_stale_instruction_blocks(config_path=config_file)
     for row in refreshed_blocks:
         _emit_status_line(
             f"Refreshed stale instruction block for {row['agent']} "
@@ -2422,6 +2448,15 @@ def setup_cmd(
         return
 
     unique_targets = list(dict.fromkeys(selected))
+    if dry_run:
+        if unique_targets:
+            _emit_status_line(
+                f"Would connect {len(unique_targets)} agent integration(s): "
+                f"{', '.join(unique_targets)}.",
+                state="info",
+            )
+        _emit_status_line(f"Setup complete, preview only ({monotonic() - setup_started:.1f}s).")
+        return
     _emit_status_line(
         f"Connecting {len(unique_targets)} agent integration(s): {', '.join(unique_targets)}.",
         state="info",

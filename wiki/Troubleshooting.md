@@ -4,10 +4,10 @@ Start with:
 
 ```bash
 docmancer status --check
-docmancer status --json
+docmancer doctor
 ```
 
-The status report combines memory health, source counts, masked security findings, pending reviews, installed-agent delivery, and cloud state.
+These commands report source health, integration state, Context revisions, provider readiness, masked security findings, and optional Cloud status.
 
 ## The wrong executable is running
 
@@ -21,95 +21,123 @@ Remove an older user-site installation or put the intended pipx or virtual-envir
 
 ## Native Python imports fail
 
-The package requires Python 3.11 through 3.13. On Apple Silicon, confirm the interpreter reports `arm64` and recreate the environment with a native Homebrew Python when `pydantic_core` or another native wheel reports an architecture mismatch.
+Docmancer requires Python 3.11 through 3.13. On Apple Silicon, confirm the interpreter reports `arm64`. Recreate the environment with a native Homebrew Python if `pydantic_core` or another native wheel reports an architecture mismatch.
 
-## Agent memory is missing
+## Docmancer finds no agent memory
 
-Confirm at least one supported agent has written memory, instructions, or rules on this machine. Opening the workbench or asking a question refreshes changed registered sources automatically:
+Run `docmancer setup` first. An agent must have written memory, instructions, rules, or eligible session history before there is anything to index.
 
 ```bash
-docmancer web
+docmancer setup
 docmancer ask "What decisions have we made in this project?"
 docmancer status --json
 ```
 
-Check the `discovery.disabled` configuration list if an expected harness is absent. Repo-level instructions can only be recovered for projects an agent has previously recorded or that are explicitly in scope. Advanced diagnosis is available through `docmancer agent refresh`.
+Check `discovery.disabled` if an expected harness is absent. Repo instructions can only be recovered for projects an agent previously recorded or that are explicitly in scope.
 
-## Distillation proposes nothing
+## An agent is detected but not connected
 
-This is expected when the approved pack already matches current evidence. Use `docmancer memory show <pack>` to inspect active records and `docmancer status` to confirm sources were harvested. If new evidence exists, target the relevant project pack explicitly:
+Detection means the application or its storage directory exists. Connection means Docmancer verified the expected skill and managed instructions after installation.
 
-```bash
-docmancer memory distill --into personal-project:<project-id> --project <path>
-```
-
-## A proposal needs different wording
-
-Inspect it with `docmancer memory review <proposal>`. Use `--edit <operation-index> --text "<replacement>"` to change one operation before approval. Team records never become active through an unreviewed edit.
-
-## A deleted record returned
-
-Run `docmancer memory show <id> --history` and `docmancer cloud sync`. Canonical removal writes a tombstone and cloud replay must not resurrect an older live revision. If the source is agent-owned rather than canonical, delete or correct the original source evidence. The next workbench open or `docmancer ask` refreshes the changed source automatically.
-
-## Context differs between agents
-
-Refresh projections and inspect agent coverage:
+Run:
 
 ```bash
-docmancer agent refresh
-docmancer status --json
+docmancer agent install <agent>
+docmancer delivery
 ```
 
-Claude Code and Codex hooks receive task-relevant context dynamically. Other supported agents use managed projections, so their file paths must still be installed and writable. Managed blocks are disposable and should not be copied into source memory.
+Codex, Codex App, and Codex Desktop share one integration family. Claude Desktop requires a manual skill upload from the generated package. The web setup modal shows manual instructions when that is the only remaining step.
 
-## A project does not inherit team standards
-
-Confirm the project is linked on the current device and that the team proposal is approved. `docmancer memory show team-standards` should list the record, while `docmancer memory show team-project:<project-id>` shows explicit project exceptions. Team project and personal project values take precedence over global standards.
+Use `--hooks` for supported automatic recall. Capture requires the separate `--capture-hooks` option and remains off by default.
 
 ## Ask returns no result
 
-Use a more specific question and confirm the source appears in `docmancer status --json`. `docmancer ask` omits weak matches below its relevance floor rather than presenting them as trustworthy context.
+Use a more specific question and confirm the source appears in `docmancer status --json`. Docmancer omits weak matches instead of presenting them as reliable context.
 
-Use `--history` when the requested fact may have been superseded or expired:
-
-```bash
-docmancer ask "<question>" --history
-docmancer memory show <record-id> --relations --history
-```
-
-## Conflicts or orphaned evidence are missing
-
-Open `docmancer web` to refresh changed sources, then inspect the advanced review filters:
+Use `--history` if the answer may have been superseded:
 
 ```bash
-docmancer memory review --conflicts
-docmancer memory review --orphans
+docmancer ask "How did our deployment policy change?" --history
 ```
 
-Project-specific differences may be classified as explicit overrides instead of global conflicts. Exact duplicates and confirmed revision lineage can reconcile automatically without entering the queue.
+## Context does not exist yet
 
-## Security warning appears in Audit
+If no memory is indexed, run `docmancer setup`. If memory exists, preview a build:
 
-The local web Audit page shows the likely credential type, severity, exact source file and line, and a masked excerpt. Use `docmancer status --json` for the complete local report, then rotate the credential if it is real and remove it from its original source. The next workbench open or `docmancer ask` refreshes the changed source. Docmancer never prints the complete detected value.
+```bash
+docmancer context refresh --dry-run
+```
+
+The local web app shows how many sources and clusters will be processed before anything is written.
+
+## AI Context is unavailable
+
+Choose a provider and model in Settings, then store and test the provider credential. The CLI equivalent is:
+
+```bash
+docmancer providers list
+docmancer providers key <provider>
+docmancer providers set <provider> --model <model-id>
+docmancer providers test <provider>
+```
+
+Live model discovery may require a credential. Cached or maintained model lists remain available when discovery cannot run.
+
+You can still build deterministic local Context without an LLM:
+
+```bash
+docmancer context refresh --provider none
+```
+
+## A Context build fails
+
+The previous Context revision remains current if a provider fails or a background job is interrupted. Check provider readiness, then retry. Use `docmancer context status`, `show`, and `diff` to inspect current state.
+
+## Context differs between agents
+
+Inspect installation, automatic recall, and recent successful use as separate signals:
+
+```bash
+docmancer delivery
+docmancer context delivery
+docmancer agent refresh
+```
+
+An installed skill can be connected even when no recall receipt exists yet. Some agents require a restart or trust prompt before new instructions take effect.
+
+## A deleted curated file returned
+
+Read its history and verify the original source:
+
+```bash
+docmancer read <address> --history
+docmancer cloud sync
+```
+
+Curated deletion writes a recoverable tombstone. If the item came from an agent-owned file, correct or remove the original evidence and refresh the index.
+
+## A security warning appears
+
+The local app and `docmancer status --json` show the likely credential category, severity, source, line, and a masked excerpt. Rotate a real credential and remove it from the original source. Docmancer never prints the complete detected value.
+
+## Library indexing is still running
+
+The Library serves its last valid SQLite catalog while rebuilding in the background. Navigation and existing results should remain usable. If it remains stale, run `docmancer doctor`, reopen `docmancer web`, and inspect the reported catalog state.
 
 ## Documentation fetch is incomplete
 
-For JavaScript-heavy sites, retry through the Docs surface with browser fallback:
+For JavaScript-heavy sites:
 
 ```bash
 docmancer docs add <url> --browser
 ```
 
-Use `--provider`, `--strategy`, or `--max-pages` when automatic discovery selects the wrong route or the corpus is too large. Refresh indexed documentation with `docmancer docs sync`.
+Use `--provider`, `--strategy`, or `--max-pages` when automatic discovery chooses the wrong route or the source is unusually large. Refresh indexed documentation with `docmancer docs sync`.
 
-## Docs query falls back to lexical retrieval
+## Cloud is unavailable
 
-The vector path may be unavailable, may not have been populated, or may be configured off. `docmancer status --check` reports the local setup. Lexical fallback remains valid for documentation search, while the default memory path uses the bundled Model2Vec model and sqlite-vec.
+Local Ask, Context, Library, integrations, capture, and docs continue to work. Reconnect with `docmancer cloud connect` when needed. Cloud adds encrypted continuity and coordination, not local recall quality.
 
-## Cloud sync is unavailable
+## An old command is no longer recognised
 
-Local memory remains fully operational. Check the footer or run `docmancer cloud`, then reconnect with `docmancer cloud connect` when needed. Local source refresh through the workbench and `docmancer ask` does not depend on Cloud connectivity. Cloud and semantic conflicts appear in the Context review queue.
-
-## An old command is no longer recognized
-
-The 0.8 root aliases were removed in 0.9. Use `ask` for recall, `web` for project onboarding, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for their respective advanced operations.
+The 0.8 aliases were removed in 0.9. Use `ask` for recall, `web` for the human interface, `context refresh` for consolidated Context, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for advanced operations.

@@ -124,9 +124,46 @@ def context_refresh(
     click.echo(f"  sources: {result['input_sources']}")
     click.echo(f"  clusters: {result['clusters']}")
     click.echo(f"  revision: {result['revision_id']}")
-    click.echo(f"  provider calls: {result.get('provider_calls', result['estimated_provider_calls'])}")
-    for reason, count in sorted((result["dedup"].get("held_back") or {}).items()):
-        click.echo(f"  held back ({reason}): {count}")
+    if dry_run:
+        click.echo(f"  estimated provider calls: {result['estimated_provider_calls']}")
+        click.echo(
+            f"  estimated tokens: {result['estimated_input_tokens']} in, "
+            f"{result['estimated_output_tokens']} out"
+        )
+        click.echo(f"  estimated cost: ~${result['estimated_cost_usd']:.4f} (planning estimate)")
+    else:
+        click.echo(f"  provider calls: {result.get('provider_calls', 0)}")
+        if result.get("cost_usd") is not None:
+            click.echo(f"  cost: ${float(result['cost_usd']):.6f}")
+
+    dedup = result.get("dedup") or {}
+    click.echo(f"  collapsed (mechanical): {dedup.get('mechanical_collapsed', 0)}")
+    click.echo(f"  collapsed (semantic): {dedup.get('semantic_collapsed', 0)}")
+    held_back = dedup.get("held_back") or {}
+    if held_back:
+        for reason, count in sorted(held_back.items()):
+            click.echo(f"  held back ({reason}): {count}")
+    else:
+        click.echo("  held back: none")
+
+    # The collapse detail is the audit surface for the one stage that can lose
+    # information. It used to be reachable only through --json, which meant the
+    # default invocation showed a count and no way to check it.
+    if dry_run:
+        collapse_plan = result.get("collapse_plan") or []
+        if collapse_plan:
+            click.echo("  would collapse:")
+            for row in collapse_plan[:20]:
+                click.echo(
+                    f"    {row['representative']} <- {', '.join(row['collapsed'])}"
+                )
+            if len(collapse_plan) > 20:
+                click.echo(
+                    f"    ... and {len(collapse_plan) - 20} more; use --json for the full plan"
+                )
+        holdbacks = result.get("holdbacks") or []
+        if holdbacks:
+            click.echo(f"  conflicts preserved: {len(holdbacks)}")
 
 
 @context_group.command("diff", cls=DocmancerCommand)

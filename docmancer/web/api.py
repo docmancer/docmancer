@@ -17,7 +17,7 @@ from docmancer.cloud.client import AuthenticationError, CloudError, EntitlementE
 from docmancer.runtime import LocalRuntime
 
 
-LOCAL_API_VERSION = 2
+LOCAL_API_VERSION = 5
 
 CAPABILITIES = {
     "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
@@ -29,13 +29,22 @@ CAPABILITIES = {
     "timeline": ["file-mutations", "diffs"],
     "context": ["status", "refresh", "diff", "rollback", "excluded", "adopt", "retire"],
     "providers": ["list", "key", "test", "models", "defaults"],
+    "agent": ["settings", "setup-plan", "setup"],
     "memory": ["query", "recent", "add", "edit", "forget", "promote"],
     "sources": ["browse", "search", "create", "edit", "delete"],
     "docs": ["browse", "query", "ingest"],
+    "library": ["browse", "search", "detail", "background-index"],
     "audit": ["secrets", "hooks"],
     "intelligence": ["review", "recent", "maintenance", "history", "resolve"],
     "maintenance": ["sync", "consolidate", "apply", "doctor"],
     "cloud": ["status", "sync", "devices", "recovery", "team", "billing"],
+}
+
+COMMERCIAL_LINKS = {
+    "pricing": "https://docmancer.dev/pricing",
+    "personal_sync": "https://docmancer.dev/cloud",
+    "team": "https://docmancer.dev/teams",
+    "account": "https://docmancer.dev/account",
 }
 
 
@@ -130,13 +139,38 @@ class LocalApi:
         return JSONResponse(jsonable({"status": status, "counts": counts}))
 
     async def capabilities(self, request: Request) -> JSONResponse:
-        return JSONResponse({"api_version": LOCAL_API_VERSION, "capabilities": CAPABILITIES})
+        return JSONResponse({
+            "api_version": LOCAL_API_VERSION,
+            "capabilities": CAPABILITIES,
+            "commercial_links": COMMERCIAL_LINKS,
+        })
 
     async def tree_root(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.tree_root()))
 
     async def tree(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(paginate(await self.runtime.tree_list(), request)))
+
+    async def library(self, request: Request) -> JSONResponse:
+        result = await self.runtime.library(
+            corpus=(request.query_params.get("corpus") or "memory").strip(),
+            query=(request.query_params.get("q") or "").strip(),
+            cursor=(request.query_params.get("cursor") or "").strip() or None,
+            limit=bounded_int(request.query_params.get("limit"), 30, maximum=100),
+        )
+        return JSONResponse(jsonable(result))
+
+    async def library_detail(self, request: Request) -> JSONResponse:
+        result = await self.runtime.library_detail(
+            str(request.path_params["corpus"]),
+            str(request.path_params["record_id"]),
+        )
+        if result is None:
+            return JSONResponse(
+                {"error": {"code": "NOT_FOUND", "message": "Library item not found"}},
+                status_code=404,
+            )
+        return JSONResponse(jsonable(result))
 
     async def tree_file(self, request: Request) -> JSONResponse:
         address = str(request.query_params.get("address") or "")
@@ -470,8 +504,16 @@ class LocalApi:
 
     async def docs(self, request: Request) -> JSONResponse:
         query = (request.query_params.get("q") or "").strip()
-        items = await self.runtime.query_docs(query, limit=100) if query else await self.runtime.docs_sources()
-        return JSONResponse(jsonable({**paginate(items, request), "query": query}))
+        source = (request.query_params.get("source") or "").strip() or None
+        items = (
+            await self.runtime.query_docs(query, limit=100, source=source)
+            if query else await self.runtime.docs_sources()
+        )
+        return JSONResponse(jsonable({
+            **paginate(items, request),
+            "query": query,
+            "source": source,
+        }))
 
     async def docs_ingest(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -570,16 +612,21 @@ class LocalApi:
         ))
 
     async def provider_models(self, request: Request) -> JSONResponse:
-        from docmancer.ai.providers.catalog import get_provider
-
-        spec = get_provider(request.path_params["provider_id"])
-        defaults = await self.runtime.ai_defaults()
-        selected = defaults.get("models", {}).get(spec.id) or spec.default_model
-        return JSONResponse({
-            "provider": spec.id,
-            "source": spec.models_source,
-            "items": [selected] if selected else [],
-        })
+        provider_id = request.path_params["provider_id"]
+        if request.query_params.get("refresh") == "1":
+            result = await self.runtime.provider_models(provider_id, refresh=True)
+        else:
+            result = await self.runtime.provider_models(provider_id)
+        if isinstance(result, list):  # Compatibility for presentation-runtime adapters.
+            result = {
+                "provider": provider_id,
+                "items": [
+                    {"id": str(item), "label": str(item), "source": "runtime"}
+                    for item in result
+                ],
+                "state": "ready",
+            }
+        return JSONResponse(jsonable(result))
 
     async def ai_defaults(self, request: Request) -> JSONResponse:
         if request.method == "GET":
@@ -590,6 +637,38 @@ class LocalApi:
             **jsonable(await self.runtime.ai_defaults()),
             "saved_to": str(path),
         })
+
+    async def agent_settings(self, request: Request) -> JSONResponse:
+        if request.method == "GET":
+            return JSONResponse(jsonable(await self.runtime.agent_settings()))
+        body = await request_json(request)
+        path = await self.runtime.save_agent_settings(body)
+        return JSONResponse({
+            **jsonable(await self.runtime.agent_settings()),
+            "saved_to": str(path),
+        })
+
+    async def agent_setup_plan(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.agent_setup_plan()))
+
+    async def agent_setup(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        targets = body.get("targets")
+        if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
+            raise ValueError("targets must be a list of agent identifiers")
+        job = self.jobs.start(
+            "agent.setup",
+            lambda progress: self.runtime.run_agent_setup(
+                targets,
+                recall_hooks=bool(body.get("recall_hooks", True)),
+                capture_hooks=bool(body.get("capture_hooks", False)),
+                progress_callback=progress,
+            ),
+        )
+        return JSONResponse(jsonable(job), status_code=202)
+
+    async def distillation_preview(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.distillation_preview()))
 
     async def maintenance(self, request: Request) -> JSONResponse:
         body = await request_json(request)

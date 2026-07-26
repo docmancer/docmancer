@@ -10,17 +10,19 @@ A memory atom is one small, self-contained, source-attributed fact, decision, ru
 
 Uncurated evidence lives under `.docmancer/inbox`. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
-## Derived outcome views
+## Human outcomes
 
-Shared memory is recomputed from active indexed atoms. It normalizes agent-specific global and project scopes before semantic clustering, requires evidence from at least two independent harnesses, excludes generated Docmancer integration copies, and retains every contributing source. It is a recurrence view, not a consensus, confidence, or truth layer.
+The local app answers what agents know through grounded Ask and the Library. Recurring knowledge is recomputed from active indexed evidence, requires independent contributing agents, excludes generated Docmancer integration copies, and retains every source. Recurrence is evidence, not consensus or truth.
 
 Context delivery receipts live under `.docmancer/state/delivery.json`. Each receipt stores the agent, integration mode, successful recall time, canonical tree revision, bounded bundle hash, and item count. The delivery matrix combines those receipts with live hook and managed-projection inspection. It does not store recalled plaintext beyond the canonical memory and existing index.
 
 Canonical tree mutations append to `.docmancer/state/decision-journal.jsonl`. Each event identifies the stable file, revision and parent, time, actor surface or harness, sources, operation, before and after paths and hashes, and a readable unified diff. This is a narrow file-revision journal. It is not a claims event ledger, confidence workflow, or as-of reconstruction engine.
 
-## Context Compiler
+## Context
 
-The compiler receives a task, project, agent, requested domains, and token budget. It selects mandatory policy first, then relevant active memory. Results include stable citations, an index revision, token estimate, and bounded retrieval trace.
+Context is a readable, revisioned artifact derived from curated memory and agent evidence. A deterministic preview calculates clusters and changes before any model call. A confirmed AI build uses the configured provider and model, while `--provider none` retains the local deterministic path. Both preserve sources, exclusions, revisions, and rollback.
+
+For task-time recall, the compiler receives a task, project, agent, requested domains, and token budget. It selects mandatory policy first, then relevant active memory. Results include stable citations, an index revision, token estimate, and bounded retrieval trace.
 
 The default retrieval path is local Model2Vec plus sqlite-vec. Lexical matching remains available, and optional FastEmbed plus Qdrant provides the heavy path. `docmancer ask` joins the curated tree with supporting indexed agent evidence under one token budget. The tree index can be deleted and rebuilt from Markdown with the advanced `docmancer reindex` command.
 

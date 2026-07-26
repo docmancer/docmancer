@@ -81,10 +81,16 @@ class AsyncDocmancerAgent:
         limit: int | None = None,
         budget: int | None = None,
         expand: str | None = None,
+        filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         """Query the index for relevant documentation sections."""
         return await asyncio.to_thread(
-            self._sync.query, text, limit=limit, budget=budget, expand=expand
+            self._sync.query,
+            text,
+            limit=limit,
+            budget=budget,
+            expand=expand,
+            filters=filters,
         )
 
     async def query_context(

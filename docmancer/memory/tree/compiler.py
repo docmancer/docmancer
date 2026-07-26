@@ -114,6 +114,11 @@ class ContextItem:
     authority: str
     source_type: str
     token_estimate: int
+    # Provenance. The base prompt instructs the model to prefer more recent
+    # records and to date each side of a conflict, which it cannot do unless
+    # these reach the rendered evidence block.
+    recorded_at: str = ""
+    harness: str = ""
 
 
 @dataclass
@@ -121,6 +126,10 @@ class EvidenceReference:
     address: str
     title: str
     excerpt: str
+    recorded_at: str = ""
+    harness: str = ""
+    score: float | None = None
+    rank: int | None = None
 
 
 @dataclass
@@ -257,6 +266,7 @@ def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBund
             authority=entry.authority,
             source_type=entry.curation_origin,
             token_estimate=_estimate_tokens(entry.body),
+            recorded_at=str(getattr(entry, "updated_at", "") or ""),
         )
         if is_mandatory:
             # Mandatory policy is retained even if it alone exceeds the

@@ -102,7 +102,10 @@ def build_context_projection(
             selected_conflicts.append(item)
             remaining -= cost
 
-    token_estimate = mandatory_tokens + (token_budget - mandatory_tokens - remaining)
+    # In overflow `remaining` is clamped to zero, so the naive expression
+    # collapses to exactly `token_budget` and reports perfect compliance for a
+    # projection that is far over. Never report less than mandatory alone costs.
+    token_estimate = max(mandatory_tokens, token_budget - remaining)
     identity = {
         "revision_id": manifest["revision_id"],
         "target_agent": target_agent,
@@ -190,10 +193,30 @@ def render_context_projection(projection: Projection) -> str:
 
 
 def _baseline_base(*, home: Path | None = None) -> Path:
+    # An explicit argument wins over the ambient env var. The previous order
+    # meant `write_context_baseline(..., home=X)` silently wrote to
+    # $DOCMANCER_HOME instead, which only went unnoticed because CI leaves it
+    # unset.
+    if home is not None:
+        return Path(home) / ".docmancer" / "baselines"
     configured = os.environ.get("DOCMANCER_HOME")
     if configured:
         return Path(configured).expanduser() / "baselines"
-    return (home or default_home()) / ".docmancer" / "baselines"
+    return default_home() / ".docmancer" / "baselines"
+
+
+def _safe_component(value: str, *, label: str) -> str:
+    """Reject anything that would escape the baselines directory.
+
+    `--agent` reaches this unvalidated from the CLI, so a value like
+    `../../.claude` would place a write outside docmancer-owned space.
+    """
+    cleaned = str(value or "").strip()
+    if not cleaned or cleaned in {".", ".."} or "/" in cleaned or "\\" in cleaned:
+        raise ValueError(f"invalid {label}: {value!r}")
+    if cleaned.startswith("."):
+        raise ValueError(f"invalid {label}: {value!r}")
+    return cleaned
 
 
 def baseline_path(
@@ -202,7 +225,9 @@ def baseline_path(
     *,
     home: Path | None = None,
 ) -> Path:
-    return _baseline_base(home=home) / target_agent / f"{project_id}.md"
+    agent = _safe_component(target_agent, label="target agent")
+    project = _safe_component(project_id, label="project id")
+    return _baseline_base(home=home) / agent / f"{project}.md"
 
 
 def _atomic_write(path: Path, text: str) -> bool:

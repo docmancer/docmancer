@@ -453,12 +453,14 @@ class DocmancerAgent:
         limit: int | None = None,
         budget: int | None = None,
         expand: str | None = None,
+        filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         return self.store.query(
             text,
             limit=limit or self.config.query.default_limit,
             budget=budget or self.config.query.default_budget,
             expand=expand if expand is not None else self.config.query.default_expand,
+            filters=filters,
         )
 
     def query_context(

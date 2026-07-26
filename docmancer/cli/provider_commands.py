@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -124,6 +125,9 @@ def providers_set(
     click.echo(f"Updated {provider_id} provider settings.")
 
 
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 @providers_group.command("key", cls=DocmancerCommand)
 @click.argument("provider_id", type=click.Choice(provider_ids()))
 @click.option("--stdin", "read_stdin", is_flag=True, help="Read the key from standard input.")
@@ -132,7 +136,11 @@ def providers_key(provider_id: str, read_stdin: bool) -> None:
     if spec.auth_kind != "api_key":
         raise click.UsageError(f"{spec.label} does not use an API key")
     value = sys.stdin.read().strip() if read_stdin else click.prompt("API key", hide_input=True)
-    if "=" in value:
+    # Only treat "NAME=value" as a pasted env assignment when the left side
+    # actually looks like an env-var name. Many real keys contain "=" (base64
+    # padding, Google-style keys), and splitting those made the error message
+    # echo the secret's own prefix back to the terminal.
+    if "=" in value and _ENV_ASSIGNMENT_RE.match(value):
         pasted_name, pasted_value = value.split("=", 1)
         normalized_name = pasted_name.strip().upper()
         if (

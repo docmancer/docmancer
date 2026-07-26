@@ -71,7 +71,10 @@ def ask_cmd(
     """Answer a task with one local bundle of policy, memory, and evidence."""
     from docmancer.memory.ask import ask
 
-    should_stream = stream and not as_json and sys.stdout.isatty()
+    # --no-cite strips citation markers, which cannot be retracted once they
+    # have streamed to the terminal. Buffer instead of streaming a copy the
+    # caller asked not to see.
+    should_stream = stream and cite and not as_json and sys.stdout.isatty()
     streamed = False
 
     def on_delta(delta: str) -> None:
@@ -110,6 +113,7 @@ def ask_cmd(
             )
             _GENERATIVE_NOTICE_SHOWN = True
         if streamed:
+            # The answer already reached the terminal chunk by chunk.
             click.echo()
         else:
             text = str(answer_result.get("text") or "")
@@ -291,7 +295,11 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
     service = _service()
     project = resolve_project_root(project_path)
     value = service.status(project_path=project)
+    # Observe first, then repair. Refreshing before checking consumed the drift
+    # and left the report asserting "up to date" about rows it never examined.
+    observed_drift = [row for row in check_instruction_block_drift() if row.get("stale")]
     refreshed_blocks = refresh_stale_instruction_blocks()
+    value["instruction_block_drift_observed"] = observed_drift
     value["instruction_block_drift"] = (
         refreshed_blocks if refreshed_blocks else check_instruction_block_drift()
     )
@@ -342,14 +350,21 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         click.echo(f"Agent projections: {len(value['agent_delivery'])}")
         click.echo(f"Curated tree: {value['tree']['entries']} file(s), {value['tree']['inbox']} inbox item(s)")
         click.echo(f"Cloud: {'connected' if value['cloud_enabled'] else 'local only'}")
-        if refreshed_blocks:
-            for row in refreshed_blocks:
+        if observed_drift:
+            click.echo(f"Instruction blocks: {len(observed_drift)} were stale")
+        for row in refreshed_blocks:
+            if row.get("refreshed_to"):
                 click.echo(
                     f"Instruction block refreshed: {row['agent']} "
                     f"({row['installed_version'] or 'unstamped'} -> {row['refreshed_to']})"
                 )
-        elif value["instruction_block_drift"]:
-            click.echo(f"Instruction blocks: {len(value['instruction_block_drift'])} up to date")
+            else:
+                click.echo(
+                    f"Instruction block still stale: {row['agent']} "
+                    f"({row.get('error') or 'refresh failed'})"
+                )
+        if not observed_drift and not refreshed_blocks:
+            click.echo("Instruction blocks: up to date")
     if check and not value["healthy"]:
         raise click.ClickException("status checks found issues; inspect `docmancer status --json`")
 

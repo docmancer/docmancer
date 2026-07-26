@@ -18,6 +18,8 @@ docmancer web
 | `docmancer setup` | Initial machine-wide discovery and user-level integration installation. |
 | `docmancer web` | Open the project workbench and refresh changed agent sources. |
 | `docmancer ask "task"` | Recall policy, curated memory, and supporting agent evidence. |
+| `docmancer context refresh --dry-run` | Preview a Context build without calling a provider or writing a revision. |
+| `docmancer context refresh` | Build a deterministic local revision of consolidated Context. |
 | `docmancer common` | Show memory recurring across independent agent harnesses. |
 | `docmancer delivery` | Show integration state and the last observed context bundle per agent. |
 | `docmancer timeline` | Show canonical memory mutations with revision lineage and diffs. |
@@ -68,10 +70,14 @@ The old root aliases were removed after the 0.8 compatibility window:
 | --- | --- |
 | `docmancer query` | `docmancer ask` |
 | `docmancer search` | `docmancer ask` |
-| `docmancer context` | `docmancer ask` |
+| `docmancer context "question"` | `docmancer ask "question"` |
 | `docmancer sync` | `docmancer cloud sync` |
 | `docmancer init` | `docmancer web` for normal onboarding |
 | `docmancer harvest <path>` | `docmancer import <path>` |
 | bare `docmancer harvest` | `docmancer agent import-sources` |
 
 External Markdown sources are never rewritten. Existing-file mutations remain hash guarded.
+
+The root name `context` now belongs to the revisioned Context command group. Use
+`docmancer context --help` for refresh, status, delivery, diff, rollback, adopt,
+and retire operations.

@@ -34,6 +34,12 @@ PROMPT_VERSION = "context-cluster-v1"
 DEFAULT_SIMILARITY_THRESHOLD = 0.18
 DEFAULT_SEMANTIC_DUPLICATE_THRESHOLD = 0.96
 DEFAULT_MAX_CLUSTER_MEMBERS = 25
+# Order-of-magnitude rates for the dry-run cost preview, based on a small
+# model such as gpt-4.1-nano. Deliberately a planning estimate, not billing:
+# the report labels it as such and a real run reports actual cost.
+ESTIMATED_OUTPUT_TOKENS_PER_CLUSTER = 400
+ESTIMATED_INPUT_USD_PER_1K = 0.0001
+ESTIMATED_OUTPUT_USD_PER_1K = 0.0004
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9_.:/-]{1,}")
 _HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$", re.MULTILINE)
@@ -471,6 +477,17 @@ class ContextEngine:
         self.semantic_threshold = DEFAULT_SEMANTIC_DUPLICATE_THRESHOLD
         self.agent = agent or MemoryAgent()
 
+    def _generation_options(self, mode: str) -> CompletionOptions:
+        """Per-role options from config, falling back to the consolidate defaults."""
+        from docmancer.ai.provider_protocol import options_for_role
+
+        providers = getattr(getattr(self.agent, "config", None), "providers", None)
+        if providers is None:
+            return CompletionOptions(
+                top_p=0.95, max_output_tokens=8192, reasoning_effort="low", mode=mode
+            )
+        return options_for_role("consolidate", providers, mode=mode)
+
     def _resolve_generated_path(self, value: object) -> Path:
         """Resolve a manifest-recorded artifact path back inside the tree.
 
@@ -667,12 +684,7 @@ class ContextEngine:
             )
             result = client.complete_text(
                 [{"role": "user", "content": prompt}],
-                CompletionOptions(
-                    top_p=0.95,
-                    max_output_tokens=8192,
-                    reasoning_effort="low",
-                    mode=mode,
-                ),
+                self._generation_options(mode),
             )
             body = f"# {cluster.topic_label}\n\n{result.text.strip()}\n"
             synthesized = True
@@ -759,6 +771,18 @@ class ContextEngine:
             "clusters": clusters,
             "estimated_provider_calls": len(clusters),
             "estimated_input_tokens": sum(max(1, len(source.text) // 4) for source in sources),
+            "estimated_output_tokens": len(clusters) * ESTIMATED_OUTPUT_TOKENS_PER_CLUSTER,
+            "estimated_cost_usd": round(
+                (
+                    sum(max(1, len(source.text) // 4) for source in sources)
+                    * ESTIMATED_INPUT_USD_PER_1K
+                    + len(clusters)
+                    * ESTIMATED_OUTPUT_TOKENS_PER_CLUSTER
+                    * ESTIMATED_OUTPUT_USD_PER_1K
+                )
+                / 1000,
+                6,
+            ),
         }
 
     def build(
@@ -804,8 +828,13 @@ class ContextEngine:
             "clusters": len(plan["clusters"]),
             "dedup": plan["dedup"],
             "conflicts": len(plan["conflicts"]),
-            "estimated_provider_calls": plan["estimated_provider_calls"] if client else 0,
+            # A cost preview that reports zero because no client was built is
+            # the opposite of a cost preview. Estimate from the plan; report
+            # actual calls separately once a run happens.
+            "estimated_provider_calls": plan["estimated_provider_calls"],
             "estimated_input_tokens": plan["estimated_input_tokens"],
+            "estimated_output_tokens": plan["estimated_output_tokens"],
+            "estimated_cost_usd": plan["estimated_cost_usd"],
             "provider": provider,
             "model": model,
             "writes": [],

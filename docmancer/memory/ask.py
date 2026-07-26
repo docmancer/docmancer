@@ -120,6 +120,13 @@ def ask(
                 address=source,
                 title=str(metadata.get("title") or Path(source).name or "Indexed evidence"),
                 excerpt=excerpt,
+                # Carried so the answer path can date claims, name the agent that
+                # recorded them, and apply a relevance floor. Previously these
+                # existed only in the debug payload and were dropped.
+                recorded_at=str(metadata.get("timestamp") or ""),
+                harness=str(metadata.get("harness") or ""),
+                score=float(chunk.score or 0.0),
+                rank=len(evidence) + 1,
             )
         )
         evidence_debug.append(
@@ -189,13 +196,30 @@ def ask(
         if client is not None:
             from docmancer.ai.answer import generate_answer
 
-            result["answer"] = generate_answer(
-                result,
-                task,
-                client=client,
-                mode=answer_mode,
-                on_delta=on_delta,
-            ).to_dict()
+            try:
+                from docmancer.ai.provider_protocol import options_for_role
+
+                result["answer"] = generate_answer(
+                    result,
+                    task,
+                    client=client,
+                    mode=answer_mode,
+                    options=options_for_role(
+                        "ask", agent.config.providers, mode=answer_mode
+                    ),
+                    on_delta=on_delta,
+                ).to_dict()
+            except Exception as exc:  # noqa: BLE001
+                # Degradation matrix (spec 7.5): losing the provider must cost
+                # the prose, never the cited evidence bundle. A timeout, a
+                # stopped local endpoint, or a rate limit previously raised out
+                # of ask() and the user got nothing at all, which is worse than
+                # the keyless path they would have had without a provider.
+                result["answer"] = None
+                result["answer_unavailable"] = (
+                    f"The answer provider failed ({type(exc).__name__}). "
+                    "The cited evidence bundle below is unaffected."
+                )
         else:
             result["answer_unavailable"] = (
                 "No answer provider is configured. The cited evidence bundle is still available."

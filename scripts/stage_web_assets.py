@@ -39,7 +39,7 @@ def stage(source: Path, destination: Path) -> dict[str, object]:
         files = sorted(path for path in staged.rglob("*") if path.is_file())
         manifest: dict[str, object] = {
             "format": 1,
-            "local_api_version": 2,
+            "local_api_version": 5,
             "built_at": datetime.now(timezone.utc).isoformat(),
             "files": {
                 path.relative_to(staged).as_posix(): sha256(path)

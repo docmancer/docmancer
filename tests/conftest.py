@@ -9,4 +9,21 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 os.environ.setdefault("DOCMANCER_AUTO_VECTORS", "0")
+
+
+@pytest.fixture(autouse=True)
+def isolate_provider_credentials(monkeypatch):
+    """Never let provider tests observe or mutate the developer's OS keyring."""
+    from docmancer.ai.providers.credentials import ProviderKeyStore
+    from docmancer.cloud.keystore import MemorySecretBackend
+
+    backend = MemorySecretBackend()
+    original = ProviderKeyStore.__init__
+
+    def initialize(store, selected_backend=None):
+        original(store, backend=selected_backend or backend)
+
+    monkeypatch.setattr(ProviderKeyStore, "__init__", initialize)

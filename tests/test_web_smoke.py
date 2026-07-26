@@ -65,7 +65,8 @@ def test_packaged_bundle_boots_and_serves_the_real_dashboard() -> None:
         assert index.status_code == 200
         body = index.text
         # Real shipped shell, not the unit-test stub.
-        assert "<title>Docmancer Local</title>" in body
+        assert "<title>Docmancer</title>" in body
+        assert "Your private AI agent for memory across coding agents." in body
         assert "__next" in body or "_next/" in body
 
         # Security headers must ride along with the real static content.
@@ -76,7 +77,7 @@ def test_packaged_bundle_boots_and_serves_the_real_dashboard() -> None:
 
 def test_hashed_static_asset_from_manifest_is_served() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert manifest.get("local_api_version") == 2
+    assert manifest.get("local_api_version") == 5
     files = manifest.get("files", {})
     asset = next(
         (name for name in files if name.endswith((".js", ".css", ".svg", ".woff2", ".png"))),
@@ -105,4 +106,4 @@ def test_live_api_answers_after_authentication() -> None:
 
         capabilities = client.get("/api/v1/capabilities")
         assert capabilities.status_code == 200
-        assert capabilities.json()["api_version"] == 2
+        assert capabilities.json()["api_version"] == 5

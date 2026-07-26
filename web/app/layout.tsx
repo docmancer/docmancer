@@ -3,8 +3,8 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 export const metadata = {
-  title: "Docmancer Local",
-  description: "The private control room for your agents' memory.",
+  title: "Docmancer",
+  description: "Your private AI agent for memory across coding agents.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

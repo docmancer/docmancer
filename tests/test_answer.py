@@ -87,7 +87,9 @@ def test_generate_answer_resolves_citations_and_verification():
     assert result.refused is False
     assert result.citations[0]["address"] == "docmancer://memory/decision"
     assert result.verification.citations_valid == "passed"
-    assert result.verification.quotes_faithful == "passed"
+    # The answer quotes nothing, so there is nothing to check. Previously this
+    # reported "passed" via a vacuous all([]), which claimed a check had run.
+    assert result.verification.quotes_faithful == "not_applicable"
     assert result.verification.retrieval_sufficiency == "met"
     assert result.verification.claim_support == "unverified"
     assert deltas == [result.text]
