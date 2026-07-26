@@ -33,9 +33,14 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ```bash
 docmancer ask "what deployment decisions apply?"
+docmancer ask "why was this chosen?" --answer --mode thorough
 docmancer common
 docmancer delivery
 docmancer timeline
+docmancer context status
+docmancer context projection --agent codex
+docmancer brief --scope project --dry-run
+docmancer review
 docmancer read docmancer://memory/<id>
 docmancer write "# Release process\n\nDeploy on Railway." --path deployment/release.md --scope project
 docmancer edit docmancer://memory/<id> - --expected-hash <hash>
@@ -47,6 +52,16 @@ docmancer import ./notes
 ```
 
 Existing-file operations use the current content hash. Harvested files remain read-only evidence, ambiguous material stays in the inbox, and `docmancer://memory/<id>` citations survive moves.
+
+`ask` returns cited evidence without requiring a provider. When a generation provider is configured, `--answer` adds grounded prose and six separate verification checks. Agents should use the read-only `context status`, `context projection`, and `context delivery` commands. `context refresh`, `rollback`, `adopt`, and `retire` remain human-controlled operations.
+
+<!-- docmancer:providers:start -->
+## Generation providers
+
+Configure credentials with `docmancer providers key <provider>` (prompt or stdin only), inspect readiness with `docmancer providers list`, and select defaults with `docmancer providers set`.
+
+Supported generation providers: `openrouter`, `openai`, `anthropic`, `google`, `mistral`, `groq`, `deepseek`, `xai`, `together`, `fireworks`, `cohere`, `openai-compat`, `ollama`, `lmstudio`.
+<!-- docmancer:providers:end -->
 
 ## Ingest Local Documentation
 

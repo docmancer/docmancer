@@ -68,9 +68,14 @@ def consolidate_payload(
     draft_quality: str,
     max_output_tokens: int | None,
     concurrency: int,
+    inline_sources: bool = False,
     on_event: Progress | None = None,
 ):
-    """Map-reduce every selected entry into one review-only draft."""
+    """Map-reduce every selected entry into one review-only draft.
+
+    ``inline_sources`` requests a per-fact source citation in every round (used
+    by the machine digest), instead of the default aggregate-only provenance.
+    """
     from docmancer.ai.memory_features import consolidate_memory, draft_to_merge_text
 
     emit = on_event or (lambda _name, _data: None)
@@ -83,7 +88,7 @@ def consolidate_payload(
             emit("request", {"round": round_no, "batch": 1, "batches": 1})
             return consolidate_memory(
                 entries=chunks[0], instruction=current_instruction, client=client, model=model,
-                draft_quality=draft_quality, max_tokens=max_output_tokens,
+                draft_quality=draft_quality, max_tokens=max_output_tokens, inline_sources=inline_sources,
                 on_progress=lambda chars: emit("stream", {"round": round_no, "batch": 1, "chars": chars}),
             )
 
@@ -99,15 +104,20 @@ def consolidate_payload(
                 model=model,
                 draft_quality=draft_quality,
                 max_tokens=max_output_tokens,
+                inline_sources=inline_sources,
                 on_progress=lambda chars: emit("stream", {"round": round_no, "batch": index, "chars": chars}),
             )
             sources = list(dict.fromkeys(str(entry.get("source_path") or "") for entry in chunk if entry.get("source_path")))
             draft.source_paths = list(dict.fromkeys([*draft.source_paths, *sources]))
+            # Digest mode must not clip sections to 1.8k chars between rounds, or
+            # a detailed batch loses most of its facts before the merge. Let each
+            # section use the full 80k merge budget instead.
+            merge_section_cap = 80_000 if inline_sources else 1_800
             return index, {
                 "scope": "docmancer-consolidation",
                 "title": f"Round {round_no} batch {index} consolidated draft",
                 "source_path": f"docmancer://memory-consolidate/round-{round_no}/batch-{index}",
-                "text": draft_to_merge_text(draft, source_files=sources, max_chars=80_000),
+                "text": draft_to_merge_text(draft, source_files=sources, max_chars=80_000, max_section_chars=merge_section_cap),
             }
 
         workers = max(1, min(concurrency, len(chunks)))
@@ -129,6 +139,8 @@ def consolidate_payload(
             "Merge these batch drafts into one review-only master memory draft. Preserve all unique facts, "
             "conflicts, warnings, and original source paths while removing exact repetition."
         )
+        if inline_sources:
+            current_instruction += " Keep each fact's inline (source: path) citation intact."
     raise RuntimeError("consolidation exceeded six merge rounds; increase the budget or narrow the selection")
 
 

@@ -78,6 +78,8 @@ class MemoryRecord:
     source_path: str = ""
     schema_version: int = RECORD_SCHEMA_VERSION
     session_id: str | None = None
+    turn_index: int | None = None
+    speaker: str | None = None
     promoted_from: str | None = None
     revision_id: str = ""
     parent_revision_ids: list[str] = field(default_factory=list)
@@ -164,6 +166,9 @@ class MemoryRecord:
             origin=self.origin,
             scope_kind=self.scope_kind,
             project_path=self.project_path,
+            session_id=self.session_id,
+            turn_index=self.turn_index,
+            speaker=self.speaker,
             project_id=self.project_id,
             revision_id=self.revision_id,
             parent_revision_ids=list(self.parent_revision_ids),
@@ -218,6 +223,8 @@ class MemoryRecordStore:
         tags: list[str] | None = None,
         origin: str = "manual",
         session_id: str | None = None,
+        turn_index: int | None = None,
+        speaker: str | None = None,
         promoted_from: str | None = None,
         audience_kind: str | None = None,
         applicability_kind: str | None = None,
@@ -239,6 +246,8 @@ class MemoryRecordStore:
             scope_kind=scope_kind,
             project_path=project,
             session_id=session_id,
+            turn_index=turn_index,
+            speaker=speaker,
             promoted_from=promoted_from,
             project_id=project_id,
             audience_kind=audience_kind or "",

@@ -481,6 +481,7 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> Path | None:
     re-installs that only replace our own block do not litter backups. Returns
     the backup path when one was written.
     """
+    from docmancer._version import __version__
     from docmancer.cli.managed_block import upsert_block
 
     _action, backup_path = upsert_block(
@@ -489,8 +490,85 @@ def _install_or_append_agents_md(dest: Path, content_body: str) -> Path | None:
         begin=_AGENTS_MD_START,
         end=_AGENTS_MD_END,
         backup_policy="foreign-content",
+        version=__version__,
     )
     return backup_path
+
+
+def _instruction_block_targets(home: Path) -> list[dict]:
+    """Global instruction-block locations docmancer may own, one per agent family.
+
+    ``codex``, ``codex-app``, and ``codex-desktop`` all write the same shared
+    ``~/.codex/AGENTS.md`` block, so they are represented once under ``codex``.
+    """
+    return [
+        {"agent": "claude-code", "path": home / ".claude" / "CLAUDE.md", "template": "claude_code_instruction.md"},
+        {"agent": "codex", "path": home / ".codex" / "AGENTS.md", "template": "codex_agents_md.md"},
+        {"agent": "cursor", "path": home / ".cursor" / "AGENTS.md", "template": "cursor_agents_md.md"},
+        {"agent": "github-copilot", "path": home / ".copilot" / "copilot-instructions.md", "template": "copilot_instructions.md"},
+    ]
+
+
+def check_instruction_block_drift(*, home: Path | None = None) -> list[dict]:
+    """Report the installed-vs-current version stamp for every owned instruction block.
+
+    Only targets that already contain a docmancer-managed block are reported;
+    a target that was never installed is not drift, it is an install gap
+    already surfaced by ``docmancer doctor``'s skill-install checks.
+    """
+    from docmancer._version import __version__
+    from docmancer.cli.managed_block import installed_block_version
+
+    home = home or Path.home()
+    rows = []
+    for target in _instruction_block_targets(home):
+        path = target["path"]
+        if not path.exists():
+            continue
+        installed_version = installed_block_version(path, begin=_AGENTS_MD_START, end=_AGENTS_MD_END)
+        if installed_version is None and _AGENTS_MD_START not in path.read_text(encoding="utf-8"):
+            continue  # no docmancer block here at all
+        rows.append({
+            "agent": target["agent"],
+            "path": str(path),
+            "installed_version": installed_version,
+            "current_version": __version__,
+            "stale": installed_version != __version__,
+        })
+    return rows
+
+
+def refresh_stale_instruction_blocks(*, config_path: str | Path | None = None, home: Path | None = None) -> list[dict]:
+    """Regenerate any owned instruction block whose version stamp is missing or stale.
+
+    Called from ``setup``, ``status``, and ``doctor`` so drift never survives
+    past the next time any of those commands runs. Returns the refreshed rows.
+    """
+    from docmancer._version import __version__
+    from docmancer.cli.managed_block import upsert_block
+
+    home = home or Path.home()
+    effective_config_path = config_path or _get_user_config_path()
+    refreshed = []
+    for row in check_instruction_block_drift(home=home):
+        if not row["stale"]:
+            continue
+        target = next(t for t in _instruction_block_targets(home) if t["agent"] == row["agent"])
+        content = _build_skill_content(target["template"], effective_config_path)
+        # Always back up here, even though a routine reinstall of an already
+        # foreign-marked file would not: this is an unattended refresh
+        # triggered by setup/status/doctor rather than an explicit install,
+        # so the prior content is worth keeping one copy of no matter what.
+        upsert_block(
+            target["path"],
+            content,
+            begin=_AGENTS_MD_START,
+            end=_AGENTS_MD_END,
+            backup_policy="always",
+            version=__version__,
+        )
+        refreshed.append({**row, "refreshed_to": __version__})
+    return refreshed
 
 
 def _install_vscode_copilot_settings(dest: Path) -> None:
@@ -1408,6 +1486,21 @@ def doctor_cmd(config_path: str | None):
         else:
             _emit_status_line(f"{label}: no hooks installed (run: docmancer agent install {label} --hooks)", state="warn", indent=4)
 
+    # Instruction-block drift: refresh anything stamped with an older release,
+    # or never stamped at all, before reporting install status below.
+    click.echo()
+    click.echo(_style("  Instruction blocks", fg="white", bold=True))
+    refreshed_blocks = refresh_stale_instruction_blocks(config_path=effective_config, home=home)
+    if refreshed_blocks:
+        for row in refreshed_blocks:
+            _emit_status_line(
+                f"{row['agent']}: refreshed {row['installed_version'] or 'unstamped'} -> {row['refreshed_to']}",
+                indent=4,
+            )
+    else:
+        for row in check_instruction_block_drift(home=home):
+            _emit_status_line(f"{row['agent']}: up to date ({row['current_version']})", indent=4)
+
     # Skill install status
     click.echo()
     click.echo(_style("  Installed skills", fg="white", bold=True))
@@ -2302,6 +2395,14 @@ def setup_cmd(
     _emit_status_line(f"Config: {display_path(config_file)}")
     config = _get_config_class().from_yaml(config_file)
     _emit_status_line(f"SQLite index: {display_path(config.index.db_path)}")
+
+    refreshed_blocks = refresh_stale_instruction_blocks(config_path=config_file)
+    for row in refreshed_blocks:
+        _emit_status_line(
+            f"Refreshed stale instruction block for {row['agent']} "
+            f"({row['installed_version'] or 'unstamped'} -> {row['refreshed_to']}).",
+            state="info",
+        )
 
     _setup_index_memory(config, index_memory=index_memory, dry_run=dry_run)
 

@@ -4,30 +4,34 @@ import {
   Activity, AlertTriangle, Archive, BookOpen, BrainCircuit, ChevronLeft, ChevronRight,
   CircleCheck, CircleHelp, Cloud, Command, Database, FileSearch, Fingerprint, Gauge, KeyRound,
   History, LoaderCircle, Moon, Play, Plus, Radio, RefreshCw, Search, Share2, ShieldCheck, Sparkles,
-  Sun, Users, WandSparkles, WifiOff, X,
+  Settings, Sun, Users, WandSparkles, WifiOff, X,
 } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { apiGet, apiMutation, establishSession, type JsonMap } from "@/lib/api";
+import { apiGet, apiJobMutation, apiMutation, establishSession, type JsonMap } from "@/lib/api";
 import { RecordInspector, type InspectorState } from "./record-inspector";
 import { InboxWorkbench } from "./inbox-workbench";
+import { ContextWorkbench } from "./context-workbench";
+import { SettingsView } from "./settings-view";
 
-export type ViewKey = "overview" | "tree" | "ask" | "common" | "delivery" | "timeline" | "agent-context" | "inbox" | "context" | "memory" | "sources" | "intelligence" | "docs" | "audit" | "maintenance" | "sync" | "devices" | "team" | "help";
+export type ViewKey = "overview" | "tree" | "ask" | "common" | "delivery" | "timeline" | "agent-context" | "inbox" | "context" | "memory" | "sources" | "intelligence" | "docs" | "audit" | "maintenance" | "settings" | "sync" | "devices" | "team" | "help";
 
 const NAV = [
   { key: "overview", label: "Home", icon: Gauge }, { key: "tree", label: "Memory tree", icon: Archive },
   { key: "ask", label: "Ask", icon: Search }, { key: "common", label: "Shared memory", icon: Share2 },
   { key: "delivery", label: "Context delivery", icon: Radio }, { key: "timeline", label: "Decision timeline", icon: History },
   { key: "agent-context", label: "Agent Context", icon: BrainCircuit },
+  { key: "context", label: "Context", icon: Sparkles },
   { key: "inbox", label: "Inbox and import", icon: Database }, { key: "docs", label: "Docs", icon: BookOpen },
   { key: "audit", label: "Audit", icon: ShieldCheck }, { key: "maintenance", label: "Activity", icon: WandSparkles },
+  { key: "settings", label: "Settings", icon: Settings },
   { key: "sync", label: "Personal Sync", icon: Cloud }, { key: "devices", label: "Devices", icon: Fingerprint },
   { key: "team", label: "Team", icon: Users }, { key: "help", label: "Help", icon: CircleHelp },
 ] as const;
 
 const NAV_SECTIONS = [
-  { label: "Local memory", keys: ["overview", "tree", "ask", "common", "delivery", "timeline", "agent-context", "inbox"] },
-  { label: "Reference", keys: ["docs", "audit", "maintenance"] },
+  { label: "Local memory", keys: ["overview", "tree", "ask", "context", "common", "delivery", "timeline", "agent-context", "inbox"] },
+  { label: "Reference", keys: ["docs", "audit", "maintenance", "settings"] },
   { label: "Cloud", keys: ["sync", "devices", "team"] },
   { label: "Learn", keys: ["help"] },
 ] as const;
@@ -37,6 +41,7 @@ const ENDPOINTS: Record<ViewKey, string> = {
   common: "/api/v1/common", delivery: "/api/v1/delivery", timeline: "/api/v1/timeline",
   "agent-context": "/api/v1/tree/root", inbox: "/api/v1/inbox", docs: "/api/v1/docs", audit: "/api/v1/audit",
   context: "/api/v1/context", memory: "/api/v1/memory", sources: "/api/v1/sources", intelligence: "/api/v1/intelligence?view=review", maintenance: "/api/v1/jobs",
+  settings: "/api/v1/providers",
   sync: "/api/v1/cloud", devices: "/api/v1/cloud/devices", team: "/api/v1/cloud/team",
   help: "/api/v1/status",
 };
@@ -50,13 +55,14 @@ const VIEW_COPY: Record<ViewKey, { eyebrow: string; title: string; description: 
   timeline: { eyebrow: "Decision journal", title: "See what changed and when", description: "Follow canonical Markdown creates, edits, moves, duplicates, trash operations, and restores with actors, sources, lineage, and readable diffs." },
   "agent-context": { eyebrow: "Delivery preview", title: "Preview what one agent receives", description: "Inspect mandatory policy and relevant curated memory within an explicit token budget." },
   inbox: { eyebrow: "Uncurated evidence", title: "Review captured and imported Markdown", description: "Optional imports stay visible here until you turn a complete file into durable memory." },
-  context: { eyebrow: "Compatibility route", title: "Agent Context", description: "This route is retained for one release and now points users toward the Context Compiler preview." },
+  context: { eyebrow: "Consolidated memory", title: "Build the Context every agent can carry", description: "Inspect revisioned topics, exclusions, freshness, projections, delivery state, diffs, and append-only rollback." },
   memory: { eyebrow: "Compatibility route", title: "Ask local memory", description: "This route is retained for one release while the product moves from atom browsing to file-backed memory." },
   sources: { eyebrow: "Compatibility route", title: "Inbox and import", description: "This route is retained for one release while optional imports move into the new workbench." },
   docs: { eyebrow: "Reference library", title: "Keep documentation separate from memory", description: "Browse indexed documentation, search its sections, or add another local path or public documentation site." },
   audit: { eyebrow: "Local safeguards", title: "Find risky content before it travels", description: "See each masked finding with its type, exact file, line, and remediation. Source content stays on this machine." },
   intelligence: { eyebrow: "Compatibility route", title: "Activity", description: "Claims-era Intelligence is retired. Existing URLs remain readable for one release." },
   maintenance: { eyebrow: "Local maintenance", title: "Rebuild, consolidate, diagnose, and apply", description: "Run the small set of allowlisted maintenance operations and inspect their results." },
+  settings: { eyebrow: "Local configuration", title: "Choose answer providers and capture settings", description: "Provider credentials stay in the operating-system keyring. Preferences and capture settings stay on this machine." },
   sync: { eyebrow: "Optional Pro feature", title: "Encrypted continuity across machines", description: "Sync signed encrypted revisions between devices. Local capture, recall, MCP, and this interface remain free." },
   devices: { eyebrow: "Device trust", title: "Control which machines can sync", description: "Connect Cloud first, then verify pending devices by fingerprint or revoke approved devices explicitly." },
   team: { eyebrow: "Shared context", title: "Publish one reviewed Team file", description: "Generate a privacy-filtered file locally, inspect one complete diff, then approve that file for encrypted publication." },
@@ -197,6 +203,8 @@ function ViewContent(props: ViewProps) {
   if (props.view === "overview") return <Overview data={props.data} counts={props.counts}/>;
   if (props.view === "ask" || props.view === "agent-context") return <AskView {...props}/>;
   if (props.view === "inbox") return <InboxWorkbench data={props.data} reload={() => props.load()}/>;
+  if (props.view === "context") return <ContextWorkbench data={props.data} reload={() => props.load()} inspect={props.inspect}/>;
+  if (props.view === "settings") return <SettingsView/>;
   if (props.view === "maintenance") return <Maintenance {...props}/>;
   if (props.view === "sync") return <SyncView {...props}/>;
   if (props.view === "devices") return <DevicesView {...props}/>;
@@ -213,7 +221,7 @@ function Overview({ data, counts }: { data: JsonMap; counts: JsonMap }) {
 }
 
 function AskView(props: ViewProps) {
-  const [result, setResult] = useState<JsonMap>({}); const [busy, setBusy] = useState(false); const [tokenBudget, setTokenBudget] = useState(2000);
+  const [result, setResult] = useState<JsonMap>({}); const [busy, setBusy] = useState(false); const [tokenBudget, setTokenBudget] = useState(4000); const [generate, setGenerate] = useState(props.view === "ask"); const [mode, setMode] = useState("normal"); const [streamed, setStreamed] = useState(""); const [generativeNotice, setGenerativeNotice] = useState(false);
   const sections = [
     { key: "mandatory_policies", label: "Mandatory policy", title: "Rules that always apply", note: "Highest-precedence instructions retained even when they exceed the requested budget.", items: arrayObjects(result.mandatory_policies) },
     { key: "curated_memory", label: "Curated memory", title: "Approved project context", note: "Canonical Markdown selected from the current project and applicable parent scopes.", items: arrayObjects(result.curated_memory) },
@@ -221,8 +229,13 @@ function AskView(props: ViewProps) {
   ];
   const structuredItems = sections.flatMap((section) => section.items);
   const items = structuredItems.length > 0 ? structuredItems : extractItems(result, props.view);
-  const run = async () => { if (!props.composer.trim()) return; setBusy(true); try { setResult(await apiMutation("/api/v1/ask", { task: props.composer, agent: props.view === "agent-context" ? (props.secondary || "codex") : "web", token_budget: tokenBudget })); } finally { setBusy(false); } };
-  return <div className="workspace-grid"><section className="collection"><div className="composer"><span className="mini-label">Cited local retrieval</span><h2>{props.view === "agent-context" ? "Compile an agent bundle" : "Ask a question"}</h2><label>Task<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="How do we deploy this project?"/></label>{props.view === "agent-context" && <label>Agent<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label>}<label>Token budget<input type="number" min={100} max={100000} step={100} value={tokenBudget} onChange={(event) => setTokenBudget(Math.min(100000, Math.max(100, Number(event.target.value) || 100)))}/><small>The compiler always retains mandatory policy, even when it alone exceeds this budget.</small></label><button className="primary" disabled={busy || !props.composer.trim()} onClick={run}>{busy ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}Compile context</button></div><div className="collection-head"><span>{items.length} cited items</span><span>{result.token_estimate ? `${result.token_estimate} of ${tokenBudget} estimated tokens` : `Budget ${tokenBudget} tokens`}</span></div>{result.no_answer ? <EmptyState view={props.view}/> : structuredItems.length > 0 ? <div className="ask-sections">{sections.filter((section) => section.items.length > 0).map((section) => <section className="context-level" key={section.key}><header><div><span className="mini-label">{section.label}</span><h2>{section.title}</h2></div><p>{section.note}</p></header><div className="rows">{section.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div></section>)}</div> : <div className="rows">{items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div>}</section><aside className="action-panel"><BoundaryCard/></aside></div>;
+  const answer = (result.answer && typeof result.answer === "object" ? result.answer : null) as JsonMap | null;
+  const verification = (answer?.verification && typeof answer.verification === "object" ? answer.verification : {}) as JsonMap;
+  const citations = answer ? arrayObjects(answer.citations) : [];
+  const citedAddresses = new Set(citations.map((item) => String(item.address ?? "")));
+  const unused = items.filter((item) => !citedAddresses.has(String(item.address ?? item.source_path ?? "")));
+  const run = async () => { if (!props.composer.trim()) return; if (generate && !window.sessionStorage.getItem("docmancer-generative-notice")) { window.sessionStorage.setItem("docmancer-generative-notice", "shown"); setGenerativeNotice(true); } setBusy(true); setStreamed(""); try { const payload = { task: props.composer, agent: props.view === "agent-context" ? (props.secondary || "codex") : "web", token_budget: tokenBudget, answer: generate, mode }; setResult(generate ? await apiJobMutation("/api/v1/ask", payload, (delta) => setStreamed((value) => value + delta)) : await apiMutation("/api/v1/ask", payload)); } finally { setBusy(false); } };
+  return <div className="workspace-grid"><section className="collection"><div className="composer"><span className="mini-label">Cited local retrieval</span><h2>{props.view === "agent-context" ? "Compile an agent bundle" : "Ask a question"}</h2><label>Task<textarea value={props.composer} onChange={(event) => props.setComposer(event.target.value)} placeholder="How do we deploy this project?"/></label>{props.view === "agent-context" && <label>Agent<select value={props.secondary || "codex"} onChange={(event) => props.setSecondary(event.target.value)}><option value="codex">Codex</option><option value="claude-code">Claude Code</option><option value="cursor">Cursor</option></select></label>}<label>Token budget<input type="number" min={100} max={100000} step={100} value={tokenBudget} onChange={(event) => setTokenBudget(Math.min(100000, Math.max(100, Number(event.target.value) || 100)))}/><small>The compiler always retains mandatory policy, even when it alone exceeds this budget.</small></label><label><input type="checkbox" checked={generate} onChange={(event) => setGenerate(event.target.checked)}/>Generate a grounded answer when a provider is configured</label>{generate && <label>Output mode<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="concise">Concise</option><option value="normal">Normal</option><option value="thorough">Thorough</option></select></label>}<button className="primary" disabled={busy || !props.composer.trim()} onClick={run}>{busy ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}Ask memory</button></div>{generativeNotice && <div className="alert"><ShieldCheck size={16}/><span>This call sends the redacted evidence subset to your configured provider and may incur provider cost.</span><button onClick={() => setGenerativeNotice(false)}>Dismiss</button></div>}{busy && streamed && <section className="context-level"><header><div><span className="mini-label">Streaming</span><h2>Answer</h2></div></header><div className="answer-prose">{streamed}</div></section>}{answer && <section className="context-level"><header><div><span className="mini-label">{answer.refused ? "Grounded refusal" : `${String(answer.provider ?? "Provider")} · ${String(answer.model ?? "")}`}</span><h2>Answer</h2></div><p>{answer.cost_usd !== null && answer.cost_usd !== undefined ? `$${Number(answer.cost_usd).toFixed(6)}` : "Cost unavailable"}</p></header><div className="answer-prose">{String(answer.text ?? "")}</div><div className="verification-grid">{Object.entries(verification).map(([key, value]) => <div key={key}><span>{humanise(key)}</span><strong>{String(value)}</strong></div>)}</div></section>}<div className="collection-head"><span>{items.length} retrieved · {citations.length} cited · {unused.length} unused</span><span>{result.token_estimate ? `${result.token_estimate} of ${tokenBudget} estimated tokens` : `Budget ${tokenBudget} tokens`}</span></div>{result.no_answer ? <EmptyState view={props.view}/> : structuredItems.length > 0 ? <div className="ask-sections">{sections.filter((section) => section.items.length > 0).map((section) => <section className="context-level" key={section.key}><header><div><span className="mini-label">{section.label}</span><h2>{section.title}</h2></div><p>{section.note}</p></header><div className="rows">{section.items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div></section>)}</div> : <div className="rows">{items.map((item, index) => <DataRow key={rowKey(item, index)} item={item} view={props.view} inspect={() => void props.inspect(item)}/>)}</div>}</section><aside className="action-panel"><BoundaryCard/></aside></div>;
 }
 
 function CollectionView(props: ViewProps) {

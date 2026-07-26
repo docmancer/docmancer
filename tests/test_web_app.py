@@ -34,6 +34,18 @@ class FakeRuntime:
     async def context(self) -> list[dict]:
         return [{"record_id": f"record-{index}", "text": f"Context {index}"} for index in range(45)]
 
+    async def context_artifact(self) -> dict:
+        return {
+            "available": True,
+            "current": {
+                "revision_id": "revision-current",
+                "topics": [{"cluster_id": "ctx_one", "topic_label": "Deployment"}],
+                "excluded": [],
+            },
+            "revisions": [{"revision_id": "revision-current"}],
+            "delivery": await self.context_delivery(),
+        }
+
     async def memory_recent(self, _since) -> list[dict]:
         return [{"atom_id": f"atom-{index}", "text": f"Memory {index}"} for index in range(45)]
 
@@ -246,7 +258,6 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
     with client:
         authenticate(client, app)
         expected = {
-            "/context/": "/agent-context/",
             "/memory/": "/ask/",
             "/sources/": "/inbox/",
             "/intelligence/": "/maintenance/",
@@ -255,6 +266,9 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
             response = client.get(source, follow_redirects=False)
             assert response.status_code == 308
             assert response.headers["location"] == destination
+        context = client.get("/context/", follow_redirects=False)
+        assert context.status_code == 200
+        assert "location" not in context.headers
 
 
 def test_harvest_and_curation_are_interactive_local_operations(tmp_path: Path) -> None:
@@ -318,11 +332,10 @@ def test_collection_routes_return_consistent_page_metadata(tmp_path: Path) -> No
     client, app, _runtime = app_client(tmp_path)
     with client:
         authenticate(client, app)
-        context = client.get("/api/v1/context?page=2&page_size=20").json()
-        assert context["page"] == 2
-        assert context["total"] == 45
-        assert context["total_pages"] == 3
-        assert len(context["items"]) == 20
+        context = client.get("/api/v1/context").json()
+        assert context["available"] is True
+        assert context["current"]["revision_id"] == "revision-current"
+        assert len(context["revisions"]) == 1
 
         memory = client.get("/api/v1/memory?page=3&page_size=20").json()
         assert memory["page"] == 3

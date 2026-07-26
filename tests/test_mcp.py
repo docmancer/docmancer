@@ -31,36 +31,36 @@ def test_build_server_registers_local_tools(monkeypatch):
 
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    assert {
+    assert names == {
         "docmancer_memory_search",
         "docmancer_docs_search",
         "docmancer_memory_status",
-        "docmancer_sources_list",
-        "docmancer_memory_add",
-        "docmancer_memory_list",
-        "docmancer_memory_show",
-        "docmancer_memory_forget",
-        "docmancer_memory_promote",
-        "docmancer_memory_conflicts",
-        "docmancer_memory_resolve_conflict",
-        "docmancer_memory_relations",
-        "docmancer_memory_orphans",
-        "docmancer_memory_recap",
-    } <= names
-    # Cloud tools absent without a key.
-    assert "docmancer_memory_extract" not in names
-    assert "docmancer_memory_consolidate_draft" not in names
+        "write_memory",
+        "read_memory",
+        "edit_memory",
+        "move_memory",
+        "duplicate_memory",
+        "trash_memory",
+        "restore_memory",
+        "search_memory",
+        "common_memory",
+        "context_delivery",
+        "context_status",
+        "context_projection",
+        "decision_timeline",
+        "ask_memory",
+    }
 
 
-def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
+def test_provider_key_does_not_expand_compact_mcp_surface(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp.server import build_server
     import asyncio
 
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert "docmancer_memory_extract" not in names
-    assert "docmancer_memory_consolidate_draft" in names
+    assert "docmancer_memory_consolidate_draft" not in names
+    assert len(names) == 17
 
 
 def test_build_server_blocked_inside_docmancer_subprocess(monkeypatch):

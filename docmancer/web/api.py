@@ -17,6 +17,8 @@ from docmancer.cloud.client import AuthenticationError, CloudError, EntitlementE
 from docmancer.runtime import LocalRuntime
 
 
+LOCAL_API_VERSION = 2
+
 CAPABILITIES = {
     "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
     "inbox": ["list", "import", "curate"],
@@ -25,7 +27,8 @@ CAPABILITIES = {
     "common": ["recurring-memory"],
     "delivery": ["agent-matrix", "bundle-receipts"],
     "timeline": ["file-mutations", "diffs"],
-    "context": ["browse", "add", "edit", "remove", "distill", "review", "share"],
+    "context": ["status", "refresh", "diff", "rollback", "excluded", "adopt", "retire"],
+    "providers": ["list", "key", "test", "models", "defaults"],
     "memory": ["query", "recent", "add", "edit", "forget", "promote"],
     "sources": ["browse", "search", "create", "edit", "delete"],
     "docs": ["browse", "query", "ingest"],
@@ -120,14 +123,14 @@ class LocalApi:
 
     async def session(self, request: Request) -> JSONResponse:
         session = request.state.browser_session
-        return JSONResponse({"csrf_token": session.csrf_token, "api_version": 1})
+        return JSONResponse({"csrf_token": session.csrf_token, "api_version": LOCAL_API_VERSION})
 
     async def status(self, request: Request) -> JSONResponse:
         status, counts = await asyncio.gather(self.runtime.status(), self.runtime.counts())
         return JSONResponse(jsonable({"status": status, "counts": counts}))
 
     async def capabilities(self, request: Request) -> JSONResponse:
-        return JSONResponse({"api_version": 1, "capabilities": CAPABILITIES})
+        return JSONResponse({"api_version": LOCAL_API_VERSION, "capabilities": CAPABILITIES})
 
     async def tree_root(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.tree_root()))
@@ -221,10 +224,37 @@ class LocalApi:
         try:
             body = await request_json(request)
             task = required_text(body, "task")
-            budget = int(body.get("token_budget") or 2000)
+            budget = int(body.get("token_budget") or 4000)
             if budget < 1 or budget > 100_000:
                 raise ValueError("token_budget must be between 1 and 100000")
-            return JSONResponse(jsonable(await self.runtime.ask_tree(task, token_budget=budget, agent=str(body.get("agent") or "web"))))
+            answer = body.get("answer")
+            if answer is not None and not isinstance(answer, bool):
+                raise ValueError("answer must be a boolean")
+            mode = str(body.get("mode") or "normal")
+            if mode not in {"concise", "normal", "thorough"}:
+                raise ValueError("mode must be concise, normal, or thorough")
+            ask_kwargs = {
+                "token_budget": budget,
+                "agent": str(body.get("agent") or "web"),
+            }
+            if answer is not None:
+                ask_kwargs["answer"] = answer
+            if "mode" in body:
+                ask_kwargs["mode"] = mode
+            if bool(body.get("stream")) and answer is not False:
+                async def operation(progress):
+                    def on_delta(delta: str) -> None:
+                        progress("answer_delta", {"delta": delta})
+
+                    return await self.runtime.ask_tree(
+                        task,
+                        **ask_kwargs,
+                        on_delta=on_delta,
+                    )
+
+                job = self.jobs.start("memory.ask", operation)
+                return JSONResponse(jsonable(job), status_code=202)
+            return JSONResponse(jsonable(await self.runtime.ask_tree(task, **ask_kwargs)))
         except Exception as exc:  # noqa: BLE001
             return error_response(exc)
 
@@ -256,8 +286,7 @@ class LocalApi:
         return JSONResponse(jsonable({**paginate(rows, request), "query": query}))
 
     async def context(self, request: Request) -> JSONResponse:
-        items = await self.runtime.context()
-        return JSONResponse(jsonable(paginate(items, request)))
+        return JSONResponse(jsonable(await self.runtime.context_artifact()))
 
     async def context_add(self, request: Request) -> JSONResponse:
         body = await request_json(request)
@@ -283,6 +312,65 @@ class LocalApi:
         else:
             raise ValueError("unsupported context action")
         return JSONResponse(jsonable(result))
+
+    async def context_refresh(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        provider = str(body.get("provider") or "none")
+        mode = str(body.get("mode") or "normal")
+        if mode not in {"concise", "normal", "thorough"}:
+            raise ValueError("mode must be concise, normal, or thorough")
+        dry_run = bool(body.get("dry_run"))
+        if dry_run:
+            return JSONResponse(jsonable(await self.runtime.refresh_context(
+                provider=provider,
+                model=str(body["model"]) if body.get("model") else None,
+                mode=mode,
+                full=bool(body.get("full")),
+                dry_run=True,
+            )))
+        job = self.jobs.start(
+            "context.refresh",
+            lambda progress: self.runtime.refresh_context(
+                provider=provider,
+                model=str(body["model"]) if body.get("model") else None,
+                mode=mode,
+                full=bool(body.get("full")),
+                progress_callback=progress,
+            ),
+        )
+        return JSONResponse(jsonable(job), status_code=202)
+
+    async def context_diff(self, request: Request) -> JSONResponse:
+        left = str(request.query_params.get("a") or "")
+        if not left:
+            raise ValueError("a revision is required")
+        right = str(request.query_params.get("b") or "") or None
+        return JSONResponse(jsonable(await self.runtime.context_diff(left, right)))
+
+    async def context_rollback(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        return JSONResponse(jsonable(
+            await self.runtime.rollback_context(required_text(body, "revision_id"))
+        ))
+
+    async def context_excluded(self, request: Request) -> JSONResponse:
+        artifact = await self.runtime.context_artifact()
+        return JSONResponse({
+            "items": jsonable(((artifact.get("current") or {}).get("excluded") or []))
+        })
+
+    async def context_adopt(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        return JSONResponse(jsonable(await self.runtime.adopt_context(
+            required_text(body, "cluster_id"),
+            destination=str(body["destination"]) if body.get("destination") else None,
+        )))
+
+    async def context_retire(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        return JSONResponse(jsonable(
+            await self.runtime.retire_context(required_text(body, "cluster_id"))
+        ))
 
     async def memory(self, request: Request) -> JSONResponse:
         query = (request.query_params.get("q") or "").strip()
@@ -461,6 +549,47 @@ class LocalApi:
             raise ValueError("enabled must map agent names to booleans")
         path = await self.runtime.save_capture_settings(enabled)
         return JSONResponse({"enabled": enabled, "saved_to": str(path)})
+
+    async def providers(self, request: Request) -> JSONResponse:
+        return JSONResponse({"items": jsonable(await self.runtime.provider_catalog())})
+
+    async def provider_key(self, request: Request) -> JSONResponse:
+        provider_id = request.path_params["provider_id"]
+        if request.method == "DELETE":
+            return JSONResponse(jsonable(await self.runtime.remove_provider_key(provider_id)))
+        body = await request_json(request)
+        return JSONResponse(jsonable(await self.runtime.provider_key(
+            provider_id,
+            required_text(body, "key"),
+            validate=bool(body.get("validate")),
+        )))
+
+    async def provider_test(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(
+            await self.runtime.test_provider(request.path_params["provider_id"])
+        ))
+
+    async def provider_models(self, request: Request) -> JSONResponse:
+        from docmancer.ai.providers.catalog import get_provider
+
+        spec = get_provider(request.path_params["provider_id"])
+        defaults = await self.runtime.ai_defaults()
+        selected = defaults.get("models", {}).get(spec.id) or spec.default_model
+        return JSONResponse({
+            "provider": spec.id,
+            "source": spec.models_source,
+            "items": [selected] if selected else [],
+        })
+
+    async def ai_defaults(self, request: Request) -> JSONResponse:
+        if request.method == "GET":
+            return JSONResponse(jsonable(await self.runtime.ai_defaults()))
+        body = await request_json(request)
+        path = await self.runtime.save_ai_defaults(body)
+        return JSONResponse({
+            **jsonable(await self.runtime.ai_defaults()),
+            "saved_to": str(path),
+        })
 
     async def maintenance(self, request: Request) -> JSONResponse:
         body = await request_json(request)

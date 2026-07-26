@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import json
 import hashlib
+import sys
 from collections import Counter
 from pathlib import Path
 
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS
-from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD
+
+_GENERATIVE_NOTICE_SHOWN = False
 
 
 def _service():
@@ -19,74 +21,28 @@ def _service():
     return MemoryService(MemoryAgent())
 
 
-@click.command("sync", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Push and pull encrypted Cloud revisions.")
-@click.option("--local-only", is_flag=True, help="Deprecated. Use harvest and reindex for local work.")
-@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, hidden=True)
-def sync_cmd(local_only: bool, project_path: Path | None) -> None:
-    """Synchronize encrypted revisions with Docmancer Cloud.
-
-    Local agent sources refresh automatically through ``docmancer web`` and
-    ``docmancer ask``.
-    """
-    if local_only or project_path is not None:
-        raise click.UsageError(
-            "local reindexing no longer runs through `docmancer sync`; "
-            "open `docmancer web` or run `docmancer ask` to refresh changed sources; "
-            "`docmancer reindex` remains an advanced curated-tree recovery command"
-        )
-    from docmancer.cli.cloud_commands import _run_sync_command
-
-    _run_sync_command()
-
-
-@click.command("query", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Search current memory.")
-@click.argument("text")
-@click.option("--limit", type=click.IntRange(1, 100), default=None)
-@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
-@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None)
-@click.option("--min-score", type=click.FloatRange(0.0, 1.0), default=DEFAULT_HOOK_THRESHOLD, show_default=True)
-@click.option("--history", "include_history", is_flag=True, help="Include superseded and expired evidence.")
-@click.option("--json", "as_json", is_flag=True)
-def query_cmd(text: str, limit: int | None, project_path: Path | None, scope: str | None, min_score: float, include_history: bool, as_json: bool) -> None:
-    """Search approved context and the supporting local evidence corpus."""
-    try:
-        chunks = _service().query(
-            text,
-            limit=limit,
-            project_path=project_path or Path.cwd(),
-            scope=scope,
-            min_score=min_score,
-            include_history=include_history,
-        )
-    except (RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    if as_json:
-        click.echo(json.dumps([
-            {"text": row.text, "score": row.score, "source": row.source, "metadata": row.metadata}
-            for row in chunks
-        ], indent=2, default=str))
-        return
-    if not chunks:
-        raise click.ClickException("no relevant memory found; use `docmancer ask` with a more specific question")
-    for index, chunk in enumerate(chunks, start=1):
-        metadata = chunk.metadata or {}
-        click.echo(f"[{index}] {float(chunk.score or 0.0):.2f}  {metadata.get('memory_type', 'memory')}  {metadata.get('scope', '')}")
-        click.echo(chunk.text)
-        if metadata.get("source_path"):
-            click.echo(f"Source: {metadata['source_path']}")
-        if index != len(chunks):
-            click.echo()
-
-
 @click.command("ask", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Recall curated memory and supporting agent evidence.")
 @click.argument("task")
-@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
-@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None)
-@click.option("--limit", type=click.IntRange(1, 100), default=8, show_default=True)
-@click.option("--token-budget", type=click.IntRange(100, 100_000), default=2000, show_default=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, help="Scope evidence recall to this project. Default is global recall across every indexed project.")
+@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None, help="Restrict to one memory scope. Use project to scope evidence to the current project.")
+@click.option("--limit", type=click.IntRange(1, 100), default=12, show_default=True)
+@click.option("--token-budget", type=click.IntRange(100, 100_000), default=4000, show_default=True)
 @click.option("--history", "include_history", is_flag=True, help="Include superseded and expired indexed evidence.")
 @click.option("--debug", is_flag=True, help="Show retrieval scores and raw evidence metadata.")
 @click.option("--no-refresh", is_flag=True, help="Use the current local index without checking agent sources.")
+@click.option(
+    "--answer/--no-answer",
+    default=None,
+    help="Generate a grounded answer when a provider is configured, or return evidence only.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["concise", "normal", "thorough"]),
+    default="normal",
+    show_default=True,
+)
+@click.option("--cite/--no-cite", default=True, show_default=True, help="Show inline citation markers in the answer.")
+@click.option("--stream/--no-stream", default=True, show_default=True, help="Stream answer text on an interactive terminal.")
 @click.option(
     "--agent",
     "agent_name",
@@ -105,11 +61,23 @@ def ask_cmd(
     include_history: bool,
     debug: bool,
     no_refresh: bool,
+    answer: bool | None,
+    mode: str,
+    cite: bool,
+    stream: bool,
     agent_name: str,
     as_json: bool,
 ) -> None:
     """Answer a task with one local bundle of policy, memory, and evidence."""
     from docmancer.memory.ask import ask
+
+    should_stream = stream and not as_json and sys.stdout.isatty()
+    streamed = False
+
+    def on_delta(delta: str) -> None:
+        nonlocal streamed
+        streamed = True
+        click.echo(delta, nl=False)
 
     result = ask(
         task,
@@ -122,12 +90,45 @@ def ask_cmd(
         agent_name=agent_name,
         surface="cli",
         integration_mode="direct",
+        answer=answer,
+        answer_mode=mode,
+        on_delta=on_delta if should_stream else None,
     )
     if not debug:
         result.pop("debug_evidence", None)
     if as_json:
         click.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
         return
+
+    answer_result = result.get("answer")
+    if answer_result:
+        global _GENERATIVE_NOTICE_SHOWN
+        if not _GENERATIVE_NOTICE_SHOWN:
+            click.echo(
+                f"Generated with {answer_result.get('provider')} using retrieved local evidence.",
+                err=True,
+            )
+            _GENERATIVE_NOTICE_SHOWN = True
+        if streamed:
+            click.echo()
+        else:
+            text = str(answer_result.get("text") or "")
+            if not cite:
+                import re
+
+                text = re.sub(r"\s*\[\d+\]", "", text)
+            click.echo(text)
+        verification = answer_result.get("verification") or {}
+        click.echo()
+        click.echo(
+            "Verification: "
+            + ", ".join(f"{key}={value}" for key, value in verification.items())
+        )
+        if answer_result.get("cost_usd") is not None:
+            click.echo(f"Provider cost: ${float(answer_result['cost_usd']):.6f}")
+        click.echo()
+    elif result.get("answer_unavailable"):
+        click.echo(result["answer_unavailable"], err=True)
 
     sections = (
         ("Mandatory policies", result["mandatory_policies"]),
@@ -148,6 +149,19 @@ def ask_cmd(
         click.echo()
     if not found:
         click.echo("No relevant memory found.")
+    if result.get("evidence_truncated"):
+        click.echo(
+            f"Note: {result['evidence_truncated']} more evidence match(es) were retrieved but "
+            "did not fit the token budget. Raise --token-budget to include them.",
+            err=True,
+        )
+    if result.get("mandatory_overflow"):
+        click.echo(
+            f"Note: mandatory policy alone exceeds --token-budget "
+            f"({result['token_estimate']} > {result['token_budget']} tokens); it is always "
+            "included in full.",
+            err=True,
+        )
     if result["refresh"].get("error"):
         click.echo(
             "Agent-source refresh failed; results use the last valid local index. "
@@ -272,9 +286,15 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
     from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
     from docmancer.memory.tree.project import resolve_project_root
 
+    from docmancer.cli.commands import check_instruction_block_drift, refresh_stale_instruction_blocks
+
     service = _service()
     project = resolve_project_root(project_path)
     value = service.status(project_path=project)
+    refreshed_blocks = refresh_stale_instruction_blocks()
+    value["instruction_block_drift"] = (
+        refreshed_blocks if refreshed_blocks else check_instruction_block_drift()
+    )
     sources = service.agent.sources()
     security = audit_secrets(service.agent.preview())
     value["sources"] = len(sources)
@@ -322,6 +342,14 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         click.echo(f"Agent projections: {len(value['agent_delivery'])}")
         click.echo(f"Curated tree: {value['tree']['entries']} file(s), {value['tree']['inbox']} inbox item(s)")
         click.echo(f"Cloud: {'connected' if value['cloud_enabled'] else 'local only'}")
+        if refreshed_blocks:
+            for row in refreshed_blocks:
+                click.echo(
+                    f"Instruction block refreshed: {row['agent']} "
+                    f"({row['installed_version'] or 'unstamped'} -> {row['refreshed_to']})"
+                )
+        elif value["instruction_block_drift"]:
+            click.echo(f"Instruction blocks: {len(value['instruction_block_drift'])} up to date")
     if check and not value["healthy"]:
         raise click.ClickException("status checks found issues; inspect `docmancer status --json`")
 
@@ -384,8 +412,6 @@ __all__ = [
     "ask_cmd",
     "common_cmd",
     "delivery_cmd",
-    "query_cmd",
     "status_cmd",
-    "sync_cmd",
     "timeline_cmd",
 ]

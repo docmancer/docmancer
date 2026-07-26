@@ -388,15 +388,13 @@ def _redacted_entries(limit: int):
 
 
 def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
-    """Cloud: produce a review-only consolidated memory draft via OpenRouter."""
-    from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
+    """Produce a review-only consolidated memory draft through the configured provider."""
+    from docmancer.ai.providers.factory import provider_client
     from docmancer.memory.consolidation import consolidate_payload
 
     blocked = _blocked_by_recursion()
     if blocked:
         return blocked
-    if not openrouter_api_key():
-        return {"error": "OPENROUTER_API_KEY is not set"}
     entries = _redacted_entries(limit)
     if not entries:
         return {"error": "no memory entries"}
@@ -405,7 +403,7 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
         for e in entries
     ]
     try:
-        client = OpenRouterClient()
+        client = provider_client(agent.config.providers.default_llm, config=agent.config.providers)
         return consolidate_payload(
             payload,
             instruction=query,
@@ -417,7 +415,7 @@ def memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
             concurrency=2,
         ).model_dump()
     except Exception as exc:  # noqa: BLE001 - return an error payload, never raise to the client
-        return {"error": f"OpenRouter consolidate failed: {exc}"}
+        return {"error": f"Provider consolidate failed: {exc}"}
 
 
 __all__ = [

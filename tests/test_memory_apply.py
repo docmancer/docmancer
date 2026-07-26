@@ -39,8 +39,8 @@ def test_apply_preserves_surrounding_content_and_is_idempotent(tmp_path):
     text = target.read_text()
     assert "Keep me." in text
     assert text.count(BEGIN) == 1  # block replaced, not duplicated
-    # A timestamped backup is written.
-    assert any(p.name.startswith("AGENTS.md.docmancer-bak-") for p in tmp_path.iterdir())
+    # A single rolling backup is written, not one per run.
+    assert (tmp_path / "AGENTS.md.docmancer-bak").exists()
 
 
 def test_apply_dry_run_writes_nothing(tmp_path):

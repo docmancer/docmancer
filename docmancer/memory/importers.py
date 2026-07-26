@@ -26,9 +26,15 @@ def _message_text(value) -> list[str]:
     return output
 
 
-def _chatgpt_conversation(item: dict) -> tuple[str, list[str]]:
+def _chatgpt_conversation(item: dict) -> tuple[str, list[tuple[str, str]]]:
+    """Return (title, [(speaker, text), ...]) in turn order.
+
+    Per the retrieval-unit contract (docs/contracts/retrieval-unit-contract.md),
+    a conversation export is one of the few sources that carries real turn
+    adjacency, so speaker and order survive here rather than being flattened.
+    """
     title = str(item.get("title") or "Imported ChatGPT conversation")
-    messages = []
+    messages: list[tuple[str, str]] = []
     mapping = item.get("mapping") or {}
     if isinstance(mapping, dict):
         nodes = sorted(
@@ -39,18 +45,26 @@ def _chatgpt_conversation(item: dict) -> tuple[str, list[str]]:
             message = node.get("message") or {}
             role = str((message.get("author") or {}).get("role") or "")
             if role in {"user", "assistant"}:
-                messages.extend(_message_text(message.get("content")))
+                text = "\n".join(_message_text(message.get("content")))
+                if text.strip():
+                    messages.append((role, text))
     return title, messages
 
 
-def _claude_conversation(item: dict) -> tuple[str, list[str]]:
+def _claude_conversation(item: dict) -> tuple[str, list[tuple[str, str]]]:
+    """Return (title, [(speaker, text), ...]) in turn order. See `_chatgpt_conversation`."""
     title = str(item.get("name") or item.get("title") or "Imported Claude conversation")
-    messages = []
+    messages: list[tuple[str, str]] = []
     for message in item.get("chat_messages") or item.get("messages") or []:
-        if isinstance(message, dict) and str(message.get("sender") or message.get("role") or "") in {
-            "human", "assistant", "user",
-        }:
-            messages.extend(_message_text(message.get("text") or message.get("content")))
+        if not isinstance(message, dict):
+            continue
+        sender = str(message.get("sender") or message.get("role") or "")
+        if sender not in {"human", "assistant", "user"}:
+            continue
+        speaker = "user" if sender == "human" else sender
+        text = "\n".join(_message_text(message.get("text") or message.get("content")))
+        if text.strip():
+            messages.append((speaker, text))
     return title, messages
 
 
@@ -80,20 +94,29 @@ def conversation_atoms(
         if not isinstance(item, dict):
             continue
         title, messages = parser(item)
-        content = "\n\n".join(redact_secrets(message) for message in messages if message.strip())
-        entry = MemoryEntry(
-            harness=f"{detected}-export",
-            scope=scope,
-            title=title,
-            content=content,
-            path=f"conversation-export://{detected}/{index}",
-            extra={"kind": "conversation-import"},
-        )
-        for atom in extract_atoms(entry):
-            if atom.content_hash in seen:
+        session_id = f"{detected}:{index}"
+        for turn_index, (speaker, text) in enumerate(messages):
+            redacted = redact_secrets(text)
+            if not redacted.strip():
                 continue
-            seen.add(atom.content_hash)
-            output.append(atom)
+            entry = MemoryEntry(
+                harness=f"{detected}-export",
+                scope=scope,
+                title=title,
+                content=redacted,
+                path=f"conversation-export://{detected}/{index}/{turn_index}",
+                extra={"kind": "conversation-import"},
+            )
+            for atom in extract_atoms(entry):
+                if atom.content_hash in seen:
+                    continue
+                seen.add(atom.content_hash)
+                # Session/turn adjacency (retrieval-unit contract): every atom
+                # from one message shares that message's turn identity.
+                atom.session_id = session_id
+                atom.turn_index = turn_index
+                atom.speaker = speaker
+                output.append(atom)
     return output
 
 

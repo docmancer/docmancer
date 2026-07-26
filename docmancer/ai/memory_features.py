@@ -24,6 +24,19 @@ _CONSOLIDATE_SYSTEM = (
     "in source_paths, and keep the summary and sections focused on durable facts."
 )
 
+# Digest mode wants the opposite of the default provenance rule: each fact must
+# carry an inline citation so a reader can trace it to its file.
+_CONSOLIDATE_SYSTEM_INLINE_SOURCES = (
+    "You consolidate a developer's scattered agent memory into one coherent, "
+    "deduplicated digest for human review. Never invent facts. Preserve conflicts "
+    "as warnings rather than silently picking a side. Group related facts into "
+    "topical sections. Prefer compressed structured facts over prose-heavy "
+    "rewriting. Do not use em dashes. Attribute every fact: end each fact or "
+    "bullet with a short inline citation of the source path it came from, for "
+    "example (source: path/to/file.md). Also record the full provenance path set "
+    "in source_paths."
+)
+
 _FAST_CONSOLIDATE_SUFFIX = (
     "Use aggressive compression. Keep only durable, reusable project facts, "
     "decisions, constraints, commands, and user preferences. Drop repeated "
@@ -40,12 +53,16 @@ def consolidate_memory(
     model: str | None = None,
     draft_quality: str = "standard",
     max_tokens: int | None = None,
+    inline_sources: bool = False,
     on_progress=None,
 ) -> ConsolidatedMemoryDraft:
     """Turn retrieved local memory entries into a review-only consolidated draft.
 
     ``entries`` is a list of ``{"scope", "title", "source_path", "text"}`` dicts.
-    The returned draft is for review only; nothing is written.
+    The returned draft is for review only; nothing is written. When
+    ``inline_sources`` is set, each fact is attributed inline with its source
+    path (used by the machine digest); otherwise provenance stays in
+    ``source_paths`` only (the default consolidation contract).
     """
     if client is None:
         from .openrouter_client import OpenRouterClient
@@ -63,15 +80,25 @@ def consolidate_memory(
     ask = instruction or "Consolidate these into a coherent master memory draft."
     if draft_quality == "fast":
         ask = f"{ask}\n\n{_FAST_CONSOLIDATE_SUFFIX}"
-    user = (
-        f"{ask}\n\nInclude the source path of every entry you draw from in source_paths. "
-        "Do not write a Sources section, source-path bullet list, or path inventory "
-        "inside title, summary, section bodies, or warnings. If many entries are "
-        "provided, summarize the facts, not the file list.\n\n"
-        + "\n\n".join(blocks)
-    )
+    if inline_sources:
+        system = _CONSOLIDATE_SYSTEM_INLINE_SOURCES
+        user = (
+            f"{ask}\n\nAttribute every fact inline with a short (source: path) citation "
+            "using the source path shown for each entry below, and also list the full "
+            "provenance in source_paths.\n\n"
+            + "\n\n".join(blocks)
+        )
+    else:
+        system = _CONSOLIDATE_SYSTEM
+        user = (
+            f"{ask}\n\nInclude the source path of every entry you draw from in source_paths. "
+            "Do not write a Sources section, source-path bullet list, or path inventory "
+            "inside title, summary, section bodies, or warnings. If many entries are "
+            "provided, summarize the facts, not the file list.\n\n"
+            + "\n\n".join(blocks)
+        )
     messages = [
-        {"role": "system", "content": _CONSOLIDATE_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     return client.parse(
@@ -125,9 +152,17 @@ def draft_to_merge_text(
     *,
     source_files: list[str] | None = None,
     max_chars: int = 12_000,
+    max_section_chars: int = 1_800,
 ) -> str:
-    """Render a compact intermediate draft for the next consolidation round."""
+    """Render a compact intermediate draft for the next consolidation round.
+
+    ``max_section_chars`` caps each section body. The default keeps ordinary
+    consolidation compact. The digest passes a large value so a detailed section
+    is not clipped to a fraction of itself before the next merge round, which
+    would silently drop facts and break the digest's completeness guarantee.
+    """
     sources = list(dict.fromkeys(source_files if source_files is not None else draft.source_paths))
+    summary_cap = min(1_200, max_section_chars) if max_section_chars < 1_800 else max(1_200, max_section_chars // 4)
     header = [
         f"# {draft.title}",
         "",
@@ -136,12 +171,12 @@ def draft_to_merge_text(
         "",
         "## Summary",
         "",
-        _clip_text(draft.summary, 1_200),
+        _clip_text(draft.summary, summary_cap),
         "",
     ]
     remaining = max(2_000, max_chars - len("\n".join(header)))
     sections = draft.sections or []
-    section_budget = max(700, min(1_800, remaining // max(1, len(sections))))
+    section_budget = max(700, min(max_section_chars, remaining // max(1, len(sections))))
     lines = header
     for section in sections:
         lines.extend(

@@ -66,6 +66,23 @@ class TreeMemoryFile:
         return f"{ADDRESS_PREFIX}{self.memory_id}"
 
     @property
+    def is_generated(self) -> bool:
+        """True when this file was produced by consolidation rather than authored.
+
+        Generated files must never become consolidation input; see the ownership
+        contract in the memory-agent spec (section 15.6). The marker lives in
+        frontmatter so the property holds even when the index, the state file, or
+        the directory layout is unavailable. `type == "context"` is accepted as a
+        fallback for files written before the marker existed.
+        """
+        marker = self.extra_frontmatter.get("generated")
+        if isinstance(marker, bool):
+            return marker
+        if isinstance(marker, str):
+            return marker.strip().lower() in {"true", "yes", "1"}
+        return self.type == "context"
+
+    @property
     def title(self) -> str:
         match = _HEADING.search(self.body)
         if match:

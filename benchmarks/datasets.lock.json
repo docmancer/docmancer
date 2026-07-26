@@ -7,6 +7,7 @@
   "longmemeval-s": {
     "filename": "longmemeval_s_cleaned.json",
     "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
-    "source": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
+    "source": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json",
+    "source_note": "third-party community-cleaned mirror, not the official LongMemEval distribution; content is pinned by sha256 regardless of what this URL serves later"
   }
 }

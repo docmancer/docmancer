@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - Unreleased
+### Added
+
+- **Grounded Ask answers.** `docmancer ask` can now generate streamed prose through a configured provider while preserving the providerless cited bundle. Answers carry inline citations, provider and cost metadata, and separate checks for citation validity, quote fidelity, retrieval sufficiency, evidence use, conflict coverage, and claim support. Normative questions refuse when no mandatory source was retrieved.
+- **Provider catalog and settings.** Added one provider catalog, OS-keyring credential storage, explicit credential precedence, shared text-completion clients, `docmancer providers` commands, local API routes, and a Workbench settings page. Keys never enter the YAML configuration or browser responses.
+- **Revisioned Context.** Added deterministic providerless topic generation, safe two-tier deduplication, contradiction holdbacks, stable cluster lineage, append-only revisions and rollback, generated-versus-authored ownership, adopt and retire controls, content-hash caching, exclusions, projections, baselines, delivery receipts, read-only MCP tools, and the `docmancer context` command group.
+- **Production retrieval windows.** Conversation session, turn, and speaker identity now survive import and indexing. Fine-grained turns are ranked while overlapping surrounding windows are collapsed for return; non-conversational files retain paragraph-aware retrieval.
+
+### Changed
+
+- **`docmancer ask` defaults to global recall.** Supporting evidence recall now spans every indexed project plus global memory by default, so cross-project questions are answered in one call. Pass `--project <path>` or `--scope project` to restrict to one project. The result payload gains a `scoped_to_project` flag.
+- **`ask` reserves a bounded share of the token budget for evidence.** Curated tree memory is now compiled against the budget minus the evidence reserve, so evidence can no longer be starved. Evidence never pushes the bundle past `--token-budget`; the one exception is mandatory policy, which is always included in full and is the only content that can exceed the budget. The result reports `within_budget` and `mandatory_overflow` so that case is visible. The default `--token-budget` is now 4000 and the default `--limit` is 12. When evidence matches are retrieved but do not fit, `ask` reports how many were dropped (`evidence_truncated`) instead of silently omitting them.
+- **Workbench Context and Settings.** `/context/` is a first-class Context revision surface rather than a compatibility redirect. `/settings/` configures generation defaults, keyring credentials, and capture without exposing an agent editor.
+
+### Fixed
+
+- **Context planning performance.** Replaced quadratic all-pairs deduplication and clustering with deterministic candidate indexes. A real 7,063-record providerless plan fell from more than two minutes without completion to 2.52 seconds while preserving explicit collapse and holdback reports.
+- **Provider call-site consistency.** Consolidation in CLI-adjacent, MCP, runtime, and tree curation paths now resolves through the shared provider factory instead of constructing OpenRouter directly.
+- **Managed instruction writes.** Managed block replacement, its rolling backup, and its state record now use unique durable temporary files under a per-target lock.
+
+### Removed
+
+- **Legacy Context-pack browser API.** The old `/api/v1/context` pack mutation collision moved out of the Context artifact namespace. Context revisions now own that route.
+
 ## [0.9.0] - 2026-07-23
 ### Added
 

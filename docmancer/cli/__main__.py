@@ -16,11 +16,13 @@ from docmancer.cli.commands import (
     update_cmd,
 )
 from docmancer.cli.cloud_commands import cloud_group
+from docmancer.cli.context_commands import context_group
 from docmancer.cli.distribution_commands import package_check_cmd
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.mcp_commands import mcp_group
 from docmancer.cli.memory_commands import memory_group
 from docmancer.cli.okf_commands import okf_group
+from docmancer.cli.provider_commands import providers_group
 from docmancer.cli.qdrant_commands import qdrant_group
 from docmancer.cli.surface_commands import (
     agent_group,
@@ -165,6 +167,15 @@ cli.add_command(timeline_cmd, "timeline")
 cli.add_command(status_cmd, "status")
 cli.add_command(doctor_cmd, "doctor")
 cli.add_command(cloud_group, "cloud")
+cli.add_command(context_group, "context")
+brief_command = copy(memory_group.commands["digest"])
+brief_command.name = "brief"
+brief_command.short_help = "Create a focused brief from local agent memory."
+cli.add_command(brief_command, "brief")
+review_command = copy(memory_group.commands["review"])
+review_command.name = "review"
+review_command.short_help = "Review conflicts, duplicates, orphans, staleness, and proposals."
+cli.add_command(review_command, "review")
 cli.add_command(web_cmd, "web")
 cli.add_command(import_command, "import")
 cli.add_command(write, "write")
@@ -180,6 +191,7 @@ for _command, _name in (
     (tree_group, "tree"),
     (okf_group, "okf"),
     (qdrant_group, "qdrant"),
+    (providers_group, "providers"),
     (duplicate, "duplicate"),
     (trash, "trash"),
     (restore, "restore"),

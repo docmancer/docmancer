@@ -98,113 +98,9 @@ def build_server(project_path: str | Path | None = None):
     def docmancer_memory_status() -> dict:
         return tools.memory_status()
 
-    @server.tool(description="List local deterministic contradiction suggestions and reviewed outcomes.")
-    def docmancer_memory_conflicts(include_resolved: bool = False) -> list[dict]:
-        return tools.memory_conflicts(include_resolved=include_resolved)
-
-    @server.tool(description="Preview or resolve one memory conflict. Call with confirm=false first, then confirm=true after review.")
-    def docmancer_memory_resolve_conflict(
-        relation_id: str,
-        resolution: str,
-        winner: str | None = None,
-        confirm: bool = False,
-    ) -> dict:
-        return tools.memory_resolve_conflict(
-            relation_id,
-            resolution,
-            winner=winner,
-            confirm=confirm,
-        )
-
-    @server.tool(description="Inspect local memory graph relationships for one memory ID or the whole corpus.")
-    def docmancer_memory_relations(
-        identifier: str | None = None,
-        relation_type: str | None = None,
-    ) -> list[dict] | dict:
-        return tools.memory_relations(identifier, relation_type=relation_type)
-
-    @server.tool(description="List current local memories that have no detected graph relationships.")
-    def docmancer_memory_orphans() -> list[dict]:
-        return tools.memory_orphans()
-
-    @server.tool(description="Summarize memory and graph changes over a local time window.")
-    def docmancer_memory_recap(
-        since: str = "7d",
-        until: str | None = None,
-        project_id: str | None = None,
-    ) -> dict:
-        return tools.memory_recap(since=since, until=until, project_id=project_id)
-
-    @server.tool(description="Show recent local memory activity across coding-agent harnesses.")
-    def docmancer_memory_recent(
-        since: str = "7d",
-        until: str | None = None,
-        harness: str | None = None,
-        limit: int = 100,
-    ) -> list[dict] | dict:
-        return tools.memory_recent(since=since, until=until, harness=harness, limit=limit)
-
-    @server.tool(description="List indexed memory sources with provenance (agent, type, scope, title, path). Local only.")
-    def docmancer_sources_list(agent: str | None = None, scope: str | None = None, kind: str | None = None) -> list[dict]:
-        return tools.sources_list(agent=agent, scope=scope, kind=kind)
-
-    @server.tool(description="Add a durable local memory record. Personal and project records stay local; team records are written to the repository without staging or committing them.")
-    def docmancer_memory_add(
-        text: str,
-        scope: str = "global",
-        project_path: str | None = None,
-        memory_type: str | None = None,
-        tags: list[str] | None = None,
-    ) -> dict:
-        return tools.memory_add(
-            text,
-            scope=scope,
-            project_path=project_path,
-            memory_type=memory_type,
-            tags=tags,
-        )
-
-    @server.tool(description="List inspectable local memory atoms and their stable record IDs.")
-    def docmancer_memory_list(
-        scope: str | None = None,
-        memory_type: str | None = None,
-        origin: str | None = None,
-        limit: int = 100,
-    ) -> list[dict]:
-        return tools.memory_list(scope=scope, memory_type=memory_type, origin=origin, limit=limit)
-
-    @server.tool(description="Show one local memory atom with provenance and merge metadata.")
-    def docmancer_memory_show(identifier: str) -> dict:
-        return tools.memory_show(identifier)
-
-    @server.tool(description="Forget a local memory. Set confirm=true only after reviewing the preview returned by confirm=false.")
-    def docmancer_memory_forget(identifier: str, confirm: bool = False) -> dict:
-        return tools.memory_forget(identifier, confirm=confirm)
-
-    @server.tool(description="Promote a reviewed memory into a repository's Git-versioned team store. Set confirm=true only after reviewing the preview.")
-    def docmancer_memory_promote(identifier: str, project_path: str, confirm: bool = False) -> dict:
-        return tools.memory_promote(identifier, project_path=project_path, confirm=confirm)
-
-    @server.tool(name="cloud_status", description="Read optional encrypted cloud sync state from this device. No network request.")
-    def cloud_status_tool() -> dict:
-        return tools.cloud_status()
-
-    @server.tool(name="cloud_conflicts", description="List unresolved local cloud conflicts. No network request.")
-    def cloud_conflicts_tool() -> list[dict]:
-        return tools.cloud_conflicts()
-
-    @server.tool(name="cloud_sync", description="Explicitly run one encrypted cloud push and pull. Local memory remains available if sync fails.")
-    def cloud_sync_tool() -> dict:
-        return tools.cloud_sync()
-
-    from docmancer.ai.openrouter_client import openrouter_api_key
-
-    if openrouter_api_key():
-        @server.tool(description="CLOUD: produce a review-only consolidated memory draft via OpenRouter. Sends privacy-redacted local memory to OpenRouter.")
-        def docmancer_memory_consolidate_draft(query: str | None = None, limit: int = 60) -> dict:
-            return tools.memory_consolidate_draft(query=query, limit=limit)
-
-    # --- Tree-memory tools (checklist A.12, additive only) -------------------
+    # The public MCP surface mirrors the compact CLI. Atom-management,
+    # conflict-resolution, consolidation, and Cloud mutation tools were removed
+    # with their deprecated CLI counterparts.
 
     @server.tool(
         description=(
@@ -432,6 +328,41 @@ def build_server(project_path: str | Path | None = None):
 
     @server.tool(
         description=(
+            "READ-ONLY: inspect the current consolidated Context revision, freshness, exclusions, "
+            "and cluster metadata. Context refresh, rollback, adopt, and retire are intentionally "
+            "human-only CLI or local-web operations."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def context_status(project_path: str | None = None) -> dict:
+        project_path, error = tree_project(project_path)
+        if error:
+            return error
+        return tree_tools.context_status(project_path=project_path)
+
+    @server.tool(
+        description=(
+            "READ-ONLY: render a bounded revision-linked Context projection for an agent without "
+            "writing or refreshing it. Context refresh, rollback, adopt, and retire are human-only."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def context_projection(
+        agent: str,
+        project_path: str | None = None,
+        token_budget: int = 2_000,
+    ) -> dict:
+        project_path, error = tree_project(project_path)
+        if error:
+            return error
+        return tree_tools.context_projection(
+            agent=agent,
+            project_path=project_path,
+            token_budget=token_budget,
+        )
+
+    @server.tool(
+        description=(
             "READ-ONLY: show the append-only timeline of canonical memory file creates, edits, "
             "moves, duplicates, trash operations, and restores, including human-readable diffs."
         ),
@@ -462,6 +393,8 @@ def build_server(project_path: str | Path | None = None):
         query: str | None,
         budget: int | None,
         agent: str,
+        answer: bool,
+        mode: str,
     ) -> dict:
         task, error = _pick_argument("task", task, query)
         if error:
@@ -475,10 +408,12 @@ def build_server(project_path: str | Path | None = None):
         return tree_tools.ask_memory(
             task,
             project_path=project_path,
-            token_budget=token_budget or 2000,
+            token_budget=token_budget or 4000,
             limit=limit,
             include_history=include_history,
             agent=agent,
+            answer=answer,
+            mode=mode,
         )
 
     @server.tool(
@@ -486,7 +421,8 @@ def build_server(project_path: str | Path | None = None):
         description=(
             "READ-ONLY: recall one bounded bundle of mandatory policy, curated memory, and supporting "
             "indexed agent evidence for a task. Returns an empty bundle when no relevant local memory "
-            "exists. Aliases: query for task, budget for token_budget."
+            "exists. Set answer=true to use the configured provider for a grounded cited answer. "
+            "Answer generation defaults to false. Aliases: query for task, budget for token_budget."
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
@@ -495,12 +431,25 @@ def build_server(project_path: str | Path | None = None):
         project_path: str | None = None,
         token_budget: int | None = None,
         include_history: bool = False,
-        limit: int = 8,
+        limit: int = 12,
         query: str | None = None,
         budget: int | None = None,
         agent: str = "mcp-client",
+        answer: bool = False,
+        mode: str = "normal",
     ) -> dict:
-        return _ask_memory_impl(task, project_path, token_budget, include_history, limit, query, budget, agent)
+        return _ask_memory_impl(
+            task,
+            project_path,
+            token_budget,
+            include_history,
+            limit,
+            query,
+            budget,
+            agent,
+            answer,
+            mode,
+        )
 
     return server
 

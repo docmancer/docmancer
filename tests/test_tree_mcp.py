@@ -8,32 +8,13 @@ import pytest
 mcp_sdk = pytest.importorskip("mcp", reason="mcp extra not installed")
 
 
-def test_build_server_lists_existing_and_new_tree_tools(monkeypatch):
+def test_build_server_lists_compact_tree_and_context_tools(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     from docmancer.mcp.server import build_server
 
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
 
-    # Every existing tool from test_mcp.py's registration assertion is still present.
-    assert {
-        "docmancer_memory_search",
-        "docmancer_docs_search",
-        "docmancer_memory_status",
-        "docmancer_sources_list",
-        "docmancer_memory_add",
-        "docmancer_memory_list",
-        "docmancer_memory_show",
-        "docmancer_memory_forget",
-        "docmancer_memory_promote",
-        "docmancer_memory_conflicts",
-        "docmancer_memory_resolve_conflict",
-        "docmancer_memory_relations",
-        "docmancer_memory_orphans",
-        "docmancer_memory_recap",
-    } <= names
-
-    # New tree-memory tools are registered alongside them.
     assert {
         "write_memory",
         "read_memory",
@@ -46,8 +27,12 @@ def test_build_server_lists_existing_and_new_tree_tools(monkeypatch):
         "ask_memory",
         "common_memory",
         "context_delivery",
+        "context_status",
+        "context_projection",
         "decision_timeline",
     } <= names
+    assert "docmancer_memory_add" not in names
+    assert "docmancer_memory_consolidate_draft" not in names
 
 
 def test_write_then_read_memory_round_trips(tmp_path, monkeypatch):
@@ -288,16 +273,14 @@ def test_server_startup_project_pin_cannot_be_overridden(tmp_path, monkeypatch):
     assert not (other / ".docmancer").exists()
 
 
-def test_build_server_adds_cloud_tools_with_openrouter_key(monkeypatch):
-    """Unchanged from test_mcp.py -- confirms the cloud-tool gating behavior
-    is unaffected by adding the new tree tools."""
+def test_build_server_keeps_compact_tools_with_provider_key(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp.server import build_server
 
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert "docmancer_memory_extract" not in names
-    assert "docmancer_memory_consolidate_draft" in names
+    assert "docmancer_memory_consolidate_draft" not in names
+    assert len(names) == 17
 
 
 def _tool_result_payload(result):

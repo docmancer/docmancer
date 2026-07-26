@@ -85,10 +85,10 @@ def test_install_claude_code_backs_up_existing_user_file():
         # User content preserved, our block appended.
         assert "Keep these." in text
         assert "<!-- docmancer:start -->" in text
-        # A timestamped backup of the pre-existing file was taken.
-        backups = list((fake_home / ".claude").glob("CLAUDE.md.docmancer-bak-*"))
-        assert backups, "expected a backup of the pre-existing CLAUDE.md"
-        assert "Keep these." in backups[0].read_text()
+        # A single rolling backup of the pre-existing file was taken.
+        backup = fake_home / ".claude" / "CLAUDE.md.docmancer-bak"
+        assert backup.exists(), "expected a backup of the pre-existing CLAUDE.md"
+        assert "Keep these." in backup.read_text()
 
 
 def test_install_claude_code_hooks_and_remove_preserves_other_hooks():

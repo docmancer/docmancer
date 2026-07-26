@@ -62,12 +62,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from docmancer.ai.openrouter_client import (
-    OpenRouterClient,
-    OpenRouterConfigError,
-    OpenRouterRequestError,
-    openrouter_api_key,
-)
 from docmancer.harness.secrets import redact_secrets
 from docmancer.memory.tree.contracts import VALID_SCOPES, VALID_STATUS
 from docmancer.memory.tree.parser import TreeMemoryFile
@@ -211,20 +205,33 @@ class BYOKCurationEngine:
     contract, same ``sources``/``authority``/``status`` vocabulary) but is
     the only place in the tree package allowed to call a provider."""
 
-    def __init__(self, store: TreeStore, *, client: OpenRouterClient | None = None) -> None:
+    def __init__(self, store: TreeStore, *, client=None) -> None:
         self.store = store
         self._injected_client = client
 
     @staticmethod
     def is_configured() -> bool:
-        """True only when an OpenRouter API key is explicitly set. Reuses
-        the exact existing key-resolution helper -- no second convention."""
-        return bool(openrouter_api_key())
+        """True when the configured default provider is ready."""
+        try:
+            from docmancer.ai.providers.factory import provider_status
+            from docmancer.core.config import DocmancerConfig
 
-    def _client(self) -> OpenRouterClient:
+            providers = DocmancerConfig().providers
+            return provider_status(
+                providers.default_llm,
+                config=providers,
+            )["key_state"] in {"stored", "from_env", "override", "not_required"}
+        except Exception:
+            return False
+
+    def _client(self):
         if self._injected_client is not None:
             return self._injected_client
-        return OpenRouterClient()
+        from docmancer.ai.providers.factory import provider_client
+        from docmancer.core.config import DocmancerConfig
+
+        providers = DocmancerConfig().providers
+        return provider_client(providers.default_llm, config=providers)
 
     def _validate_response(
         self,
@@ -292,12 +299,12 @@ class BYOKCurationEngine:
         if not self.is_configured():
             return BYOKCurationResult(
                 outcome="not_configured",
-                reason="OPENROUTER_API_KEY is not set; BYOK curation did not run and made no provider call",
+                reason="No default provider credential is configured; BYOK curation did not run and made no provider call",
             )
 
         try:
             client = self._client()
-        except OpenRouterConfigError as exc:
+        except Exception as exc:  # noqa: BLE001 - configuration errors fail closed
             # Key vanished between is_configured() and client construction,
             # or another config problem surfaced. Still a clean, non-raising
             # "not configured" outcome -- no provider call was made.
@@ -307,13 +314,6 @@ class BYOKCurationEngine:
 
         try:
             response = client.parse(messages, BYOKCurationResponse)
-        except (OpenRouterRequestError, OpenRouterConfigError) as exc:
-            return BYOKCurationResult(
-                outcome="provider_failed",
-                reason=f"provider request failed: {exc}",
-                provider=getattr(client, "provider_name", "OpenRouter"),
-                model=getattr(client, "model", ""),
-            )
         except Exception as exc:  # noqa: BLE001 - any other provider/parse failure must not raise
             # Covers malformed/non-JSON content, schema-validation failure
             # inside OpenRouterClient.parse, or any other unexpected

@@ -35,22 +35,28 @@ class MemorySecretBackend:
 
 
 class KeyStore:
-    def __init__(self, backend: SecretBackend | None = None) -> None:
+    def __init__(
+        self,
+        backend: SecretBackend | None = None,
+        *,
+        service: str = SERVICE,
+    ) -> None:
         self.backend = backend or keyring
+        self.service = service
 
     def _name(self, account_id: str, kind: str) -> str:
         return f"{account_id}:{kind}"
 
     def get(self, account_id: str, kind: str) -> bytes | None:
-        value = self.backend.get_password(SERVICE, self._name(account_id, kind))
+        value = self.backend.get_password(self.service, self._name(account_id, kind))
         return b64decode(value) if value else None
 
     def set(self, account_id: str, kind: str, value: bytes) -> None:
-        self.backend.set_password(SERVICE, self._name(account_id, kind), b64encode(value))
+        self.backend.set_password(self.service, self._name(account_id, kind), b64encode(value))
 
     def delete(self, account_id: str, kind: str) -> None:
         try:
-            self.backend.delete_password(SERVICE, self._name(account_id, kind))
+            self.backend.delete_password(self.service, self._name(account_id, kind))
         except keyring.errors.PasswordDeleteError:
             pass
 

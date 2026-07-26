@@ -17,7 +17,7 @@ coverage/
 downloaded-docs/
 /release-patch-pypi.sh
 /repush-release-tag.sh
-docs/
+/docs/
 scripts/*.log
 output/playwright/
 .playwright-cli/

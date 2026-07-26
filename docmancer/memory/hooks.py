@@ -157,6 +157,30 @@ def _format_canonical(records: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _current_baseline(payload: HookPayload) -> str:
+    """Read the latest revision-linked baseline, failing open on any problem."""
+    if payload.event != "SessionStart" or not payload.cwd:
+        return ""
+    latest = (
+        Path(payload.cwd).expanduser().resolve()
+        / ".docmancer"
+        / "state"
+        / "context"
+        / "latest.json"
+    )
+    try:
+        manifest = json.loads(latest.read_text(encoding="utf-8"))
+        project_id = str((manifest.get("scope") or {}).get("project_id") or "")
+        if not project_id:
+            return ""
+        from docmancer.memory.projections import baseline_path
+
+        path = baseline_path(payload.agent, project_id)
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except Exception:  # noqa: BLE001 - a baseline must never block agent startup
+        return ""
+
+
 def build_hook_context(
     payload: HookPayload,
     *,
@@ -211,7 +235,15 @@ def build_hook_context(
             break
     if should_dedupe:
         _save_seen(payload.session_id, seen_order)
-    sections = [value for value in (_format_canonical(canonical), _format_context(selected, max_chars=max_chars) if selected else "") if value]
+    sections = [
+        value
+        for value in (
+            _current_baseline(payload),
+            _format_canonical(canonical),
+            _format_context(selected, max_chars=max_chars) if selected else "",
+        )
+        if value
+    ]
     if not sections:
         return ""
     context = "\n\n".join(sections)

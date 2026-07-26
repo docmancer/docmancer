@@ -77,9 +77,20 @@ class AtomicMemoryEntry:
     source_count: int = 1
     merged_from: list[str] = field(default_factory=list)
     record_id: str | None = None
+    # True when this atom came from consolidation output rather than from a
+    # harvested or user-authored source. Generated atoms are excluded from
+    # consolidation input by `MemoryAgent.indexed_atoms`; see spec 15.6.
+    generated: bool = False
     origin: str = "harvested"
     scope_kind: str = "unknown"
     project_path: str | None = None
+    # Session/turn adjacency (retrieval-unit contract, docs/contracts/retrieval-unit-contract.md).
+    # Set only for atoms harvested from a source with real turn structure
+    # (currently: imported conversation exports). None for every markdown
+    # memory/instruction source, which has no underlying turns to preserve.
+    session_id: str | None = None
+    turn_index: int | None = None
+    speaker: str | None = None
     project_id: str | None = None
     revision_id: str | None = None
     parent_revision_ids: list[str] = field(default_factory=list)
@@ -116,6 +127,9 @@ class AtomicMemoryEntry:
             "origin": self.origin,
             "scope_kind": self.scope_kind,
             "project_path": self.project_path,
+            "session_id": self.session_id,
+            "turn_index": self.turn_index,
+            "speaker": self.speaker,
             "project_id": self.project_id,
             "revision_id": self.revision_id,
             "parent_revision_ids": list(self.parent_revision_ids),
@@ -152,6 +166,9 @@ class AtomicMemoryEntry:
             "origin": self.origin,
             "scope_kind": self.scope_kind,
             "project_path": self.project_path,
+            "session_id": self.session_id,
+            "turn_index": self.turn_index,
+            "speaker": self.speaker,
             "project_id": self.project_id,
             "revision_id": self.revision_id,
             "parent_revision_ids": list(self.parent_revision_ids),

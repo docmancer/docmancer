@@ -52,8 +52,9 @@ logger = logging.getLogger(__name__)
 _MEMORY_COLLECTION = "docmancer_memory"
 
 # Bump when extraction logic changes so stale cached atoms are not reused.
-_ATOM_CACHE_VERSION = 4
-MEMORY_SCHEMA_VERSION = 3
+_ATOM_CACHE_VERSION = 5
+MEMORY_SCHEMA_VERSION = 4
+RETRIEVAL_UNIT_STRATEGY = "rank-turn-return-window-v1"
 _SOURCE_SNAPSHOT_VERSION = 2
 _SCHEMA_META_TABLE = "docmancer_memory_meta"
 _DEFAULT_SYNC_LOCK_TIMEOUT = 10.0
@@ -231,7 +232,7 @@ class MemoryAgent:
             # content hashes, reuses unchanged embeddings, and prunes points
             # whose rebuilt chunk rows no longer exist.
             progress("index", f"Rebuilding the local search index with {len(atoms):,} memory atoms")
-            docs = [atom.to_document() for atom in atoms]
+            docs = self._retrieval_documents(atoms)
             self._agent.ingest_documents(
                 docs,
                 recreate=True,
@@ -357,6 +358,7 @@ class MemoryAgent:
                 "schema_version": str(MEMORY_SCHEMA_VERSION),
                 "memory_layer": "atomic",
                 "graph_schema_version": str(GRAPH_SCHEMA_VERSION),
+                "retrieval_unit_strategy": RETRIEVAL_UNIT_STRATEGY,
                 "embeddings_provider": str(emb.provider or ""),
                 "embeddings_model": str(emb.model or ""),
                 "embeddings_dim": str(emb.dimensions or 0),
@@ -369,7 +371,13 @@ class MemoryAgent:
             return
         if meta.get("schema_version") != str(MEMORY_SCHEMA_VERSION) or meta.get("memory_layer") != "atomic":
             raise SchemaMismatchError(
-                "this memory index predates memory atoms; run `docmancer memory sync --recreate`"
+                "this memory index uses an older retrieval-unit strategy; "
+                "run `docmancer memory sync --recreate`"
+            )
+        if meta.get("retrieval_unit_strategy") != RETRIEVAL_UNIT_STRATEGY:
+            raise SchemaMismatchError(
+                "this memory index mixes an older retrieval-unit strategy; "
+                "run `docmancer memory sync --recreate`"
             )
 
     def _atoms_from_entries(
@@ -517,7 +525,7 @@ class MemoryAgent:
         with self._sync_lock():
             embed = self._embed_fn()
             self._agent.ingest_documents(
-                [atom.to_document() for atom in atoms],
+                self._retrieval_documents(atoms),
                 recreate=False,
                 with_vectors=True,
                 embeddings_provider=self._embedding_provider,
@@ -525,6 +533,63 @@ class MemoryAgent:
             self._stamp_schema()
             self.graph.rebuild(self.indexed_atoms(), embed_texts=embed)
         return len(atoms)
+
+    @staticmethod
+    def _retrieval_documents(
+        atoms: list[AtomicMemoryEntry],
+        *,
+        turn_radius: int = 2,
+    ) -> list["Document"]:
+        """Rank conversational atoms individually while returning nearby turns.
+
+        The indexed document content remains the fine-grained atom, so lexical
+        and vector ranking cannot match a neighboring turn. The surrounding
+        context is stored only in metadata and substituted after retrieval.
+        Non-conversational atoms keep the existing one-atom document shape.
+        """
+        grouped: dict[str, list[AtomicMemoryEntry]] = {}
+        for atom in atoms:
+            if atom.session_id is not None and atom.turn_index is not None:
+                grouped.setdefault(atom.session_id, []).append(atom)
+
+        documents = []
+        for atom in atoms:
+            document = atom.to_document()
+            if atom.session_id is None or atom.turn_index is None:
+                documents.append(document)
+                continue
+            session_atoms = sorted(
+                grouped.get(atom.session_id, []),
+                key=lambda item: (int(item.turn_index or 0), item.atom_id),
+            )
+            members = [
+                item
+                for item in session_atoms
+                if abs(int(item.turn_index or 0) - int(atom.turn_index or 0)) <= turn_radius
+            ]
+            member_payload = [
+                {
+                    "atom_id": item.atom_id,
+                    "turn_index": item.turn_index,
+                    "speaker": item.speaker,
+                    "text": item.text,
+                }
+                for item in members
+            ]
+            document.metadata.update(
+                {
+                    "retrieval_unit": "turn",
+                    "return_unit": "context_window",
+                    "rank_id": atom.atom_id,
+                    "context_member_ids": [item.atom_id for item in members],
+                    "context_members": member_payload,
+                    "context_text": "\n\n".join(
+                        f"{item.speaker or 'unknown'}: {item.text}" for item in members
+                    ),
+                }
+            )
+            documents.append(document)
+        return documents
 
     def _project_paths(self, entries: list["MemoryEntry"] | None = None) -> list[str]:
         paths: set[str] = set(self._extra_project_paths)
@@ -622,7 +687,7 @@ class MemoryAgent:
             filters=retrieval_filters,
             allow_degraded=allow_degraded,
         )
-        chunks = result.chunks
+        chunks = self._collapse_context_windows(result.chunks)
         states = self.graph.current_state(
             str((chunk.metadata or {}).get("atom_id") or "") for chunk in chunks
         )
@@ -734,6 +799,68 @@ class MemoryAgent:
         if expand_relations:
             selected = self._expand_relation_chunks(selected, atom_lookup, requested_limit)
         return selected
+
+    @staticmethod
+    def _collapse_context_windows(chunks):
+        """Collapse overlapping returned windows without changing rank scores."""
+        ordinary = []
+        windows = []
+        for chunk in chunks:
+            metadata = chunk.metadata or {}
+            members = metadata.get("context_members")
+            if not isinstance(members, list) or not members:
+                ordinary.append(chunk)
+                continue
+            ids = {str(item.get("atom_id") or "") for item in members if isinstance(item, dict)}
+            target = next(
+                (
+                    existing
+                    for existing in windows
+                    if ids.intersection(existing["ids"])
+                    and str(metadata.get("session_id") or "")
+                    == existing["session_id"]
+                ),
+                None,
+            )
+            if target is None:
+                windows.append(
+                    {
+                        "chunk": chunk,
+                        "ids": ids,
+                        "session_id": str(metadata.get("session_id") or ""),
+                        "members": {
+                            str(item.get("atom_id") or ""): dict(item)
+                            for item in members
+                            if isinstance(item, dict)
+                        },
+                    }
+                )
+                continue
+            target["ids"].update(ids)
+            for item in members:
+                if isinstance(item, dict):
+                    target["members"][str(item.get("atom_id") or "")] = dict(item)
+
+        collapsed = []
+        for entry in windows:
+            chunk = entry["chunk"]
+            members = sorted(
+                entry["members"].values(),
+                key=lambda item: (int(item.get("turn_index") or 0), str(item.get("atom_id") or "")),
+            )
+            chunk.metadata["context_members"] = members
+            chunk.metadata["context_member_ids"] = [
+                str(item.get("atom_id") or "") for item in members
+            ]
+            chunk.text = "\n\n".join(
+                f"{item.get('speaker') or 'unknown'}: {item.get('text') or ''}"
+                for item in members
+            )
+            collapsed.append(chunk)
+        return sorted(
+            [*ordinary, *collapsed],
+            key=lambda chunk: -float(chunk.score or 0.0),
+        )
 
     def _expand_relation_chunks(self, chunks, atom_lookup, limit: int):
         """Append directly related memories after their retrieved seed."""
@@ -1241,8 +1368,21 @@ class MemoryAgent:
                 return False
         return True
 
-    def indexed_atoms(self, *, limit: int | None = None) -> list[AtomicMemoryEntry]:
-        """Read atomic records from the stored index."""
+    def indexed_atoms(
+        self,
+        *,
+        limit: int | None = None,
+        include_generated: bool = False,
+    ) -> list[AtomicMemoryEntry]:
+        """Read atomic records from the stored index.
+
+        Consolidation output is excluded by default. This is the retrieval-layer
+        half of the ownership invariant in spec 15.6: a generated record must
+        never become synthesis input for a later run, or each run synthesizes
+        over the previous run's interpretations until provenance decays. Callers
+        that genuinely want the generated corpus (browsing, delivery previews)
+        must opt in explicitly.
+        """
         if not Path(self.db_path).exists():
             return []
         try:
@@ -1252,8 +1392,11 @@ class MemoryAgent:
         atoms: list[AtomicMemoryEntry] = []
         for item in provenance:
             atom = self._atom_from_provenance(item)
-            if atom is not None:
-                atoms.append(atom)
+            if atom is None:
+                continue
+            if atom.generated and not include_generated:
+                continue
+            atoms.append(atom)
         atoms.sort(key=_atom_sort_key)
         if limit is not None:
             atoms = atoms[: max(0, limit)]
@@ -1333,9 +1476,17 @@ class MemoryAgent:
             source_count=int(meta.get("source_count") or 1),
             merged_from=[str(p) for p in meta.get("merged_from", []) if p],
             record_id=meta.get("record_id"),
+            generated=_is_generated_metadata(meta),
             origin=str(meta.get("origin") or "harvested"),
             scope_kind=str(meta.get("scope_kind") or str(meta.get("scope") or "unknown").split(":", 1)[0]),
             project_path=meta.get("project_path"),
+            session_id=meta.get("session_id"),
+            turn_index=(
+                int(meta["turn_index"])
+                if meta.get("turn_index") is not None
+                else None
+            ),
+            speaker=meta.get("speaker"),
             project_id=meta.get("project_id"),
             revision_id=meta.get("revision_id"),
             parent_revision_ids=[str(value) for value in meta.get("parent_revision_ids", []) if value],
@@ -1448,6 +1599,9 @@ class MemoryAgent:
                     memory_type=atom.type,
                     tags=["conversation-import", atom.harness],
                     origin="imported",
+                    session_id=atom.session_id,
+                    turn_index=atom.turn_index,
+                    speaker=atom.speaker,
                 )
             except ValueError:
                 continue
@@ -1846,6 +2000,25 @@ class MemoryAgent:
         path = self._source_snapshot_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _is_generated_metadata(meta: dict) -> bool:
+    """Decide whether an indexed record is consolidation output.
+
+    Checked against the frontmatter marker first, then the record type, then the
+    managed-namespace path. Three independent signals because this filter guards
+    the spec 15.6 ownership invariant, and a single signal that goes missing
+    (a relocated tree, a lost marker) would silently reopen the loop.
+    """
+    marker = meta.get("generated")
+    if isinstance(marker, bool):
+        return marker
+    if isinstance(marker, str) and marker.strip().lower() in {"true", "yes", "1"}:
+        return True
+    if str(meta.get("memory_type") or "") == "context":
+        return True
+    path = str(meta.get("source_path") or "").replace("\\", "/")
+    return "/.docmancer/tree/context/" in path
 
 
 def _atom_sort_key(atom: AtomicMemoryEntry):

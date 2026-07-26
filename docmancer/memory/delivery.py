@@ -81,6 +81,9 @@ def _stable_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
             "token_estimate",
             "token_budget",
             "index_revision",
+            "revision_id",
+            "projection_id",
+            "topic_summaries",
         )
     }
 
@@ -115,6 +118,8 @@ def record_delivery(
         "integration_mode": integration_mode,
         "last_successful_recall": datetime.now(timezone.utc).isoformat(),
         "tree_revision": str(bundle.get("index_revision") or ""),
+        "revision_id": str(bundle.get("revision_id") or ""),
+        "projection_id": str(bundle.get("projection_id") or ""),
         "bundle_hash": bundle_hash(bundle),
         "token_estimate": int(bundle.get("token_estimate") or 0),
         "item_count": sum(
@@ -174,6 +179,8 @@ def delivery_matrix(
                 "projection_path": projection,
                 "last_successful_recall": receipt.get("last_successful_recall"),
                 "tree_revision": receipt.get("tree_revision"),
+                "revision_id": receipt.get("revision_id"),
+                "projection_id": receipt.get("projection_id"),
                 "bundle_hash": receipt.get("bundle_hash"),
                 "surface": receipt.get("surface"),
                 "item_count": receipt.get("item_count"),

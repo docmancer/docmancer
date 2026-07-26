@@ -34,6 +34,37 @@ export async function apiMutation(
   return decode(response);
 }
 
+export async function apiJobMutation(
+  path: string,
+  body: JsonMap,
+  onDelta: (delta: string) => void,
+): Promise<JsonMap> {
+  const job = await apiMutation(path, { ...body, stream: true });
+  const jobId = String(job.id ?? "");
+  if (!jobId) return job;
+  return new Promise((resolve, reject) => {
+    const events = new EventSource(`/api/v1/jobs/${encodeURIComponent(jobId)}/events`);
+    events.addEventListener("progress", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as JsonMap;
+      const data = payload.data as JsonMap | undefined;
+      if (payload.stage === "answer_delta" && data?.delta) onDelta(String(data.delta));
+    });
+    events.addEventListener("done", (event) => {
+      events.close();
+      const payload = JSON.parse((event as MessageEvent).data) as JsonMap;
+      if (payload.state === "failed") {
+        reject(new Error(String(payload.error ?? "Answer generation failed")));
+      } else {
+        resolve((payload.result && typeof payload.result === "object" ? payload.result : {}) as JsonMap);
+      }
+    });
+    events.onerror = () => {
+      events.close();
+      reject(new Error("The local answer stream disconnected."));
+    };
+  });
+}
+
 async function decode(response: Response): Promise<JsonMap> {
   const data = (await response.json().catch(() => ({}))) as JsonMap;
   if (!response.ok) {

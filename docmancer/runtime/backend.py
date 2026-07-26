@@ -445,27 +445,266 @@ class LocalRuntime:
         return dict(self._require_memory().config.capture.enabled)
 
     async def save_capture_settings(self, enabled: dict[str, bool]) -> Path:
+        import os
+        import tempfile
         import yaml
+        from filelock import FileLock
 
         path = self._config_file()
-        data = {}
-        if path.is_file():
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if isinstance(loaded, dict):
-                data = loaded
-        data["capture"] = {"enabled": {key: bool(value) for key, value in sorted(enabled.items())}}
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        lock = FileLock(str(path) + ".lock", timeout=10)
+        temporary: Path | None = None
+        with lock:
+            data = {}
+            if path.is_file():
+                loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    data = loaded
+            data["capture"] = {
+                "enabled": {key: bool(value) for key, value in sorted(enabled.items())}
+            }
+            content = yaml.safe_dump(data, sort_keys=False)
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    temporary = Path(handle.name)
+                os.replace(temporary, path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
         self._require_memory().config.capture.enabled = dict(enabled)
         return path
 
+    async def provider_catalog(self) -> list[dict]:
+        from docmancer.ai.providers.catalog import PROVIDERS
+        from docmancer.ai.providers.factory import provider_status
+
+        config = self._require_memory().config.providers
+        return await asyncio.to_thread(
+            lambda: [provider_status(spec.id, config=config) for spec in PROVIDERS]
+        )
+
+    async def provider_key(
+        self,
+        provider_id: str,
+        value: str,
+        *,
+        validate: bool = False,
+    ) -> dict:
+        from docmancer.ai.providers.catalog import get_provider
+        from docmancer.ai.providers.credentials import ProviderKeyStore
+        from docmancer.ai.providers.factory import provider_client, provider_status
+
+        spec = get_provider(provider_id)
+        if spec.auth_kind != "api_key":
+            raise ValueError(f"{spec.label} does not use an API key")
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("key cannot be empty")
+        if validate:
+            client = provider_client(
+                provider_id,
+                config=self._require_memory().config.providers,
+                api_key_override=cleaned,
+            )
+            await asyncio.to_thread(client.preflight)
+        store = ProviderKeyStore()
+        await asyncio.to_thread(store.set, provider_id, cleaned)
+        return provider_status(
+            provider_id,
+            config=self._require_memory().config.providers,
+            store=store,
+        )
+
+    async def remove_provider_key(self, provider_id: str) -> dict:
+        from docmancer.ai.providers.credentials import ProviderKeyStore
+        from docmancer.ai.providers.factory import provider_status
+
+        store = ProviderKeyStore()
+        await asyncio.to_thread(store.delete, provider_id)
+        return provider_status(
+            provider_id,
+            config=self._require_memory().config.providers,
+            store=store,
+        )
+
+    async def test_provider(self, provider_id: str) -> dict:
+        from docmancer.ai.providers.factory import provider_client
+
+        client = provider_client(
+            provider_id,
+            config=self._require_memory().config.providers,
+        )
+        await asyncio.to_thread(client.preflight)
+        return {
+            "ready": True,
+            "provider": provider_id,
+            "model": client.model,
+        }
+
+    async def ai_defaults(self) -> dict:
+        config = self._require_memory().config.providers
+        return {
+            "default_llm": config.default_llm,
+            "models": dict(config.models),
+            "base_urls": dict(config.base_urls),
+            "preference": config.preference,
+            "output_mode": config.output_mode,
+            "generation": {
+                key: item.model_dump()
+                for key, item in config.generation.items()
+            },
+        }
+
+    async def save_ai_defaults(self, value: dict) -> Path:
+        from docmancer.ai.providers.catalog import get_provider
+        from docmancer.cli.provider_commands import _atomic_update
+
+        provider_id = str(value.get("default_llm") or "").strip()
+        if provider_id:
+            get_provider(provider_id)
+        output_mode = str(value.get("output_mode") or "normal")
+        if output_mode not in {"concise", "normal", "thorough"}:
+            raise ValueError("output_mode must be concise, normal, or thorough")
+        preference = str(value.get("preference") or "")
+        models = value.get("models") or {}
+        base_urls = value.get("base_urls") or {}
+        if not isinstance(models, dict) or not isinstance(base_urls, dict):
+            raise ValueError("models and base_urls must be objects")
+        path = self._config_file()
+
+        def transform(data: dict) -> None:
+            providers = data.setdefault("providers", {})
+            providers.update({
+                "default_llm": provider_id or "openrouter",
+                "models": {str(key): str(item) for key, item in models.items()},
+                "base_urls": {str(key): str(item) for key, item in base_urls.items()},
+                "preference": preference,
+                "output_mode": output_mode,
+            })
+
+        await asyncio.to_thread(_atomic_update, path, transform)
+        config = self._require_memory().config.providers
+        config.default_llm = provider_id or "openrouter"
+        config.models = {str(key): str(item) for key, item in models.items()}
+        config.base_urls = {str(key): str(item) for key, item in base_urls.items()}
+        config.preference = preference
+        config.output_mode = output_mode
+        return path
+
+    def _context_engine(self):
+        from docmancer.memory.context_engine import ContextEngine
+
+        return ContextEngine(self.project_path, agent=self._require_memory())
+
+    async def context_artifact(self) -> dict:
+        engine = self._context_engine()
+        latest, revisions = await asyncio.gather(
+            asyncio.to_thread(engine.latest),
+            asyncio.to_thread(engine.revisions),
+        )
+        return {
+            "available": latest is not None,
+            "current": latest,
+            "revisions": revisions,
+            "delivery": await self.context_delivery(),
+        }
+
+    async def refresh_context(
+        self,
+        *,
+        provider: str = "none",
+        model: str | None = None,
+        mode: str = "normal",
+        full: bool = False,
+        dry_run: bool = False,
+        progress_callback=None,
+    ) -> dict:
+        from docmancer.ai.providers.factory import provider_client
+
+        progress = progress_callback or (lambda _name, _data: None)
+        progress("plan", {"detail": "Building the Context refresh plan"})
+        client = None
+        if provider != "none" and not dry_run:
+            client = provider_client(
+                provider,
+                config=self._require_memory().config.providers,
+                model=model,
+            )
+        result = await asyncio.to_thread(
+            self._context_engine().build,
+            client=client,
+            dry_run=dry_run,
+            full=full,
+            mode=mode,
+        )
+        progress(
+            "complete",
+            {
+                "detail": "Context plan ready" if dry_run else "Context revision ready",
+                "revision_id": result.get("revision_id"),
+            },
+        )
+        return result
+
+    async def context_diff(self, left: str, right: str | None = None) -> dict:
+        engine = self._context_engine()
+        before = await asyncio.to_thread(engine.revision, left)
+        after = (
+            await asyncio.to_thread(engine.revision, right)
+            if right
+            else await asyncio.to_thread(engine.latest)
+        )
+        if after is None:
+            raise ValueError("no current Context revision exists")
+        before_topics = {row["cluster_id"]: row for row in before.get("topics", [])}
+        after_topics = {row["cluster_id"]: row for row in after.get("topics", [])}
+        shared = set(before_topics).intersection(after_topics)
+        return {
+            "from": before["revision_id"],
+            "to": after["revision_id"],
+            "added_clusters": sorted(set(after_topics) - set(before_topics)),
+            "removed_clusters": sorted(set(before_topics) - set(after_topics)),
+            "changed_clusters": sorted(
+                cluster_id
+                for cluster_id in shared
+                if before_topics[cluster_id].get("artifact_hash")
+                != after_topics[cluster_id].get("artifact_hash")
+            ),
+        }
+
+    async def rollback_context(self, revision_id: str) -> dict:
+        return await asyncio.to_thread(self._context_engine().rollback, revision_id)
+
+    async def adopt_context(
+        self,
+        cluster_id: str,
+        *,
+        destination: str | None = None,
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._context_engine().adopt,
+            cluster_id,
+            destination=destination,
+        )
+
+    async def retire_context(self, cluster_id: str) -> dict:
+        return await asyncio.to_thread(self._context_engine().retire, cluster_id)
+
     async def consolidate(self, query: str | None, on_event=None) -> str:
         from docmancer.ai.memory_features import draft_to_markdown
-        from docmancer.ai.openrouter_client import OpenRouterClient, openrouter_api_key
+        from docmancer.ai.providers.factory import provider_client
         from docmancer.memory.consolidation import consolidate_payload
 
-        if not openrouter_api_key():
-            raise ValueError("OPENROUTER_API_KEY is not set")
         atoms = self._require_memory().indexed_atoms(limit=100)
         if not atoms:
             raise ValueError("no indexed memory atoms are available")
@@ -473,7 +712,8 @@ class LocalRuntime:
             {"scope": atom.scope, "title": atom.title, "source_path": atom.source_path, "text": atom.text}
             for atom in atoms
         ]
-        client = OpenRouterClient()
+        providers = self._require_memory().config.providers
+        client = provider_client(providers.default_llm, config=providers)
         try:
             await asyncio.to_thread(client.preflight)
             draft = await asyncio.to_thread(
@@ -495,6 +735,7 @@ class LocalRuntime:
                 await asyncio.to_thread(close)
 
     async def apply_memory(self, agent: str, draft: str | None = None) -> Path:
+        from docmancer._version import __version__
         from docmancer.cli.managed_block import upsert_block
         from docmancer.cli.memory_commands import (
             _APPLY_TARGETS, _MEMORY_BLOCK_BEGIN, _MEMORY_BLOCK_END, _apply_target_path, _render_atoms_for_apply,
@@ -507,7 +748,13 @@ class LocalRuntime:
         if target is None:
             raise ValueError("could not resolve apply target")
         await asyncio.to_thread(
-            upsert_block, target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END, backup_policy="foreign-content"
+            upsert_block,
+            target,
+            body,
+            begin=_MEMORY_BLOCK_BEGIN,
+            end=_MEMORY_BLOCK_END,
+            backup_policy="foreign-content",
+            version=__version__,
         )
         return target
 
@@ -1047,7 +1294,16 @@ class LocalRuntime:
             )
         return payload
 
-    async def ask_tree(self, task: str, *, token_budget: int = 2000, agent: str = "web") -> dict:
+    async def ask_tree(
+        self,
+        task: str,
+        *,
+        token_budget: int = 4000,
+        agent: str = "web",
+        answer: bool | None = None,
+        mode: str = "normal",
+        on_delta=None,
+    ) -> dict:
         from docmancer.memory.ask import ask
 
         bundle = await asyncio.to_thread(
@@ -1058,6 +1314,9 @@ class LocalRuntime:
             agent_name=agent,
             surface="web",
             integration_mode="workbench-preview",
+            answer=answer,
+            answer_mode=mode,
+            on_delta=on_delta,
         )
         items = [
             *bundle["mandatory_policies"],
@@ -1065,7 +1324,7 @@ class LocalRuntime:
             *bundle["relevant_evidence"],
         ]
         return {
-            "answer": None,
+            "answer": bundle.get("answer"),
             "no_answer": not bool(items),
             "items": items,
             "mandatory_policies": bundle["mandatory_policies"],
@@ -1074,6 +1333,7 @@ class LocalRuntime:
             "token_estimate": bundle["token_estimate"],
             "index_revision": bundle["index_revision"],
             "refresh": bundle["refresh"],
+            "answer_unavailable": bundle.get("answer_unavailable"),
             "timings": {},
         }
 

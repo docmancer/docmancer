@@ -106,10 +106,9 @@ def test_public_commands_have_examples_in_help():
 def test_expired_root_aliases_are_removed_in_0_9():
     runner = CliRunner()
     for command in (
-        "query",
-        "search",
-        "context",
-        "sync",
+            "query",
+            "search",
+            "sync",
         "init",
         "harvest",
         "add",
@@ -402,18 +401,22 @@ def test_display_path_shortens_home_and_cwd(tmp_path):
         assert display_path(project_dir / "docmancer.yaml") == "./docmancer.yaml"
 
 
-def test_doctor_runs():
+def test_doctor_runs(tmp_path):
     fake_config = MagicMock()
     fake_config.index.db_path = "/tmp/docmancer.db"
     fake_agent = MagicMock()
     fake_agent.collection_stats.return_value = {"sources_count": 0, "sections_count": 0, "extracted_dir": "/tmp/extracted"}
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
     with patch("docmancer.cli.commands._load_config", return_value=fake_config), \
-         patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
+         patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent), \
+         patch("docmancer.cli.commands.Path.home", return_value=fake_home):
         result = CliRunner().invoke(cli, ["doctor"])
     assert result.exit_code == 0
     assert "SQLite" in result.output
     assert "Local loaders" in result.output
     assert "Curated Markdown tree" in result.output
+    assert "Instruction blocks" in result.output
     assert "Deprecated:" not in result.output
 
 

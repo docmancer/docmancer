@@ -7,12 +7,14 @@ SQLite-backed files.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import signal
 import sys
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 
@@ -1448,7 +1450,9 @@ _PROVIDER_NOTICE = (
     "Note: this sends your selected local memory text to {provider}. "
     "Secrets are redacted first; nothing is stored remotely by docmancer."
 )
-_PROVIDER_CHOICES = ["openrouter"]
+from docmancer.ai.providers.catalog import provider_ids as _provider_ids
+
+_PROVIDER_CHOICES = list(_provider_ids(capability="llm"))
 _DEFAULT_CONSOLIDATE_INPUT_BUDGET = 50_000
 _FAST_CONSOLIDATE_INPUT_BUDGET = 35_000
 _OPENROUTER_CONSOLIDATE_INPUT_BUDGET = 25_000
@@ -1472,16 +1476,19 @@ def _provider_disclosure(provider: str, client=None) -> str:
 
 def _expected_provider_errors():
     from docmancer.ai.openrouter_client import OpenRouterConfigError
+    from docmancer.ai.providers.openai_compatible import ProviderRequestError
 
-    return (OpenRouterConfigError,)
+    return (OpenRouterConfigError, ProviderRequestError, ValueError)
 
 
 def _make_provider_client(provider: str, *, model: str | None, timeout: float | None):
-    if provider == "openrouter":
-        from docmancer.ai.openrouter_client import OpenRouterClient
+    from docmancer.ai.providers.factory import provider_client
 
-        return OpenRouterClient(model=model, timeout_seconds=timeout)
-    raise click.ClickException(f"Unsupported provider: {provider}")
+    return provider_client(
+        provider,
+        model=model,
+        timeout_seconds=timeout,
+    )
 
 
 def _make_provider_client_or_exit(command: str, provider: str, *, model: str | None, timeout: float | None):
@@ -1671,12 +1678,16 @@ def _fmt_seconds(seconds: float) -> str:
     return f"{seconds:.0f}s"
 
 
-def _is_openrouter_client(client) -> bool:
-    return (getattr(client, "provider_name", "") or "").lower() == "openrouter"
+def _provider_id(client) -> str:
+    return str(
+        getattr(client, "provider_id", None)
+        or getattr(client, "provider_name", "")
+        or ""
+    ).lower()
 
 
 def _default_consolidate_budget(*, draft_quality: str, client) -> int:
-    if _is_openrouter_client(client):
+    if _provider_id(client) == "openrouter":
         return (
             _OPENROUTER_FAST_CONSOLIDATE_INPUT_BUDGET
             if draft_quality == "fast"
@@ -1686,7 +1697,7 @@ def _default_consolidate_budget(*, draft_quality: str, client) -> int:
 
 
 def _default_consolidate_max_output_tokens(*, draft_quality: str, client) -> int:
-    if _is_openrouter_client(client):
+    if _provider_id(client) == "openrouter":
         return (
             _OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS
             if draft_quality == "fast"
@@ -1696,7 +1707,7 @@ def _default_consolidate_max_output_tokens(*, draft_quality: str, client) -> int
 
 
 def _default_consolidate_concurrency(*, client) -> int:
-    if _is_openrouter_client(client):
+    if _provider_id(client) == "openrouter":
         return _OPENROUTER_CONSOLIDATE_CONCURRENCY
     return _DEFAULT_CONSOLIDATE_CONCURRENCY
 
@@ -1814,6 +1825,7 @@ def _consolidate_payload_in_rounds(
     draft_quality: str,
     max_output_tokens: int | None,
     concurrency: int,
+    inline_sources: bool = False,
 ):
     """Map-reduce memory consolidation while preserving every selected entry."""
     from docmancer.memory.consolidation import consolidate_payload
@@ -1853,6 +1865,7 @@ def _consolidate_payload_in_rounds(
         draft_quality=draft_quality,
         max_output_tokens=max_output_tokens,
         concurrency=concurrency,
+        inline_sources=inline_sources,
         on_event=on_event,
     )
 
@@ -2101,6 +2114,360 @@ def consolidate(
     )
 
 
+_DEFAULT_DIGEST = "machine-memory-digest.md"
+
+_DIGEST_INSTRUCTION = (
+    "Produce one comprehensive digest of everything these memory sources record, "
+    "organized by topic rather than by which agent wrote each fact. Preserve every "
+    "unique durable fact, decision, preference, rule, incident, figure, and named "
+    "entity, and cite the source path for each. Deduplicate facts that recur across "
+    "agents, keeping the richest phrasing. When facts conflict or a figure was "
+    "superseded more than once, keep the most recent dated version and note that it "
+    "supersedes the earlier one. Write full sentences with normal grammar. Do not use "
+    "em dashes. Do not open sentences or list items with bare fragment labels."
+)
+
+
+def _entry_in_project(entry, target) -> bool:
+    """Keep global entries plus the selected project and its ancestors.
+
+    Ancestor (parent workspace) memory applies to a child project, matching
+    ``ask`` recall semantics. Descendant projects are excluded on purpose: a
+    nested child project (a sibling's private repo, for example) must not be
+    swept into a project-scoped digest and sent to the provider.
+    """
+    scope = str(getattr(entry, "scope", "") or "")
+    prefix, _, value = scope.partition(":")
+    if prefix == "global" or prefix == "":
+        return True
+    if prefix not in {"project", "team"} or not value:
+        return False
+    try:
+        candidate = Path(value).expanduser().resolve()
+    except OSError:
+        return False
+    return candidate == target or candidate in target.parents
+
+
+def _digest_default_output(digest_scope: str, project) -> Path:
+    """Default digest path under the docmancer home, never inside a repo.
+
+    Both scopes write under the docmancer home so a sensitive digest can never be
+    dropped where a working repository would offer it for commit. A fresh repo
+    does not necessarily ignore ``.docmancer/``, so project scope must not rely on
+    the project tree; it is namespaced under the home by the project path hash.
+    """
+    home = os.getenv("DOCMANCER_HOME")
+    base = (Path(home) if home else Path.home() / ".docmancer") / "digests"
+    if digest_scope == "project":
+        resolved = Path(project).expanduser().resolve()
+        digest_id = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+        return base / f"project-{resolved.name}-{digest_id}.md"
+    return base / _DEFAULT_DIGEST
+
+
+def _digest_source_lines(source_files) -> list[str]:
+    # List every discovered source; the digest promise is full coverage, so a
+    # truncated preview would misrepresent what will be sent.
+    return [f"  {display_path(p)}" for p in source_files]
+
+
+def _estimate_digest_plan(payload: list[dict], *, input_budget: int, output_cap: int) -> tuple[int, int]:
+    """Estimate total provider requests and output tokens across all rounds.
+
+    The reducer re-chunks intermediate drafts and can run several merge rounds,
+    not just one final merge. This simulates that with the same chunker, treating
+    each intermediate draft as roughly ``output_cap`` tokens, so the plan does not
+    understate an expensive full-machine run.
+    """
+    total_requests = 0
+    current = payload
+    for _round in range(6):
+        chunks, _stats = _chunk_payload_entries(current, budget=input_budget)
+        total_requests += len(chunks)
+        if len(chunks) <= 1:
+            break
+        # Next round consolidates one intermediate draft per chunk; size each at
+        # the per-request output cap (its upper bound).
+        filler = "x" * (output_cap * _APPROX_CHARS_PER_TOKEN)
+        current = [
+            {"scope": "consolidation", "title": f"batch {i}", "source_path": f"round/{i}", "text": filler}
+            for i in range(len(chunks))
+        ]
+    return total_requests, total_requests * output_cap
+
+
+@memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Digest every memory source on this machine into one file.")
+@click.option("--since", default="7d", show_default=True, help="Only include source files changed in this ISO-8601 or relative window.")
+@click.option("--scope", "digest_scope", type=click.Choice(["machine", "project", "team"], case_sensitive=False), default="machine", show_default=True, help="machine reads every discovered source; project restricts to the current project plus global memory; team selects team scope.")
+@click.option("--focus", default=None, help="Focus the brief on one question or domain.")
+@click.option("--format", "output_format", type=click.Choice(["md", "json", "okf"]), default="md", show_default=True)
+@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, help="Project root for --scope project (default: current directory).")
+@click.option("--output", "output", default=None, help="Where to write the brief. The default is under the docmancer home, never the current directory.")
+@click.option("--limit", default=None, type=int, help="Cap the number of source files (default: all discovered sources).")
+@click.option("--budget", default=None, type=int, help="Approximate input-token budget per provider request. Defaults are provider-specific; use 0 to send in one request.")
+@click.option("--provider", type=click.Choice(_PROVIDER_CHOICES, case_sensitive=False), default="openrouter", show_default=True, help="Provider for generation.")
+@click.option("--model", default=None, help="Override the provider model. For OpenRouter, pass any OpenRouter model id, for example openai/gpt-4.1-nano.")
+@click.option("--draft-quality", type=click.Choice(["standard", "fast"], case_sensitive=False), default="standard", show_default=True, help="Use fast for smaller batches and more aggressive compression.")
+@click.option("--max-output-tokens", default=None, type=int, help="Hard cap for generated output per provider request. Defaults are provider-specific; use 0 for provider default.")
+@click.option("--concurrency", default=None, type=int, help="Parallel requests. Defaults are provider-specific; use 1 for serial execution.")
+@click.option("--timeout", "timeout", default=None, type=float, help="Seconds per provider request (provider-specific default; use 0 for provider default).")
+@click.option("--dry-run", is_flag=True, help="Show the source list and estimated token cost without calling any provider or writing a file.")
+@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the provider-use confirmation.")
+@click.option("--include", "include", multiple=True, help="Only include sources whose path/scope match this glob.")
+@click.option("--exclude", "exclude", multiple=True, help="Exclude sources whose path/scope match this glob.")
+def digest(
+    since,
+    digest_scope,
+    focus,
+    output_format,
+    project_path,
+    output,
+    limit,
+    budget,
+    provider,
+    model,
+    draft_quality,
+    max_output_tokens,
+    concurrency,
+    timeout,
+    dry_run,
+    assume_yes,
+    include,
+    exclude,
+):
+    """Create a time-bounded brief from local agent memory sources.
+
+    Raw harvested source text is privacy-filtered and redacted before any
+    provider call. Use --focus to narrow the brief and --dry-run to inspect the
+    selected source list and estimated call plan.
+
+    This is a provider-backed path. Local recall and Context remain useful
+    without a provider.
+    """
+    from docmancer.memory.tree.project import resolve_project_root
+
+    provider = provider.lower()
+    draft_quality = draft_quality.lower()
+    digest_scope = digest_scope.lower()
+    is_brief = click.get_current_context().info_name == "brief"
+    project = resolve_project_root(project_path)
+
+    agent = _agent(include, exclude)
+    # Raw source text, filtered by privacy allow-list, then redacted. This is the
+    # crux: it bypasses atom extraction so coverage matches a direct read.
+    entries = [agent.privacy.clean(e) for e in agent.preview()]
+    if digest_scope == "project":
+        entries = [e for e in entries if _entry_in_project(e, project)]
+    elif digest_scope == "team":
+        entries = [e for e in entries if str(e.scope).casefold().startswith("team")]
+    cutoff = _parse_recap_time(since)
+    recent_entries = []
+    for entry in entries:
+        try:
+            modified_at = datetime.fromtimestamp(Path(entry.path).stat().st_mtime, tz=timezone.utc)
+        except (OSError, ValueError):
+            modified_at = None
+        if modified_at is None or modified_at >= cutoff:
+            recent_entries.append(entry)
+    entries = recent_entries
+    entries = [e for e in entries if str(e.content or "").strip()]
+    if limit:
+        entries = entries[:limit]
+    if not entries:
+        click.echo("No memory sources found. Run: docmancer memory sync")
+        sys.exit(1)
+
+    payload = [
+        {"scope": e.scope, "title": e.title, "source_path": e.path, "text": e.content}
+        for e in entries
+    ]
+    source_files = list(dict.fromkeys(e.path for e in entries if e.path))
+    out_path = Path(output) if output else _digest_default_output(digest_scope, project)
+    if output is None and output_format == "json":
+        out_path = out_path.with_suffix(".json")
+    elif output is None and output_format == "okf":
+        out_path = out_path.with_suffix("")
+
+    # Resolve the same budgets and output cap the real run would use, honouring
+    # --budget, --draft-quality, and --max-output-tokens, so the plan matches.
+    if budget is not None:
+        resolved_input_budget = budget
+    elif draft_quality == "fast":
+        resolved_input_budget = _OPENROUTER_FAST_CONSOLIDATE_INPUT_BUDGET
+    else:
+        resolved_input_budget = _OPENROUTER_CONSOLIDATE_INPUT_BUDGET
+    if max_output_tokens and max_output_tokens > 0:
+        resolved_output_cap = max_output_tokens
+    elif is_brief:
+        resolved_output_cap = 16_384
+    elif draft_quality == "fast":
+        resolved_output_cap = _OPENROUTER_FAST_CONSOLIDATE_MAX_OUTPUT_TOKENS
+    else:
+        resolved_output_cap = _OPENROUTER_CONSOLIDATE_MAX_OUTPUT_TOKENS
+    _chunks0, stats = _chunk_payload_entries(payload, budget=resolved_input_budget)
+    est_requests, est_output = _estimate_digest_plan(
+        payload, input_budget=resolved_input_budget, output_cap=resolved_output_cap
+    )
+
+    if dry_run:
+        _emit_block(
+            "Brief plan (dry run)" if is_brief else "Digest plan (dry run)",
+            [
+                ("scope", digest_scope),
+                ("since", since),
+                ("focus", focus or "all durable changes"),
+                ("format", output_format),
+                ("sources", len(entries)),
+                ("input tokens", f"~{stats['original_tokens']:,}"),
+                ("est output tokens", f"up to ~{est_output:,}"),
+                ("provider requests", f"~{est_requests} (all merge rounds)"),
+                ("budget/request", f"~{resolved_input_budget:,} tokens"),
+                ("output cap/request", f"~{resolved_output_cap:,} tokens"),
+                ("provider", _provider_disclosure(provider)),
+                ("cost", "input + output tokens times the chosen model's per-token rate"),
+                ("output path", display_path(out_path)),
+                ("next", "re-run without --dry-run to generate the digest"),
+            ],
+            err=False,
+        )
+        click.echo(f"Sources ({len(source_files)}):")
+        for line in _digest_source_lines(source_files):
+            click.echo(line)
+        return
+
+    # Key-gated cloud path. With no provider key configured, fall back to listing
+    # the raw sources that would be digested instead of failing opaquely.
+    try:
+        client = _make_provider_client(provider, model=model, timeout=timeout)
+    except _expected_provider_errors() as exc:
+        click.echo(str(exc), err=True)
+        click.echo(
+            f"No provider key configured, so no digest was generated. These "
+            f"{len(source_files)} source file(s) would be digested:"
+        )
+        for line in _digest_source_lines(source_files):
+            click.echo(line)
+        click.echo("Set OPENROUTER_API_KEY to generate the digest, or run with --dry-run for the token plan.")
+        sys.exit(2)
+    except Exception as exc:  # noqa: BLE001 - provider setup should not traceback
+        click.echo(f"docmancer memory digest provider setup failed: {exc}", err=True)
+        sys.exit(1)
+    active_provider = provider
+
+    provider_label = getattr(client, "provider_name", None) or provider
+    click.echo(_PROVIDER_NOTICE.format(provider=_provider_disclosure(active_provider, client)), err=True)
+    if not assume_yes:
+        click.confirm(
+            f"Send {len(entries)} redacted memory source(s) to {provider_label}?",
+            abort=True,
+            err=True,
+        )
+
+    from docmancer.ai.memory_features import draft_to_markdown
+
+    def _call(active_client, active_model):
+        resolved_budget = budget
+        if resolved_budget is None:
+            resolved_budget = _default_consolidate_budget(draft_quality=draft_quality, client=active_client)
+        resolved_max_output_tokens = max_output_tokens
+        if resolved_max_output_tokens is None and is_brief:
+            resolved_max_output_tokens = 16_384
+        elif resolved_max_output_tokens is None:
+            resolved_max_output_tokens = _default_consolidate_max_output_tokens(
+                draft_quality=draft_quality, client=active_client
+            )
+        if resolved_max_output_tokens <= 0:
+            resolved_max_output_tokens = None
+        resolved_concurrency = concurrency
+        if resolved_concurrency is None:
+            resolved_concurrency = _default_consolidate_concurrency(client=active_client)
+        resolved_concurrency = max(1, resolved_concurrency)
+        _provider_preflight(active_client, model=active_model)
+        return _consolidate_payload_in_rounds(
+            payload,
+            instruction=(
+                _DIGEST_INSTRUCTION
+                + (f"\n\nFocus the brief on: {focus}" if focus else "")
+            ),
+            client=active_client,
+            model=active_model,
+            budget=resolved_budget,
+            draft_quality=draft_quality,
+            max_output_tokens=resolved_max_output_tokens,
+            concurrency=resolved_concurrency,
+            inline_sources=True,
+        )
+
+    draft = _run_provider_or_exit(
+        "digest", active_provider, client, model=model, timeout=timeout, fn=_call
+    )
+    draft.source_paths = list(dict.fromkeys(source_files))
+
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    header = (
+        f"<!-- docmancer machine memory digest. Generated {stamp}. "
+        f"Scope: {digest_scope}. Sources: {len(entries)}. -->\n"
+        "<!-- Point-in-time snapshot. It does not auto-update; re-run to refresh. "
+        "Some figures in the sources are tentative and superseded; the most recent "
+        "dated version is authoritative. This file concentrates sensitive personal "
+        "and commercial facts. Keep it local and gitignored; do not sync it. -->\n\n"
+    )
+    markdown = header + draft_to_markdown(draft, source_files=source_files)
+    if output_format == "json":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(
+                {
+                    "scope": digest_scope,
+                    "since": since,
+                    "focus": focus,
+                    "generated_at": stamp,
+                    "source_paths": source_files,
+                    "markdown": markdown,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    elif output_format == "okf":
+        out_path.mkdir(parents=True, exist_ok=True)
+        (out_path / "index.md").write_text(markdown, encoding="utf-8")
+        (out_path / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "format": "okf",
+                    "generated_at": stamp,
+                    "scope": digest_scope,
+                    "since": since,
+                    "focus": focus,
+                    "source_paths": source_files,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    else:
+        if out_path.parent and not out_path.parent.exists():
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(markdown, encoding="utf-8")
+    _emit_block(
+        "Digest",
+        [
+            ("path", display_path(out_path)),
+            ("scope", digest_scope),
+            ("sources", len(entries)),
+            ("size", f"{len(markdown):,} chars"),
+            ("note", "sensitive; keep this file local and gitignored"),
+        ],
+        err=False,
+    )
+
+
 _MEMORY_BLOCK_BEGIN = "<!-- docmancer:memory:begin (managed; edits inside are overwritten on next apply) -->"
 _MEMORY_BLOCK_END = "<!-- docmancer:memory:end -->"
 
@@ -2196,23 +2563,30 @@ def apply(from_path, agent, output, dry_run, print_only, remove, assume_yes):
             sys.exit(2)
         body = _render_atoms_for_apply(atoms)
 
+    from docmancer._version import __version__
+
     if print_only:
         click.echo(f"Target: {display_path(target)}")
         click.echo("")
         from docmancer.cli.managed_block import build_block
 
-        click.echo(build_block(body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END))
+        click.echo(build_block(body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END, version=__version__))
         return
 
     if dry_run:
         click.echo(f"Target: {display_path(target)}")
-        click.echo(diff_block(target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END) or "(no changes)")
+        click.echo(
+            diff_block(target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END, version=__version__)
+            or "(no changes)"
+        )
         return
 
     if not assume_yes:
         click.confirm(f"Write docmancer's managed block into {display_path(target)}?", abort=True)
 
-    action, backup = upsert_block(target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END)
+    action, backup = upsert_block(
+        target, body, begin=_MEMORY_BLOCK_BEGIN, end=_MEMORY_BLOCK_END, version=__version__
+    )
     click.echo(f"{action.capitalize()} docmancer managed block in {display_path(target)}.")
     if backup:
         click.echo(f"Backup written to {display_path(backup)}")
@@ -2495,6 +2869,9 @@ def canonical_distill(pack_id: str, project_path: Path | None, limit: int, as_js
 @click.option("--text", "replacement_text", default=None)
 @click.option("--conflicts", is_flag=True, help="Show unresolved contradictions.")
 @click.option("--orphans", is_flag=True, help="Show current unconnected memories.")
+@click.option("--duplicates", is_flag=True, help="Show records representing duplicate source atoms.")
+@click.option("--stale", is_flag=True, help="Show active records older than 90 days.")
+@click.option("--superseded", is_flag=True, help="Show superseded or expired records.")
 @click.option("--strategy", type=click.Choice(["keep-left", "keep-right", "keep-both", "manual"]), default=None, help="Resolve a cloud transport conflict.")
 @click.option("--json", "as_json", is_flag=True)
 def canonical_review(
@@ -2505,19 +2882,63 @@ def canonical_review(
     replacement_text: str | None,
     conflicts: bool,
     orphans: bool,
+    duplicates: bool,
+    stale: bool,
+    superseded: bool,
     strategy: str | None,
     as_json: bool,
 ) -> None:
     service = _memory_service()
-    if conflicts or orphans:
-        value = (
+    if conflicts or orphans or duplicates or stale or superseded:
+        if conflicts:
+            value = (
             [*service.agent.conflicts(unresolved_only=True), *[
                 {**row, "review_kind": "cloud-conflict", "id": f"cloud:{row['conflict_id']}"}
                 for row in service.cloud_conflicts()
             ]]
-            if conflicts
-            else service.agent.graph.orphans()
-        )
+            )
+        elif orphans:
+            value = service.agent.graph.orphans()
+        else:
+            atoms = service.agent.indexed_atoms()
+            if duplicates:
+                value = [
+                    {
+                        **_atom_dict(atom),
+                        "review_kind": "duplicate",
+                        "recommended_resolution": "Keep the representative and its collapsed source provenance.",
+                    }
+                    for atom in atoms
+                    if atom.source_count > 1
+                ]
+            elif superseded:
+                value = [
+                    {
+                        **_atom_dict(atom),
+                        "review_kind": "superseded",
+                        "recommended_resolution": "Retain for history or retire from active projections.",
+                    }
+                    for atom in atoms
+                    if atom.status in {"superseded", "expired"}
+                ]
+            else:
+                stale_before = datetime.now(timezone.utc) - timedelta(days=90)
+                value = []
+                for atom in atoms:
+                    if atom.status != "active" or not atom.timestamp:
+                        continue
+                    try:
+                        recorded = datetime.fromisoformat(atom.timestamp.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if recorded.tzinfo is None:
+                        recorded = recorded.replace(tzinfo=timezone.utc)
+                    if recorded < stale_before:
+                        value.append({
+                            **_atom_dict(atom),
+                            "review_kind": "stale",
+                            "recommended_resolution": "Confirm, supersede, or retire this record.",
+                        })
         if as_json:
             _context_json(value)
         else:
@@ -2638,7 +3059,7 @@ def _hide_compatibility_command(name: str, replacement: str) -> None:
     command.invoke = MethodType(invoke, command)
 
 
-for _old_name, _replacement in {
+DEPRECATED_MEMORY_COMMAND_REPLACEMENTS: dict[str, str] = {
     "apply": "docmancer agent refresh",
     "audit": "docmancer status",
     "clear": "docmancer memory remove",
@@ -2649,15 +3070,17 @@ for _old_name, _replacement in {
     "orphans": "docmancer memory review --orphans",
     "profile": "docmancer memory distill",
     "promote": "docmancer memory share",
-    "query": "docmancer query",
+    "query": "docmancer ask",
     "recap": "docmancer memory show --history",
     "recent": "docmancer memory show --history",
     "relations": "docmancer memory show --relations",
     "sources": "docmancer status",
     "status": "docmancer status",
-    "sync": "docmancer sync",
+    "sync": "docmancer setup",
     "team": "docmancer memory share",
-}.items():
+}
+
+for _old_name, _replacement in DEPRECATED_MEMORY_COMMAND_REPLACEMENTS.items():
     _hide_compatibility_command(_old_name, _replacement)
 
 for _advanced_name in ("capture", "eval", "hook-context", "import-conversations", "scan"):

@@ -18,7 +18,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from docmancer.runtime import LocalRuntime
-from docmancer.web.api import LocalApi, error_response
+from docmancer.web.api import LOCAL_API_VERSION, LocalApi, error_response
 from docmancer.web.security import (
     LoopbackSecurity,
     MAX_REQUEST_BYTES,
@@ -78,7 +78,7 @@ def create_app(
     manifest_path = asset_root / "asset-manifest.json"
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("local_api_version") != 1:
+        if manifest.get("local_api_version") != LOCAL_API_VERSION:
             raise RuntimeError("the packaged web application requires an incompatible local API")
 
     @asynccontextmanager
@@ -114,7 +114,6 @@ def create_app(
     async def compatibility_redirect(request: Request) -> Response:
         """Move retired workbench routes to their canonical replacements."""
         destinations = {
-            "context": "/agent-context/",
             "memory": "/ask/",
             "sources": "/inbox/",
             "intelligence": "/maintenance/",
@@ -122,11 +121,25 @@ def create_app(
         surface = request.url.path.strip("/")
         return RedirectResponse(url=destinations[surface], status_code=308)
 
+    async def application_page(request: Request) -> Response:
+        """Serve an exported application route, with a shell fallback for tests."""
+        surface = request.url.path.strip("/")
+        nested = asset_root / surface / "index.html"
+        index = nested if nested.is_file() else asset_root / "index.html"
+        if not index.is_file():
+            return PlainTextResponse("The packaged web application is missing. Reinstall Docmancer.", status_code=503)
+        return Response(index.read_bytes(), media_type="text/html")
+
     routes = [
         Route("/", bootstrap, methods=["GET"]),
         *[
+            Route(path, application_page, methods=["GET", "HEAD"])
+            for surface in ("context", "settings")
+            for path in (f"/{surface}", f"/{surface}/")
+        ],
+        *[
             Route(path, compatibility_redirect, methods=["GET", "HEAD"])
-            for surface in ("context", "memory", "sources", "intelligence")
+            for surface in ("memory", "sources", "intelligence")
             for path in (f"/{surface}", f"/{surface}/")
         ],
         Route("/api/v1/session", api.session, methods=["GET"]),
@@ -148,8 +161,14 @@ def create_app(
         Route("/api/v1/delivery", api.delivery, methods=["GET"]),
         Route("/api/v1/timeline", api.timeline, methods=["GET"]),
         Route("/api/v1/context", api.context, methods=["GET"]),
-        Route("/api/v1/context", api.context_add, methods=["POST"]),
-        Route("/api/v1/context/{identifier:str}", api.context_action, methods=["POST"]),
+        Route("/api/v1/context/refresh", api.context_refresh, methods=["POST"]),
+        Route("/api/v1/context/diff", api.context_diff, methods=["GET"]),
+        Route("/api/v1/context/rollback", api.context_rollback, methods=["POST"]),
+        Route("/api/v1/context/excluded", api.context_excluded, methods=["GET"]),
+        Route("/api/v1/context/adopt", api.context_adopt, methods=["POST"]),
+        Route("/api/v1/context/retire", api.context_retire, methods=["POST"]),
+        Route("/api/v1/packs", api.context_add, methods=["POST"]),
+        Route("/api/v1/packs/{identifier:str}", api.context_action, methods=["POST"]),
         Route("/api/v1/memory", api.memory, methods=["GET"]),
         Route("/api/v1/memory", api.memory_add, methods=["POST"]),
         Route("/api/v1/memory/{identifier:str}", api.memory_detail, methods=["GET"]),
@@ -166,6 +185,11 @@ def create_app(
         Route("/api/v1/intelligence", api.intelligence, methods=["GET"]),
         Route("/api/v1/intelligence/{identifier:str}", api.intelligence_action, methods=["POST"]),
         Route("/api/v1/settings/capture", api.capture_settings, methods=["GET", "PUT"]),
+        Route("/api/v1/providers", api.providers, methods=["GET"]),
+        Route("/api/v1/providers/{provider_id:str}/key", api.provider_key, methods=["PUT", "DELETE"]),
+        Route("/api/v1/providers/{provider_id:str}/test", api.provider_test, methods=["POST"]),
+        Route("/api/v1/providers/{provider_id:str}/models", api.provider_models, methods=["GET"]),
+        Route("/api/v1/settings/ai-defaults", api.ai_defaults, methods=["GET", "PUT"]),
         Route("/api/v1/maintenance", api.maintenance, methods=["POST"]),
         Route("/api/v1/jobs", api.jobs_list, methods=["GET"]),
         Route("/api/v1/jobs/{job_id:str}", api.job, methods=["GET"]),

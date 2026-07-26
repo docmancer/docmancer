@@ -156,6 +156,32 @@ class CaptureConfig(BaseSettings):
         return bool(self.enabled.get(harness.casefold(), True))
 
 
+class GenerationRoleConfig(BaseModel):
+    top_p: float | None = None
+    temperature: float | None = None
+    reasoning_effort: str = "low"
+    max_output_tokens: int
+
+
+class ProvidersConfig(BaseSettings):
+    """Generation-provider preferences. Secret values never live here."""
+
+    default_llm: str = "openrouter"
+    models: dict[str, str] = Field(default_factory=dict)
+    base_urls: dict[str, str] = Field(default_factory=dict)
+    preference: str = ""
+    output_mode: str = "normal"
+    generation: dict[str, GenerationRoleConfig] = Field(
+        default_factory=lambda: {
+            "ask": GenerationRoleConfig(top_p=0.95, reasoning_effort="low", max_output_tokens=4096),
+            "brief": GenerationRoleConfig(top_p=0.95, reasoning_effort="low", max_output_tokens=16384),
+            "review": GenerationRoleConfig(top_p=0.90, reasoning_effort="medium", max_output_tokens=8192),
+            "consolidate": GenerationRoleConfig(temperature=0.0, reasoning_effort="low", max_output_tokens=16384),
+        }
+    )
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_PROVIDERS_", extra="ignore")
+
+
 _LEGACY_VECTOR_STORE_FIELDS = {"db_path", "local_path"}
 _NEW_VECTOR_STORE_FIELDS = {"provider", "url", "collection", "api_key_env", "options"}
 
@@ -170,6 +196,7 @@ class DocmancerConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     capture: CaptureConfig = Field(default_factory=CaptureConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> DocmancerConfig:

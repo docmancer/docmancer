@@ -1,6 +1,8 @@
 # Public memory retrieval benchmarks
 
-This directory runs the official LoCoMo and LongMemEval-S datasets through Docmancer's shipping local Model2Vec, sqlite-vec, lexical, and reciprocal-rank-fusion retrieval path. It makes no provider calls and costs nothing to run.
+This directory runs the official LoCoMo dataset and a community-cleaned mirror of LongMemEval-S through Docmancer's shipping local Model2Vec, sqlite-vec, lexical, and reciprocal-rank-fusion retrieval path. It makes no provider calls and costs nothing to run.
+
+LongMemEval-S is fetched from `xiaowu0162/longmemeval-cleaned` on Hugging Face, a third-party cleaned mirror, not the original benchmark authors' distribution. `benchmarks/datasets.lock.json` pins its content by SHA-256 so the file used is fixed regardless of what that mirror serves later, but the mirror itself is not the official source.
 
 ## Reproduce
 
@@ -58,3 +60,18 @@ The harness records the Docmancer version, dataset URL and hash, model, vector s
 Checked-in JSON omits the dataset's question and answer text. It retains case IDs, categories, gold and retrieved identifiers, ranks, exclusions, losses, hashes, configuration, and timings. Download the pinned official dataset and join on case ID when inspecting an individual result.
 
 The paid BYOK configuration and complete FastEmbed plus Qdrant plus sparse heavy stack were not run. The dense-only FastEmbed sensitivity profile is published separately. Paid configurations must remain reported as not run until explicitly authorized, never inferred from a local result.
+
+## Generated-answer arm
+
+`run_answers.py` is a second, explicitly cloud-gated LoCoMo arm. It consumes a completed local retrieval report, generates an answer from the retrieved windows, and grades it with a separately disclosed LLM judge. It refuses to run without `--allow-provider-calls`, records both model names and both prompts, and incurs provider cost.
+
+```bash
+.venv/bin/python benchmarks/run_answers.py \
+  --provider openrouter \
+  --model openai/gpt-4.1-mini \
+  --judge-provider openrouter \
+  --judge-model openai/gpt-4.1 \
+  --allow-provider-calls
+```
+
+Never publish this answer figure alone. Publish it beside the paired retrieval artifact, preserve the judge model and prompt, and do not claim leadership until an external party reproduces the run.

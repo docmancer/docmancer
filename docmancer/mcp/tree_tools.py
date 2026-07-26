@@ -350,10 +350,12 @@ def ask_memory(
     task: str,
     *,
     project_path: str | None = None,
-    token_budget: int = 2000,
-    limit: int = 8,
+    token_budget: int = 4000,
+    limit: int = 12,
     include_history: bool = False,
     agent: str = "mcp-client",
+    answer: bool = False,
+    mode: str = "normal",
 ) -> dict:
     """Recall curated memory plus supporting indexed agent evidence."""
     from docmancer.memory.ask import ask
@@ -368,6 +370,8 @@ def ask_memory(
         agent_name=agent,
         surface="mcp",
         integration_mode="mcp",
+        answer=answer,
+        answer_mode=mode,
     )
 
 
@@ -394,6 +398,68 @@ def context_delivery(*, project_path: str | None = None) -> list[dict]:
         hook_rows=inspect_hook_status(project),
         projections=projections,
     )
+
+
+def context_status(*, project_path: str | None = None) -> dict:
+    """Read the current Context revision and freshness. Never mutates it."""
+    from docmancer.memory.context_engine import ContextEngine
+
+    project = Path(project_path).expanduser().resolve() if project_path else Path.cwd().resolve()
+    latest = ContextEngine(project).latest()
+    if latest is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "revision_id": latest.get("revision_id"),
+        "parent_revision_id": latest.get("parent_revision_id"),
+        "scope": latest.get("scope"),
+        "clusters": latest.get("clusters") or [],
+        "freshness": latest.get("freshness") or {},
+        "cost_estimate": latest.get("cost_estimate") or {},
+        "excluded": latest.get("excluded") or [],
+    }
+
+
+def context_projection(
+    *,
+    agent: str,
+    project_path: str | None = None,
+    token_budget: int = 2_000,
+) -> dict:
+    """Render a current projection in memory without refreshing or writing it."""
+    from docmancer.memory.context_engine import ContextEngine
+    from docmancer.memory.projections import (
+        build_context_projection,
+        render_context_projection,
+    )
+
+    project = Path(project_path).expanduser().resolve() if project_path else Path.cwd().resolve()
+    engine = ContextEngine(project)
+    latest = engine.latest()
+    if latest is None:
+        return {"available": False}
+    bundle = context_bundle_payload(
+        compile_context(
+            _store_for(str(project)).index,
+            ContextRequest(
+                task="session baseline",
+                project_path=str(project),
+                agent=agent,
+                token_budget=token_budget,
+            ),
+        )
+    )
+    projection = build_context_projection(
+        latest,
+        bundle,
+        target_agent=agent,
+        token_budget=token_budget,
+    )
+    return {
+        "available": True,
+        "projection": projection.to_dict(),
+        "rendered": render_context_projection(projection),
+    }
 
 
 def decision_timeline(
@@ -426,5 +492,7 @@ __all__ = [
     "build_context",
     "common_memory",
     "context_delivery",
+    "context_projection",
+    "context_status",
     "decision_timeline",
 ]
