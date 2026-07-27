@@ -42,9 +42,14 @@ class SmokeRuntime:
         return {"atoms": 0, "sources": 0, "docs": 0, "context": 0, "intelligence": 0}
 
 
-def _client() -> tuple[TestClient, object]:
+def _client(history_path: Path) -> tuple[TestClient, object]:
     runtime = SmokeRuntime()
-    app = create_app(port=49555, static_dir=STATIC_DIR, runtime=runtime)  # type: ignore[arg-type]
+    app = create_app(
+        port=49555,
+        static_dir=STATIC_DIR,
+        runtime=runtime,  # type: ignore[arg-type]
+        ask_history_path=history_path,
+    )
     return TestClient(app, base_url="http://127.0.0.1:49555"), app
 
 
@@ -53,8 +58,8 @@ def _authenticate(client: TestClient, app: object) -> None:
     assert client.get(f"/?bootstrap={token}", follow_redirects=False).status_code == 303
 
 
-def test_packaged_bundle_boots_and_serves_the_real_dashboard() -> None:
-    client, app = _client()
+def test_packaged_bundle_boots_and_serves_the_real_dashboard(tmp_path: Path) -> None:
+    client, app = _client(tmp_path / "ask.sqlite3")
     with client:
         # The unauthenticated root is gated by the loopback bootstrap.
         assert client.get("/", follow_redirects=False).status_code == 401
@@ -75,9 +80,9 @@ def test_packaged_bundle_boots_and_serves_the_real_dashboard() -> None:
         assert "connect-src 'self'" in index.headers["content-security-policy"]
 
 
-def test_hashed_static_asset_from_manifest_is_served() -> None:
+def test_hashed_static_asset_from_manifest_is_served(tmp_path: Path) -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert manifest.get("local_api_version") == 5
+    assert manifest.get("local_api_version") == 8
     files = manifest.get("files", {})
     asset = next(
         (name for name in files if name.endswith((".js", ".css", ".svg", ".woff2", ".png"))),
@@ -85,15 +90,15 @@ def test_hashed_static_asset_from_manifest_is_served() -> None:
     )
     assert asset is not None, "manifest lists no fingerprinted static assets"
 
-    client, app = _client()
+    client, app = _client(tmp_path / "ask.sqlite3")
     with client:
         _authenticate(client, app)
         response = client.get(f"/{asset}")
         assert response.status_code == 200, f"static asset {asset!r} did not serve"
 
 
-def test_live_api_answers_after_authentication() -> None:
-    client, app = _client()
+def test_live_api_answers_after_authentication(tmp_path: Path) -> None:
+    client, app = _client(tmp_path / "ask.sqlite3")
     with client:
         _authenticate(client, app)
 
@@ -106,4 +111,4 @@ def test_live_api_answers_after_authentication() -> None:
 
         capabilities = client.get("/api/v1/capabilities")
         assert capabilities.status_code == 200
-        assert capabilities.json()["api_version"] == 5
+        assert capabilities.json()["api_version"] == 8

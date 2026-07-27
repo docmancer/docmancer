@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -15,15 +16,16 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from docmancer.cloud.client import AuthenticationError, CloudError, EntitlementError
 from docmancer.runtime import LocalRuntime
+from docmancer.web.ask_history import AskHistoryStore
 
 
-LOCAL_API_VERSION = 5
+LOCAL_API_VERSION = 8
 
 CAPABILITIES = {
     "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
     "inbox": ["list", "import", "curate"],
     "editors": ["list", "open-markdown"],
-    "ask": ["context"],
+    "ask": ["context", "conversation-history", "temporary-chat"],
     "common": ["recurring-memory"],
     "delivery": ["agent-matrix", "bundle-receipts"],
     "timeline": ["file-mutations", "diffs"],
@@ -37,7 +39,7 @@ CAPABILITIES = {
     "audit": ["secrets", "hooks"],
     "intelligence": ["review", "recent", "maintenance", "history", "resolve"],
     "maintenance": ["sync", "consolidate", "apply", "doctor"],
-    "cloud": ["status", "sync", "devices", "recovery", "team", "billing"],
+    "cloud": ["status", "connect", "disconnect", "sync", "devices", "recovery", "team", "billing"],
 }
 
 COMMERCIAL_LINKS = {
@@ -65,6 +67,44 @@ def jsonable(value: Any) -> Any:
     if callable(model_dump):
         return jsonable(model_dump())
     return value
+
+
+def answer_text(result: dict[str, Any]) -> str:
+    answer = result.get("answer")
+    if isinstance(answer, dict):
+        text = str(answer.get("text") or "").strip()
+        if text:
+            return text
+    elif isinstance(answer, str) and answer.strip():
+        return answer.strip()
+    unavailable = str(result.get("answer_unavailable") or "").strip()
+    if unavailable:
+        return unavailable
+    items = result.get("items") or []
+    if items:
+        count = len(items)
+        return f"Docmancer found {count} relevant source{'s' if count != 1 else ''}, but no generated answer was available."
+    return "Docmancer could not find relevant memory for this question."
+
+
+def answer_metadata(result: dict[str, Any]) -> dict[str, Any]:
+    answer = result.get("answer")
+    answer_details = answer if isinstance(answer, dict) else {}
+    evidence = [
+        *list(result.get("mandatory_policies") or []),
+        *list(result.get("curated_memory") or []),
+        *list(result.get("relevant_evidence") or []),
+    ]
+    return {
+        "provider": answer_details.get("provider"),
+        "model": answer_details.get("model"),
+        "cost_usd": answer_details.get("cost_usd"),
+        "token_estimate": result.get("token_estimate"),
+        "index_revision": result.get("index_revision"),
+        "evidence": evidence,
+        "verification": answer_details.get("verification"),
+        "refused": answer_details.get("refused"),
+    }
 
 
 async def request_json(request: Request) -> dict[str, Any]:
@@ -126,9 +166,21 @@ class JobRegistry:
 
 
 class LocalApi:
-    def __init__(self, runtime: LocalRuntime) -> None:
+    def __init__(
+        self,
+        runtime: LocalRuntime,
+        *,
+        ask_history_path: str | Path | None = None,
+    ) -> None:
         self.runtime = runtime
         self.jobs = JobRegistry()
+        project_path = Path(runtime.project_path).expanduser().resolve()
+        project_id = hashlib.sha256(str(project_path).encode()).hexdigest()[:16]
+        self.ask_history = AskHistoryStore(
+            ask_history_path or project_path / ".docmancer" / "state" / "ask.sqlite3",
+            project_id=project_id,
+            project_label=project_path.name,
+        )
 
     async def session(self, request: Request) -> JSONResponse:
         session = request.state.browser_session
@@ -275,20 +327,115 @@ class LocalApi:
                 ask_kwargs["answer"] = answer
             if "mode" in body:
                 ask_kwargs["mode"] = mode
+            conversation_id = str(body.get("conversation_id") or "").strip()
+            temporary = bool(body.get("temporary"))
+            if conversation_id and temporary:
+                raise ValueError("temporary chats cannot have a saved conversation id")
+            exchange: tuple[str, str] | None = None
+            if conversation_id:
+                exchange = await asyncio.to_thread(
+                    self.ask_history.begin_exchange,
+                    conversation_id,
+                    task,
+                )
+
+            async def run_ask(on_delta=None):
+                try:
+                    result = await self.runtime.ask_tree(
+                        task,
+                        **ask_kwargs,
+                        on_delta=on_delta,
+                    )
+                    if exchange is not None:
+                        await asyncio.to_thread(
+                            self.ask_history.complete_answer,
+                            conversation_id,
+                            exchange[1],
+                            answer_text(result),
+                            metadata=answer_metadata(result),
+                        )
+                    return {
+                        **result,
+                        "conversation_id": conversation_id or None,
+                        "user_message_id": exchange[0] if exchange else None,
+                        "assistant_message_id": exchange[1] if exchange else None,
+                        "temporary": temporary or not bool(conversation_id),
+                    }
+                except Exception as exc:
+                    if exchange is not None:
+                        await asyncio.to_thread(
+                            self.ask_history.complete_answer,
+                            conversation_id,
+                            exchange[1],
+                            "This answer did not complete.",
+                            metadata={"error": type(exc).__name__},
+                            status="failed",
+                        )
+                    raise
+
             if bool(body.get("stream")) and answer is not False:
                 async def operation(progress):
                     def on_delta(delta: str) -> None:
                         progress("answer_delta", {"delta": delta})
 
-                    return await self.runtime.ask_tree(
-                        task,
-                        **ask_kwargs,
-                        on_delta=on_delta,
-                    )
+                    return await run_ask(on_delta)
 
                 job = self.jobs.start("memory.ask", operation)
-                return JSONResponse(jsonable(job), status_code=202)
-            return JSONResponse(jsonable(await self.runtime.ask_tree(task, **ask_kwargs)))
+                return JSONResponse(
+                    jsonable({
+                        **job,
+                        "conversation_id": conversation_id or None,
+                        "user_message_id": exchange[0] if exchange else None,
+                        "assistant_message_id": exchange[1] if exchange else None,
+                        "temporary": temporary or not bool(conversation_id),
+                    }),
+                    status_code=202,
+                )
+            return JSONResponse(jsonable(await run_ask()))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def ask_conversations(self, request: Request) -> JSONResponse:
+        try:
+            if request.method == "POST":
+                body = await request_json(request)
+                if body.get("temporary"):
+                    return JSONResponse({"temporary": True, "conversation": None}, status_code=201)
+                conversation = await asyncio.to_thread(self.ask_history.create_conversation)
+                return JSONResponse(jsonable(conversation), status_code=201)
+            limit = bounded_int(request.query_params.get("limit"), 60, maximum=200)
+            items = await asyncio.to_thread(
+                self.ask_history.list_conversations,
+                limit=limit,
+            )
+            return JSONResponse({"items": jsonable(items)})
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def ask_conversation(self, request: Request) -> JSONResponse:
+        try:
+            conversation_id = str(request.path_params["conversation_id"])
+            if request.method == "DELETE":
+                deleted = await asyncio.to_thread(
+                    self.ask_history.delete_conversation,
+                    conversation_id,
+                )
+                if not deleted:
+                    return JSONResponse(
+                        {"error": {"code": "NOT_FOUND", "message": "Conversation not found"}},
+                        status_code=404,
+                    )
+                return JSONResponse({"deleted": True, "id": conversation_id})
+            conversation = await asyncio.to_thread(
+                self.ask_history.get_conversation,
+                conversation_id,
+            )
+            if conversation is None:
+                return JSONResponse(
+                    {"error": {"code": "NOT_FOUND", "message": "Conversation not found"}},
+                    status_code=404,
+                )
+            return JSONResponse(jsonable(conversation))
         except Exception as exc:  # noqa: BLE001
             return error_response(exc)
 
@@ -653,6 +800,8 @@ class LocalApi:
 
     async def agent_setup(self, request: Request) -> JSONResponse:
         body = await request_json(request)
+        if body.get("confirmed") is not True:
+            raise ValueError("setup confirmation is required")
         targets = body.get("targets")
         if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
             raise ValueError("targets must be a list of agent identifiers")
@@ -660,8 +809,8 @@ class LocalApi:
             "agent.setup",
             lambda progress: self.runtime.run_agent_setup(
                 targets,
-                recall_hooks=bool(body.get("recall_hooks", True)),
-                capture_hooks=bool(body.get("capture_hooks", False)),
+                capture_hooks=True,
+                confirmed=True,
                 progress_callback=progress,
             ),
         )
@@ -717,6 +866,48 @@ class LocalApi:
 
     async def cloud_status(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.cloud_status()))
+
+    async def cloud_connect(self, request: Request) -> JSONResponse:
+        from docmancer.cloud.config import default_cloud_base_url
+
+        body = await request_json(request)
+        status = await self.runtime.cloud_status()
+        if status.get("configured"):
+            return JSONResponse(
+                {"error": {"code": "ALREADY_CONNECTED", "message": "this device is already connected"}},
+                status_code=409,
+            )
+        base_url = optional_text(body, "base_url") or default_cloud_base_url()
+        create_recovery = bool(body.get("create_recovery"))
+
+        async def operation(progress: Callable[[str, dict[str, Any]], None]) -> dict:
+            outcome = await self.runtime.cloud_connect(
+                base_url=base_url, create_recovery=create_recovery, progress=progress,
+            )
+            # The recovery key is shown exactly once and never enters the pollable job record.
+            recovery_key = outcome.pop("recovery_key", None)
+            self._recovery_key_once = recovery_key
+            outcome["recovery_key_available"] = recovery_key is not None
+            return outcome
+
+        job = self.jobs.start("cloud.connect", operation)
+        return JSONResponse(jsonable(job), status_code=202)
+
+    async def cloud_recovery_key_once(self, request: Request) -> JSONResponse:
+        recovery_key = getattr(self, "_recovery_key_once", None)
+        self._recovery_key_once = None
+        if not recovery_key:
+            return JSONResponse(
+                {"error": {"code": "NOT_FOUND", "message": "no unread recovery key is available"}},
+                status_code=404,
+            )
+        return JSONResponse({"recovery_key": recovery_key})
+
+    async def cloud_connect_cancel(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(self.runtime.cloud_cancel_connect()))
+
+    async def cloud_disconnect(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.cloud_disconnect()))
 
     async def cloud_sync(self, request: Request) -> JSONResponse:
         job = self.jobs.start("cloud.sync", lambda _progress: self.runtime.cloud_sync())
@@ -848,6 +1039,11 @@ def required_text(body: dict[str, Any], key: str, *, allow_empty: bool = False) 
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
         raise ValueError(f"{key} is required")
     return value if allow_empty else value.strip()
+
+
+def optional_text(body: dict[str, Any], key: str) -> str:
+    value = body.get(key)
+    return value.strip() if isinstance(value, str) else ""
 
 
 def require_confirmation(body: dict[str, Any], expected: str) -> None:

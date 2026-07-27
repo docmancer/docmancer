@@ -4,11 +4,13 @@ Docmancer separates canonical local files, disposable retrieval state, agent del
 
 ## Canonical layer
 
-Curated Markdown files under `.docmancer/tree` are the source of truth. Frontmatter carries stable identity, type, scope, authority, project identity, source citations, lifecycle status, revision lineage, tags, and curation origin. Content hashes guard edits and moves.
+The machine-wide baseline lives as source-attributed Markdown under `~/.docmancer/tree`. It has four stable files: `about.md`, `preferences.md`, `working-principles.md`, and `active-projects.md`. Docmancer reconciles these automatically from eligible indexed evidence. A configured generation provider can merge and compress changed evidence after redaction; deterministic local selection and rendering is the fallback.
+
+Deliberate project Markdown under `<project>/.docmancer/tree` remains the source of truth for project-specific curation. Frontmatter carries stable identity, type, scope, authority, project identity, source citations, lifecycle status, revision lineage, tags, and curation origin. Content hashes guard edits and moves.
 
 A memory atom is one small, self-contained, source-attributed fact, decision, rule, preference, or workflow. Atoms are disposable retrieval units derived from canonical files. They are not a second writable source of truth.
 
-Uncurated evidence lives under `.docmancer/inbox`. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
+Markdown that a user explicitly imports for whole-file curation lives under `.docmancer/inbox`. Automatic session capture uses the inbox only as a transient spool, then indexes durable conclusions, reconciles the laptop memory, and removes the processed checkpoint. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
 ## Human outcomes
 
@@ -32,9 +34,9 @@ Retrieval changes must be evaluated against the repository benchmark corpus befo
 
 ## Capture and curation
 
-Lifecycle capture normalizes Claude Code and Codex hook payloads into one bounded schema. Redaction occurs before durable payload construction. Eligible checkpoints go only to the inbox, retrying the same event is idempotent, and failures never block the host agent.
+Lifecycle capture normalizes Claude Code and Codex hook payloads into one bounded schema. Redaction occurs before durable payload construction. Eligible durable conclusions are indexed and reconciled automatically, retrying the same event is idempotent, and failures never block the host agent.
 
-Deterministic curation performs structural extraction, exact normalized duplicate detection, explicit placement, and explicit supersession. BYOK curation is isolated behind explicit consent, strict response schemas, citation validation, advisory-only authority, provenance recording, and deterministic fallback.
+The setup warning and confirmation authorize automatic local reconciliation and, when configured, provider-assisted synthesis. Reconciliation performs structural extraction, exact normalized duplicate detection, stable whole-file placement, provenance recording, and deterministic fallback. It does not create a per-atom approval queue.
 
 ## Surfaces
 

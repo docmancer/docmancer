@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import sys
+import threading
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -878,6 +879,7 @@ class LocalRuntime:
     async def agent_setup_plan(self) -> dict:
         from docmancer.cli.commands import _detect_setup_targets
         from docmancer.harness.integration_status import inspect_integrations
+        from docmancer.harness.setup_plan import build_setup_confirmation
 
         detected, hooks, deliveries = await asyncio.gather(
             asyncio.to_thread(_detect_setup_targets),
@@ -898,9 +900,15 @@ class LocalRuntime:
         return {
             "items": items,
             "recommended": recommended,
+            "confirmation": build_setup_confirmation(
+                recommended,
+                index_memory=True,
+                recall_hooks=True,
+                capture_hooks=True,
+            ),
             "commands": {
-                "setup": "docmancer setup",
-                "all": "docmancer setup --all",
+                "setup": "docmancer setup --yes",
+                "all": "docmancer setup --all --yes",
                 "context_preview": "docmancer context refresh --dry-run",
                 "context_build": "docmancer context refresh",
             },
@@ -910,19 +918,28 @@ class LocalRuntime:
         self,
         targets: list[str],
         *,
-        recall_hooks: bool = True,
-        capture_hooks: bool = False,
+        capture_hooks: bool = True,
+        confirmed: bool = False,
         progress_callback=None,
     ) -> dict:
         from docmancer.cli.commands import INSTALL_TARGETS
+        from docmancer.harness.setup_plan import build_setup_confirmation, normalize_setup_targets
 
         progress = progress_callback or (lambda _name, _data: None)
-        selected = list(dict.fromkeys(str(item).lower() for item in targets))
+        selected = normalize_setup_targets(targets)
         unknown = [item for item in selected if item not in INSTALL_TARGETS]
         if unknown:
             raise ValueError(f"unsupported agent integration: {', '.join(unknown)}")
         if not selected:
             raise ValueError("select at least one coding agent")
+        if not confirmed:
+            raise ValueError("setup confirmation is required")
+        confirmation = build_setup_confirmation(
+            selected,
+            index_memory=True,
+            recall_hooks=True,
+            capture_hooks=capture_hooks,
+        )
 
         async def run(args: list[str], label: str) -> str:
             progress("setup", {"detail": label})
@@ -940,32 +957,13 @@ class LocalRuntime:
                 raise RuntimeError(text.strip() or f"{label} failed")
             return text
 
-        setup_args = ["setup"]
+        setup_args = ["setup", "--yes"]
         for target in selected:
             setup_args.extend(["--agent", target])
+        setup_args.append("--capture-hooks")
         if self.config_path:
             setup_args.extend(["--config", str(self.config_path)])
         output = [await run(setup_args, "Indexing memory and installing Docmancer skills")]
-        hook_targets = [
-            target for target in selected
-            if target in {"claude-code", "codex", "codex-app", "codex-desktop"}
-        ]
-        if recall_hooks:
-            for target in hook_targets:
-                output.append(await run(
-                    ["agent", "install", target, "--hooks", *(
-                        ["--config", str(self.config_path)] if self.config_path else []
-                    )],
-                    f"Installing recall hooks for {target}",
-                ))
-        if capture_hooks:
-            for target in hook_targets:
-                output.append(await run(
-                    ["agent", "install", target, "--capture-hooks", *(
-                        ["--config", str(self.config_path)] if self.config_path else []
-                    )],
-                    f"Installing capture hooks for {target}",
-                ))
         progress("done", {"detail": "Docmancer is connected to the selected agents"})
         verified = await self.agent_setup_plan()
         selected_families = {
@@ -979,8 +977,9 @@ class LocalRuntime:
         self._schedule_library_rebuild()
         return {
             "targets": selected,
-            "recall_hooks": recall_hooks,
+            "recall_hooks": True,
             "capture_hooks": capture_hooks,
+            "confirmation": confirmation,
             "items": selected_states,
             "verified": all(
                 item["integration_state"] in {"connected", "manual-step"}
@@ -1066,12 +1065,26 @@ class LocalRuntime:
                 for row in source_rows
             }.values())
             summary = str(topic.get("summary") or topic.get("text") or "").strip()
+            title = str(topic.get("topic_label") or topic.get("title") or "").strip()
+            if topic.get("synthesized") and topic.get("body"):
+                body = str(topic["body"])
+                if not title:
+                    title = next(
+                        (
+                            line.lstrip("#").strip()
+                            for line in body.splitlines()
+                            if line.strip().startswith("#")
+                        ),
+                        "",
+                    )
+                if not summary:
+                    summary = self._readable_markdown_preview(body, limit=720)
             humanized.append({
                 **{
                     key: value for key, value in topic.items()
                     if key not in {"source_addresses", "member_addresses", "artifact_path", "path", "artifact_hash", "body"}
                 },
-                "title": str(topic.get("topic_label") or topic.get("title") or "Knowledge topic"),
+                "title": title or "Knowledge topic",
                 "summary": summary,
                 "sources": unique_sources,
                 "source_count": len(unique_sources) or int(topic.get("member_count") or len(source_rows)),
@@ -2388,6 +2401,120 @@ class LocalRuntime:
         root = Path(self._require_memory().db_path).parent
         config = CloudConfig(root)
         return await asyncio.to_thread(CloudState(config.paths.sync_state).conflicts)
+
+    async def cloud_connect(
+        self,
+        *,
+        base_url: str | None = None,
+        create_recovery: bool = False,
+        progress: Callable[[str, dict], None] | None = None,
+    ) -> dict:
+        """Drive device-code login end to end, reporting each stage as it happens."""
+        from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.connect import (
+            ConnectCancelled,
+            await_authorization,
+            enqueue_project,
+            finish_connect,
+            resume_existing_connect,
+            start_connect,
+        )
+        from docmancer.cloud.keystore import KeyStore
+
+        root = Path(self._require_memory().db_path).parent
+        config = CloudConfig(root)
+        if config.enabled():
+            raise ValueError("this device is already connected to Docmancer Cloud")
+
+        emit = progress or (lambda stage, data: None)
+        cancel = threading.Event()
+        self._cloud_connect_cancel = cancel
+
+        def run() -> dict:
+            keys = KeyStore()
+            resumed = resume_existing_connect(
+                base_url or "",
+                config=config,
+                account=config.account(),
+                keys=keys,
+                root=root,
+                on_event=emit,
+            ) if base_url else None
+            if resumed is not None:
+                return resumed
+            session = start_connect(
+                base_url,
+                root=root,
+                project_path=self.project_path,
+                keys=keys,
+                on_event=emit,
+            )
+            result = await_authorization(
+                session, on_event=emit, should_cancel=cancel.is_set,
+            )
+            outcome = finish_connect(session, result, on_event=emit)
+            if outcome["state"] == "connected":
+                try:
+                    enqueue_project(root, keys, self.project_path)
+                except Exception as exc:  # noqa: BLE001 - the connection is valid even if queueing fails
+                    outcome["queue_warning"] = (
+                        f"Connected, but existing memory could not be queued: {exc}. Run sync to retry."
+                    )
+            if create_recovery:
+                outcome["recovery_key"] = self._cloud_create_recovery(root, keys, outcome["workspace_id"])
+            return outcome
+
+        try:
+            return await asyncio.to_thread(run)
+        except ConnectCancelled:
+            raise
+        finally:
+            self._cloud_connect_cancel = None
+
+    def _cloud_create_recovery(self, root: Path, keys, workspace_id: str) -> str:
+        from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.recovery import create_recovery
+
+        config = CloudConfig(root)
+        account = config.account()
+        workspace_key = keys.workspace_key(str(account.get("account_id") or ""), workspace_id)
+        if not workspace_key:
+            raise ValueError("a local workspace key is required to create a recovery key")
+        recovery_key, wrapper = create_recovery(workspace_id, workspace_key, root=root)
+        (config.paths.root / "recovery-wrapper.json").write_text(
+            json.dumps(wrapper, indent=2) + "\n", encoding="utf-8",
+        )
+        try:
+            client, _workspace = self._cloud_client()
+            try:
+                client.upload_recovery_wrapper(workspace_id, wrapper)
+            finally:
+                client.close()
+        except Exception:  # noqa: BLE001 - the wrapper is saved locally regardless
+            pass
+        return recovery_key
+
+    def cloud_cancel_connect(self) -> dict:
+        cancel = getattr(self, "_cloud_connect_cancel", None)
+        if cancel is None:
+            return {"cancelled": False, "reason": "no_attempt_in_flight"}
+        cancel.set()
+        return {"cancelled": True}
+
+    async def cloud_disconnect(self) -> dict:
+        """Clear the local cloud session without touching local memory."""
+        from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.keystore import KeyStore
+
+        root = Path(self._require_memory().db_path).parent
+        config = CloudConfig(root)
+        account = config.account()
+        keys = KeyStore()
+        account_id = str(account.get("account_id") or "")
+        if account_id:
+            await asyncio.to_thread(keys.delete, account_id, "access-token")
+        await asyncio.to_thread(config.save_account, enabled=False)
+        return {"disconnected": True}
 
     async def cloud_sync(self) -> dict:
         from docmancer.cloud.client import CloudClient

@@ -32,7 +32,9 @@ cd /path/to/your-project
 docmancer web
 ```
 
-`setup` finds supported coding agents, indexes the memory and instructions they already wrote, and installs user-level Docmancer skills. It does not modify the project in your current directory.
+`setup` finds every supported coding agent on the machine, shows one complete preflight plan and privacy warning, and asks for confirmation before changing anything. Once confirmed, it indexes existing memory and instructions, builds one laptop-wide canonical memory under `~/.docmancer/tree`, installs or updates every detected user-level Docmancer skill, and enables automatic recall and session capture wherever the agent supports them. It does not modify the project in your current directory.
+
+The canonical memory keeps the main things that should follow you between agents: who you are, durable preferences, working principles, and active projects or repositories. Changed evidence is reconciled automatically when setup, Ask, the local web app, memory sync, or a supported lifecycle hook runs. If a configured AI provider is ready, Docmancer uses it to merge and compress the evidence after redaction. If no provider is ready, or the provider fails, deterministic local rules produce the same stable files without blocking memory.
 
 `web` opens a loopback-only app for the current project. Its main pages each have one purpose:
 
@@ -79,14 +81,14 @@ The web app shows the source count, cluster plan, provider, estimated calls, and
 
 ## Connect coding agents
 
-`docmancer setup` installs detected integrations during onboarding. You can manage one explicitly when needed:
+`docmancer setup` installs all detected integrations and automatic recall and capture hooks during onboarding. Use `--yes` only when you have already reviewed the same plan and need a non-interactive run. You can manage one integration explicitly when needed:
 
 ```bash
 docmancer agent install codex --hooks
 docmancer agent install claude-code --hooks
 ```
 
-Installed skills teach agents when to ask Docmancer for prior decisions and how to write durable memory when you explicitly request it. Recall hooks can provide bounded task-relevant Context automatically. Capture is a separate opt-in and remains off by default.
+Installed skills teach agents when to ask Docmancer for prior decisions and how to write deliberate project memory when you explicitly request it. Recall hooks provide a bounded view of the shared laptop memory and relevant project evidence automatically. Supported lifecycle hooks capture durable session conclusions and reconcile them without creating a per-item approval queue.
 
 ## Keep a decision deliberately
 
@@ -163,11 +165,13 @@ docmancer cloud sync
 | --- | --- |
 | `<project>/.docmancer/tree/` | Curated project memory as Markdown. |
 | `<project>/.docmancer/context/` | Revisioned generated Context artifacts. |
-| `<project>/.docmancer/inbox/` | Imported or captured material awaiting review. |
+| `<project>/.docmancer/inbox/` | Markdown explicitly imported for optional whole-file curation. Automatic session capture is processed as a transient spool. |
 | `<project>/.docmancer/trash/` | Recoverable deleted memory files. |
 | `<project>/.docmancer/state/decision-journal.jsonl` | Append-only curated-file history. |
 | `<project>/.docmancer/state/delivery.json` | Recent successful Context delivery receipts. |
 | `~/.docmancer/memory.db` | Rebuildable machine-wide agent-memory index. |
+| `~/.docmancer/tree/` | Automatically reconciled laptop-wide canonical memory as source-attributed Markdown. |
+| `~/.docmancer/state/laptop-memory/` | Reconciliation manifest and revision history. |
 | `~/.docmancer/docmancer.yaml` | Local configuration. |
 
 ## Requirements

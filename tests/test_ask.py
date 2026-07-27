@@ -52,6 +52,70 @@ def test_ask_combines_curated_memory_and_agent_evidence(tmp_path, monkeypatch):
     assert delivery["agents"]["cursor"]["bundle_hash"]
 
 
+def test_ask_marks_indexed_instruction_files_as_mandatory(tmp_path, monkeypatch):
+    # A policy question is answerable from the instruction files the agents
+    # already read, with no curation step. Recall must carry the `instructions`
+    # kind through as mandatory authority, or the normative gate in the answer
+    # path discards correct evidence and refuses.
+    home = tmp_path / "home"
+    project = tmp_path / "repo"
+    project.mkdir()
+    _plant_agent_memory(home, project)
+    (project / "CLAUDE.md").write_text(
+        "# Security rules\n\nNEVER read .env files or any .env.* variant.\n"
+    )
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "memory.db"))
+
+    result = CliRunner().invoke(
+        cli,
+        ["ask", "What are my rules around env files?", "--project", str(project), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    env_rows = [row for row in payload["relevant_evidence"] if ".env" in row["excerpt"]]
+    assert env_rows, payload["relevant_evidence"]
+    assert any(row["authority"] == "mandatory" for row in env_rows)
+    assert all(row["authority"] == "advisory" for row in payload["relevant_evidence"] if "Railway" in row["excerpt"])
+
+
+def test_ask_reports_an_unreadable_recall_index_instead_of_reporting_no_memory(
+    tmp_path, monkeypatch
+):
+    # A stale CLI against a newer index raises SchemaMismatchError on every
+    # query. Swallowing it renders a dead index as "No relevant memory found.",
+    # which is indistinguishable from an empty corpus and hides the one fact
+    # that would fix it.
+    from docmancer.memory import MemoryAgent, SchemaMismatchError
+
+    home = tmp_path / "home"
+    project = tmp_path / "repo"
+    project.mkdir()
+    _plant_agent_memory(home, project)
+    monkeypatch.setenv("DOCMANCER_HARNESS_HOME", str(home))
+    monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(tmp_path / "memory.db"))
+
+    def _raise(*args, **kwargs):
+        raise SchemaMismatchError("this memory index predates memory atoms")
+
+    monkeypatch.setattr(MemoryAgent, "query", _raise)
+
+    result = CliRunner().invoke(
+        cli, ["ask", "How do production releases deploy?", "--project", str(project), "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "predates memory atoms" in (payload.get("recall_error") or "")
+
+    text_result = CliRunner().invoke(
+        cli, ["ask", "How do production releases deploy?", "--project", str(project)]
+    )
+    assert "predates memory atoms" in text_result.output
+    assert "No relevant memory found." not in text_result.output
+
+
 def test_ask_defaults_to_global_recall_across_projects(tmp_path, monkeypatch):
     # Agent memory belongs to `project`, but we ask from an unrelated directory
     # with no --project. Evidence recall must default to global and still find

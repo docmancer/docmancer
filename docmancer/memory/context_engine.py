@@ -22,6 +22,7 @@ from docmancer.memory.tree.providerless_context import (
     ProviderlessCluster,
     render_providerless_cluster,
 )
+from docmancer.memory.tree.compiler import authority_for_kind
 from docmancer.memory.tree.revision_identity import content_revision_id
 
 CONTEXT_SCHEMA_VERSION = 1
@@ -523,7 +524,7 @@ class ContextEngine:
             if atom.generated:  # defence in depth; already excluded upstream
                 continue
             path = str(atom.source_path or "")
-            authority = "mandatory" if atom.kind in {"instructions", "rules"} else "advisory"
+            authority = authority_for_kind(atom.kind)
             sources.append(
                 ContextSource(
                     address=f"memory://atom/{atom.atom_id}",

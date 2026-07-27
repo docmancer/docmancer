@@ -25,6 +25,7 @@ def test_cloud_disable_does_not_remove_local_memory(tmp_path, monkeypatch):
 
 def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
+    from docmancer.cloud import connect as connect_module
 
     config = CloudConfig(tmp_path)
     config.save_account(
@@ -58,7 +59,7 @@ def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatc
         "_context",
         lambda: (tmp_path, config, config.account(), keys),
     )
-    monkeypatch.setattr(cloud_commands, "CloudClient", Client)
+    monkeypatch.setattr(connect_module, "CloudClient", Client)
 
     result = CliRunner().invoke(
         cli,
@@ -73,6 +74,7 @@ def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatc
 
 def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
+    from docmancer.cloud import connect as connect_module
 
     account_id = "00000000-0000-4000-8000-000000000001"
     workspace_id = "00000000-0000-4000-8000-000000000002"
@@ -111,7 +113,7 @@ def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
         "_context",
         lambda: (tmp_path, config, config.account(), keys),
     )
-    monkeypatch.setattr(cloud_commands, "CloudClient", Client)
+    monkeypatch.setattr(connect_module, "CloudClient", Client)
 
     result = CliRunner().invoke(
         cli,
@@ -126,6 +128,7 @@ def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
 
 def test_cloud_devices_lists_fingerprints_and_revokes_one_device(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
+    from docmancer.cloud import connect as connect_module
 
     account_id = "00000000-0000-4000-8000-000000000001"
     workspace_id = "00000000-0000-4000-8000-000000000002"
@@ -199,6 +202,7 @@ def test_team_subcommands_are_registered():
 
 def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
+    from docmancer.cloud import connect as connect_module
 
     config = CloudConfig(tmp_path)
     keys = KeyStore(MemorySecretBackend())
@@ -237,7 +241,7 @@ def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(cloud_commands, "_context", lambda: (tmp_path, config, {}, keys))
-    monkeypatch.setattr(cloud_commands, "CloudClient", Client)
+    monkeypatch.setattr(connect_module, "CloudClient", Client)
     result = CliRunner().invoke(
         cli, ["cloud", "connect", "--base-url", "https://cloud.invalid"],
     )

@@ -109,6 +109,44 @@ def test_normative_question_without_mandatory_record_refuses_without_provider_ca
     assert provider.calls == 0
 
 
+def test_indexed_instruction_file_satisfies_normative_authority():
+    # An agent instruction file (CLAUDE.md / AGENTS.md) is the document that
+    # governs the agent, not incidental search noise. When recall surfaces one
+    # for a policy question, it carries mandatory authority even though it
+    # arrived as indexed evidence rather than a curated tree entry.
+    bundle = _bundle()
+    bundle["relevant_evidence"] = [
+        {
+            "address": "/repo/CLAUDE.md",
+            "title": "Security rules > env files",
+            "excerpt": "NEVER read .env files.",
+            "authority": "mandatory",
+            "kind": "instructions",
+            "score": 0.9,
+        }
+    ]
+
+    assert retrieval_sufficiency(bundle, "what are my rules around env files?") == "met"
+
+
+def test_indexed_agent_memory_does_not_satisfy_normative_authority():
+    # Ordinary recalled session memory stays advisory. Only instruction and
+    # rule files are promoted, so a stray transcript cannot speak as policy.
+    bundle = _bundle()
+    bundle["relevant_evidence"] = [
+        {
+            "address": "/home/.codex/memories/session.md",
+            "title": "Some session",
+            "excerpt": "We talked about .env files once.",
+            "authority": "advisory",
+            "kind": "agent-memory",
+            "score": 0.9,
+        }
+    ]
+
+    assert retrieval_sufficiency(bundle, "what are my rules around env files?") == "unmet"
+
+
 def test_prompt_injection_in_evidence_is_rendered_as_data():
     bundle = _bundle()
     bundle["curated_memory"][0]["excerpt"] = (

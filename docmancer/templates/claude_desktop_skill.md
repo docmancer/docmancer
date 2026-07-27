@@ -5,7 +5,7 @@ description: Search local documentation context packs with docmancer CLI. Use wh
 
 # docmancer
 
-Docmancer maintains local agent memory and a separate documentation index. Use `docmancer ask`, `read`, `write`, `edit`, and `move` for prior decisions and durable memory. Use `docmancer docs ...` for third-party documentation.
+Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Use `docmancer ask`, `read`, `write`, `edit`, and `move` for prior decisions and durable memory. Use `docmancer docs ...` for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -22,7 +22,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Core Commands
 
-- `docmancer setup`: create config, database, and agent integrations.
+- `docmancer setup`: preview and confirm machine-wide indexing, canonical reconciliation, detected agent skills, and automatic recall and capture hooks.
 - `docmancer docs add <path>`: index local files or directories.
 - `docmancer docs add <url>`: fetch and index documentation from a URL or GitHub repository.
 - `docmancer docs sync [source]`: re-fetch and re-index all sources, or one specific source.

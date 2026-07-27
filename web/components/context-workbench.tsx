@@ -1,11 +1,11 @@
 "use client";
 
 import {
-  ArrowRight, Check, Clock3, Cloud, Copy, Database, ExternalLink, FileDiff,
+  ArrowRight, Check, Clock3, Cloud, Copy, Database, FileDiff,
   Radio, RefreshCw, RotateCcw, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiGet, apiJobMutation, apiMutation, type JsonMap } from "@/lib/api";
+import { apiGet, apiJobMutation, apiMutation, apiStartJob, waitForJob, type JsonMap } from "@/lib/api";
 import { CommandRow, messageOf, Modal, Notice, objectAt, rows } from "./workspace-app";
 import { SetupFlow } from "./settings-view";
 
@@ -44,7 +44,7 @@ export function ContextWorkbench({ data, reload }: Props) {
   const counts = objectAt(data, "counts");
   const atoms = Number(counts.atoms ?? 0);
   const freshness = objectAt(current, "freshness");
-  const stale = rows(freshness.stale_cluster_ids).length;
+  const stale = Array.isArray(freshness.stale_cluster_ids) ? freshness.stale_cluster_ids.length : 0;
 
   const preview = async () => {
     setBusy("preview"); setError("");
@@ -60,12 +60,13 @@ export function ContextWorkbench({ data, reload }: Props) {
     if (!distillation) return;
     setBusy("distill-run"); setError("");
     try {
-      await apiJobMutation("/api/v1/context/refresh", {
+      const job = await apiStartJob("/api/v1/context/refresh", {
         provider: String(distillation.provider),
         model: distillation.model ? String(distillation.model) : undefined,
-      }, () => undefined);
+      });
       setDistillation(null);
-      await reload();
+      setBusy("");
+      void waitForJob(job).then(reload).catch((reason) => setError(messageOf(reason)));
     } catch (reason) { setError(messageOf(reason)); }
     finally { setBusy(""); }
   };
@@ -163,8 +164,8 @@ function Delivery({ data, cloud, setDetail }: { data: JsonMap; cloud: JsonMap; s
     })}</div>
       : <div className="purposeful-empty"><Radio size={20}/><h3>No delivery receipts yet</h3><p>Connect Docmancer to your coding agents, then start a new agent session to generate delivery evidence.</p><code>docmancer setup</code></div>}
   </section><section className="context-section cloud-delivery"><div className="section-heading"><div><span className="eyebrow">Beyond this machine</span><h2>Keep Context continuous</h2><p>Local intelligence remains free. Cloud plans add encrypted continuity and coordination.</p></div></div><div className="cloud-plan-grid">
-    <article><Cloud size={18}/><span className="eyebrow">Personal Sync</span><h3>Encrypted continuity across devices</h3><p>{cloud.configured ? "This machine is connected. Manage approved devices and run sync from Settings." : "Recover after a reset and keep approved devices current without uploading plaintext memory."}</p><a className="secondary-btn" href={cloud.configured ? "/settings/?section=cloud" : "https://docmancer.dev/cloud"} target={cloud.configured ? undefined : "_blank"} rel="noreferrer">{cloud.configured ? "Manage Sync" : "Explore Personal Sync"} <ArrowRight size={14}/></a></article>
-    <article><ShieldCheck size={18}/><span className="eyebrow">Team</span><h3>One approved Context file</h3><p>Review the complete file locally, then encrypt it before hosted Team coordination.</p><a className="secondary-btn" href="https://docmancer.dev/teams" target="_blank" rel="noreferrer">Explore Team <ExternalLink size={14}/></a></article>
+    <article><Cloud size={18}/><span className="eyebrow">Personal Sync</span><h3>Encrypted continuity across devices</h3><p>{cloud.configured ? "This machine is connected. Manage approved devices and run sync from Settings." : "Recover after a reset and keep approved devices current without uploading plaintext memory."}</p><a className="secondary-btn" href="/settings/?section=cloud">{cloud.configured ? "Manage Sync" : "Connect this device"} <ArrowRight size={14}/></a></article>
+    <article><ShieldCheck size={18}/><span className="eyebrow">Team</span><h3>One approved Context file</h3><p>Review the complete file locally, then encrypt it before hosted Team coordination.</p><a className="secondary-btn" href="/settings/?section=cloud">{cloud.configured ? "Manage Team" : "Connect this device"} <ArrowRight size={14}/></a></article>
   </div></section></>;
 }
 
@@ -212,7 +213,7 @@ function DistillationPreview({ preview, busy, run, close }: { preview: JsonMap; 
     <div className="preview-metrics"><div><strong>{Number(preview.clusters ?? 0).toLocaleString()}</strong><span>Topics</span></div><div><strong>{Number(preview.estimated_provider_calls ?? 0).toLocaleString()}</strong><span>Provider calls</span></div><div><strong>{Number(preview.estimated_input_tokens ?? 0).toLocaleString()}</strong><span>Input tokens</span></div><div><strong>${Number(preview.estimated_cost_usd ?? 0).toFixed(4)}</strong><span>Planning estimate</span></div></div>
     <div className="distill-output-grid">{outputs.map((output) => <span key={output}><Check size={14}/>{output}</span>)}</div>
     <div className="plan-assurance"><ShieldCheck size={16}/><div><strong>Private by design</strong><p>{String(preview.privacy_note ?? "Only topic evidence is sent to your selected provider. Credentials stay in the operating-system keyring.")}</p></div></div>
-    <div className="modal-actions"><button className="secondary-btn" onClick={close}>Cancel</button>{preview.available ? <button className="primary-btn" disabled={busy} onClick={run}>{busy ? <RefreshCw className="spin" size={14}/> : <Sparkles size={14}/>}Distill and build Context</button> : <a className="primary-btn" href="/settings/?section=model">Configure provider <ArrowRight size={14}/></a>}</div>
+    <div className="modal-actions"><button className="secondary-btn" onClick={close}>Close</button>{preview.available ? <button className="primary-btn" disabled={busy} onClick={run}>{busy ? <RefreshCw className="spin" size={14}/> : <Sparkles size={14}/>}Start distillation</button> : <a className="primary-btn" href="/settings/?section=model">Configure provider <ArrowRight size={14}/></a>}</div>
   </div></Modal>;
 }
 

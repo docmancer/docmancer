@@ -121,6 +121,18 @@ class ContextItem:
     harness: str = ""
 
 
+# Agent instruction and rule files are the documents that govern the agent, so a
+# recalled hit from one carries the same authority as a curated policy entry.
+# Everything else recall surfaces (session transcripts, summaries) stays
+# advisory. Shared by the Context builder and the ask evidence path so the two
+# cannot drift.
+MANDATORY_KINDS = frozenset({"instructions", "rules"})
+
+
+def authority_for_kind(kind: str | None) -> str:
+    return "mandatory" if kind in MANDATORY_KINDS else "advisory"
+
+
 @dataclass
 class EvidenceReference:
     address: str
@@ -130,6 +142,9 @@ class EvidenceReference:
     harness: str = ""
     score: float | None = None
     rank: int | None = None
+    # Recall-derived authority. Lets a policy question be answered from the
+    # instruction files the agents already read, with no curation step.
+    authority: str = "advisory"
 
 
 @dataclass

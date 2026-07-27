@@ -290,7 +290,7 @@ def test_setup_detects_vscode_without_writing_project_files():
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.core.config.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
-            result = runner.invoke(cli, ["setup"])
+            result = runner.invoke(cli, ["setup", "--yes"])
         assert result.exit_code == 0, result.output
         assert (fake_home / ".copilot" / "copilot-instructions.md").exists()
         assert not (Path(".github") / "copilot-instructions.md").exists()
@@ -327,8 +327,10 @@ def test_setup_all_creates_config_db_and_installs_skills():
         with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
              patch("docmancer.core.config.Path.home", return_value=fake_home), \
              patch("docmancer.cli.commands._get_agent_class", return_value=lambda config: fake_agent):
-            result = runner.invoke(cli, ["setup", "--all"])
+            result = runner.invoke(cli, ["setup", "--all", "--yes"])
         assert result.exit_code == 0, result.output
         assert (fake_home / ".docmancer" / "docmancer.yaml").exists()
         assert (fake_home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()
+        assert (fake_home / ".codex" / "hooks.json").exists()
+        assert (fake_home / ".claude" / "settings.json").exists()
         assert (fake_home / ".docmancer" / "exports" / "claude-desktop" / "docmancer.zip").exists()

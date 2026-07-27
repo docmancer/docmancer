@@ -743,6 +743,32 @@ class MemoryService:
     ) -> list[MemoryRecord]:
         self.ensure_packs(project_path=project_path)
         records = self.agent.records.records(project_paths=self.agent._project_paths())
+        laptop_records: list[MemoryRecord] = []
+        try:
+            from docmancer.memory.laptop import laptop_memory_root
+            from docmancer.memory.tree.store import TreeStore
+
+            for entry in TreeStore(laptop_memory_root() / "tree").index.entries():
+                if entry.status != "active" or "laptop-canonical" not in entry.tags:
+                    continue
+                laptop_records.append(
+                    MemoryRecord(
+                        record_id=entry.memory_id,
+                        text=entry.body[:1_600].rstrip(),
+                        type=entry.type,
+                        tags=[
+                            *entry.tags,
+                            *([MANDATORY_TAG] if entry.authority == "mandatory" else []),
+                        ],
+                        origin=entry.curation_origin,
+                        scope_kind="global",
+                        harness="docmancer",
+                        source_path=str(entry.path),
+                        revision_id=entry.revision_id,
+                    )
+                )
+        except Exception:  # noqa: BLE001 - legacy records remain a valid fallback
+            laptop_records = []
         by_id = {record.record_id: record for record in records}
         visible = [pack for pack in self.packs.packs() if self._pack_visible(pack, project_path) and pack.status == "active"]
         priority = {
@@ -797,10 +823,14 @@ class MemoryService:
                     -_record_relevance(by_id[record_id], query_tokens),
                 ),
             )
-        output: list[MemoryRecord] = []
-        seen: set[str] = set()
+        output: list[MemoryRecord] = laptop_records[:limit]
+        seen: set[str] = {
+            " ".join(record.text.casefold().split()) for record in output
+        }
         overridden_ids: set[str] = set()
         overridden_texts: set[str] = set()
+        if len(output) >= limit:
+            return output
         for record_id in candidate_ids:
             record = by_id.get(record_id)
             if record is None or record.record_id in overridden_ids or record.record_id in semantic_suppressed:
@@ -837,17 +867,38 @@ class MemoryService:
     def status(self, *, project_path: str | Path | None = None) -> dict:
         packs = self.list_context(project_path=project_path)
         memory = self.agent.status()
+        canonical_state = {}
+        from docmancer.memory.laptop import laptop_memory_root
+
+        canonical_root = laptop_memory_root()
+        canonical_path = canonical_root / "state" / "laptop-memory" / "latest.json"
+        try:
+            canonical_state = json.loads(canonical_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            canonical_state = {}
         return {
             "memory": memory,
             "packs": len(packs),
             "active_records": sum(int(pack["records"]) for pack in packs),
             "pending_reviews": len(self.packs.proposals(state="pending")),
+            "laptop_canonical": {
+                "available": bool(canonical_state),
+                "root": str(canonical_root / "tree"),
+                "revision_id": canonical_state.get("revision_id"),
+                "provider": canonical_state.get("provider"),
+                "sections": len(canonical_state.get("sections") or []),
+                "selected": canonical_state.get("selected", 0),
+                "withheld": canonical_state.get("withheld", 0),
+            },
             "cloud_enabled": self.cloud.enabled(),
         }
 
     def sync(self, *, project_path=None, local_only: bool = False, progress_callback: Callable | None = None) -> dict:
         direct_changes = self.reconcile_direct_edits()
         indexed = self.agent.sync(progress_callback=progress_callback)
+        from docmancer.memory.laptop import LaptopMemoryReconciler
+
+        canonical = LaptopMemoryReconciler(self.agent).reconcile()
         packs = self.ensure_packs(project_path=project_path)
         pending_before = {proposal.proposal_id for proposal in self.proposals(state="pending")}
         for pack in packs:
@@ -868,6 +919,7 @@ class MemoryService:
             "proposals": len([proposal for proposal in pending_after if proposal.proposal_id not in pending_before]),
             "pending_reviews": len(pending_after),
             "direct_changes": direct_changes,
+            "canonical": canonical,
             "cloud": cloud_result,
             "projections": projections,
         }

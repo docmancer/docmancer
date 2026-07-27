@@ -246,7 +246,7 @@ def test_tree_init_rejects_denied_root_without_creating_state(tmp_path):
     assert not root.exists()
 
 
-def test_top_level_capture_reads_one_event_from_stdin_and_writes_only_inbox(tmp_path):
+def test_top_level_capture_processes_event_without_leaving_an_inbox_queue(tmp_path):
     runner = CliRunner()
     root = str(tmp_path / "tree")
     inbox = str(tmp_path / "inbox")
@@ -266,7 +266,9 @@ def test_top_level_capture_reads_one_event_from_stdin_and_writes_only_inbox(tmp_
     captured = json.loads(result.output)
     assert captured["ok"] is True
     assert captured["destination"] == "inbox"
-    assert list((tmp_path / "inbox").glob("*.md"))
+    assert captured["processed"] is True
+    assert captured["inbox_path"] is None
+    assert not list((tmp_path / "inbox").glob("*.md"))
     assert not list((tmp_path / "tree").rglob("*.md"))
 
 

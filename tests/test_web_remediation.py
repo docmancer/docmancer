@@ -56,6 +56,53 @@ def test_codex_is_connected_without_requiring_a_delivery_receipt(tmp_path: Path)
     assert codex["connected"] is True
     assert codex["integration_state"] == "connected"
     assert codex["last_successful_recall"] is None
+    assert codex["action_kind"] == "automatic"
+    assert codex["recall_setup_required"] is True
+
+
+def test_connected_codex_with_recall_but_no_capture_needs_automatic_memory_setup(tmp_path: Path) -> None:
+    skill = tmp_path / ".codex" / "skills" / "docmancer" / "SKILL.md"
+    memory_skill = tmp_path / ".codex" / "skills" / "docmancer-memory" / "SKILL.md"
+    instructions = tmp_path / ".codex" / "AGENTS.md"
+    for path in (skill, memory_skill):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Docmancer\n", encoding="utf-8")
+    instructions.write_text(_managed_block(), encoding="utf-8")
+    codex = next(
+        row for row in inspect_integrations(
+            detected_targets=["codex"],
+            hook_rows=[{"agent": "codex", "scope": "user", "recall": True, "capture": False}],
+            delivery_rows=[],
+            home=tmp_path,
+        )
+        if row["id"] == "codex"
+    )
+    assert codex["connected"] is True
+    assert codex["recall_setup_required"] is True
+    assert codex["capture_setup_required"] is True
+    assert codex["action_kind"] == "automatic"
+
+
+def test_connected_codex_with_recall_and_capture_needs_no_setup(tmp_path: Path) -> None:
+    skill = tmp_path / ".codex" / "skills" / "docmancer" / "SKILL.md"
+    memory_skill = tmp_path / ".codex" / "skills" / "docmancer-memory" / "SKILL.md"
+    instructions = tmp_path / ".codex" / "AGENTS.md"
+    for path in (skill, memory_skill):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Docmancer\n", encoding="utf-8")
+    instructions.write_text(_managed_block(), encoding="utf-8")
+    codex = next(
+        row for row in inspect_integrations(
+            detected_targets=["codex"],
+            hook_rows=[{"agent": "codex", "scope": "user", "recall": True, "capture": True}],
+            delivery_rows=[],
+            home=tmp_path,
+        )
+        if row["id"] == "codex"
+    )
+    assert codex["connected"] is True
+    assert codex["recall_setup_required"] is False
+    assert codex["capture_setup_required"] is False
     assert codex["action_kind"] == "none"
 
 
@@ -119,6 +166,29 @@ def test_human_preview_removes_local_paths_and_memory_addresses() -> None:
     assert "/Users/" not in preview
     assert "memory://atom/" not in preview
     assert "a local file" in preview
+
+
+@pytest.mark.asyncio
+async def test_synthesized_context_body_is_presented_as_readable_context(tmp_path: Path) -> None:
+    runtime = LocalRuntime(project_path=tmp_path)
+    runtime.memory = type(
+        "Memory",
+        (),
+        {"indexed_atoms": lambda self: []},
+    )()
+
+    topics = await runtime._humanize_context_topics([
+        {
+            "cluster_id": "ctx_release",
+            "body": "# Release process\n\nDeploy through Railway after the full test suite passes.",
+            "synthesized": True,
+            "source_addresses": [],
+        }
+    ])
+
+    assert topics[0]["title"] == "Release process"
+    assert topics[0]["summary"] == "Deploy through Railway after the full test suite passes."
+    assert topics[0]["has_readable_summary"] is True
 
 
 def test_library_catalog_searches_and_cursor_paginates(tmp_path: Path) -> None:

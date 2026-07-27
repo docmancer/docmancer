@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from starlette.testclient import TestClient
@@ -246,11 +247,20 @@ class FakeRuntime:
     async def curate_inbox(self, inbox_id: str, relative_path: str, *, apply: bool = False) -> dict:
         return {"applied": apply, "source": inbox_id, "destination": relative_path, "diff": "+# Checkpoint"}
 
-    async def ask_tree(self, task: str, *, token_budget: int = 2000, agent: str = "web") -> dict:
+    async def ask_tree(
+        self,
+        task: str,
+        *,
+        token_budget: int = 2000,
+        agent: str = "web",
+        mode: str = "normal",
+        on_delta=None,
+        **_kwargs,
+    ) -> dict:
         evidence = {"title": "Railway release", "source_path": "/memory/release.md", "authority": "advisory"}
         curated = {"title": "Release", "address": "docmancer://memory/one", "authority": "project"}
         return {
-            "answer": None,
+            "answer": "Use Railway. [1]",
             "no_answer": False,
             "items": [curated, evidence],
             "mandatory_policies": [],
@@ -270,7 +280,12 @@ def app_client(tmp_path: Path) -> tuple[TestClient, object, FakeRuntime]:
     static.mkdir()
     (static / "index.html").write_text("<html>local</html>", encoding="utf-8")
     runtime = FakeRuntime()
-    app = create_app(port=48123, static_dir=static, runtime=runtime)  # type: ignore[arg-type]
+    app = create_app(
+        port=48123,
+        static_dir=static,
+        runtime=runtime,  # type: ignore[arg-type]
+        ask_history_path=tmp_path / "ask.sqlite3",
+    )
     return TestClient(app, base_url="http://127.0.0.1:48123"), app, runtime
 
 
@@ -384,6 +399,16 @@ def test_human_agent_settings_and_setup_plan_are_exposed(tmp_path: Path) -> None
         setup = client.get("/api/v1/agent/setup")
         assert setup.status_code == 200
         assert setup.json()["recommended"] == ["codex"]
+        rejected = client.post(
+            "/api/v1/agent/setup",
+            json={"targets": ["codex"]},
+            headers={
+                "origin": "http://127.0.0.1:48123",
+                "x-docmancer-csrf": csrf,
+            },
+        )
+        assert rejected.status_code == 400
+        assert "confirmation is required" in rejected.json()["error"]["message"]
 
         models = client.get("/api/v1/providers/openai/models")
         assert models.status_code == 200
@@ -593,6 +618,108 @@ def test_editor_routes_list_and_open_allowlisted_markdown_apps(tmp_path: Path) -
         assert opened.status_code == 200
         assert opened.json()["opened"] is True
         assert opened.json()["editor"] == "vscode"
+
+
+def test_ask_conversations_are_saved_locally_and_can_be_deleted(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        created = client.post("/api/v1/ask/conversations", json={}, headers=headers)
+        assert created.status_code == 201
+        conversation_id = created.json()["id"]
+
+        answer = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "How do we release this project?",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        assert answer.status_code == 200
+        assert answer.json()["conversation_id"] == conversation_id
+
+        conversations = client.get("/api/v1/ask/conversations")
+        assert conversations.status_code == 200
+        assert conversations.json()["items"][0]["title"] == "How do we release this project?"
+        assert conversations.json()["items"][0]["message_count"] == 2
+
+        detail = client.get(f"/api/v1/ask/conversations/{conversation_id}")
+        assert detail.status_code == 200
+        assert [message["role"] for message in detail.json()["messages"]] == [
+            "user",
+            "assistant",
+        ]
+        assert detail.json()["messages"][1]["content"] == "Use Railway. [1]"
+        assert detail.json()["messages"][1]["evidence"][0]["title"] == "Release"
+
+        deleted = client.delete(
+            f"/api/v1/ask/conversations/{conversation_id}",
+            headers=headers,
+        )
+        assert deleted.status_code == 200
+        assert client.get(f"/api/v1/ask/conversations/{conversation_id}").status_code == 404
+
+
+def test_temporary_ask_does_not_create_conversation_history(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        answer = client.post(
+            "/api/v1/ask",
+            json={"task": "What is temporary?", "temporary": True},
+            headers=headers,
+        )
+        assert answer.status_code == 200
+        assert answer.json()["temporary"] is True
+        assert client.get("/api/v1/ask/conversations").json()["items"] == []
+
+
+def test_streamed_ask_finishes_and_saves_without_an_open_event_stream(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        started = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "Keep working after I leave",
+                "conversation_id": conversation_id,
+                "stream": True,
+            },
+            headers=headers,
+        )
+        assert started.status_code == 202
+
+        job_id = started.json()["id"]
+        for _ in range(100):
+            job = client.get(f"/api/v1/jobs/{job_id}").json()
+            if job["state"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert job["state"] == "completed"
+
+        conversation = client.get(
+            f"/api/v1/ask/conversations/{conversation_id}",
+        ).json()
+        assert conversation["messages"][-1]["status"] == "complete"
+        assert conversation["messages"][-1]["content"] == "Use Railway. [1]"
 
 
 def test_core_outcome_routes_expose_common_delivery_and_timeline(tmp_path: Path) -> None:

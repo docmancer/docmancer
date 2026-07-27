@@ -143,8 +143,13 @@ def inspect_integrations(
             integration_state = "available"
 
         detected_surfaces = [family]
+        recall_missing = bool(spec.get("recall_capable")) and not bool(hook.get("recall"))
+        capture_missing = bool(spec.get("recall_capable")) and not bool(hook.get("capture"))
+        automatic_memory_missing = recall_missing or capture_missing
         action_kind = (
-            "none"
+            "automatic"
+            if integration_state == "connected" and automatic_memory_missing and family in detected_families
+            else "none"
             if integration_state == "connected"
             else "manual"
             if integration_state == "manual-step"
@@ -175,6 +180,8 @@ def inspect_integrations(
                 "current_version": __version__,
                 "recall_capable": bool(spec.get("recall_capable")),
                 "recall_hook": bool(hook.get("recall")),
+                "recall_setup_required": automatic_memory_missing and family in detected_families,
+                "capture_setup_required": capture_missing and family in detected_families,
                 "capture_hook": bool(hook.get("capture")),
                 "last_successful_recall": delivery.get("last_successful_recall"),
                 "last_surface": delivery.get("surface"),

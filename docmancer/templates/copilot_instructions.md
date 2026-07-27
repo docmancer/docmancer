@@ -1,6 +1,6 @@
 # docmancer
 
-Docmancer maintains local agent memory and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Use `docmancer docs ...` only for third-party documentation.
+Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Use `docmancer docs ...` only for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -20,7 +20,7 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 ## Core Commands
 
 ```bash
-docmancer setup
+docmancer setup  # previews all detected integrations and asks before changing them
 docmancer ask "what decisions apply?" --agent github-copilot
 docmancer common
 docmancer delivery

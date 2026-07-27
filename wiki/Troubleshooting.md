@@ -48,7 +48,7 @@ docmancer delivery
 
 Codex, Codex App, and Codex Desktop share one integration family. Claude Desktop requires a manual skill upload from the generated package. The web setup modal shows manual instructions when that is the only remaining step.
 
-Use `--hooks` for supported automatic recall. Capture requires the separate `--capture-hooks` option and remains off by default.
+Bare `docmancer setup` installs supported automatic recall and capture hooks after showing its warning and confirmation. Use `--hooks` or `--capture-hooks` only when managing one integration through the lower-level `docmancer agent install` command.
 
 ## Ask returns no result
 

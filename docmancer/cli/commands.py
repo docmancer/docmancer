@@ -151,6 +151,48 @@ def _ensure_user_config() -> Path:
     return config_path
 
 
+def _enable_automatic_capture(config_path: Path) -> None:
+    """Persist the setup-approved capture defaults without replacing other config."""
+    import tempfile
+
+    import yaml as _yaml
+    from filelock import FileLock
+
+    path = Path(config_path).expanduser().resolve()
+    lock = FileLock(str(path) + ".lock", timeout=10)
+    temporary: Path | None = None
+    with lock:
+        loaded = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = loaded if isinstance(loaded, dict) else {}
+        capture = data.get("capture")
+        if not isinstance(capture, dict):
+            capture = {}
+        enabled = capture.get("enabled")
+        if not isinstance(enabled, dict):
+            enabled = {}
+        enabled.update({"claude-code": True, "codex": True})
+        capture["enabled"] = enabled
+        data["capture"] = capture
+        content = _yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
 def _load_config(config_path: str | None):
     DocmancerConfig = _get_config_class()
     if config_path:
@@ -2356,6 +2398,21 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
 
     if n:
         _emit_status_line(f"Indexed {n:,} memory atoms ({monotonic() - sync_started:.1f}s).")
+        try:
+            from docmancer.memory.laptop import LaptopMemoryReconciler, laptop_memory_root
+
+            canonical = LaptopMemoryReconciler(agent).reconcile()
+            state = "Updated" if canonical.get("changed") else "Confirmed"
+            _emit_status_line(
+                f"{state} laptop-wide canonical memory at "
+                f"{display_path(laptop_memory_root() / 'tree')} "
+                f"({canonical.get('provider') or 'deterministic'})."
+            )
+        except Exception as exc:  # noqa: BLE001 - indexed evidence remains usable
+            _emit_status_line(
+                f"Could not reconcile laptop-wide canonical memory ({exc}).",
+                state="warn",
+            )
         click.echo('  Try: docmancer memory query "..."')
     else:
         _emit_status_line(
@@ -2375,15 +2432,19 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
         "docmancer setup --agent github-copilot",
     ),
 )
-@click.option("--all", "install_all", is_flag=True, default=False, help="Install every supported agent integration non-interactively.")
+@click.option("--all", "install_all", is_flag=True, default=False, help="Install every supported agent integration, including agents not detected.")
 @click.option("--agent", "agents", multiple=True, type=click.Choice(INSTALL_TARGETS, case_sensitive=False), help="Agent integration to install. Can be repeated.")
 @click.option("--index-memory/--no-index-memory", default=True, show_default=True, help="Index the memory your coding agents already wrote on this machine.")
+@click.option("--capture-hooks", is_flag=True, default=True, hidden=True)
+@click.option("-y", "--yes", "assume_yes", is_flag=True, default=False, help="Apply the displayed setup plan without prompting.")
 @click.option("--dry-run", is_flag=True, help="Preview the memory index (counts only); write nothing.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def setup_cmd(
     install_all: bool,
     agents: tuple[str, ...],
     index_memory: bool,
+    capture_hooks: bool,
+    assume_yes: bool,
     dry_run: bool,
     config_path: str | None,
 ):
@@ -2394,8 +2455,42 @@ def setup_cmd(
     installs one or more agent skill/instruction files. Use `--agent` to pick
     explicit targets such as `codex`, `claude-code`, or `github-copilot`.
     """
+    from docmancer.harness.setup_plan import build_setup_confirmation, normalize_setup_targets
+
     setup_started = monotonic()
-    _emit_brand_header("docmancer setup", "Index your agents' memory, then connect your coding agents.")
+    _emit_brand_header("docmancer setup", "Index local memory and connect every coding agent detected on this machine.")
+
+    selected = [agent.lower() for agent in agents]
+    if install_all:
+        selected = list(INSTALL_TARGETS)
+    elif not selected:
+        selected = _detect_setup_targets()
+    unique_targets = normalize_setup_targets(selected)
+    confirmation = build_setup_confirmation(
+        unique_targets,
+        index_memory=index_memory,
+        recall_hooks=True,
+        capture_hooks=capture_hooks,
+    )
+    click.echo("Docmancer is ready to:")
+    for step in confirmation["steps"]:
+        click.echo(f"  • {step['title']}: {step['detail']}")
+    if unique_targets:
+        click.echo(f"  Detected targets: {', '.join(confirmation['target_labels'])}")
+    else:
+        click.echo("  No supported coding agents were detected. Setup will only prepare and index local memory.")
+    click.echo()
+    click.echo(
+        "Warning: setup will read supported local agent memory, enable lifecycle capture, "
+        "and automatically update ~/.docmancer/tree. If an AI provider is configured, "
+        "redacted evidence may be sent to that provider for canonical-memory synthesis."
+    )
+    click.echo()
+    if not dry_run and not assume_yes:
+        if not click.confirm("Apply this setup plan?", default=False):
+            _emit_status_line("Setup cancelled. No files were changed.", state="info")
+            return
+
     config_status = LiveStatus(started_at=setup_started)
     config_status.start("Preparing the local configuration and SQLite index...")
     try:
@@ -2414,6 +2509,7 @@ def setup_cmd(
             )
         else:
             config_file = _ensure_config_and_db(config_path)
+            _enable_automatic_capture(config_file)
             config = _get_config_class().from_yaml(config_file)
     finally:
         config_status.stop()
@@ -2432,22 +2528,11 @@ def setup_cmd(
 
     _setup_index_memory(config, index_memory=index_memory, dry_run=dry_run)
 
-    selected = [agent.lower() for agent in agents]
-    if install_all:
-        selected = list(INSTALL_TARGETS)
-    elif not selected:
-        detected = _detect_setup_targets()
-        if detected:
-            selected = detected
-        elif click.confirm("No agent installs detected. Install Codex skill?", default=True):
-            selected = ["codex"]
-
-    if not selected:
+    if not unique_targets:
         _emit_status_line(f"Setup complete ({monotonic() - setup_started:.1f}s).")
         _emit_next_step("Change to a project and run `docmancer web`.")
         return
 
-    unique_targets = list(dict.fromkeys(selected))
     if dry_run:
         if unique_targets:
             _emit_status_line(
@@ -2471,7 +2556,14 @@ def setup_cmd(
             # Machine-wide setup must never modify the repository that happens
             # to be the current working directory. Project integrations remain
             # an explicit `agent install ... --project` action.
-            ctx.invoke(install_cmd, agent=target, project=False, config_path=str(config_file))
+            ctx.invoke(
+                install_cmd,
+                agent=target,
+                project=False,
+                hooks=target in {"claude-code", "codex"},
+                capture_hooks=capture_hooks and target in {"claude-code", "codex"},
+                config_path=str(config_file),
+            )
             _emit_status_line(f"Finished integration for {target} ({monotonic() - target_started:.1f}s).")
     finally:
         _INSTALL_QUIET = False

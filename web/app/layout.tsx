@@ -5,6 +5,11 @@ import "./globals.css";
 export const metadata = {
   title: "Docmancer",
   description: "Your private AI agent for memory across coding agents.",
+  icons: {
+    icon: "/wizard-logo.png",
+    shortcut: "/wizard-logo.png",
+    apple: "/wizard-logo.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

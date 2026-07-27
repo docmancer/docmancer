@@ -3,6 +3,7 @@ import json
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
+from docmancer.harness.setup_plan import build_setup_confirmation
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -23,8 +24,8 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def test_setup_indexes_memory(tmp_path, monkeypatch):
-    _isolate(tmp_path, monkeypatch)
-    r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--index-memory"])
+    home = _isolate(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--index-memory", "--yes"])
     assert r.exit_code == 0, r.output
     assert "Preparing the local configuration and SQLite index" in r.output
     assert "Loading the local embedding model" in r.output
@@ -35,6 +36,13 @@ def test_setup_indexes_memory(tmp_path, monkeypatch):
     assert "Indexed 1 memory atoms" in r.output
     assert "Installing integration for codex" in r.output
     assert "Finished integration for codex" in r.output
+    assert "Install automatic recall hooks" in r.output
+    assert "Automatic session capture will be enabled" in r.output
+    assert (home / ".codex" / "hooks.json").exists()
+    assert (home / ".docmancer" / "tree" / "active-projects.md").exists()
+    config = (home / ".docmancer" / "docmancer.yaml").read_text()
+    assert "claude-code: true" in config
+    assert "codex: true" in config
     assert "Setup complete" in r.output
     q = CliRunner().invoke(cli, ["memory", "query", "where do we deploy"])
     assert q.exit_code == 0, q.output
@@ -57,10 +65,37 @@ def test_setup_dry_run_previews_only(tmp_path, monkeypatch):
 
 def test_setup_no_index_memory_skips(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
-    r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--no-index-memory"])
+    r = CliRunner().invoke(cli, ["setup", "--agent", "codex", "--no-index-memory", "--yes"])
     assert r.exit_code == 0, r.output
     assert "Indexed" not in r.output
     assert "Memory indexing skipped (--no-index-memory)" in r.output
     assert "Installing integration for codex" in r.output
     assert "Setup complete" in r.output
     assert not (tmp_path / "mem.db").exists()
+
+
+def test_setup_requires_confirmation_before_writing(tmp_path, monkeypatch):
+    home = _isolate(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["setup", "--agent", "codex"], input="n\n")
+    assert r.exit_code == 0, r.output
+    assert "Docmancer is ready to:" in r.output
+    assert "Install automatic recall hooks" in r.output
+    assert "Automatic session capture will be enabled" in r.output
+    assert "Maintain one laptop-wide canonical memory" in r.output
+    assert "Setup cancelled. No files were changed." in r.output
+    assert not (home / ".docmancer" / "docmancer.yaml").exists()
+    assert not (home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()
+    assert not (home / ".codex" / "hooks.json").exists()
+
+
+def test_setup_plan_collapses_codex_surfaces_and_enables_automatic_memory():
+    plan = build_setup_confirmation(
+        ["codex", "codex-app", "codex-desktop", "claude-code", "claude-desktop"],
+    )
+    assert plan["targets"] == ["codex", "claude-code", "claude-desktop"]
+    assert plan["recall_targets"] == ["codex", "claude-code"]
+    assert plan["manual_targets"] == ["claude-desktop"]
+    assert plan["capture_hooks"] is True
+    assert plan["automatic_reconciliation"] is True
+    assert any(step["title"] == "Automatic session capture will be enabled" for step in plan["steps"])
+    assert any(step["kind"] == "reconcile" for step in plan["steps"])

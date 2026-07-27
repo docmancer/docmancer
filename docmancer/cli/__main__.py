@@ -119,7 +119,11 @@ def web_cmd(
     try:
         from docmancer.memory import MemoryAgent
 
-        MemoryAgent().refresh_if_changed()
+        memory = MemoryAgent()
+        memory.refresh_if_changed()
+        from docmancer.memory.laptop import LaptopMemoryReconciler
+
+        LaptopMemoryReconciler(memory).reconcile()
     except Exception as exc:  # noqa: BLE001 - the workbench remains usable with its last valid index
         click.echo(
             f"Agent-source refresh failed; opening with the last valid local index. {exc}",

@@ -40,7 +40,25 @@ export async function apiJobMutation(
   body: JsonMap,
   onDelta: (delta: string) => void,
 ): Promise<JsonMap> {
+  const job = await apiStartJob(path, body);
+  return waitForJob(job, onDelta);
+}
+
+export async function apiStartJob(
+  path: string,
+  body: JsonMap,
+): Promise<JsonMap> {
   const job = await apiMutation(path, { ...body, stream: true });
+  const jobId = String(job.id ?? "");
+  if (!jobId) return job;
+  window.dispatchEvent(new CustomEvent("docmancer:job-started", { detail: job }));
+  return job;
+}
+
+export async function waitForJob(
+  job: JsonMap,
+  onDelta: (delta: string) => void = () => undefined,
+): Promise<JsonMap> {
   const jobId = String(job.id ?? "");
   if (!jobId) return job;
   return new Promise((resolve, reject) => {
@@ -62,6 +80,35 @@ export async function apiJobMutation(
     events.onerror = () => {
       events.close();
       reject(new Error("The local answer stream disconnected."));
+    };
+  });
+}
+
+/** Follow a job and surface every progress stage, not only answer deltas. */
+export async function watchJob(
+  job: JsonMap,
+  onStage: (stage: string, data: JsonMap) => void,
+): Promise<JsonMap> {
+  const jobId = String(job.id ?? "");
+  if (!jobId) return job;
+  return new Promise((resolve, reject) => {
+    const events = new EventSource(`/api/v1/jobs/${encodeURIComponent(jobId)}/events`);
+    events.addEventListener("progress", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as JsonMap;
+      onStage(String(payload.stage ?? ""), (payload.data ?? {}) as JsonMap);
+    });
+    events.addEventListener("done", (event) => {
+      events.close();
+      const payload = JSON.parse((event as MessageEvent).data) as JsonMap;
+      if (payload.state === "failed") {
+        reject(new Error(String(payload.error ?? "The job failed")));
+      } else {
+        resolve((payload.result && typeof payload.result === "object" ? payload.result : {}) as JsonMap);
+      }
+    });
+    events.onerror = () => {
+      events.close();
+      reject(new Error("The local job stream disconnected."));
     };
   });
 }

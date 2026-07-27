@@ -9,6 +9,15 @@ from pathlib import Path
 from typing import Any
 
 
+DEFAULT_CLOUD_BASE_URL = "https://api.docmancer.dev"
+
+
+def default_cloud_base_url() -> str:
+    """Hosted API base URL, overridable for staging or self-hosted deployments."""
+    configured = os.getenv("DOCMANCER_CLOUD_BASE_URL", "").strip()
+    return (configured or DEFAULT_CLOUD_BASE_URL).rstrip("/")
+
+
 def default_cloud_root() -> Path:
     configured = os.getenv("DOCMANCER_HOME")
     root = Path(configured).expanduser() if configured else Path.home() / ".docmancer"

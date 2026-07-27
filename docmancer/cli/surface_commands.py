@@ -151,7 +151,15 @@ def ask_cmd(
             if item.get("address"):
                 click.echo(f"  Source: {item['address']}")
         click.echo()
-    if not found:
+    if result.get("recall_error"):
+        # Distinguish "the index could not be read" from "the corpus has no
+        # answer". Only curated tree results, if any, reached the bundle above.
+        click.echo(
+            "Indexed evidence recall failed, so these results come from curated memory only. "
+            f"{result['recall_error']}",
+            err=True,
+        )
+    elif not found:
         click.echo("No relevant memory found.")
     if result.get("evidence_truncated"):
         click.echo(

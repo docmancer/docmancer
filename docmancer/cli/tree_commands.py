@@ -220,10 +220,35 @@ def capture_command(root: str | None, inbox_path: str | None, validate_only: boo
             tree_root = Path(root) if root else _default_tree_root()
             inbox = Path(inbox_path) if inbox_path else tree_root.parent / "inbox"
             result = capture_event(payload, CurationEngine(TreeStore(tree_root), inbox))
+            if result.get("ok") and result.get("inbox_path"):
+                try:
+                    event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "")
+                    agent_name = (
+                        "claude-code"
+                        if event in {"PostCompact", "SessionEnd"}
+                        else "codex"
+                    )
+                    from docmancer.memory.capture import capture_payload
+
+                    retained, indexed = capture_payload(payload, agent=agent_name)
+                    result["retained_atoms"] = retained
+                    result["indexed"] = indexed
+                    if retained:
+                        from docmancer.memory import MemoryAgent
+                        from docmancer.memory.laptop import LaptopMemoryReconciler
+
+                        result["canonical"] = LaptopMemoryReconciler(
+                            MemoryAgent()
+                        ).reconcile(use_provider=False)
+                    Path(str(result["inbox_path"])).unlink(missing_ok=True)
+                    result["processed"] = True
+                    result["inbox_path"] = None
+                except Exception as exc:  # noqa: BLE001 - capture and reconciliation fail open
+                    result["reconcile_error"] = str(exc)[:300]
     if as_json:
         _emit_json(result)
-    elif result.get("ok") and result.get("inbox_path"):
-        click.echo(f"Captured checkpoint to {result.get('inbox_path')}")
+    elif result.get("ok") and result.get("processed"):
+        click.echo("Captured and reconciled durable session memory.")
     else:
         click.echo(f"Capture skipped: {result.get('reason') or result.get('note') or result.get('error') or 'not eligible'}", err=True)
 

@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - Unreleased
+### Added
+
+- **Laptop-wide canonical memory.** Docmancer now reconciles source-attributed agent evidence into stable Markdown under `~/.docmancer/tree`, covering durable personal context, preferences, working principles, and active projects. A configured provider can merge and compress redacted evidence, with deterministic local generation as a safe fallback.
+- **All-encompassing setup.** `docmancer setup` now presents one explicit preflight plan, installs or updates every detected agent integration, enables supported recall and capture hooks, indexes existing evidence, and reconciles laptop memory after confirmation.
+- **Local Ask conversations.** The workbench stores project-scoped Ask conversations and cited answers in a local SQLite database. Users can reopen or delete saved conversations, start a new conversation, or choose a temporary chat that is never persisted.
+- **In-app Cloud connect.** The local web app can now connect a device to Docmancer Cloud without dropping to a terminal. Settings shows an eight-character device code, opens the hosted authorization page, follows the local job, and lands on the connected Cloud panel. Connecting is free and does not require an active subscription; a plan is only needed before encrypted revisions can be uploaded.
+- **Connected Cloud panel.** The Cloud section now renders registered devices with approve and revoke, the owner-side Team surface with members and invitations, queued upload counts, an entitlement banner when transfer is not permitted, and a disconnect control.
+- **Shared connect module.** Added `docmancer.cloud.connect`, a UI-agnostic device-code flow used by both `docmancer cloud connect` and the local HTTP API, so the terminal and the browser share one implementation.
+- **Local API routes.** Added `POST /api/v1/cloud/connect`, `/connect/cancel`, `/connect/recovery-key`, and `/disconnect`. The recovery key is readable exactly once and never enters the pollable job record.
+
+### Fixed
+
+- **`ask` can answer policy questions from your instruction files.** A recalled hit from an agent instruction or rule file (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, and the rest) now carries mandatory authority, matching how the Context builder has always classified them. Previously that authority was only reachable through curated tree entries, so a question like "what are my rules around env files?" refused with "no mandatory-authority source" even when recall had surfaced a dozen instruction files that answered it exactly. Ordinary recalled session memory stays advisory, so a stray transcript still cannot speak as policy.
+- **A failed recall query no longer reads as an empty corpus.** `ask` caught every query exception and reported "No relevant memory found.", which is indistinguishable from having nothing to say. An unreadable index (schema mismatch, corruption) now reports the underlying error and states that the results came from curated memory only. The bundle carries the reason as `recall_error`.
+- **Context distillation stays in the background.** Closing the preview no longer cancels a long-running provider-backed or local Context build. The workbench keeps navigation available, reports progress through the status surface, and reloads the resulting revision when the job completes.
+- **Readable synthesized Context.** Provider-generated topic bodies now supply the human title and summary shown in Context instead of falling back to an undistilled placeholder when a valid synthesized explanation exists.
+- **Truthful setup counts.** Detected applications, installed integrations, pending updates, automatic installation, and manual follow-up remain separate states. Codex surfaces are collapsed into one integration family, and manual Claude Desktop steps do not inflate the automatic connection count.
+
+### Changed
+
+- **`--base-url` is now optional.** `docmancer cloud connect` defaults to the hosted service and accepts a `DOCMANCER_CLOUD_BASE_URL` override, so the flag is only needed for staging or self-hosted deployments.
+- **Cloud entry points stay in the app.** The sidebar card, Home tiles, and Context workbench tiles now open the local Cloud settings panel instead of opening marketing pages in a new tab. Pricing and account links remain available inside that panel.
+- **Home is now a memory conversation.** The primary workbench surface uses a ChatGPT-style Ask layout with saved conversations on the left, a focused reading and composer column, and compact agent, integration, and Cloud actions on the right. Source provenance stays attached but collapsed until requested.
+- **Docmancer identity and responsive layout.** The packaged workbench and favicon use the project wizard mark. The visual system uses restrained pastel accents, the action rail moves below the conversation before the reading column becomes cramped, and the complete chat remains usable on mobile.
+- **Concise setup guidance.** Installed skills and managed instructions now describe the shared laptop memory, deliberate writes, automatic recall, and lifecycle reconciliation consistently across Claude Code, Codex, Cursor, Copilot, and Claude Desktop.
+
 ## [0.9.1] - 2026-07-26
 ### Added
 

@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import shutil
-import uuid
 from copy import copy
 from types import MethodType
 from pathlib import Path
@@ -12,9 +10,9 @@ from pathlib import Path
 import click
 
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS
-from docmancer.cloud.client import AuthenticationError, CloudClient, CloudError
+from docmancer.cloud.client import CloudClient
 from docmancer.cloud.config import CloudConfig
-from docmancer.cloud.crypto import b64encode, random_key
+from docmancer.cloud.crypto import b64encode
 from docmancer.cloud.entitlement import read_entitlement
 from docmancer.cloud.keystore import KeyStore
 from docmancer.cloud.outbox import CloudState
@@ -77,61 +75,21 @@ def _resume_existing_connect(
     config: CloudConfig,
     account: dict,
     keys: KeyStore,
+    root: Path,
 ) -> bool:
-    account_id = str(account.get("account_id") or "")
-    workspace_id = str(account.get("workspace_id") or "")
-    device_id = str(account.get("device_id") or "")
-    token = keys.token(account_id) if account_id else None
-    if not account_id or not workspace_id or not device_id or not token:
-        return False
-    configured_url = str(account.get("base_url") or "").rstrip("/")
-    if configured_url and configured_url != base_url.rstrip("/"):
-        raise click.ClickException(
-            f"this device is already associated with {configured_url}; disconnect it before changing servers"
-        )
+    from docmancer.cloud.connect import ConnectError, resume_existing_connect
 
-    client = CloudClient(
-        base_url, token=token.decode("utf-8"), device_id=device_id,
-        signing_private_key=keys.get(account_id, "device-signing-private"),
-    )
     try:
-        rows = list(client.devices(workspace_id).get("devices") or [])
-    except AuthenticationError:
+        outcome = resume_existing_connect(
+            base_url, config=config, account=account, keys=keys, root=root,
+        )
+    except ConnectError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if outcome is None:
         return False
-    except CloudError as exc:
-        raise click.ClickException(
-            f"could not verify the existing cloud device: {exc}"
-        ) from exc
-    finally:
-        client.close()
-
-    current = next(
-        (row for row in rows if str(row.get("device_id") or row.get("id")) == device_id),
-        None,
-    )
-    if not current:
-        raise click.ClickException(
-            "the configured cloud device is missing on the server; recover the workspace before registering another device"
-        )
-    state = str(current.get("state") or "pending")
-    if state == "revoked":
-        raise click.ClickException(
-            "the configured cloud device is revoked; recover the workspace before registering another device"
-        )
-    if state != "approved":
-        fingerprint = current.get("fingerprint") or "unknown"
-        click.echo(
-            f"Device {device_id} is already pending approval. Confirm fingerprint: {fingerprint}"
-        )
-        return True
-    if config.enabled():
-        click.echo(
-            f"Device {device_id} is already connected. Run `docmancer cloud sync` to transfer changes."
-        )
-        return True
-
-    click.echo(f"Device {device_id} is approved. Completing the existing connection.")
-    _run_sync_command()
+    click.echo(str(outcome.get("message") or ""))
+    if outcome.get("state") == "resume_sync":
+        _run_sync_command()
     return True
 
 
@@ -156,7 +114,7 @@ def status(as_json: bool) -> None:
 
 
 @cloud_group.command("connect", cls=DocmancerCommand, short_help="Connect encrypted cloud sync.")
-@click.option("--base-url", required=True, help="Docmancer Cloud API base URL.")
+@click.option("--base-url", default=None, help="Docmancer Cloud API base URL. Defaults to the hosted service.")
 @click.option("--account-id", default=None, help="Required only with a static development token.")
 @click.option("--workspace-id", default=None, help="Required only with a static development token.")
 @click.option("--device-id", default=None)
@@ -165,7 +123,7 @@ def status(as_json: bool) -> None:
 @click.option("--create-recovery", is_flag=True, help="Create and display a recovery key after connecting.")
 @click.option("--recovery-key", default=None, hide_input=True, help="Verify an existing recovery key after connecting.")
 def login(
-    base_url: str,
+    base_url: str | None,
     account_id: str | None,
     workspace_id: str | None,
     device_id: str | None,
@@ -174,212 +132,73 @@ def login(
     create_recovery: bool,
     recovery_key: str | None,
 ) -> None:
-    import time
-    from docmancer.cloud.crypto import b64decode, box_keypair, signing_keypair, unwrap_key, wrap_key
+    from docmancer.cloud.config import default_cloud_base_url
+    from docmancer.cloud.connect import (
+        ConnectError,
+        ConnectUsageError,
+        await_authorization,
+        connect_with_token,
+        finish_connect,
+        start_connect,
+    )
 
     if create_recovery and recovery_key:
         raise click.UsageError("choose only one of --create-recovery or --recovery-key")
+    resolved_base = (base_url or default_cloud_base_url()).rstrip("/")
     root, config, existing_account, keys = _context()
-    existing_account_id = str(existing_account.get("account_id") or "")
-    existing_device_id = str(existing_account.get("device_id") or "")
-    if _resume_existing_connect(
-        base_url=base_url,
-        config=config,
-        account=existing_account,
-        keys=keys,
-    ):
-        return
 
-    existing_identity = None
-    if existing_account_id and existing_device_id:
-        existing_identity = {
-            "signing_private": keys.get(existing_account_id, "device-signing-private"),
-            "signing_public": keys.get(existing_account_id, "device-signing-public"),
-            "box_private": keys.get(existing_account_id, "device-box-private"),
-            "box_public": keys.get(existing_account_id, "device-box-public"),
-        }
-        if not all(existing_identity.values()):
-            raise click.ClickException(
-                "the previous cloud device identity is incomplete; restore it from recovery before registering another device"
-            )
-    if device_id and existing_device_id and device_id != existing_device_id:
-        raise click.UsageError(
-            "--device-id cannot replace an existing local cloud device"
-        )
     try:
-        device_id = str(uuid.UUID(device_id or existing_device_id or str(uuid.uuid4())))
-    except ValueError as exc:
-        raise click.UsageError("--device-id must be a canonical UUID") from exc
-    pending_approval = False
-    key_version = 1
-    if token is None:
-        if existing_identity:
-            signing_private = existing_identity["signing_private"]
-            signing_public = existing_identity["signing_public"]
-            box_private = existing_identity["box_private"]
-            box_public = existing_identity["box_public"]
+        if token is not None:
+            outcome = connect_with_token(
+                resolved_base,
+                account_id=account_id or "",
+                workspace_id=workspace_id or "",
+                token=token,
+                device_id=device_id,
+                root=root,
+                project_path=Path.cwd(),
+                keys=keys,
+            )
         else:
-            signing_private, signing_public = signing_keypair()
-            box_private, box_public = box_keypair()
-        client = CloudClient(base_url, token="", device_id=device_id)
-        try:
-            started = client.start_device_login({
-                "device_id": device_id,
-                "signing_public_key": b64encode(signing_public),
-                "box_public_key": b64encode(box_public),
-            })
-            click.echo(f"Open {started.get('verification_uri')} and enter code {started.get('user_code')}.")
-            deadline = time.monotonic() + max(1, device_code_timeout)
-            interval = max(1, int(started.get("interval") or 3))
-            while True:
-                result = client.poll_device_login(str(started["device_code"]))
-                if result.get("access_token"):
-                    break
-                if result.get("code") not in {"AUTHORIZATION_PENDING", "SLOW_DOWN"}:
-                    raise click.ClickException(str(result.get("message") or "device login failed"))
-                if time.monotonic() >= deadline:
-                    raise click.ClickException("device login timed out")
-                time.sleep(interval + (2 if result.get("code") == "SLOW_DOWN" else 0))
-        finally:
-            client.close()
-        try:
-            account_id = str(uuid.UUID(str(result["account_id"])))
-        except ValueError as exc:
-            raise click.ClickException("cloud returned an invalid account UUID") from exc
-        if existing_identity and account_id != existing_account_id:
-            device_id = str(uuid.uuid4())
-            signing_private, signing_public = signing_keypair()
-            box_private, box_public = box_keypair()
-        token = str(result["access_token"])
-        for kind, value in {
-            "device-signing-private": signing_private, "device-signing-public": signing_public,
-            "device-box-private": box_private, "device-box-public": box_public,
-        }.items():
-            keys.set(account_id, kind, value)
-        device_keys = {"signing_public": signing_public, "box_public": box_public}
-        authenticated = CloudClient(
-            base_url, token=token, device_id=device_id,
-            signing_private_key=signing_private,
-        )
-        try:
-            rows = list(authenticated.workspaces().get("workspaces") or [])
-            if workspace_id:
-                selected = next(
-                    (row for row in rows if str(row.get("workspace_id")) == workspace_id),
-                    None,
-                )
-                if selected is None:
-                    raise click.ClickException("the requested workspace is not available to this account")
-            elif not rows:
-                selected = None
-            elif len(rows) == 1:
-                selected = rows[0]
-            elif click.get_text_stream("stdin").isatty():
-                choices = {str(index): row for index, row in enumerate(rows, start=1)}
-                for index, row in choices.items():
-                    click.echo(f"{index}: {row.get('name') or row.get('workspace_id')}")
-                selected = choices[click.prompt("Select workspace", type=click.Choice(list(choices)))]
-            else:
-                raise click.ClickException("multiple workspaces are available; pass --workspace-id")
+            if _resume_existing_connect(
+                base_url=resolved_base, config=config, account=existing_account, keys=keys, root=root,
+            ):
+                return
+            session = start_connect(
+                resolved_base, root=root, project_path=Path.cwd(), device_id=device_id, keys=keys,
+            )
+            click.echo(f"Open {session.verification_uri} and enter code {session.user_code}.")
+            result = await_authorization(session, timeout=device_code_timeout)
+            outcome = finish_connect(
+                session, result, workspace_id=workspace_id, choose_workspace=_prompt_for_workspace,
+            )
+    except ConnectUsageError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except ConnectError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-            fingerprint = "docmancer-" + hashlib.sha256(signing_public).hexdigest()[:32]
-            if selected is None:
-                workspace_key = random_key()
-                created = authenticated.create_workspace({
-                    "kind": "personal",
-                    "device": {
-                        "sign_pubkey": b64encode(signing_public),
-                        "box_pubkey": b64encode(box_public),
-                        "fingerprint": fingerprint,
-                    },
-                    "wrapped_key": b64encode(wrap_key(workspace_key, box_public)),
-                })
-                try:
-                    workspace_id = str(uuid.UUID(str(created["workspace_id"])))
-                    device_id = str(uuid.UUID(str(created["device_id"])))
-                except ValueError as exc:
-                    raise click.ClickException("cloud returned invalid workspace bootstrap UUIDs") from exc
-                key_version = int(created.get("current_key_version") or 1)
-            else:
-                try:
-                    workspace_id = str(uuid.UUID(str(selected["workspace_id"])))
-                except ValueError as exc:
-                    raise click.ClickException("cloud returned an invalid workspace UUID") from exc
-                key_version = int(selected.get("current_key_version") or 1)
-                devices = list(authenticated.devices(workspace_id).get("devices") or [])
-                current = next(
-                    (row for row in devices if str(row.get("device_id") or row.get("id")) == device_id),
-                    None,
-                )
-                if current:
-                    server_signing = current.get("signing_public_key") or current.get("sign_public_key")
-                    server_box = current.get("box_public_key") or current.get("box_pubkey")
-                    if server_signing != b64encode(signing_public) or server_box != b64encode(box_public):
-                        raise click.ClickException(
-                            "the server device ID belongs to different local keys; refusing to replace either identity"
-                        )
-                    fingerprint = str(current.get("fingerprint") or fingerprint)
-                    state = str(current.get("state") or "pending")
-                    if state == "revoked":
-                        raise click.ClickException(
-                            "the existing local device is revoked; recover the workspace before registering a replacement"
-                        )
-                    pending_approval = state != "approved"
-                    workspace_key = keys.workspace_key(account_id, workspace_id, key_version) or b""
-                    if not pending_approval and not workspace_key:
-                        wrapper = authenticated.key_wrapper(workspace_id, device_id, key_version)
-                        workspace_key = unwrap_key(
-                            b64decode(str(wrapper["wrapped_key"])),
-                            box_private,
-                        )
-                else:
-                    registered = authenticated.register_device(workspace_id, {
-                        "sign_pubkey": b64encode(signing_public),
-                        "box_pubkey": b64encode(box_public),
-                        "fingerprint": fingerprint,
-                    })
-                    try:
-                        device_id = str(uuid.UUID(str(registered["device_id"])))
-                    except ValueError as exc:
-                        raise click.ClickException("cloud returned an invalid device UUID") from exc
-                    workspace_key = b""
-                    pending_approval = True
-        finally:
-            authenticated.close()
-    else:
-        if not account_id or not workspace_id:
-            raise click.UsageError("--account-id and --workspace-id are required with --token")
-        try:
-            account_id = str(uuid.UUID(account_id))
-            workspace_id = str(uuid.UUID(workspace_id))
-        except ValueError as exc:
-            raise click.UsageError("--account-id and --workspace-id must be canonical UUIDs") from exc
-        device_keys = keys.ensure_device_keys(account_id)
-        existing_workspace = config.workspace(workspace_id)
-        key_version = int((existing_workspace[1] if existing_workspace else {}).get("key_version") or 1)
-        workspace_key = keys.workspace_key(account_id, workspace_id, key_version) or keys.workspace_key(account_id, workspace_id) or random_key()
-    assert account_id is not None and workspace_id is not None and token is not None
-    keys.set_token(account_id, token)
-    if workspace_key:
-        keys.set_workspace_key(account_id, workspace_id, workspace_key, key_version=key_version)
-    config.save_account(enabled=not pending_approval, account_id=account_id, workspace_id=workspace_id, device_id=device_id, base_url=base_url)
-    config.set_workspace(
-        workspace_id, key_version=key_version,
-        device_public_keys={device_id: b64encode(device_keys["signing_public"])},
-        device_box_public_keys={device_id: b64encode(device_keys["box_public"])},
-    )
-    config.ensure_project(Path.cwd())
-    if pending_approval:
+    if outcome["state"] == "pending_approval":
         click.echo(
-            f"Registered pending device {device_id}. Approve this fingerprint from an existing device: {fingerprint}"
+            f"Registered pending device {outcome['device_id']}. "
+            f"Approve this fingerprint from an existing device: {outcome['fingerprint']}"
         )
     else:
         _enqueue_current_project_or_warn(root, keys)
-        click.echo(f"Connected device {device_id}. Encrypted sync is enabled.")
+        click.echo(f"Connected device {outcome['device_id']}. Encrypted sync is enabled.")
     if create_recovery:
         _create_recovery()
     elif recovery_key:
         _verify_recovery(recovery_key)
+
+
+def _prompt_for_workspace(rows: list[dict]) -> dict:
+    if not click.get_text_stream("stdin").isatty():
+        raise click.UsageError("multiple workspaces are available; pass --workspace-id")
+    choices = {str(index): row for index, row in enumerate(rows, start=1)}
+    for index, row in choices.items():
+        click.echo(f"{index}: {row.get('name') or row.get('workspace_id')}")
+    return choices[click.prompt("Select workspace", type=click.Choice(list(choices)))]
+
 
 
 @cloud_group.command("disconnect", cls=DocmancerCommand, short_help="Disconnect cloud without deleting local memory.")
@@ -459,18 +278,9 @@ def _run_sync_command() -> None:
 
 
 def _enqueue_current_project(root: Path, keys: KeyStore) -> None:
-    from docmancer.cloud.lifecycle import enqueue_revisions_if_enabled
-    from docmancer.cloud.migrate import migrate_records
-    from docmancer.memory.records import MemoryRecordStore
+    from docmancer.cloud.connect import enqueue_project
 
-    migrate_records(root=root, project_paths=[Path.cwd()])
-    store = MemoryRecordStore(root)
-    revisions = (
-        revision
-        for record in store.records(project_paths=[Path.cwd()])
-        for revision in store.revisions(record.record_id)
-    )
-    enqueue_revisions_if_enabled(revisions, root=root, keystore=keys)
+    enqueue_project(root, keys, Path.cwd())
 
 
 def _enqueue_current_project_or_warn(root: Path, keys: KeyStore) -> bool:

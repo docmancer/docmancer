@@ -8,6 +8,7 @@ from typing import Callable
 from docmancer.memory.tree.compiler import (
     ContextRequest,
     EvidenceReference,
+    authority_for_kind,
     compile_context,
 )
 from docmancer.memory.tree.project import resolve_project_root, tree_paths
@@ -49,6 +50,18 @@ def ask(
 
     project = resolve_project_root(project_path)
     resolved_tree = Path(tree_root).expanduser().resolve() if tree_root is not None else tree_paths(project)[0]
+    agent = MemoryAgent()
+    refresh_error = None
+    refreshed = False
+    reconcile = {}
+    if refresh:
+        try:
+            refreshed = agent.refresh_if_changed()
+            from docmancer.memory.laptop import LaptopMemoryReconciler
+
+            reconcile = LaptopMemoryReconciler(agent).reconcile()
+        except Exception as exc:  # noqa: BLE001 - recall uses the last valid index and canonical tree
+            refresh_error = str(exc)
 
     # Reserve a share of the budget for indexed evidence up front, then compile
     # curated memory against only the remainder. This guarantees evidence its
@@ -66,16 +79,40 @@ def ask(
         project_path=str(project),
         token_budget=curated_budget,
     )
-    bundle = compile_context(TreeStore(resolved_tree).index, request)
+    from docmancer.memory.laptop import laptop_memory_root
 
-    agent = MemoryAgent()
-    refresh_error = None
-    refreshed = False
-    if refresh:
-        try:
-            refreshed = agent.refresh_if_changed()
-        except Exception as exc:  # noqa: BLE001 - recall uses the last valid index
-            refresh_error = str(exc)
+    laptop_tree = laptop_memory_root() / "tree"
+    bundle = compile_context(TreeStore(laptop_tree).index, request)
+    if resolved_tree.resolve() != laptop_tree.resolve():
+        project_budget = max(0, curated_budget - bundle.token_estimate)
+        project_bundle = compile_context(
+            TreeStore(resolved_tree).index,
+            ContextRequest(
+                task=task,
+                project_path=str(project),
+                token_budget=project_budget,
+            ),
+        )
+        existing = {item.address for item in [*bundle.mandatory_policies, *bundle.curated_memory]}
+        bundle.mandatory_policies.extend(
+            item for item in project_bundle.mandatory_policies if item.address not in existing
+        )
+        existing.update(item.address for item in bundle.mandatory_policies)
+        bundle.curated_memory.extend(
+            item for item in project_bundle.curated_memory if item.address not in existing
+        )
+        bundle.conflict_warnings.extend(project_bundle.conflict_warnings)
+        bundle.token_estimate += project_bundle.token_estimate
+        bundle.index_revision = (
+            bundle.index_revision[:10] + project_bundle.index_revision[:10]
+        )
+        bundle.retrieval_trace.channel += "+project-tree"
+        bundle.retrieval_trace.candidates_considered += (
+            project_bundle.retrieval_trace.candidates_considered
+        )
+        bundle.retrieval_trace.excluded_over_budget += (
+            project_bundle.retrieval_trace.excluded_over_budget
+        )
 
     curated_tokens = bundle.token_estimate
     remaining = max(0, token_budget - curated_tokens)
@@ -88,6 +125,7 @@ def ask(
     query_project = project if scoped else None
 
     chunks = []
+    recall_error = None
     if remaining:
         try:
             chunks = agent.query(
@@ -97,8 +135,13 @@ def ask(
                 scope=scope,
                 include_history=include_history,
             )
-        except Exception:  # noqa: BLE001 - an absent recall index leaves tree recall usable
+        except Exception as exc:  # noqa: BLE001 - an absent recall index leaves tree recall usable
+            # Tree recall still works without the index, so this is not fatal.
+            # But it must not be silent: a failed query and an empty corpus both
+            # yield zero evidence, and reporting only "no memory found" hides a
+            # schema mismatch or a corrupt index behind a plausible answer.
             chunks = []
+            recall_error = str(exc) or exc.__class__.__name__
 
     evidence: list[EvidenceReference] = []
     evidence_debug: list[dict] = []
@@ -127,6 +170,7 @@ def ask(
                 harness=str(metadata.get("harness") or ""),
                 score=float(chunk.score or 0.0),
                 rank=len(evidence) + 1,
+                authority=authority_for_kind(metadata.get("kind")),
             )
         )
         evidence_debug.append(
@@ -152,6 +196,7 @@ def ask(
         "curated_memory": [asdict(item) for item in bundle.curated_memory],
         "relevant_evidence": [asdict(item) for item in evidence],
         "conflict_warnings": [asdict(item) for item in bundle.conflict_warnings],
+        "recall_error": recall_error,
         "evidence_truncated": truncated,
         "within_budget": within_budget,
         "mandatory_overflow": (not within_budget),
@@ -163,6 +208,8 @@ def ask(
         "refresh": {
             "refreshed": refreshed,
             "error": refresh_error,
+            "canonical_changed": bool(reconcile.get("changed")),
+            "canonical_revision_id": reconcile.get("revision_id"),
         },
         "debug_evidence": evidence_debug,
         "answer": None,

@@ -2,7 +2,7 @@
 
 # docmancer
 
-Docmancer maintains local agent memory and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
+Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
 
 Executable: `{{DOCS_KIT_CMD}}`
 

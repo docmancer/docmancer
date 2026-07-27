@@ -70,10 +70,11 @@ def create_app(
     project_path: str | Path | None = None,
     static_dir: str | Path | None = None,
     runtime: LocalRuntime | None = None,
+    ask_history_path: str | Path | None = None,
 ) -> Starlette:
     security = LoopbackSecurity(port=port)
     local_runtime = runtime or LocalRuntime(config_path=config_path, project_path=project_path)
-    api = LocalApi(local_runtime)
+    api = LocalApi(local_runtime, ask_history_path=ask_history_path)
     asset_root = Path(static_dir) if static_dir else Path(__file__).with_name("static")
     manifest_path = asset_root / "asset-manifest.json"
     if manifest_path.is_file():
@@ -173,6 +174,12 @@ def create_app(
         Route("/api/v1/harvest", api.harvest, methods=["POST"]),
         Route("/api/v1/curate", api.curate, methods=["POST"]),
         Route("/api/v1/ask", api.ask, methods=["POST"]),
+        Route("/api/v1/ask/conversations", api.ask_conversations, methods=["GET", "POST"]),
+        Route(
+            "/api/v1/ask/conversations/{conversation_id:str}",
+            api.ask_conversation,
+            methods=["GET", "DELETE"],
+        ),
         Route("/api/v1/common", api.common, methods=["GET"]),
         Route("/api/v1/delivery", api.delivery, methods=["GET"]),
         Route("/api/v1/timeline", api.timeline, methods=["GET"]),
@@ -215,6 +222,10 @@ def create_app(
         Route("/api/v1/jobs/{job_id:str}", api.job, methods=["GET"]),
         Route("/api/v1/jobs/{job_id:str}/events", api.job_events, methods=["GET"]),
         Route("/api/v1/cloud", api.cloud_status, methods=["GET"]),
+        Route("/api/v1/cloud/connect", api.cloud_connect, methods=["POST"]),
+        Route("/api/v1/cloud/connect/cancel", api.cloud_connect_cancel, methods=["POST"]),
+        Route("/api/v1/cloud/connect/recovery-key", api.cloud_recovery_key_once, methods=["POST"]),
+        Route("/api/v1/cloud/disconnect", api.cloud_disconnect, methods=["POST"]),
         Route("/api/v1/cloud/sync", api.cloud_sync, methods=["POST"]),
         Route("/api/v1/cloud/devices", api.cloud_devices, methods=["GET"]),
         Route("/api/v1/cloud/devices/{device_id:str}/approve", api.cloud_device_approve, methods=["POST"]),
