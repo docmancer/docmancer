@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.2] - Unreleased
+## [0.9.2] - 2026-07-27
 ### Added
 
 - **Laptop-wide canonical memory.** Docmancer now reconciles source-attributed agent evidence into stable Markdown under `~/.docmancer/tree`, covering durable personal context, preferences, working principles, and active projects. A configured provider can merge and compress redacted evidence, with deterministic local generation as a safe fallback.
