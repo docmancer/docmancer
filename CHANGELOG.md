@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.3] - Unreleased
+## [0.9.3] - 2026-07-28
 ### Added
 
 - **Canonical memory is visible and editable.** `docmancer memory canonical` reports the current revision, provider, evidence counts, and per-section sizes without calling a provider; `--refresh` and `--deterministic` run the reconciler deliberately, exposing two behaviours that were previously reachable only as an implicit side effect of `setup`, `web`, `ask`, `sync`, and session capture. `docmancer memory canonical show <section>` prints one section, and the home page of the local app gains a canonical memory card and a full-screen editor.
