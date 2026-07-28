@@ -22,6 +22,21 @@ Docmancer combines an automatically reconciled laptop-wide canonical memory, cur
 6. Use `docmancer common`, `delivery`, or `timeline` for cross-agent recurrence, delivery proof, or canonical decision history.
 7. Use `docmancer docs ...` separately for library and vendor documentation.
 
+## Canonical memory
+
+`docmancer memory canonical` shows the laptop-wide memory shared by every agent on this machine: `about`, `preferences`, `working-principles`, and `active-projects`. Read one section with `docmancer memory canonical show <section>`, or `docmancer read --global <section>.md` for the raw file. Note that `--global` is required, because `docmancer read` otherwise resolves against the current project's tree.
+
+Each section has two zones. The generated zone is rebuilt automatically whenever the evidence changes, so anything written there is destroyed on the next sync. The pinned zone is preserved exactly.
+
+When the user states a durable correction or standing preference that belongs to the whole machine rather than one project, pin it:
+
+```bash
+docmancer memory canonical pin preferences "Never use em dashes in public prose."
+docmancer memory canonical unpin preferences "em dashes"
+```
+
+Never use `docmancer edit` to change a canonical section's generated zone. That edit is refused, and it would be discarded on the next sync even if it were not.
+
 ## Commands
 
 ```bash
@@ -31,6 +46,10 @@ docmancer ask "why was this chosen?" --answer --mode thorough
 docmancer common
 docmancer delivery
 docmancer timeline
+docmancer memory canonical
+docmancer memory canonical show preferences
+docmancer memory canonical pin preferences "Never use em dashes in public prose."
+docmancer read --global about.md
 docmancer context status
 docmancer context projection --agent codex
 docmancer brief --scope project --dry-run

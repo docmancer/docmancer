@@ -274,6 +274,43 @@ class FakeRuntime:
     async def resolve_memory_conflict(self, identifier: str, resolution: str, *, winner: str | None = None) -> dict:
         return {"relation_id": identifier, "resolution": resolution, "winner": winner}
 
+    async def canonical_status(self) -> dict:
+        return {
+            "available": True,
+            "root": "/home/.docmancer/tree",
+            "revision_id": "laptop_abc",
+            "provider": "deterministic",
+            "selected": 12,
+            "withheld": 3,
+            "pinned_total": 1,
+            "sections": [
+                {"section": "about", "present": True, "pinned_lines": 1, "generated_chars": 40},
+                {"section": "preferences", "present": True, "pinned_lines": 0, "generated_chars": 90},
+            ],
+        }
+
+    async def canonical_section(self, section: str) -> dict:
+        if section == "missing":
+            raise ValueError("unknown canonical section 'missing'")
+        return {
+            "section": section,
+            "content_hash": "hash-1",
+            "pinned": "- a pinned note",
+            "generated": "## Constraint\n- a generated line",
+        }
+
+    async def canonical_set_pinned(self, section: str, pinned: str, expect: str | None) -> dict:
+        if expect == "stale":
+            raise ValueError("canonical section 'about' changed since it was read")
+        self.pinned_writes = getattr(self, "pinned_writes", [])
+        self.pinned_writes.append((section, pinned, expect))
+        return {"section": section, "pinned": pinned, "pinned_lines": 1, "content_hash": "hash-2"}
+
+    async def canonical_refresh(self, *, deterministic: bool = False) -> dict:
+        self.refreshes = getattr(self, "refreshes", [])
+        self.refreshes.append(deterministic)
+        return {"changed": True, "provider": "deterministic" if deterministic else "openrouter"}
+
 
 def app_client(tmp_path: Path) -> tuple[TestClient, object, FakeRuntime]:
     static = tmp_path / "static"
@@ -736,3 +773,118 @@ def test_core_outcome_routes_expose_common_delivery_and_timeline(tmp_path: Path)
         assert delivery.json()["items"][0]["bundle_hash"] == "abc123"
         assert timeline.json()["items"][0]["file_id"] == "memory-1"
         assert timeline.json()["items"][0]["operation"] == "edit"
+
+
+def test_failed_background_job_is_logged_with_a_traceback(caplog):
+    """The job registry is in-memory only, so an unlogged failure leaves no
+    record once the server exits. A Context build can fail 27 minutes and
+    hundreds of provider calls in, which is exactly when the traceback matters.
+    """
+    import asyncio
+    import logging
+
+    from docmancer.web.api import JobRegistry
+
+    async def scenario():
+        registry = JobRegistry()
+
+        async def operation(_progress):
+            raise RuntimeError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac")
+
+        job = registry.start("context.refresh", operation)
+        for _ in range(200):
+            if job["state"] in {"completed", "failed"}:
+                break
+            await asyncio.sleep(0.01)
+        return job
+
+    with caplog.at_level(logging.ERROR, logger="docmancer.web.api"):
+        job = asyncio.run(scenario())
+
+    assert job["state"] == "failed"
+    assert "SSLV3_ALERT_BAD_RECORD_MAC" in job["error"]
+    record = next(r for r in caplog.records if r.name == "docmancer.web.api")
+    assert "context.refresh" in record.getMessage()
+    assert record.exc_info is not None, "the traceback must be logged, not just the message"
+
+
+def test_canonical_status_and_section_are_served(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        authenticate(client, app)
+
+        status = client.get("/api/v1/canonical")
+        assert status.status_code == 200
+        assert status.json()["pinned_total"] == 1
+
+        section = client.get("/api/v1/canonical/about")
+        assert section.status_code == 200
+        assert section.json()["pinned"] == "- a pinned note"
+
+        assert client.get("/api/v1/canonical/missing").status_code == 404
+
+
+def test_canonical_pin_writes_and_reports_a_stale_hash_as_conflict(tmp_path: Path) -> None:
+    """A reconcile can land between read and save. That must surface as a 409 the
+    client can recover from, never as a silent overwrite."""
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+
+        ok = client.post(
+            "/api/v1/canonical/about/pin",
+            json={"pinned": "- new note", "expected_hash": "hash-1"},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        )
+        assert ok.status_code == 200
+        assert runtime.pinned_writes == [("about", "- new note", "hash-1")]
+
+        conflict = client.post(
+            "/api/v1/canonical/about/pin",
+            json={"pinned": "- other", "expected_hash": "stale"},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        )
+        assert conflict.status_code == 409
+
+
+def test_canonical_pin_accepts_clearing_every_note(tmp_path: Path) -> None:
+    """Empty is a legitimate value: it is how a user removes their last note."""
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        response = client.post(
+            "/api/v1/canonical/about/pin",
+            json={"pinned": "", "expected_hash": "hash-1"},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        )
+        assert response.status_code == 200
+        assert runtime.pinned_writes[-1][1] == ""
+
+
+def test_canonical_refresh_passes_the_deterministic_flag(tmp_path: Path) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        client.post(
+            "/api/v1/canonical/refresh",
+            json={"deterministic": True},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        )
+        client.post(
+            "/api/v1/canonical/refresh",
+            json={},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        )
+        assert runtime.refreshes == [True, False]
+
+
+def test_canonical_refresh_route_is_not_shadowed_by_the_section_route(tmp_path: Path) -> None:
+    """/canonical/refresh must not resolve as the section named "refresh"."""
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        assert client.post(
+            "/api/v1/canonical/refresh",
+            json={},
+            headers={"origin": "http://127.0.0.1:48123", "x-docmancer-csrf": csrf},
+        ).status_code == 200

@@ -208,6 +208,54 @@ def build_server(project_path: str | Path | None = None):
 
     @server.tool(
         description=(
+            "READ-ONLY: read the machine-wide canonical memory, which is what docmancer has "
+            "reconciled about this user across every agent and project (about, preferences, "
+            "working-principles, active-projects). Omit section for the status of all sections; "
+            "pass section for that section split into its pinned and generated zones. "
+            "Call this to find out what is already known about the user before asking them."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def canonical_memory(section: str | None = None) -> dict:
+        return tree_tools.canonical_memory(section=section)
+
+    @server.tool(
+        description=(
+            "MUTATING: pin one durable line into a canonical memory section (about, preferences, "
+            "working-principles, active-projects). The pinned zone is the ONLY part of a canonical "
+            "section that survives automatic reconciliation, so use this (not edit_memory) for any "
+            "correction, standing preference, or fact the reconciler got wrong or left out. "
+            "Idempotent: pinning the same line twice changes nothing."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+    def pin_memory(section: str | None = None, text: str | None = None) -> dict:
+        section, error = _pick_argument("section", section, None)
+        if error:
+            return error
+        text, error = _pick_argument("text", text, None)
+        if error:
+            return error
+        return tree_tools.pin_memory(section, text)
+
+    @server.tool(
+        description=(
+            "MUTATING: remove pinned lines from a canonical memory section by case-insensitive "
+            "substring match. Fails without changing anything when nothing matches."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False),
+    )
+    def unpin_memory(section: str | None = None, text: str | None = None) -> dict:
+        section, error = _pick_argument("section", section, None)
+        if error:
+            return error
+        text, error = _pick_argument("text", text, None)
+        if error:
+            return error
+        return tree_tools.unpin_memory(section, text)
+
+    @server.tool(
+        description=(
             "MUTATING, DESTRUCTIVE at the old path: move or rename one tree-memory file. Its stable "
             "address survives the move, but the old path stops resolving. Requires the file's current "
             "content_hash in expected_hash. Aliases: target for address, new_path for "

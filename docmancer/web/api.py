@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import hashlib
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -117,6 +118,9 @@ async def request_json(request: Request) -> dict[str, Any]:
     return value
 
 
+logger = logging.getLogger(__name__)
+
+
 class JobRegistry:
     def __init__(self) -> None:
         self.jobs: dict[str, dict[str, Any]] = {}
@@ -152,6 +156,15 @@ class JobRegistry:
             except Exception as exc:  # Converted to a bounded local error for polling.
                 job["state"] = "failed"
                 job["error"] = str(exc)
+                # This registry is in-memory only, so without a log line the
+                # sole record of a failed background job dies with the process.
+                # These jobs run unattended for many minutes (a Context build
+                # can make hundreds of provider calls), and a transport-level
+                # failure late in that run would otherwise leave nothing to
+                # diagnose from.
+                logger.exception(
+                    "background job %s (%s) failed: %s", job_id, kind, exc
+                )
             finally:
                 job["finished_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -465,6 +478,42 @@ class LocalApi:
                 if query in json.dumps(row, ensure_ascii=False, default=str).casefold()
             ]
         return JSONResponse(jsonable({**paginate(rows, request), "query": query}))
+
+    async def canonical(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.canonical_status()))
+
+    async def canonical_section(self, request: Request) -> JSONResponse:
+        section = request.path_params["section"]
+        try:
+            return JSONResponse(jsonable(await self.runtime.canonical_section(section)))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def canonical_pin(self, request: Request) -> JSONResponse:
+        """Replace one section's pinned zone.
+
+        ``expected_hash`` is required so a concurrent reconcile cannot be
+        silently overwritten; the client re-reads and reapplies on 409.
+        """
+        body = await request_json(request)
+        section = request.path_params["section"]
+        try:
+            result = await self.runtime.canonical_set_pinned(
+                section,
+                required_text(body, "pinned", allow_empty=True),
+                str(body.get("expected_hash") or "") or None,
+            )
+        except ValueError as exc:
+            status = 409 if "changed since it was read" in str(exc) else 400
+            return JSONResponse({"error": str(exc)}, status_code=status)
+        return JSONResponse(jsonable(result))
+
+    async def canonical_refresh(self, request: Request) -> JSONResponse:
+        body = await request_json(request)
+        result = await self.runtime.canonical_refresh(
+            deterministic=bool(body.get("deterministic")),
+        )
+        return JSONResponse(jsonable(result))
 
     async def context(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.context_artifact()))

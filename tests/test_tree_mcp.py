@@ -126,7 +126,11 @@ def test_ask_memory_returns_empty_bundle_when_no_relevant_memory(tmp_path, monke
     from docmancer.mcp.server import build_server
 
     server = build_server()
-    result = asyncio.run(server.call_tool("ask_memory", {"task": "anything at all"}))
+    # The canonical tree is never empty now: the reconciler always writes the
+    # self-description entry that explains what this store is called. So the
+    # task has to be genuinely unrelated to anything, rather than merely vague,
+    # for the bundle to come back empty.
+    result = asyncio.run(server.call_tool("ask_memory", {"task": "zebra quantum flux capacitor"}))
     payload = _tool_result_payload(result)
     assert payload["mandatory_policies"] == []
     assert payload["curated_memory"] == []
@@ -280,7 +284,8 @@ def test_build_server_keeps_compact_tools_with_provider_key(monkeypatch):
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert "docmancer_memory_consolidate_draft" not in names
-    assert len(names) == 17
+    # 17 compact tools plus canonical_memory, pin_memory, and unpin_memory.
+    assert len(names) == 20
 
 
 def _tool_result_payload(result):
@@ -302,3 +307,105 @@ def _tool_result_payload(result):
         content = result
     assert len(content) == 1
     return json.loads(content[0].text)
+
+
+def test_canonical_and_pin_tools_are_registered(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    from docmancer.mcp.server import build_server
+
+    names = {t.name for t in asyncio.run(build_server().list_tools())}
+    assert {"canonical_memory", "pin_memory", "unpin_memory"} <= names
+
+
+def test_edit_memory_refuses_to_rewrite_a_generated_zone(tmp_path, monkeypatch):
+    """An agent that edits the generated zone would have its work destroyed on
+    the next reconcile, so the tool must refuse and name the pin call instead."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    from docmancer.memory.tree.zones import render_zones
+    from docmancer.mcp.server import build_server
+
+    server = build_server()
+    body = render_zones(
+        pinned="- a pinned note",
+        generated="## Constraint\n- a generated line",
+        revision="abc123",
+        section="preferences",
+    )
+    write_payload = _tool_result_payload(
+        asyncio.run(server.call_tool("write_memory", {"relative_path": "preferences.md", "text": body}))
+    )
+    address = write_payload["address"]
+
+    tampered = body.replace("a generated line", "an agent-authored line")
+    payload = _tool_result_payload(
+        asyncio.run(
+            server.call_tool(
+                "edit_memory",
+                {"address": address, "text": tampered, "expected_hash": write_payload["content_hash"]},
+            )
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"] == "generated_zone_readonly"
+    assert "pin_memory" in payload["recovery"]
+
+    # The refusal must not have written anything.
+    after = _tool_result_payload(asyncio.run(server.call_tool("read_memory", {"address": address})))
+    assert "an agent-authored line" not in after["body"]
+
+
+def test_edit_memory_still_allows_a_pinned_zone_edit(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    from docmancer.memory.tree.zones import render_zones, replace_pinned
+    from docmancer.mcp.server import build_server
+
+    server = build_server()
+    body = render_zones(pinned="- old", generated="- generated", revision="r1", section="preferences")
+    write_payload = _tool_result_payload(
+        asyncio.run(server.call_tool("write_memory", {"relative_path": "preferences.md", "text": body}))
+    )
+
+    payload = _tool_result_payload(
+        asyncio.run(
+            server.call_tool(
+                "edit_memory",
+                {
+                    "address": write_payload["address"],
+                    "text": replace_pinned(body, "- new note", section="preferences"),
+                    "expected_hash": write_payload["content_hash"],
+                },
+            )
+        )
+    )
+
+    assert payload.get("edited") is True
+    assert "- new note" in payload["body"]
+
+
+def test_unmanaged_files_are_not_guarded(tmp_path, monkeypatch):
+    """The guard keys off markers in the body, so ordinary curated memory keeps
+    its plain whole-body edit path."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    from docmancer.mcp.server import build_server
+
+    server = build_server()
+    write_payload = _tool_result_payload(
+        asyncio.run(server.call_tool("write_memory", {"relative_path": "notes/plain.md", "text": "Original."}))
+    )
+    payload = _tool_result_payload(
+        asyncio.run(
+            server.call_tool(
+                "edit_memory",
+                {
+                    "address": write_payload["address"],
+                    "text": "Rewritten entirely.",
+                    "expected_hash": write_payload["content_hash"],
+                },
+            )
+        )
+    )
+    assert payload.get("edited") is True

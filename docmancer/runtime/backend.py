@@ -121,6 +121,29 @@ class LocalRuntime:
             "sources": memory_count + instruction_count,
         }
 
+    def _reconciler(self):
+        from docmancer.memory.laptop import LaptopMemoryReconciler
+
+        return LaptopMemoryReconciler(self._require_memory())
+
+    async def canonical_status(self) -> dict:
+        """Status of every canonical section. Never calls a provider."""
+        return await asyncio.to_thread(self._reconciler().status)
+
+    async def canonical_section(self, section: str) -> dict:
+        return await asyncio.to_thread(self._reconciler().read_section, section)
+
+    async def canonical_set_pinned(self, section: str, pinned: str, expect: str | None) -> dict:
+        """Replace one section's pinned zone. The generated zone is untouched."""
+        return await asyncio.to_thread(
+            lambda: self._reconciler().set_pinned(section, pinned, expect=expect)
+        )
+
+    async def canonical_refresh(self, *, deterministic: bool = False) -> dict:
+        return await asyncio.to_thread(
+            lambda: self._reconciler().reconcile(use_provider=not deterministic, force=True)
+        )
+
     async def context(self) -> list[dict]:
         service = self._require_service()
         packs = await asyncio.to_thread(service.list_context, project_path=self.project_path)
@@ -982,7 +1005,11 @@ class LocalRuntime:
             "confirmation": confirmation,
             "items": selected_states,
             "verified": all(
-                item["integration_state"] in {"connected", "manual-step"}
+                item["integration_state"] == "manual-step"
+                or (
+                    item["integration_state"] == "connected"
+                    and not item.get("recall_setup_required")
+                )
                 for item in selected_states
             ),
             "output": "\n".join(output)[-12000:],
@@ -2225,43 +2252,9 @@ class LocalRuntime:
         return await asyncio.to_thread(self._hook_status)
 
     def _hook_status(self) -> list[dict]:
-        locations = [
-            ("claude-code", "user", Path.home() / ".claude" / "settings.json"),
-            ("codex", "user", Path.home() / ".codex" / "hooks.json"),
-        ]
-        project = Path(self.project_path).expanduser().resolve() if self.project_path else None
-        if project is not None:
-            locations.extend(
-                [
-                    ("claude-code", "project", project / ".claude" / "settings.json"),
-                    ("codex", "project", project / ".codex" / "hooks.json"),
-                ]
-            )
-        rows = []
-        for agent, scope, path in locations:
-            data = {}
-            error = None
-            if path.is_file():
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
-                    error = str(exc)
-            blob = json.dumps(data, sort_keys=True)
-            hooks = data.get("hooks") if isinstance(data, dict) else {}
-            events = sorted(str(event) for event in hooks) if isinstance(hooks, dict) else []
-            rows.append(
-                {
-                    "agent": agent,
-                    "scope": scope,
-                    "path": str(path),
-                    "exists": path.is_file(),
-                    "recall": "memory hook-context" in blob or "session-baseline" in blob,
-                    "capture": "memory capture-hook" in blob,
-                    "events": events,
-                    "error": error,
-                }
-            )
-        return rows
+        from docmancer.memory.delivery import inspect_hook_status
+
+        return inspect_hook_status(self.project_path)
 
     async def audit_if_changed(self) -> dict | None:
         source_state = await asyncio.to_thread(self._audit_source_signature)

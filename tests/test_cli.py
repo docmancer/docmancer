@@ -62,6 +62,7 @@ PUBLIC_COMMAND_HELP_CASES = [
     (["memory"], ["distill", "review", "share"]),
     (["docs"], ["add", "query", "sync"]),
     (["status"], ["--check"]),
+    (["clear"], ["--keep-config", "--keep-models"]),
     (["cloud"], ["connect", "disconnect"]),
     (["agent"], ["install", "refresh"]),
     (["mcp"], ["serve", "install"]),
@@ -116,7 +117,6 @@ def test_expired_root_aliases_are_removed_in_0_9():
         "inspect",
         "list",
         "remove",
-        "clear",
         "fetch",
         "install",
         "ingest",
@@ -140,7 +140,8 @@ def test_web_resolves_git_root_initializes_tree_and_refreshes(tmp_path, monkeypa
 
     assert result.exit_code == 0, result.output
     assert (project / ".docmancer" / "tree" / "context.md").is_file()
-    memory.refresh_if_changed.assert_called_once_with()
+    memory.refresh_if_changed.assert_called_once()
+    assert callable(memory.refresh_if_changed.call_args.kwargs["progress_callback"])
     assert run_web.call_args.kwargs["project_path"] == str(project.resolve())
 
 

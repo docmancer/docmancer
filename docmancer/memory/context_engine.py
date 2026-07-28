@@ -38,6 +38,79 @@ DEFAULT_MAX_CLUSTER_MEMBERS = 25
 # Order-of-magnitude rates for the dry-run cost preview, based on a small
 # model such as gpt-4.1-nano. Deliberately a planning estimate, not billing:
 # the report labels it as such and a real run reports actual cost.
+# A Context build makes one provider call per cluster, hundreds on a large
+# corpus, over tens of minutes. Transport faults are near-certain across a run
+# that long, and previously any one of them discarded every completed cluster.
+CONTEXT_PROVIDER_ATTEMPTS = 4
+CONTEXT_PROVIDER_BACKOFF_SECONDS = 1.5
+# Each cluster is one independent request, so the build is network-bound rather
+# than CPU-bound. Kept modest to stay well inside provider rate limits.
+CONTEXT_BUILD_CONCURRENCY = 8
+
+
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    """Whether a failed provider call is worth retrying.
+
+    Deliberately narrow: transport and availability faults only. An invalid key,
+    a malformed request, or a refusal will fail identically on every attempt, so
+    retrying those only multiplies the bill.
+    """
+    import ssl
+
+    if isinstance(exc, (ssl.SSLError, ConnectionError, TimeoutError)):
+        return True
+    name = type(exc).__name__
+    if name in {
+        "ConnectError", "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+        "ReadError", "WriteError", "RemoteProtocolError", "ProtocolError", "TransportError",
+    }:
+        return True
+    text = str(exc).casefold()
+    return any(
+        marker in text
+        for marker in ("bad record mac", "connection reset", "timed out", "temporarily unavailable", "rate limit")
+    )
+
+
+def _complete_with_retry(client, messages, options):
+    """Call the provider, retrying transient transport failures with backoff."""
+    import time
+
+    last: BaseException | None = None
+    for attempt in range(CONTEXT_PROVIDER_ATTEMPTS):
+        try:
+            return client.complete_text(messages, options)
+        except Exception as exc:  # noqa: BLE001 - re-raised below when not transient
+            last = exc
+            if not _is_transient_provider_error(exc) or attempt == CONTEXT_PROVIDER_ATTEMPTS - 1:
+                raise
+            time.sleep(CONTEXT_PROVIDER_BACKOFF_SECONDS * (2**attempt))
+    raise last  # unreachable; the loop either returns or raises
+
+
+def _is_transcript_noise(atom) -> bool:
+    """Raw session transcript material, excluded from consolidation.
+
+    ``_sources`` previously took every non-generated atom, so a build paid a
+    provider to summarise running commentary of what an agent did turn by turn
+    ("Raw Memories > Thread ...", "Task Group: ..."). On a real corpus that was
+    42% of the input. The laptop reconciler already refuses this material; the
+    Context engine now applies the same test rather than inventing a second
+    notion of what is worth consolidating.
+    """
+    from docmancer.memory.laptop import TASK_HISTORY_MARKERS
+
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            getattr(atom, "source_path", ""),
+            getattr(atom, "source_title", ""),
+            getattr(atom, "text", ""),
+        )
+    ).casefold()
+    return any(marker in haystack for marker in TASK_HISTORY_MARKERS)
+
+
 ESTIMATED_OUTPUT_TOKENS_PER_CLUSTER = 400
 ESTIMATED_INPUT_USD_PER_1K = 0.0001
 ESTIMATED_OUTPUT_USD_PER_1K = 0.0004
@@ -523,6 +596,8 @@ class ContextEngine:
         for atom in self.agent.indexed_atoms():
             if atom.generated:  # defence in depth; already excluded upstream
                 continue
+            if _is_transcript_noise(atom):
+                continue
             path = str(atom.source_path or "")
             authority = authority_for_kind(atom.kind)
             sources.append(
@@ -683,7 +758,8 @@ class ContextEngine:
                 "must end with the exact source address in parentheses. Do not invent facts "
                 "and do not use em dashes.\n\n" + evidence
             )
-            result = client.complete_text(
+            result = _complete_with_retry(
+                client,
                 [{"role": "user", "content": prompt}],
                 self._generation_options(mode),
             )
@@ -751,6 +827,34 @@ class ContextEngine:
             + "\n---\n\n"
             + (body if body.endswith("\n") else body + "\n")
         )
+
+    def _render_clusters(self, clusters, *, client, mode: str) -> dict:
+        """Render every cluster, overlapping provider calls where it is safe.
+
+        Returns ``{cluster_id: (body, synthesized, cost, cache_hit)}``. Without a
+        client the work is local and cheap, so it stays sequential. The cache is
+        keyed per cluster and written atomically, so concurrent renders touch
+        disjoint files.
+        """
+        if client is None or len(clusters) < 2:
+            return {
+                cluster.cluster_id: self._render_cluster(cluster, client=client, mode=mode)
+                for cluster in clusters
+            }
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = max(1, min(CONTEXT_BUILD_CONCURRENCY, len(clusters)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                cluster.cluster_id: pool.submit(
+                    self._render_cluster, cluster, client=client, mode=mode
+                )
+                for cluster in clusters
+            }
+            # Resolving in cluster order makes the first failure raised
+            # deterministic rather than whichever worker happened to lose first.
+            return {cluster_id: future.result() for cluster_id, future in futures.items()}
 
     def _artifact_path(self, cluster: TopicCluster) -> Path:
         return self.generated_root / f"{_slug(cluster.topic_label)}-{cluster.cluster_id[4:12]}.md"
@@ -876,6 +980,14 @@ class ContextEngine:
             str(row.get("cluster_id")): str(row.get("member_hash") or "")
             for row in (previous or {}).get("clusters", [])
         }
+        # Render clusters up front, concurrently when a provider is involved.
+        # Each call is an independent HTTP round trip of several seconds, so a
+        # sequential loop made wall-clock scale linearly with cluster count: a
+        # 634-cluster build took over an hour purely waiting on the network.
+        # The writes below stay sequential and in order, so artifact ordering
+        # and the manifest are unchanged; only the network waiting overlaps.
+        rendered = self._render_clusters(plan["clusters"], client=client, mode=mode)
+
         stale_cluster_ids = []
         for cluster in plan["clusters"]:
             member_hash = _hash_text(
@@ -885,11 +997,7 @@ class ContextEngine:
             )
             if previous_cluster_hashes.get(cluster.cluster_id) != member_hash:
                 stale_cluster_ids.append(cluster.cluster_id)
-            body, synthesized, cluster_cost, cache_hit = self._render_cluster(
-                cluster,
-                client=client,
-                mode=mode,
-            )
+            body, synthesized, cluster_cost, cache_hit = rendered[cluster.cluster_id]
             cache_hits += int(cache_hit)
             cost += float(cluster_cost or 0.0)
             path = self._artifact_path(cluster)

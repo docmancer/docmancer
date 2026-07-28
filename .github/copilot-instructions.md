@@ -30,7 +30,7 @@ docmancer query "how to authenticate" --expand
 docmancer query "how to authenticate" --expand page
 docmancer query "how to authenticate" --format json
 docmancer query "how to authenticate" --allow-degraded
-docmancer clear --dry-run
+docmancer clear
 docmancer list
 docmancer inspect
 docmancer remove <source>

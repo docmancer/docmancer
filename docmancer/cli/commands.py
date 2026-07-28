@@ -1825,6 +1825,19 @@ def _format_size(n: int) -> str:
     return f"{f:.1f} TB"
 
 
+def _resolved_docmancer_home() -> Path:
+    """The docmancer state directory this machine actually uses.
+
+    Mirrors the ``DOCMANCER_HOME`` handling in ``docmancer.memory`` and
+    ``docmancer.runtime.qdrant_manager`` so ``clear`` removes the same tree the
+    rest of the CLI reads and writes, not a hardcoded ``~/.docmancer``.
+    """
+    override = os.environ.get("DOCMANCER_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".docmancer"
+
+
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
@@ -1832,37 +1845,39 @@ def _format_size(n: int) -> str:
     epilog=format_examples(
         "docmancer clear",
         "docmancer clear --yes",
-        "docmancer clear --dry-run",
         "docmancer clear --keep-config",
         "docmancer clear --keep-models",
     ),
 )
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the confirmation prompt.")
-@click.option("--dry-run", is_flag=True, help="Print what would be deleted without removing anything.")
-@click.option("--keep-config", is_flag=True, help="Preserve ~/.docmancer/docmancer.yaml.")
+@click.option("--keep-config", is_flag=True, help="Preserve docmancer.yaml in the docmancer home.")
 @click.option(
     "--keep-models",
     is_flag=True,
     help="Skip the FastEmbed / Qdrant-hosted HuggingFace model caches.",
 )
-def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: bool) -> None:
+def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
     """Remove every docmancer-related directory from this machine.
 
     Removes (by default):
 
     \b
-    - ~/.docmancer/ (config, SQLite FTS5 index, extracted docs, embeddings cache,
-      managed Qdrant storage)
+    - the docmancer home ($DOCMANCER_HOME, else ~/.docmancer): config, the
+      SQLite and sqlite-vec indexes, the memory tree, baselines, extracted
+      docs, the embeddings cache, vendored models, managed Qdrant storage
     - ~/.cache/fastembed/ (FastEmbed ONNX model cache)
     - ~/.cache/huggingface/hub/models--Qdrant--* (Qdrant-published models that
       docmancer pulled via the qdrant_client embedding helper)
 
     The managed Qdrant process is stopped first if it is running. Other tools'
     HuggingFace caches (non-Qdrant publishers) are left untouched.
+
+    Project-local .docmancer/ directories and cloud credentials held in the OS
+    keyring are NOT removed. Rebuild afterwards with: docmancer setup
     """
     home = Path.home()
 
-    docmancer_home = home / ".docmancer"
+    docmancer_home = _resolved_docmancer_home()
     targets: list[Path] = []
 
     if docmancer_home.exists():
@@ -1873,6 +1888,11 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
                 targets.append(child)
         else:
             targets.append(docmancer_home)
+
+    # A relocated home can leave an older default tree behind. Surface it
+    # rather than deleting it silently, since it may predate the relocation.
+    default_home = home / ".docmancer"
+    leftover = default_home if default_home != docmancer_home and default_home.exists() else None
 
     if not keep_models:
         fastembed_cache = home / ".cache" / "fastembed"
@@ -1886,6 +1906,8 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
 
     if not targets:
         click.echo("Nothing to remove. Docmancer state is already clear.")
+        if leftover:
+            click.echo(f"Note: {display_path(leftover)} exists but is not the active home.")
         return
 
     sizes = {t: _dir_size_bytes(t) for t in targets}
@@ -1897,9 +1919,9 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
     click.echo(f"  {'-' * 10}")
     click.echo(f"  {_format_size(total):>10}  total")
 
-    if dry_run:
-        click.echo("\nDry run; no changes made.")
-        return
+    click.echo("\nNot removed: project-local .docmancer/ directories, cloud credentials in the OS keyring.")
+    if leftover:
+        click.echo(f"Not removed: {display_path(leftover)} (not the active home; $DOCMANCER_HOME is set).")
 
     if not assume_yes:
         click.confirm("\nRemove all of this?", abort=True)
@@ -1928,6 +1950,7 @@ def clear_cmd(assume_yes: bool, dry_run: bool, keep_config: bool, keep_models: b
             failed.append((t, str(exc)))
 
     click.echo(f"Removed {_format_size(removed)} of docmancer state.")
+    click.echo("Rebuild the local index with: docmancer setup")
     if failed:
         click.echo("Some paths could not be removed:", err=True)
         for path, msg in failed:
@@ -2403,17 +2426,32 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
 
             canonical = LaptopMemoryReconciler(agent).reconcile()
             state = "Updated" if canonical.get("changed") else "Confirmed"
+            provider = canonical.get("provider") or "deterministic"
             _emit_status_line(
-                f"{state} laptop-wide canonical memory at "
+                f"{state} machine-wide canonical memory at "
                 f"{display_path(laptop_memory_root() / 'tree')} "
-                f"({canonical.get('provider') or 'deterministic'})."
+                f"({provider})."
             )
+            # Reconciliation reruns on its own and, with a key configured, spends
+            # provider tokens each time the evidence changes. Context
+            # distillation is previewed and priced before it runs; this path is
+            # not, so the least it can do is say so once, out loud, at setup.
+            if provider != "deterministic":
+                _emit_status_line(
+                    f"Canonical memory is rebuilt with {provider} whenever your evidence "
+                    "changes, including on `docmancer ask`, `docmancer web`, "
+                    "`docmancer memory sync`, and session capture. Run "
+                    "`docmancer memory canonical --refresh --deterministic` to rebuild "
+                    "without a provider.",
+                    state="info",
+                )
         except Exception as exc:  # noqa: BLE001 - indexed evidence remains usable
             _emit_status_line(
-                f"Could not reconcile laptop-wide canonical memory ({exc}).",
+                f"Could not reconcile machine-wide canonical memory ({exc}).",
                 state="warn",
             )
         click.echo('  Try: docmancer memory query "..."')
+        click.echo("  Try: docmancer memory canonical")
     else:
         _emit_status_line(
             "No agent memory found yet. Changed sources refresh when you open `docmancer web` or run `docmancer ask`.",

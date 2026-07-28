@@ -55,7 +55,7 @@ def build_setup_confirmation(
     if automatic_reconciliation:
         steps.append({
             "kind": "reconcile",
-            "title": "Maintain one laptop-wide canonical memory",
+            "title": "Maintain one machine-wide canonical memory",
             "detail": (
                 "Automatically reconcile important personal context, preferences, projects, "
                 "and working principles into ~/.docmancer/tree. A configured AI provider is "

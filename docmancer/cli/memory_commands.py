@@ -2833,6 +2833,133 @@ def canonical_remove(identifier: str, yes: bool) -> None:
         click.echo("Removed context and wrote a content-free tombstone.")
 
 
+def _reconciler():
+    from docmancer.memory import MemoryAgent
+    from docmancer.memory.laptop import LaptopMemoryReconciler
+
+    return LaptopMemoryReconciler(MemoryAgent())
+
+
+@memory_group.group(
+    "canonical",
+    cls=DocmancerGroup,
+    context_settings=HELP_CONTEXT_SETTINGS,
+    invoke_without_command=True,
+    short_help="Inspect and pin the machine-wide canonical memory.",
+    epilog=format_examples(
+        "docmancer memory canonical",
+        "docmancer memory canonical show preferences",
+        'docmancer memory canonical pin preferences "Never use em dashes"',
+        "docmancer memory canonical --refresh --deterministic",
+    ),
+)
+@click.option("--refresh", is_flag=True, help="Rebuild every section now, even when the evidence is unchanged.")
+@click.option(
+    "--deterministic",
+    is_flag=True,
+    help="Rebuild without calling any AI provider. Only meaningful with --refresh.",
+)
+@click.option("--json", "as_json", is_flag=True)
+@click.pass_context
+def canonical_group(ctx: click.Context, refresh: bool, deterministic: bool, as_json: bool) -> None:
+    """Show what Docmancer has reconciled into one memory for this machine.
+
+    The four sections are rebuilt automatically by `docmancer setup`, `docmancer
+    web`, `docmancer ask`, `docmancer memory sync`, and session-capture hooks.
+    This command reports that state and, with --refresh, runs it deliberately.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    reconciler = _reconciler()
+    if refresh:
+        result = reconciler.reconcile(use_provider=not deterministic, force=True)
+        if not as_json:
+            state = "Rebuilt" if result.get("changed") else "Confirmed"
+            emit_status_line(
+                f"{state} canonical memory ({result.get('provider') or 'deterministic'})."
+            )
+    elif deterministic:
+        raise click.ClickException("--deterministic only applies with --refresh")
+
+    status = reconciler.status()
+    if as_json:
+        _context_json(status)
+        return
+    if not status["available"]:
+        click.echo("No canonical memory has been built yet.")
+        click.echo("  Try: docmancer memory canonical --refresh")
+        return
+    click.echo(f"Revision:  {status['revision_id']}")
+    click.echo(f"Generated: {status['generated_at']}  ({status['provider']})")
+    click.echo(f"Location:  {display_path(Path(status['root']))}")
+    click.echo(
+        f"Evidence:  {status['selected']} selected, {status['withheld']} withheld"
+    )
+    click.echo("")
+    for row in status["sections"]:
+        if not row.get("present"):
+            click.echo(f"  {row['section']:<20} not generated yet")
+            continue
+        pinned = int(row.get("pinned_lines") or 0)
+        pinned_label = f"{pinned} pinned" if pinned else "no pinned notes"
+        click.echo(f"  {row['section']:<20} {row.get('generated_chars', 0):>6} chars  {pinned_label}")
+    for failure in status.get("provider_failures") or []:
+        emit_status_line(
+            f"{failure.get('section')}: provider failed, used deterministic rendering "
+            f"({failure.get('error')})",
+            state="warn",
+        )
+
+
+@canonical_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Print one section.")
+@click.argument("section")
+@click.option("--json", "as_json", is_flag=True)
+def canonical_section_show(section: str, as_json: bool) -> None:
+    """Print one canonical section, pinned notes first."""
+    try:
+        value = _reconciler().read_section(section)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _context_json(value)
+        return
+    click.echo(f"# {value['section']}  ({display_path(Path(value['path']))})")
+    click.echo("")
+    if value["pinned"]:
+        click.echo(style("Pinned (kept across every rebuild)", fg="bright_black"))
+        click.echo(value["pinned"])
+        click.echo("")
+    click.echo(style("Generated (replaced on the next sync)", fg="bright_black"))
+    click.echo(value["generated"])
+
+
+@canonical_group.command("pin", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add a durable note that survives every rebuild.")
+@click.argument("section")
+@click.argument("text")
+def canonical_pin(section: str, text: str) -> None:
+    """Pin one line into a section so reconciliation never replaces it."""
+    try:
+        result = _reconciler().pin(section, text)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not result.get("changed"):
+        click.echo(f"Already pinned in {result['section']}. Nothing changed.")
+        return
+    click.echo(f"Pinned into {result['section']} ({result['pinned_lines']} pinned total).")
+
+
+@canonical_group.command("unpin", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Remove a pinned note.")
+@click.argument("section")
+@click.argument("text")
+def canonical_unpin(section: str, text: str) -> None:
+    """Remove pinned lines in SECTION containing TEXT."""
+    try:
+        result = _reconciler().unpin(section, text)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Removed {result['removed']} pinned line(s) from {result['section']}.")
+
+
 @memory_group.command("distill", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose a reconciled context-pack patch.")
 @click.option("--into", "pack_id", default="personal-defaults", show_default=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)

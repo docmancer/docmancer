@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import pytest
 from docmancer._version import __version__
 from docmancer.core.config import ProvidersConfig
 from docmancer.harness.integration_status import inspect_integrations
+from docmancer.memory.delivery import inspect_hook_status
 from docmancer.memory.tree.store import TreeStore
 from docmancer.runtime.backend import LocalRuntime
 from docmancer.web.library_catalog import LibraryCatalog
@@ -104,6 +106,106 @@ def test_connected_codex_with_recall_and_capture_needs_no_setup(tmp_path: Path) 
     assert codex["recall_setup_required"] is False
     assert codex["capture_setup_required"] is False
     assert codex["action_kind"] == "none"
+
+
+def test_current_capture_hook_command_is_detected_after_setup(tmp_path: Path) -> None:
+    hooks = {
+        "hooks": {
+            "SessionStart": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/opt/docmancer/bin/docmancer session-baseline --agent codex",
+                }],
+            }],
+            "UserPromptSubmit": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/opt/docmancer/bin/docmancer memory hook-context --agent codex",
+                }],
+            }],
+            "Stop": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/opt/docmancer/bin/docmancer --config /tmp/docmancer.yaml capture",
+                }],
+            }],
+        },
+    }
+    path = tmp_path / ".codex" / "hooks.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(hooks), encoding="utf-8")
+
+    codex = next(
+        row for row in inspect_hook_status(home=tmp_path)
+        if row["agent"] == "codex" and row["scope"] == "user"
+    )
+
+    assert codex["recall"] is True
+    assert codex["capture"] is True
+
+
+def test_installed_codex_with_current_hooks_has_no_pending_setup(tmp_path: Path) -> None:
+    for path in (
+        tmp_path / ".codex" / "skills" / "docmancer" / "SKILL.md",
+        tmp_path / ".codex" / "skills" / "docmancer-memory" / "SKILL.md",
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Docmancer\n", encoding="utf-8")
+    (tmp_path / ".codex" / "AGENTS.md").write_text(_managed_block(), encoding="utf-8")
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks_path.write_text(
+        json.dumps({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "command": "/opt/docmancer/bin/docmancer session-baseline --agent codex",
+                    }],
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "command": "/opt/docmancer/bin/docmancer memory hook-context --agent codex",
+                    }],
+                }],
+                "Stop": [{
+                    "hooks": [{
+                        "command": "/opt/docmancer/bin/docmancer capture",
+                    }],
+                }],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    codex = next(
+        row for row in inspect_integrations(
+            detected_targets=["codex"],
+            hook_rows=inspect_hook_status(home=tmp_path),
+            delivery_rows=[],
+            home=tmp_path,
+        )
+        if row["id"] == "codex"
+    )
+
+    assert codex["integration_state"] == "connected"
+    assert codex["recall_setup_required"] is False
+    assert codex["capture_setup_required"] is False
+    assert codex["action_kind"] == "none"
+
+
+def test_unrelated_capture_text_is_not_treated_as_a_docmancer_hook(tmp_path: Path) -> None:
+    path = tmp_path / ".codex" / "hooks.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"hooks":{"Stop":[{"hooks":[{"command":"echo capture"}]}]}}',
+        encoding="utf-8",
+    )
+
+    codex = next(
+        row for row in inspect_hook_status(home=tmp_path)
+        if row["agent"] == "codex" and row["scope"] == "user"
+    )
+
+    assert codex["capture"] is False
 
 
 def test_claude_desktop_manual_upload_is_not_an_automatic_install(tmp_path: Path) -> None:

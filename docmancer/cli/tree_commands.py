@@ -36,14 +36,53 @@ def _default_tree_root() -> Path:
     return tree_paths()[0]
 
 
-def _store(root: str | None, *, ensure: bool = False) -> TreeStore:
+def _global_tree_root() -> Path:
+    from docmancer.memory.laptop import laptop_memory_root
+
+    return laptop_memory_root() / "tree"
+
+
+def _store(root: str | None, *, ensure: bool = False, global_scope: bool = False) -> TreeStore:
     if root:
         return TreeStore(Path(root))
+    # The machine-wide canonical tree lives at ~/.docmancer/tree, but the default
+    # root is <project>/.docmancer/tree. Without --global, the instruction the
+    # canonical self-description gives ("docmancer read about.md") silently
+    # resolved to the wrong tree from inside any repository.
+    if global_scope:
+        return TreeStore(_global_tree_root())
     if ensure:
         from docmancer.memory.tree.project import ensure_project
 
         return TreeStore(ensure_project().tree_root)
     return TreeStore(_default_tree_root())
+
+
+def _guard_canonical_zone(store: TreeStore, address: str, new_body: str) -> None:
+    """Refuse a whole-body edit that would rewrite an automatically generated zone.
+
+    The reconciler replaces that zone on the next sync, so accepting the edit
+    would quietly discard the caller's work. The error names the pin command
+    instead, which is the write that actually persists.
+    """
+    from docmancer.memory.tree.zones import ZoneViolation, guard_zoned_write
+
+    try:
+        existing = store.read(address)
+    except TreeError:
+        return  # A missing or ambiguous address is the store's error to report.
+    try:
+        guard_zoned_write(existing.body, new_body, address=address)
+    except ZoneViolation as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+_GLOBAL_OPTION = click.option(
+    "--global",
+    "global_scope",
+    is_flag=True,
+    help="Target the machine-wide canonical tree (~/.docmancer/tree) instead of this project's.",
+)
 
 
 def _read_text(text: str | None) -> str:
@@ -497,6 +536,7 @@ def import_command(
 @tree_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a new or updated curated memory file.")
 @click.argument("text", required=False)
 @click.option("--root", default=None, help="Tree root directory. Defaults to ./.docmancer/tree.")
+@_GLOBAL_OPTION
 @click.option("--path", "relative_path", required=True, help="Path relative to the tree root, e.g. deployment/release.md.")
 @click.option("--type", "memory_type", default="fact", show_default=True)
 @click.option("--scope", default="global", show_default=True)
@@ -510,6 +550,7 @@ def import_command(
 def write(
     text: str | None,
     root: str | None,
+    global_scope: bool,
     relative_path: str,
     memory_type: str,
     scope: str,
@@ -526,7 +567,8 @@ def write(
     Prints the resulting stable address, content hash, and revision.
     """
     body = _read_text(text)
-    store = _store(root, ensure=True)
+    store = _store(root, ensure=True, global_scope=global_scope)
+    _guard_canonical_zone(store, relative_path, body)
     try:
         entry = store.write(
             relative_path=relative_path,
@@ -555,10 +597,11 @@ def write(
 @tree_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Read one curated memory file.")
 @click.argument("address")
 @click.option("--root", default=None, help="Tree root directory. Defaults to ./.docmancer/tree.")
+@_GLOBAL_OPTION
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-def read(address: str, root: str | None, as_json: bool) -> None:
+def read(address: str, root: str | None, global_scope: bool, as_json: bool) -> None:
     """Resolve ADDRESS (stable ID, docmancer:// address, path, or title) and print it."""
-    store = _store(root)
+    store = _store(root, global_scope=global_scope)
     try:
         entry = store.read(address)
     except TreeError as exc:
@@ -585,12 +628,21 @@ def read(address: str, root: str | None, as_json: bool) -> None:
 @click.argument("address")
 @click.argument("text", required=False)
 @click.option("--root", default=None, help="Tree root directory. Defaults to ./.docmancer/tree.")
+@_GLOBAL_OPTION
 @click.option("--expected-hash", required=True, help="The content hash read from `tree read`/`tree write`; guards against a stale write.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-def edit(address: str, text: str | None, root: str | None, expected_hash: str, as_json: bool) -> None:
+def edit(
+    address: str,
+    text: str | None,
+    root: str | None,
+    global_scope: bool,
+    expected_hash: str,
+    as_json: bool,
+) -> None:
     """Replace the body of ADDRESS with TEXT (or stdin), guarded by --expected-hash."""
     body = _read_text(text)
-    store = _store(root)
+    store = _store(root, global_scope=global_scope)
+    _guard_canonical_zone(store, address, body)
     try:
         entry = store.edit(address, text=body, expected_hash=expected_hash, actor_surface="cli")
     except TreeError as exc:

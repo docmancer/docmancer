@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - Unreleased
+### Added
+
+- **Canonical memory is visible and editable.** `docmancer memory canonical` reports the current revision, provider, evidence counts, and per-section sizes without calling a provider; `--refresh` and `--deterministic` run the reconciler deliberately, exposing two behaviours that were previously reachable only as an implicit side effect of `setup`, `web`, `ask`, `sync`, and session capture. `docmancer memory canonical show <section>` prints one section, and the home page of the local app gains a canonical memory card and a full-screen editor.
+- **Pinned notes survive reconciliation.** Each canonical section is now split into a pinned zone and a generated zone. The reconciler rewrites only the generated zone and carries the pinned zone forward untouched, so a note written by a human or an agent is no longer destroyed on the next sync. Pin from the app, from `docmancer memory canonical pin|unpin`, or from the new `pin_memory` / `unpin_memory` MCP tools. Pinned text is never sent to a provider and is excluded from the evidence fingerprint, so pinning never triggers a paid rebuild.
+- **`canonical_memory` MCP tool.** Agents can read the machine-wide canonical memory through their own tool layer, either as a status summary or one section at a time.
+- **Canonical memory can describe itself.** The reconciler now writes `canonical-memory.md` into the tree, a deterministic entry that states what the store is called, where it lives, which file holds which section, and what is explicitly not part of it. It names every term the store answers to, including canonical memory, master memory, laptop memory, machine-wide memory, global memory, curated memory, the memory tree, and the single source of truth, so recall matches the question however it is phrased. It is never sent through the provider path, because a paraphrasing model would drop the very terms that make it findable.
+
+### Changed
+
+- **Context builds no longer pay a model to summarise raw session transcripts.** `ContextEngine._sources()` collected every non-generated atom, filtered only on `generated`. On a laptop-wide corpus that meant 42% of the paid input was running commentary of what an agent did turn by turn (`Raw Memories > Thread ...`, `Task Group: ...`). The laptop reconciler already refused this material, so the Context engine now applies the same test instead of keeping a second, looser notion of what deserves consolidation. Measured on a real 7,186-atom corpus: input sources drop to 4,160, provider calls from 634 to 529, and input tokens from 591k to 324k, a 45% reduction.
+- **Per-cluster provider calls run concurrently.** The build issued one blocking request per cluster in a plain loop, so wall-clock time scaled linearly with cluster count and a 634-cluster build spent over an hour waiting on the network. Rendering now overlaps up to 8 requests at a time. Artifact writes stay sequential and ordered, so the manifest is unchanged.
+
+### Fixed
+
+- **Canonical tree commands have an explicit global target.** `read`, `edit`, and `write` normally resolve against `<project>/.docmancer/tree`. All three now take `--global` for the machine-wide tree at `~/.docmancer/tree`, and the canonical self-description uses the correct `docmancer read --global about.md` form.
+- **A whole-body edit of a canonical section is refused instead of silently discarded.** `docmancer edit` and the `edit_memory` MCP tool detected nothing, accepted the write, and let the next reconcile delete it. Both now return a structured `generated_zone_readonly` error naming the pin call to use instead. Files without generated markers, which is all ordinary curated memory, keep their existing whole-body edit path.
+- **Setup discloses what canonical reconciliation costs.** Context distillation is previewed and priced before it runs; canonical reconciliation calls the same class of provider on every evidence change with no disclosure at all. Both the CLI setup output and the web confirmation screen now name the provider and the triggers that rerun it.
+- **A transient network fault no longer destroys an entire Context build.** A single `SSLV3_ALERT_BAD_RECORD_MAC` 27 minutes into a run discarded every completed cluster. Provider calls now retry with exponential backoff, restricted to transport and availability faults. Permanent failures such as an invalid key or a rejected request still fail on the first attempt, because retrying those only multiplies the bill.
+
+- **A failed background job no longer erases itself.** The local web app showed every finished job for 15 seconds and then dropped it, applying the same timer to failures as to successes. Because these jobs advertise that you can walk away from them, a Context build that died 27 minutes in displayed its error to an empty screen and then removed all trace of it, leaving a page identical to one where nothing had ever run. Failures now stay until dismissed, take precedence over jobs still running, and carry a close control. This covers every job kind, not only Context builds.
+- **Background job failures are written to the server log.** The job registry keeps state in memory only and previously discarded the traceback, so nothing survived the process and the terminal running `docmancer web` stayed silent. Failures now log with a full traceback.
+
+- **`ask` no longer answers "where is my canonical memory?" with a skill file.** Nothing in the corpus previously stated in words what the store was called or where it lived, so the highest-authority near match won: an installed `SKILL.md`, which is an instruction file that discusses memory operations at length and was promoted to mandatory authority in 0.9.2. The question now has a correct, citable target. Unrelated questions do not retrieve the new entry.
+
+- **`docmancer clear` is back.** The command that removes all local Docmancer state from a machine had been listed among the deprecated root aliases, mislabelled as a stand-in for `docmancer docs remove`, and was dropped along with that alias table during the 0.9 CLI restructure. Its implementation survived as unreachable code, while `AGENTS.md` and the Copilot instructions carried on documenting it. It is now registered as a first-class top-level command again, next to `setup`, `status`, and `doctor`.
+- **`clear` honours a relocated home.** It previously hardcoded `~/.docmancer` and so missed the real state directory whenever `DOCMANCER_HOME` was set, even though the memory index, hooks, baselines, and managed Qdrant all respect that variable. It now resolves the same home the rest of the CLI uses, and names any stale default tree it deliberately leaves in place instead of deleting it silently.
+
+### Changed
+
+- **`clear` states its boundaries before deleting.** The confirmation now spells out that project-local `.docmancer/` directories and Cloud credentials held in the OS keyring are not removed, so a machine-wide wipe cannot be mistaken for one that also clears committed team memory or an authorized device. On completion it points at `docmancer setup` to rebuild.
+- **`clear --dry-run` has been removed.** The command already prints a full itemised size table and waits on a `y/N` confirmation before touching anything, which covers the same need.
+
 ## [0.9.2] - 2026-07-27
 ### Added
 

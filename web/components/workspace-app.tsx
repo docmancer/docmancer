@@ -9,6 +9,7 @@ import {
 import Link from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiJobMutation, apiMutation, establishSession, type JsonMap } from "@/lib/api";
+import { CanonicalCard, CanonicalEditor } from "./canonical-memory";
 import { ContextWorkbench } from "./context-workbench";
 import { LibraryView } from "./library-view";
 import { MarkdownContent } from "./markdown-content";
@@ -110,18 +111,33 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
   </div>;
 }
 
+/** Decide whether a job still belongs on screen.
+ *
+ * A completed job is an acknowledgement and can fade on its own. A failed one
+ * is the opposite: it is the single outcome the user has to act on, and these
+ * jobs are explicitly advertised as safe to walk away from ("Running in the
+ * background. You can keep using Docmancer."). Expiring a failure on the same
+ * timer as a success meant a Context build that died 27 minutes in showed its
+ * error for 15 seconds to an empty chair and then erased it, leaving a page
+ * indistinguishable from one where nothing had ever run. Failures now stay
+ * until the user dismisses them.
+ */
+export function jobStillVisible(job: JsonMap, now: number): boolean {
+  if (job.state === "queued" || job.state === "running") return true;
+  if (job.state === "failed") return true;
+  const finished = new Date(String(job.finished_at ?? "")).getTime();
+  const visibleFor = job.kind === "memory.ask" ? 5_000 : 15_000;
+  return Number.isFinite(finished) && now - finished < visibleFor;
+}
+
 function BackgroundJobs() {
   const [jobs, setJobs] = useState<JsonMap[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     const data = await apiGet("/api/v1/jobs");
     const now = Date.now();
-    setJobs(rows(data.items).filter((job) => {
-      if (job.state === "queued" || job.state === "running") return true;
-      const finished = new Date(String(job.finished_at ?? "")).getTime();
-      const visibleFor = job.kind === "memory.ask" ? 5_000 : 15_000;
-      return Number.isFinite(finished) && now - finished < visibleFor;
-    }));
+    setJobs(rows(data.items).filter((job) => jobStillVisible(job, now)));
   }, []);
 
   useEffect(() => {
@@ -141,8 +157,11 @@ function BackgroundJobs() {
     };
   }, [load]);
 
-  if (!jobs.length) return null;
-  const job = jobs[0];
+  const visible = jobs.filter((item) => !dismissed.includes(String(item.id ?? "")));
+  if (!visible.length) return null;
+  // A failure outranks anything still running: it is the item that needs a
+  // decision, and it must not be hidden behind a later job's progress.
+  const job = visible.find((item) => item.state === "failed") ?? visible[0];
   const labels: Record<string, string> = {
     "context.refresh": "Building your Context",
     "memory.ask": "Answering with your memory",
@@ -172,10 +191,16 @@ function BackgroundJobs() {
       : failed
         ? `${label} failed`
         : label;
-  return <aside className="background-jobs" aria-live="polite">
+  return <aside className={`background-jobs${failed ? " failed" : ""}`} aria-live={failed ? "assertive" : "polite"}>
     <span className="job-pulse">{completed ? <Check size={15}/> : failed ? <X size={15}/> : <LoaderCircle className="spin" size={15}/>}</span>
     <div><strong>{title}</strong><span>{detail}</span></div>
-    {jobs.length > 1 && <small>+{jobs.length - 1}</small>}
+    {visible.length > 1 && <small>+{visible.length - 1}</small>}
+    {failed && <button
+      type="button"
+      className="job-dismiss"
+      aria-label="Dismiss this failure"
+      onClick={() => setDismissed((current) => [...current, String(job.id ?? "")])}
+    ><X size={13}/></button>}
   </aside>;
 }
 
@@ -206,7 +231,8 @@ function HomeView() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [busy, setBusy] = useState("");
-  const [modal, setModal] = useState<"agent" | "setup" | "">("");
+  const [modal, setModal] = useState<"agent" | "setup" | "canonical" | "">("");
+  const [canonical, setCanonical] = useState<JsonMap>({});
   const [error, setError] = useState("");
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<"top" | "bottom">("top");
@@ -218,12 +244,16 @@ function HomeView() {
   }, []);
   const load = useCallback(async () => {
     try {
-      const [setupData, conversationData] = await Promise.all([
+      const [setupData, conversationData, canonicalData] = await Promise.all([
         apiGet("/api/v1/agent/setup"),
         apiGet("/api/v1/ask/conversations?limit=60"),
+        // Never blocks the page: an unbuilt canonical tree is a normal first-run
+        // state, not an error worth showing above the chat.
+        apiGet("/api/v1/canonical").catch(() => ({})),
       ]);
       setSetup(setupData);
       setConversations(rows(conversationData.items));
+      setCanonical(canonicalData);
     } catch (reason) { setError(messageOf(reason)); }
   }, []);
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
@@ -359,7 +389,7 @@ function HomeView() {
   const connectionStatus = automatic.length
     ? `${automatic.length} ready to connect`
     : recallSetup.length
-      ? `${recallSetup.length} need automatic recall`
+      ? `${recallSetup.length} need automatic memory setup`
       : updates.length
         ? `${updates.length} update${updates.length === 1 ? "" : "s"} available`
         : repairs.length
@@ -372,7 +402,7 @@ function HomeView() {
   const connectionAction = automatic.length
     ? "Connect agents"
     : recallSetup.length
-      ? "Finish recall setup"
+      ? "Finish automatic memory setup"
       : updates.length
         ? "Update integrations"
         : repairs.length
@@ -496,6 +526,7 @@ function HomeView() {
         </div>
         <button className="primary-btn wide" onClick={() => setModal("setup")}>{connectionAction} <ArrowRight size={15}/></button>
       </article>
+      <CanonicalCard status={canonical} onOpen={() => setModal("canonical")}/>
       <section className="home-cloud-card">
         <div><span className="eyebrow">Optional Docmancer Cloud</span><h2>Carry Context beyond this machine</h2><p>Local intelligence stays free. Pay for encrypted continuity and coordination.</p></div>
         <a href="/settings/?section=cloud"><Cloud size={16}/><span><strong>Personal Sync</strong><small>History, devices, and recovery</small></span><ArrowRight size={14}/></a>
@@ -505,6 +536,7 @@ function HomeView() {
     </section>
     {modal === "agent" && <Modal title="Customise Docmancer" subtitle="This is the one agent humans interact with in the web UI." close={() => setModal("")}><AgentEditor onSaved={() => { setModal(""); void load(); }}/></Modal>}
     {modal === "setup" && <Modal title="Connect Docmancer" subtitle="Index local memory, install skills, and optionally add recall hooks." close={() => setModal("")}><SetupFlow initial={setup} onComplete={() => { setModal(""); void load(); }}/></Modal>}
+    {modal === "canonical" && <Modal title="What Docmancer knows about you" subtitle="One memory shared by every connected agent on this machine." close={() => { setModal(""); void load(); }}><CanonicalEditor/></Modal>}
   </div>;
 }
 

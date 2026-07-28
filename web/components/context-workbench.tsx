@@ -26,8 +26,40 @@ export function ContextWorkbench({ data, reload }: Props) {
   const [setup, setSetup] = useState<JsonMap | null>(null);
   const [plan, setPlan] = useState<JsonMap | null>(null);
   const [distillation, setDistillation] = useState<JsonMap | null>(null);
+  const [contextJobRunning, setContextJobRunning] = useState(false);
+  const [contextJobsReady, setContextJobsReady] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let timer = 0;
+    const refresh = async () => {
+      try {
+        const jobs = rows((await apiGet("/api/v1/jobs")).items);
+        setContextJobRunning(jobs.some((job) =>
+          job.kind === "context.refresh" && (job.state === "queued" || job.state === "running")
+        ));
+      } catch {
+        setContextJobRunning(false);
+      } finally {
+        setContextJobsReady(true);
+      }
+    };
+    const started = (event: Event) => {
+      const job = (event as CustomEvent<JsonMap>).detail;
+      if (job?.kind === "context.refresh") {
+        setContextJobRunning(true);
+        setContextJobsReady(true);
+      }
+    };
+    void refresh();
+    timer = window.setInterval(() => void refresh(), 2000);
+    window.addEventListener("docmancer:job-started", started);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("docmancer:job-started", started);
+    };
+  }, []);
 
   useEffect(() => {
     if (tab === "knowledge" && !Object.keys(common).length) apiGet("/api/v1/common").then(setCommon).catch((reason) => setError(messageOf(reason)));
@@ -57,27 +89,39 @@ export function ContextWorkbench({ data, reload }: Props) {
     catch (reason) { setError(messageOf(reason)); } finally { setBusy(""); }
   };
   const distill = async () => {
-    if (!distillation) return;
+    if (!distillation || !contextJobsReady || contextJobRunning) return;
     setBusy("distill-run"); setError("");
     try {
+      setContextJobRunning(true);
       const job = await apiStartJob("/api/v1/context/refresh", {
         provider: String(distillation.provider),
         model: distillation.model ? String(distillation.model) : undefined,
       });
       setDistillation(null);
       setBusy("");
-      void waitForJob(job).then(reload).catch((reason) => setError(messageOf(reason)));
-    } catch (reason) { setError(messageOf(reason)); }
+      void waitForJob(job)
+        .then(reload)
+        .catch((reason) => setError(messageOf(reason)));
+    } catch (reason) {
+      setContextJobRunning(false);
+      setError(messageOf(reason));
+    }
     finally { setBusy(""); }
   };
   const openSetup = async () => {
     try { setSetup(await apiGet("/api/v1/agent/setup")); } catch (reason) { setError(messageOf(reason)); }
   };
   const openDistillation = async () => {
+    if (!contextJobsReady || contextJobRunning) return;
     setBusy("distill"); setError("");
     try { setDistillation(await apiGet("/api/v1/context/distillation-preview")); }
     catch (reason) { setError(messageOf(reason)); } finally { setBusy(""); }
   };
+  const distillationDisabled = Boolean(busy) || !contextJobsReady || contextJobRunning;
+  const distillationButton = (iconSize: number) => <>
+    {contextJobRunning ? <RefreshCw className="spin" size={iconSize}/> : <Sparkles size={iconSize}/>}
+    {contextJobRunning ? "Context build running" : "Distill memory with AI"}
+  </>;
 
   if (!data.available) return <section className="context-empty">
     <div className="empty-illustration"><span/><span/><span/><Sparkles size={22}/></div>
@@ -87,7 +131,7 @@ export function ContextWorkbench({ data, reload }: Props) {
       ? "Preview the consolidation first, then create a revisioned Context that connected agents can carry."
       : "Run setup to index the memory and instructions your coding agents have already written. Then Docmancer can build shared Context."}</p>
     {error && <Notice kind="error">{error}</Notice>}
-    {atoms ? <><div className="empty-actions"><button className="primary-btn distill-button" disabled={Boolean(busy)} onClick={openDistillation}><Sparkles size={16}/>Distill memory with AI</button><button className="secondary-btn" disabled={Boolean(busy)} onClick={preview}>Build without AI</button></div></>
+    {atoms ? <><div className="empty-actions"><button className="primary-btn distill-button" disabled={distillationDisabled} onClick={openDistillation}>{distillationButton(16)}</button><button className="secondary-btn" disabled={Boolean(busy)} onClick={preview}>Build without AI</button></div></>
       : <div className="empty-actions"><button className="primary-btn" onClick={openSetup}>Run Docmancer setup <ArrowRight size={15}/></button></div>}
     <CommandRow title={atoms ? "CLI equivalent" : "Start from the terminal"} command={atoms ? "docmancer context refresh --dry-run" : "docmancer setup"} note={atoms ? "Preview consolidation without writing a revision." : "Index memory and install detected integrations."}/>
     {plan && <Modal title="Build Context locally without AI" subtitle="No files have been changed." close={() => setPlan(null)}><PlanSummary plan={plan} onBuild={build} close={() => setPlan(null)}/></Modal>}
@@ -102,7 +146,7 @@ export function ContextWorkbench({ data, reload }: Props) {
     { id: "history", label: "History", icon: Clock3 },
   ];
   return <div className="context-workbench">
-    <div className="context-toolbar"><div className="context-tabs">{tabs.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon size={15}/>{label}</button>)}</div>{(tab === "overview" || tab === "knowledge") && <button className="primary-btn distill-button" disabled={Boolean(busy)} onClick={openDistillation}><Sparkles size={15}/>Distill memory with AI</button>}</div>
+    <div className="context-toolbar"><div className="context-tabs">{tabs.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon size={15}/>{label}</button>)}</div>{(tab === "overview" || tab === "knowledge") && <button className="primary-btn distill-button" disabled={distillationDisabled} onClick={openDistillation}>{distillationButton(15)}</button>}</div>
     {error && <Notice kind="error">{error}</Notice>}
     {tab === "overview" && <Overview current={current} topics={topics} revisions={revisions} stale={stale} onPreview={preview} onBuild={build} busy={busy} setDetail={setDetail}/>}
     {tab === "knowledge" && <Knowledge data={common} fallback={topics} setDetail={setDetail}/>}

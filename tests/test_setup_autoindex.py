@@ -81,7 +81,7 @@ def test_setup_requires_confirmation_before_writing(tmp_path, monkeypatch):
     assert "Docmancer is ready to:" in r.output
     assert "Install automatic recall hooks" in r.output
     assert "Automatic session capture will be enabled" in r.output
-    assert "Maintain one laptop-wide canonical memory" in r.output
+    assert "Maintain one machine-wide canonical memory" in r.output
     assert "Setup cancelled. No files were changed." in r.output
     assert not (home / ".docmancer" / "docmancer.yaml").exists()
     assert not (home / ".codex" / "skills" / "docmancer" / "SKILL.md").exists()

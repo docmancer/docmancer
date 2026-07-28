@@ -49,6 +49,9 @@ def test_build_server_registers_local_tools(monkeypatch):
         "context_projection",
         "decision_timeline",
         "ask_memory",
+        "canonical_memory",
+        "pin_memory",
+        "unpin_memory",
     }
 
 
@@ -60,7 +63,8 @@ def test_provider_key_does_not_expand_compact_mcp_surface(monkeypatch):
     server = build_server()
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert "docmancer_memory_consolidate_draft" not in names
-    assert len(names) == 17
+    # 17 compact tools plus canonical_memory, pin_memory, and unpin_memory.
+    assert len(names) == 20
 
 
 def test_build_server_blocked_inside_docmancer_subprocess(monkeypatch):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,10 +27,43 @@ AGENTS = (
 )
 
 
-def inspect_hook_status(project_path: str | Path | None = None) -> list[dict]:
+def _hook_commands(data: dict[str, Any]) -> list[str]:
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    commands: list[str] = []
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler in handlers:
+                if isinstance(handler, dict) and handler.get("command"):
+                    commands.append(str(handler["command"]))
+    return commands
+
+
+def _is_capture_command(command: str) -> bool:
+    if "memory capture-hook" in command:
+        return True
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    return "docmancer" in command and "capture" in tokens
+
+
+def inspect_hook_status(
+    project_path: str | Path | None = None,
+    *,
+    home: str | Path | None = None,
+) -> list[dict]:
+    root = Path(home).expanduser() if home is not None else Path.home()
     locations = [
-        ("claude-code", "user", Path.home() / ".claude" / "settings.json"),
-        ("codex", "user", Path.home() / ".codex" / "hooks.json"),
+        ("claude-code", "user", root / ".claude" / "settings.json"),
+        ("codex", "user", root / ".codex" / "hooks.json"),
     ]
     if project_path is not None:
         project = Path(project_path).expanduser().resolve()
@@ -49,16 +83,19 @@ def inspect_hook_status(project_path: str | Path | None = None) -> list[dict]:
                 data = loaded if isinstance(loaded, dict) else {}
             except (OSError, json.JSONDecodeError) as exc:
                 error = str(exc)
-        blob = json.dumps(data, sort_keys=True)
         hooks = data.get("hooks") if isinstance(data, dict) else {}
+        commands = _hook_commands(data)
         rows.append(
             {
                 "agent": agent,
                 "scope": scope,
                 "path": str(path),
                 "exists": path.is_file(),
-                "recall": "memory hook-context" in blob or "session-baseline" in blob,
-                "capture": "memory capture-hook" in blob,
+                "recall": any(
+                    "memory hook-context" in command or "session-baseline" in command
+                    for command in commands
+                ),
+                "capture": any(_is_capture_command(command) for command in commands),
                 "events": sorted(str(event) for event in hooks) if isinstance(hooks, dict) else [],
                 "error": error,
             }

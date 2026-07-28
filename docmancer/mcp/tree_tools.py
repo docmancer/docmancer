@@ -191,15 +191,82 @@ def edit_memory(
     prior ``read_memory``/``write_memory`` call). A stale hash fails with
     a structured ``StaleWriteError`` payload naming the safe next call:
     re-read the address and retry with the fresh hash.
+
+    Automatically reconciled files (the canonical sections) carry a generated
+    zone that is rewritten on every sync. An edit that changes that zone fails
+    with a ``generated_zone_readonly`` payload naming ``pin_memory`` instead,
+    because the edit would otherwise be silently discarded on the next sync.
     """
+    from docmancer.memory.tree.zones import ZoneViolation, guard_zoned_write
+
     try:
         store = _store_for(project_path)
+        existing = store.read(address)
+        guard_zoned_write(existing.body, text, address=address)
         entry = store.edit(address, text=text, expected_hash=expected_hash, actor_surface="mcp")
+    except ZoneViolation as exc:
+        payload = exc.payload()
+        payload["recovery"] = (
+            f"Call pin_memory(section={exc.address.removesuffix('.md')!r}, text=...) "
+            "to add a note that survives reconciliation."
+        )
+        return payload
     except TreeError as exc:
         return _error_payload(exc)
     payload = _entry_payload(entry)
     payload["edited"] = True
     return payload
+
+
+def _reconciler():
+    from docmancer.memory import MemoryAgent
+    from docmancer.memory.laptop import LaptopMemoryReconciler
+
+    return LaptopMemoryReconciler(MemoryAgent())
+
+
+def canonical_memory(*, section: str | None = None) -> dict:
+    """Read the machine-wide canonical memory: what Docmancer has reconciled
+    about this user across every agent and project. READ-ONLY.
+
+    Without ``section``, returns the status of all sections. With ``section``
+    (``about``, ``preferences``, ``working-principles``, ``active-projects``),
+    returns that section split into its ``pinned`` and ``generated`` zones.
+    """
+    try:
+        reconciler = _reconciler()
+        return reconciler.read_section(section) if section else reconciler.status()
+    except ValueError as exc:
+        return {"ok": False, "error": "unknown_section", "message": str(exc)}
+
+
+def pin_memory(section: str, text: str) -> dict:
+    """Add one durable line to a canonical section's pinned zone. MUTATING.
+
+    The pinned zone is the only part of a canonical section that survives
+    reconciliation. Use this instead of ``edit_memory`` for anything that
+    should persist: a correction, a standing preference, a fact the automatic
+    reconciler got wrong or omitted.
+
+    ``section`` is one of ``about``, ``preferences``, ``working-principles``,
+    or ``active-projects``.
+    """
+    try:
+        return {"ok": True, **_reconciler().pin(section, text)}
+    except ValueError as exc:
+        return {"ok": False, "error": "pin_failed", "message": str(exc)}
+
+
+def unpin_memory(section: str, text: str) -> dict:
+    """Remove pinned lines in ``section`` containing ``text``. MUTATING.
+
+    Matching is a case-insensitive substring test. Fails without changing
+    anything when nothing matches.
+    """
+    try:
+        return {"ok": True, **_reconciler().unpin(section, text)}
+    except ValueError as exc:
+        return {"ok": False, "error": "unpin_failed", "message": str(exc)}
 
 
 def move_memory(
