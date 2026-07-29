@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **Library navigation no longer freezes behind “Opening your local memory.”** Route rendering is independent of the session handshake, Library owns its readiness state, and SQLite readers no longer renegotiate journal mode while a background catalog writer holds the database.
 - **Repeated Shared Memory visits no longer rescan everything.** Parsed tree metadata and integration delivery state are cached with safe invalidation, so a slow agent inspection cannot hold the canonical file tree hostage.
+- **MCP 2.0 no longer breaks the packaged server.** The optional MCP and development dependency ranges now stay on the compatible 1.x SDK until Docmancer adopts the new 2.x server API.
 
 ## [0.9.3] - 2026-07-28
 ### Added
