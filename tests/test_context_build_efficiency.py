@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import pytest
 
 from docmancer.memory.context_engine import (
+    ContextSource,
+    DedupGroup,
+    cluster_topics,
     _complete_with_retry,
     _is_transcript_noise,
     _is_transient_provider_error,
@@ -133,7 +136,7 @@ class TestRetry:
 
 class TestConcurrency:
     def test_provider_renders_overlap_and_keep_their_cluster_mapping(self):
-        """The whole point: 634 independent HTTP waits must not serialise."""
+        """Independent provider batches must overlap and retain topic mapping."""
         from docmancer.memory.context_engine import ContextEngine
 
         clusters = [SimpleNamespace(cluster_id=f"c{i}") for i in range(8)]
@@ -141,7 +144,7 @@ class TestConcurrency:
         peak = 0
         lock = threading.Lock()
 
-        def render(cluster, *, client, mode):
+        def render(batch, *, client, mode):
             nonlocal active, peak
             with lock:
                 active += 1
@@ -149,10 +152,26 @@ class TestConcurrency:
             time.sleep(0.05)
             with lock:
                 active -= 1
-            return (f"body-{cluster.cluster_id}", True, 0.01, False)
+            return {
+                cluster.cluster_id: (
+                    f"body-{cluster.cluster_id}",
+                    True,
+                    0.01,
+                    False,
+                )
+                for cluster in batch
+            }
 
         engine = ContextEngine.__new__(ContextEngine)
-        engine._render_cluster = render
+        engine.distillation = SimpleNamespace(max_concurrency=8)
+        engine._last_render_stats = {}
+        engine._cluster_batches = lambda pending: [[cluster] for cluster in pending]
+        engine._cluster_cache_path = lambda cluster, client, mode: (
+            cluster.cluster_id,
+            SimpleNamespace(),
+        )
+        engine._load_json = lambda *_args: None
+        engine._render_provider_batch = render
 
         rendered = engine._render_clusters(clusters, client=object(), mode="normal")
 
@@ -173,3 +192,85 @@ class TestConcurrency:
 
         assert rendered["c0"][0] == "local-c0"
         assert len(rendered) == 4
+
+    def test_topics_are_batched_before_provider_calls(self):
+        from docmancer.memory.context_engine import ContextEngine
+        from docmancer.memory.tree.providerless_context import ProviderlessCluster
+
+        clusters = [
+            SimpleNamespace(
+                cluster_id=f"c{i}",
+                topic_label=f"Topic {i}",
+                sources=[],
+            )
+            for i in range(64)
+        ]
+        engine = ContextEngine.__new__(ContextEngine)
+        engine.distillation = SimpleNamespace(
+            topics_per_request=8,
+            max_input_tokens=12_000,
+        )
+        engine._providerless_cluster = lambda cluster: ProviderlessCluster(
+            cluster_id=cluster.cluster_id,
+            topic_label=cluster.topic_label,
+            members=(),
+        )
+
+        batches = engine._cluster_batches(clusters)
+
+        assert len(batches) == 8
+        assert all(len(batch) == 8 for batch in batches)
+
+
+def _source(address: str, text: str, title: str = "Topic") -> ContextSource:
+    return ContextSource(
+        address=address,
+        content_hash=address,
+        text=text,
+        title=title,
+        path=f"/{address}.md",
+        harness="codex",
+        recorded_at="2026-07-29T00:00:00+00:00",
+        scope="project",
+        authority="agent-memory",
+    )
+
+
+class TestStableClustering:
+    def test_cluster_id_survives_label_and_minor_membership_change(self):
+        original = [
+            DedupGroup(_source("docmancer://a", "Qdrant indexing vectors quickly.", "Index")),
+            DedupGroup(_source("docmancer://b", "Qdrant vector indexing batches.", "Index")),
+        ]
+        first = cluster_topics(original)
+        assert len(first) == 1
+        previous = [
+            {
+                "cluster_id": first[0].cluster_id,
+                "member_addresses": [source.address for source in first[0].sources],
+            }
+        ]
+        changed = original + [
+            DedupGroup(_source("docmancer://c", "Qdrant vector indexing throughput.", "Scale"))
+        ]
+
+        second = cluster_topics(changed, previous=previous)
+
+        assert len(second) == 1
+        assert second[0].cluster_id == first[0].cluster_id
+
+    def test_oversized_components_keep_hard_member_bound(self):
+        groups = [
+            DedupGroup(
+                _source(
+                    f"docmancer://{index}",
+                    f"shared retrieval indexing topic group {index % 3}",
+                )
+            )
+            for index in range(30)
+        ]
+
+        clusters = cluster_topics(groups, threshold=0.05, max_members=7)
+
+        assert sum(len(cluster.groups) for cluster in clusters) == 30
+        assert max(len(cluster.groups) for cluster in clusters) <= 7

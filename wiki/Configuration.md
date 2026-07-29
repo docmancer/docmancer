@@ -8,6 +8,7 @@ A fresh install uses a fully local retrieval stack:
 
 - `embeddings.provider: model2vec`, using the vendored `minishlab/potion-base-8M` static model.
 - `vector_store.provider: sqlite-vec`, using one local SQLite-backed vector file.
+- `retrieval.profile: local`, selecting the zero-daemon stack.
 - `retrieval.default_mode: hybrid`, combining lexical and dense retrieval and degrading to lexical when vector retrieval is unavailable.
 
 The rebuildable memory index uses its own database under `~/.docmancer/memory.db` with co-located graph tables and a vector file. The automatically reconciled laptop-wide memory lives under `~/.docmancer/tree/`, with reconciliation manifests and revisions under `~/.docmancer/state/laptop-memory/`. Durable personal records use `~/.docmancer/memories/`, canonical record revisions use `~/.docmancer/memories/.revisions/`, tombstones use `~/.docmancer/memory-tombstones.json`, and team records use `<repo>/.docmancer/memory/`. Reconciliation uses the configured generation provider when it is ready, then falls back to deterministic local rules. The docs index uses the configured `index.db_path`.
@@ -34,6 +35,7 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 | `index.provider` | `sqlite` | Index backend. Only SQLite is supported. |
 | `index.db_path` | `~/.docmancer/docmancer.db` | Docs SQLite database path. |
 | `index.extracted_dir` | `~/.docmancer/extracted` | Directory for inspectable extracted Markdown and JSON. |
+| `index.persist_extracted` | `true` | Write inspectable per-source Markdown and JSON. The scale profile disables this to avoid hundreds of thousands of tiny files. |
 
 ### Query
 
@@ -55,15 +57,18 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
-| `loaders.default_chunk_size` | `800` | Default chunk size used by paragraph and sliding-window chunkers. |
-| `loaders.default_chunk_overlap` | `100` | Default overlap. Must be smaller than `chunk_size`. |
+| `loaders.default_chunk_size` | `400` | Default token budget used by structural chunkers. |
+| `loaders.default_chunk_overlap` | `64` | Default token overlap. Must be smaller than `chunk_size`. |
+| `loaders.default_chunk_unit` | `tokens` | Budget unit. Set `characters` only for compatibility. |
 | `loaders.formats.<fmt>.chunk_size` | unset | Per-format override for `md`, `pdf`, `docx`, `rtf`, `html`, or `txt`. |
 | `loaders.formats.<fmt>.chunk_overlap` | unset | Per-format overlap override. |
+| `loaders.formats.<fmt>.chunk_unit` | unset | Per-format `tokens` or compatibility `characters` override. |
 
 ### Vector store
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
+| `retrieval.profile` | `local` | `local` keeps sqlite-vec and Model2Vec. `scale` selects the configured Qdrant and FastEmbed stack. |
 | `vector_store.provider` | `sqlite-vec` | Default local vector backend. Advanced users may set `qdrant`. |
 | `vector_store.collection` | derived from project name | Vector collection name. |
 | `vector_store.options.db_path` | `~/.docmancer/sqlite-vec.db` | Storage path for the default `sqlite-vec` provider. |
@@ -83,6 +88,16 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 | Key | Default | What it controls |
 |-----|---------|------------------|
 | `retrieval.default_mode` | `hybrid` | `lexical`, `dense`, `sparse`, or `hybrid`. |
+
+### AI Context distillation
+
+| Key | Default | What it controls |
+|-----|---------|------------------|
+| `distillation.max_concurrency` | `16` | Maximum provider batches in flight at once. |
+| `distillation.topics_per_request` | `16` | Independent topics combined into one structured provider call. |
+| `distillation.max_input_tokens` | `24000` | Maximum estimated evidence tokens in one provider batch. |
+| `distillation.target_seconds` | `8` | Wall-clock target recorded in each build manifest. Provider latency can still exceed it. |
+| `distillation.model` | unset | Optional lower-latency model used only for distillation. |
 | `retrieval.fusion.method` | `rrf` | `rrf` or `weighted_rrf`. |
 | `retrieval.fusion.rrf_k` | `60` | RRF rank-discount constant. |
 | `retrieval.fusion.weights` | `{}` | Per-source weights for `weighted_rrf`. |
@@ -92,6 +107,16 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 | `retrieval.expand` | unset | `adjacent` or `page` expansion for hybrid retrieval. |
 | `retrieval.budget` | unset | Optional override for `query.default_budget`. |
 | `retrieval.limit` | unset | Optional override for `query.default_limit`. |
+
+### Distillation
+
+| Key | Default | What it controls |
+|-----|---------|------------------|
+| `distillation.max_concurrency` | `16` | Maximum concurrent provider batches. |
+| `distillation.topics_per_request` | `16` | Independent topics synthesized in one provider request. |
+| `distillation.max_input_tokens` | `24000` | Approximate input ceiling per provider batch. |
+| `distillation.target_seconds` | `8` | Operator latency target reported with build status. |
+| `distillation.model` | unset | Optional Context-specific generation model. |
 
 ### Discovery
 
@@ -135,7 +160,15 @@ The default stack needs no provider keys. These settings are for explicit opt-in
 | FastEmbed cache override | `DOCMANCER_FASTEMBED_CACHE_DIR`. |
 | Advanced Qdrant backend | `vector_store.provider: qdrant`, optional `vector_store.url`, optional `vector_store.api_key_env`, and the `embeddings-heavy` extra. |
 
-Example advanced Qdrant config:
+The supported shortcut configures the complete heavy stack:
+
+```bash
+pipx install "docmancer[embeddings-heavy]"
+docmancer qdrant start
+docmancer setup --profile scale
+```
+
+Equivalent advanced Qdrant config:
 
 ```yaml
 vector_store:
@@ -146,13 +179,17 @@ embeddings:
   provider: fastembed
   model: BAAI/bge-base-en-v1.5
   dimensions: 768
+  sparse_model: prithivida/Splade_PP_en_v1
+
+retrieval:
+  profile: scale
 ```
 
-Qdrant remains supported for users who explicitly configure the heavy backend, but it is not the default path. The default `sqlite-vec` backend is the product path optimized for local memory recall.
+Qdrant is the scale path, not an accuracy shortcut. It improves filtered vector search, concurrent ingestion, batching, and operational headroom. Source coverage, retrieval-unit quality, fusion, and evaluation still determine whether results are useful. The default `sqlite-vec` backend remains optimized for local memory recall with no daemon.
 
 ## Notes
 
 - Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
-- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Users do not need a separate initialization step.
+- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Ask and web startup do not scan agent files or rewrite indexes. Use `docmancer memory sync`, a supported capture hook, or `docmancer ask --fresh` when a refresh is required.
 - If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.
 - Provider model catalogs are cached locally. Providers with discovery endpoints refresh their generation-capable models in the background; maintained catalogs and custom model IDs remain available when live discovery is unavailable.

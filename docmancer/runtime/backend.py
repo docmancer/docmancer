@@ -46,24 +46,115 @@ class LocalRuntime:
         self._library_rebuild_task: asyncio.Task | None = None
         self._library_rebuild_error: str | None = None
         self._library_bootstrap_checked = False
+        self._library_rebuild_started_at: str | None = None
+        self._library_rebuild_finished_at: str | None = None
+        self._memory_refresh_task: asyncio.Task | None = None
+        self._memory_refresh_error: str | None = None
+        self._memory_refresh_started_at: str | None = None
+        self._memory_refresh_finished_at: str | None = None
+        self._memory_refreshed = False
         self._tree_store_instance: Any | None = None
+        self._shared_memory_cache: dict | None = None
+        self._shared_memory_cache_at = 0.0
+        self._shared_memory_refresh_task: asyncio.Task | None = None
+        self._delivery_cache: list[dict] | None = None
+        self._delivery_cache_at = 0.0
         self._provider_model_refresh_tasks: dict[str, asyncio.Task] = {}
         self.model_label = "local"
+        self.initializing = False
+        self.initialization_error: str | None = None
+        self.initialized_at: str | None = None
 
     async def initialize(self) -> dict:
         if self.ready:
-            return await self.counts()
-        self.memory, self.docs = await asyncio.gather(
-            asyncio.to_thread(self._make_memory),
-            asyncio.to_thread(self._make_docs),
-        )
-        from docmancer.memory.service import MemoryService
+            return {"ready": True}
+        self.initializing = True
+        self.initialization_error = None
+        try:
+            self.memory, self.docs = await asyncio.gather(
+                asyncio.to_thread(self._make_memory),
+                asyncio.to_thread(self._make_docs),
+            )
+            from docmancer.memory.service import MemoryService
 
-        self.service = MemoryService(self.memory)
-        self.ready = True
-        embeddings = getattr(getattr(self.memory, "config", None), "embeddings", None)
-        self.model_label = str(getattr(embeddings, "provider", None) or getattr(embeddings, "model", None) or "local")
-        return await self.counts()
+            self.service = MemoryService(self.memory)
+            self.ready = True
+            self.initialized_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            embeddings = getattr(getattr(self.memory, "config", None), "embeddings", None)
+            self.model_label = str(getattr(embeddings, "provider", None) or getattr(embeddings, "model", None) or "local")
+            # Counts are presentation data, not a readiness prerequisite.
+            return {"ready": True}
+        except Exception as exc:
+            self.initialization_error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self.initializing = False
+
+    def readiness(self) -> dict:
+        """Report startup state without constructing a backend or reading an index."""
+        return {
+            "ready": self.ready,
+            "initializing": self.initializing,
+            "error": self.initialization_error,
+            "initialized_at": self.initialized_at,
+            "memory_refresh": self.memory_refresh_status(),
+            "library_index": self.library_index_status(),
+        }
+
+    def schedule_memory_refresh(self) -> asyncio.Task | None:
+        """Queue a non-blocking evidence-index refresh for the local web app.
+
+        Canonical synthesis and generated-artifact maintenance are
+        intentionally not part of this task. The web app serves the latest
+        committed index immediately.
+        """
+        if self._memory_refresh_task is not None and not self._memory_refresh_task.done():
+            return self._memory_refresh_task
+
+        async def refresh() -> None:
+            self._memory_refresh_started_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
+            self._memory_refresh_error = None
+            try:
+                from docmancer.memory.laptop import migrate_canonical_scaffold
+
+                await asyncio.to_thread(migrate_canonical_scaffold)
+                self._memory_refreshed = bool(
+                    await asyncio.to_thread(self._require_memory().refresh_if_changed)
+                )
+            except Exception as exc:  # noqa: BLE001 - keep the last committed index usable
+                self._memory_refresh_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                self._memory_refresh_finished_at = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+                self._schedule_shared_memory_refresh()
+                self._schedule_library_rebuild()
+
+        self._memory_refresh_task = asyncio.create_task(
+            refresh(), name="docmancer-memory-refresh"
+        )
+        return self._memory_refresh_task
+
+    def memory_refresh_status(self) -> dict:
+        task = self._memory_refresh_task
+        return {
+            "running": bool(task is not None and not task.done()),
+            "refreshed": self._memory_refreshed,
+            "started_at": self._memory_refresh_started_at,
+            "finished_at": self._memory_refresh_finished_at,
+            "error": self._memory_refresh_error,
+        }
+
+    def library_index_status(self) -> dict:
+        task = self._library_rebuild_task
+        return {
+            "running": bool(task is not None and not task.done()),
+            "started_at": self._library_rebuild_started_at,
+            "finished_at": self._library_rebuild_finished_at,
+            "error": self._library_rebuild_error,
+        }
 
     def _make_memory(self):
         if self._memory_factory is not None:
@@ -424,8 +515,10 @@ class LocalRuntime:
         )
 
     async def context_delivery(self) -> list[dict]:
+        if self._delivery_cache is not None and monotonic() - self._delivery_cache_at < 30:
+            return self._delivery_cache
         setup = await self.agent_setup_plan()
-        return [
+        result = [
             {
                 **item,
                 "agent": item["id"],
@@ -433,6 +526,185 @@ class LocalRuntime:
             }
             for item in setup["items"]
         ]
+        self._delivery_cache = result
+        self._delivery_cache_at = monotonic()
+        return result
+
+    @staticmethod
+    def _scaffold_folders(paths: list[str], required: tuple[str, ...]) -> list[dict]:
+        folders = set(required)
+        for value in paths:
+            parts = Path(value).parts[:-1]
+            folders.update(
+                Path(*parts[:index]).as_posix()
+                for index in range(1, len(parts) + 1)
+            )
+        return [
+            {
+                "path": path,
+                "name": Path(path).name,
+                "parent": Path(path).parent.as_posix()
+                if Path(path).parent.as_posix() != "."
+                else "",
+            }
+            for path in sorted(folders)
+        ]
+
+    def _invalidate_shared_memory_cache(self) -> None:
+        self._shared_memory_cache = None
+        self._shared_memory_cache_at = 0.0
+
+    def _schedule_shared_memory_refresh(self) -> None:
+        if self._shared_memory_refresh_task and not self._shared_memory_refresh_task.done():
+            return
+
+        async def refresh() -> None:
+            try:
+                result = await self._build_shared_memory()
+                self._shared_memory_cache = result
+                self._shared_memory_cache_at = monotonic()
+            except Exception:
+                # Keep serving the last valid snapshot.
+                return
+
+        self._shared_memory_refresh_task = asyncio.create_task(
+            refresh(), name="docmancer-shared-memory-refresh"
+        )
+
+    async def shared_memory(self) -> dict:
+        """Serve the last tree snapshot immediately and refresh it in place."""
+        if self._shared_memory_cache is not None:
+            if monotonic() - self._shared_memory_cache_at > 10:
+                self._schedule_shared_memory_refresh()
+            return self._shared_memory_cache
+        result = await self._build_shared_memory()
+        self._shared_memory_cache = result
+        self._shared_memory_cache_at = monotonic()
+        return result
+
+    async def _build_shared_memory(self) -> dict:
+        """Return both canonical trees as compact filesystem metadata."""
+        from docmancer.memory.laptop import laptop_memory_root
+        from docmancer.memory.tree.project import PROJECT_SCAFFOLD_FOLDERS
+        from docmancer.memory.tree.store import TreeStore
+
+        machine_store = TreeStore(laptop_memory_root() / "tree")
+        project_store = self._tree_store()
+        machine_entries, project_entries = await asyncio.gather(
+            asyncio.to_thread(machine_store.index.entries),
+            asyncio.to_thread(project_store.index.entries),
+        )
+
+        legacy_count = sum(
+            1
+            for entry in machine_entries
+            if str(entry.path.relative_to(machine_store.root)).startswith("context/")
+        )
+        migrated_destinations = {
+            relative
+            for relative in (
+                "profile/about.md",
+                "profile/preferences.md",
+                "principles/working-style.md",
+                "projects/active.md",
+                "README.md",
+            )
+            if (machine_store.root / relative).is_file()
+        }
+        legacy_names = {
+            "about.md": "profile/about.md",
+            "preferences.md": "profile/preferences.md",
+            "working-principles.md": "principles/working-style.md",
+            "active-projects.md": "projects/active.md",
+            "canonical-memory.md": "README.md",
+        }
+        machine_entries = [
+            entry
+            for entry in machine_entries
+            if not str(entry.path.relative_to(machine_store.root)).startswith("context/")
+            and not (
+                entry.path.parent == machine_store.root
+                and legacy_names.get(entry.path.name) in migrated_destinations
+            )
+        ]
+
+        def root_payload(store, entries, *, key: str, label: str, folders: tuple[str, ...]):
+            paths = [entry.path.relative_to(store.root).as_posix() for entry in entries]
+            return {
+                "key": key,
+                "label": label,
+                "path": str(store.root),
+                "count": len(entries),
+                "folders": self._scaffold_folders(paths, folders),
+                "files": [
+                    {
+                        **self._tree_entry_payload(
+                            entry,
+                            include_body=False,
+                            backlinks=self._tree_backlinks(entries),
+                            root=store.root,
+                        ),
+                        "root": key,
+                        "path": entry.path.relative_to(store.root).as_posix(),
+                    }
+                    for entry in sorted(entries, key=lambda item: str(item.path))
+                ],
+            }
+
+        return {
+            "scaffold_version": 1,
+            "roots": [
+                root_payload(
+                    machine_store,
+                    machine_entries,
+                    key="machine",
+                    label="This machine",
+                    folders=("profile", "principles", "projects", "shared"),
+                ),
+                root_payload(
+                    project_store,
+                    project_entries,
+                    key="project",
+                    label=Path(self.project_path).name,
+                    folders=PROJECT_SCAFFOLD_FOLDERS,
+                ),
+            ],
+            "legacy_generated_files": legacy_count,
+        }
+
+    async def shared_memory_read(self, address: str) -> dict:
+        from docmancer.memory.laptop import laptop_memory_root
+        from docmancer.memory.tree.store import TreeStore
+
+        for key, store in (
+            ("project", self._tree_store()),
+            ("machine", TreeStore(laptop_memory_root() / "tree")),
+        ):
+            entries = await asyncio.to_thread(store.index.entries)
+            entry = next((item for item in entries if item.address == address), None)
+            if entry is not None:
+                return {
+                    **self._tree_entry_payload(
+                        entry,
+                        backlinks=self._tree_backlinks(entries),
+                        root=store.root,
+                    ),
+                    "root": key,
+                    "path": entry.path.relative_to(store.root).as_posix(),
+                }
+        from docmancer.memory.tree.errors import AddressNotFoundError
+
+        raise AddressNotFoundError(address)
+
+    async def agent_projection(self, agent: str, *, token_budget: int = 2_000) -> dict:
+        from docmancer.mcp.tree_tools import context_projection
+
+        return await asyncio.to_thread(
+            context_projection,
+            agent=agent,
+            project_path=self.project_path,
+            token_budget=token_budget,
+        )
 
     async def _raw_context_delivery(self) -> list[dict]:
         from docmancer.memory.delivery import delivery_matrix
@@ -997,6 +1269,8 @@ class LocalRuntime:
             item for item in verified["items"]
             if str(item["id"]) in selected_families
         ]
+        self._delivery_cache = None
+        self._delivery_cache_at = 0.0
         self._schedule_library_rebuild()
         return {
             "targets": selected,
@@ -1035,7 +1309,14 @@ class LocalRuntime:
             "sources": len(sources),
             "provider": provider_id,
             "provider_label": provider.get("label") or provider_id.replace("-", " ").title(),
-            "model": models.get(provider_id),
+            "model": (
+                getattr(
+                    getattr(self._require_memory().config, "distillation", None),
+                    "model",
+                    None,
+                )
+                or models.get(provider_id)
+            ),
             "provider_ready": str(provider.get("key_state") or "") != "missing",
             "clusters": int(plan.get("clusters") or 0),
             "estimated_provider_calls": int(plan.get("estimated_provider_calls") or 0),
@@ -1156,10 +1437,15 @@ class LocalRuntime:
         progress("plan", {"detail": "Building the Context refresh plan"})
         client = None
         if provider != "none" and not dry_run:
+            distillation_model = getattr(
+                getattr(self._require_memory().config, "distillation", None),
+                "model",
+                None,
+            )
             client = provider_client(
                 provider,
                 config=self._require_memory().config.providers,
-                model=model,
+                model=model or distillation_model,
             )
         result = await asyncio.to_thread(
             self._context_engine().build,
@@ -1615,12 +1901,20 @@ class LocalRuntime:
             return
         if self._library_rebuild_task and not self._library_rebuild_task.done():
             return
+        self._library_bootstrap_checked = True
         async def rebuild() -> None:
+            self._library_rebuild_started_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
             self._library_rebuild_error = None
             try:
                 await self.rebuild_library_catalog()
             except Exception as exc:  # The last valid catalog remains usable.
                 self._library_rebuild_error = str(exc)
+            finally:
+                self._library_rebuild_finished_at = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
 
         self._library_rebuild_task = loop.create_task(rebuild())
 
@@ -1791,8 +2085,9 @@ class LocalRuntime:
         *,
         include_body: bool = True,
         backlinks: dict[str, list[dict]] | None = None,
+        root: Path | None = None,
     ) -> dict:
-        root = self._tree_store().root
+        root = root or self._tree_store().root
         outline = []
         for line_number, line in enumerate(entry.body.splitlines(), start=1):
             stripped = line.lstrip()
@@ -1868,6 +2163,7 @@ class LocalRuntime:
             actor_surface="web",
             actor_harness=str(body.get("agent") or "web"),
         )
+        self._invalidate_shared_memory_cache()
         self._schedule_library_rebuild()
         return self._tree_entry_payload(entry)
 
@@ -1885,6 +2181,7 @@ class LocalRuntime:
                     dense.close()
 
             result = {"reindexed": count, "dense": await asyncio.to_thread(rebuild_dense)}
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return result
         address = str(body["address"])
@@ -1898,6 +2195,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "move":
@@ -1909,6 +2207,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "duplicate":
@@ -1920,6 +2219,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "trash":
@@ -1930,6 +2230,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return {"trashed": True, "restore_token": token}
         if action == "restore":
@@ -1939,6 +2240,7 @@ class LocalRuntime:
                 actor_surface="web",
                 actor_harness=str(body.get("agent") or "web"),
             )
+            self._invalidate_shared_memory_cache()
             self._schedule_library_rebuild()
             return self._tree_entry_payload(entry)
         if action == "open-editor":
@@ -2228,6 +2530,7 @@ class LocalRuntime:
         )
         return {
             "memory": memory_status,
+            "memory_refresh": self.memory_refresh_status(),
             "last_sync": await asyncio.to_thread(memory.last_sync_stats),
             "docs": docs_status,
             "project": self.project_path,

@@ -2864,9 +2864,10 @@ def _reconciler():
 def canonical_group(ctx: click.Context, refresh: bool, deterministic: bool, as_json: bool) -> None:
     """Show what Docmancer has reconciled into one memory for this machine.
 
-    The four sections are rebuilt automatically by `docmancer setup`, `docmancer
-    web`, `docmancer ask`, `docmancer memory sync`, and session-capture hooks.
-    This command reports that state and, with --refresh, runs it deliberately.
+    The four sections are rebuilt by `docmancer setup`, explicit memory sync,
+    session-capture hooks, or this command with --refresh. Ask and web startup
+    read the current index without reconciling files. This command reports that
+    state and, with --refresh, runs it deliberately.
     """
     if ctx.invoked_subcommand is not None:
         return

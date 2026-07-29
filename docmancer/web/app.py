@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import threading
@@ -84,8 +85,27 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: Starlette):
-        await local_runtime.initialize()
-        yield
+        async def initialize_runtime() -> None:
+            try:
+                await local_runtime.initialize()
+                schedule_refresh = getattr(local_runtime, "schedule_memory_refresh", None)
+                if callable(schedule_refresh):
+                    schedule_refresh()
+            except Exception:
+                # Readiness exposes the failure while the static workbench
+                # remains available with panel-level recovery.
+                return
+
+        task = asyncio.create_task(
+            initialize_runtime(), name="docmancer-web-initialize"
+        )
+        _app.state.runtime_initialization = task
+        await asyncio.sleep(0)
+        try:
+            yield
+        finally:
+            if not task.done():
+                task.cancel()
 
     async def bootstrap(request: Request) -> Response:
         supplied = request.query_params.get("bootstrap")
@@ -117,17 +137,17 @@ def create_app(
         destinations = {
             "ask": "/",
             "agent-context": "/",
-            "memory": "/library/?tab=evidence",
             "tree": "/library/?tab=memory",
             "inbox": "/library/?tab=memory",
             "sources": "/library/?tab=evidence",
             "docs": "/library/?tab=docs",
-            "common": "/context/?tab=knowledge",
-            "delivery": "/context/?tab=delivery",
-            "timeline": "/context/?tab=history",
+            "context": "/memory/",
+            "common": "/memory/",
+            "delivery": "/memory/",
+            "timeline": "/memory/",
             "audit": "/settings/?section=safeguards",
             "maintenance": "/settings/?section=maintenance",
-            "intelligence": "/context/?tab=knowledge",
+            "intelligence": "/memory/",
         }
         surface = request.url.path.strip("/")
         return RedirectResponse(url=destinations[surface], status_code=308)
@@ -145,21 +165,29 @@ def create_app(
         Route("/", bootstrap, methods=["GET"]),
         *[
             Route(path, application_page, methods=["GET", "HEAD"])
-            for surface in ("context", "library", "settings", "help")
+            for surface in ("memory", "library", "settings", "help")
             for path in (f"/{surface}", f"/{surface}/")
         ],
         *[
             Route(path, compatibility_redirect, methods=["GET", "HEAD"])
             for surface in (
-                "ask", "agent-context", "memory", "tree", "inbox", "sources",
+                "ask", "agent-context", "context", "tree", "inbox", "sources",
                 "docs", "common", "delivery", "timeline", "audit",
                 "maintenance", "intelligence",
             )
             for path in (f"/{surface}", f"/{surface}/")
         ],
         Route("/api/v1/session", api.session, methods=["GET"]),
+        Route("/api/v1/readiness", api.readiness, methods=["GET"]),
         Route("/api/v1/status", api.status, methods=["GET"]),
         Route("/api/v1/capabilities", api.capabilities, methods=["GET"]),
+        Route("/api/v1/shared-memory", api.shared_memory, methods=["GET"]),
+        Route("/api/v1/shared-memory/file", api.shared_memory_file, methods=["GET"]),
+        Route(
+            "/api/v1/agents/{agent:str}/projection",
+            api.agent_projection,
+            methods=["GET"],
+        ),
         Route("/api/v1/tree/root", api.tree_root, methods=["GET"]),
         Route("/api/v1/tree", api.tree, methods=["GET"]),
         Route("/api/v1/library", api.library, methods=["GET"]),

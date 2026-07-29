@@ -126,7 +126,7 @@ def test_expired_root_aliases_are_removed_in_0_9():
         assert f"No such command '{command}'" in result.output
 
 
-def test_web_resolves_git_root_initializes_tree_and_refreshes(tmp_path, monkeypatch):
+def test_web_resolves_git_root_without_blocking_on_memory_refresh(tmp_path, monkeypatch):
     project = tmp_path / "repo"
     nested = project / "src" / "feature"
     (project / ".git").mkdir(parents=True)
@@ -139,9 +139,8 @@ def test_web_resolves_git_root_initializes_tree_and_refreshes(tmp_path, monkeypa
         result = CliRunner().invoke(cli, ["web", "--no-open"])
 
     assert result.exit_code == 0, result.output
-    assert (project / ".docmancer" / "tree" / "context.md").is_file()
-    memory.refresh_if_changed.assert_called_once()
-    assert callable(memory.refresh_if_changed.call_args.kwargs["progress_callback"])
+    assert (project / ".docmancer" / "tree" / "overview.md").is_file()
+    memory.refresh_if_changed.assert_not_called()
     assert run_web.call_args.kwargs["project_path"] == str(project.resolve())
 
 

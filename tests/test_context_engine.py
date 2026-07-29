@@ -1,14 +1,23 @@
 import json
+import re
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
 from docmancer.memory.atomic import AtomicMemoryEntry
 from docmancer.memory.context_engine import ContextEngine, context_cache_key
+from docmancer.ai.provider_protocol import TextResult
 
 
-def _atom(atom_id: str, text: str, *, kind: str = "agent-memory") -> AtomicMemoryEntry:
+def _atom(
+    atom_id: str,
+    text: str,
+    *,
+    kind: str = "agent-memory",
+    source_title: str = "Deployment decision",
+) -> AtomicMemoryEntry:
     digest = __import__("hashlib").sha256(text.encode()).hexdigest()
     return AtomicMemoryEntry(
         atom_id=atom_id,
@@ -18,7 +27,7 @@ def _atom(atom_id: str, text: str, *, kind: str = "agent-memory") -> AtomicMemor
         kind=kind,
         scope="project:/repo",
         source_path=f"/memory/{atom_id}.md",
-        source_title="Deployment decision",
+        source_title=source_title,
         line_start=1,
         line_end=1,
         source_hash=digest,
@@ -153,3 +162,65 @@ def test_cache_key_changes_for_members_provider_model_and_generation(tmp_path):
     )
 
     assert len({baseline, with_provider, with_model, with_generation}) == 4
+
+
+def test_provider_topics_share_one_structured_call_and_reuse_per_topic_cache(tmp_path):
+    atoms = [
+        _atom(
+            "a1",
+            "Railway deployment smoke testing is mandatory.",
+            source_title="Release operations",
+        ),
+        _atom(
+            "a2",
+            "Python dependency locks use uv.",
+            source_title="Package management",
+        ),
+    ]
+    engine = _engine(tmp_path, atoms)
+    engine.distillation = SimpleNamespace(
+        topics_per_request=16,
+        max_input_tokens=24_000,
+        max_concurrency=16,
+        target_seconds=8.0,
+    )
+    clusters = engine.plan()["clusters"]
+    assert len(clusters) == 2
+    addresses = {
+        cluster.cluster_id: cluster.sources[0].address
+        for cluster in clusters
+    }
+
+    class Provider:
+        provider_id = "test"
+        provider_name = "test"
+        model = "test-model"
+        calls = 0
+
+        def complete_text(self, messages, options):
+            self.calls += 1
+            ids = re.findall(r"^TOPIC (ctx_[a-z0-9]+)$", messages[0]["content"], re.MULTILINE)
+            return TextResult(
+                text=json.dumps(
+                    {
+                        "topics": [
+                            {
+                                "cluster_id": cluster_id,
+                                "body": f"Durable source context ({addresses[cluster_id]}).",
+                            }
+                            for cluster_id in ids
+                        ]
+                    }
+                ),
+                model=self.model,
+                provider=self.provider_name,
+                cost_usd=0.01,
+            )
+
+    provider = Provider()
+    first = engine._render_clusters(clusters, client=provider, mode="normal")
+    second = engine._render_clusters(clusters, client=provider, mode="normal")
+
+    assert provider.calls == 1
+    assert set(first) == {cluster.cluster_id for cluster in clusters}
+    assert all(row[3] is True for row in second.values())

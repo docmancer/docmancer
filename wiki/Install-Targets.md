@@ -2,7 +2,7 @@
 
 `docmancer setup` detects coding agents and prepares one machine-wide plan. Before writing anything, it lists memory indexing, laptop-wide canonical reconciliation, every skill and managed-instruction installation, automatic recall and capture hooks, and manual follow-up. It also warns that a configured AI provider may receive redacted evidence for synthesis. Once confirmed, it installs or updates every detected integration, enables automatic capture for supported agents, and creates `~/.docmancer/tree`. Detection means the application or its storage directory exists. Connection means Docmancer verified its expected skill and managed instructions after installation. The same confirmed setup is available in the local web UI. Use `docmancer agent install <agent>` for an explicit target.
 
-Memory discovery is independent from installation. `setup` discovers supported agent memory and rules even when Docmancer has not installed a skill into that agent. `web` and `ask` refresh changed sources automatically.
+Memory discovery is independent from installation. `setup` discovers supported agent memory and rules even when Docmancer has not installed a skill into that agent. Lifecycle capture and `memory sync` maintain the index. Web schedules maintenance after it is already serving, while Ask refreshes only with `--fresh`.
 
 ## Skill locations
 

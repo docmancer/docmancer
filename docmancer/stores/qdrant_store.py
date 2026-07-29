@@ -20,8 +20,16 @@ _PAYLOAD_INDEX_FIELDS = (
     "source_path",
     "source_path_prefix",
     "format",
+    "document_id",
     "document_title_hash",
     "docset_root",
+    "unit_id",
+    "unit_revision_id",
+    "project_id",
+    "scope_kind",
+    "kind",
+    "lifecycle",
+    "harness",
 )
 
 
@@ -118,16 +126,32 @@ class QdrantStore(VectorStore):
 
     def _create_payload_indexes(self, collection: str) -> None:
         qm = self._qm
+        existing: set[str] = set()
+        try:
+            info = self._client.get_collection(collection_name=collection)
+            schema = getattr(info, "payload_schema", None) or {}
+            existing = {str(field) for field in schema}
+        except Exception:
+            # A newly created collection may not expose its schema immediately.
+            # Creation below remains strict, so a real failure is still visible.
+            pass
         for field in _PAYLOAD_INDEX_FIELDS:
+            if field in existing:
+                continue
             try:
                 self._client.create_payload_index(
                     collection_name=collection,
                     field_name=field,
                     field_schema=qm.PayloadSchemaType.KEYWORD,
                 )
-            except Exception:
-                # Index may already exist on a re-ensure; ignore duplicates.
-                pass
+            except Exception as exc:
+                message = str(exc).casefold()
+                if "already exists" in message or "already indexed" in message:
+                    continue
+                raise RuntimeError(
+                    f"could not create Qdrant payload index {field!r} "
+                    f"for collection {collection!r}"
+                ) from exc
 
     def _write_sentinel(self, collection: str, meta: dict[str, Any] | None = None) -> None:
         qm = self._qm

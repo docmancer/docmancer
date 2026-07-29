@@ -257,7 +257,7 @@ export function SetupFlow({ initial, onComplete }: { initial: JsonMap; onComplet
         <article><Check size={16}/><div><strong>Index existing agent memory</strong><p>Discover local memory and instruction files, then rebuild the private local search index.</p></div></article>
         <article><Check size={16}/><div><strong>Install or update {selectedItems.length} integration{selectedItems.length === 1 ? "" : "s"}</strong><p>{selectedItems.map((item) => String(item.label)).join(", ")} will receive Docmancer skills and managed instructions where supported.</p></div></article>
         {recallTargets.length > 0 && <article><Check size={16}/><div><strong>Install automatic recall hooks</strong><p>{recallTargets.map((item) => String(item.label)).join(", ")} will be able to recall relevant local memory at session and prompt boundaries.</p></div></article>}
-        <article><Check size={16}/><div><strong>Maintain one machine-wide canonical memory</strong><p>Docmancer will automatically reconcile important personal context, preferences, projects, and working principles into ~/.docmancer/tree. This reruns on its own whenever your evidence changes, including when you ask a question, open this app, sync, or end a coding session.</p></div></article>
+        <article><Check size={16}/><div><strong>Maintain one machine-wide canonical memory</strong><p>Docmancer organises durable preferences, principles, projects, decisions, workflows, and lessons under ~/.docmancer/tree. Source refresh runs in the background and never delays the workbench.</p></div></article>
         {desktopSelected && <article><ExternalLink size={16}/><div><strong>Prepare Claude Desktop for manual upload</strong><p>Docmancer will create the skill package and show you where to upload it. The web app cannot complete that final Claude Desktop step.</p></div></article>}
         {recallTargets.length > 0 && <article><ShieldCheck size={16}/><div><strong>Enable automatic session capture</strong><p>Supported agents will save durable local session conclusions and feed them into automatic reconciliation.</p></div></article>}
       </div>
@@ -347,7 +347,7 @@ function Safeguards() {
   const safeguards = [
     ["Local means local", "The browser talks only to Docmancer on 127.0.0.1."],
     ["Credentials stay out of projects", "Provider keys are stored in the operating-system keyring."],
-    ["Sources remain visible", "Answers and Context retain provenance so you can inspect where they came from."],
+    ["Sources remain visible", "Answers and canonical files retain provenance so you can inspect where they came from."],
     ["Risky content is masked", "Secret-like values are masked before they are shown or moved."],
     ["Destructive actions are explicit", "Deletion, rollback, and publication require a deliberate confirmation."],
   ];
@@ -405,11 +405,11 @@ function CloudSettings() {
   if (loading) return <Loading label="Loading Cloud status"/>;
 
   if (!status.configured) return <div className="settings-form">
-    <div className="settings-title"><div className="feature-icon mint"><Cloud size={19}/></div><div><span className="eyebrow">Optional encrypted continuity</span><h2>Carry Context beyond this machine</h2><p>The complete local product stays free. Paid plans cover encrypted sync, recovery, and Team coordination.</p></div></div>
+    <div className="settings-title"><div className="feature-icon mint"><Cloud size={19}/></div><div><span className="eyebrow">Optional encrypted continuity</span><h2>Carry shared memory beyond this machine</h2><p>The complete local product stays free. Paid plans cover encrypted sync, recovery, and Team coordination.</p></div></div>
     {error && <Notice kind="error">{error}</Notice>}
     <div className="cloud-plan-grid">
       <article><span className="eyebrow">Personal Sync</span><h3>Keep every approved device current</h3><p>Replicate encrypted revisions, recover after a reset, and keep managed history without uploading plaintext memory.</p></article>
-      <article><span className="eyebrow">Team</span><h3>Share one approved Context file</h3><p>Generate and review the complete file locally, then encrypt it before hosted coordination and delivery.</p></article>
+      <article><span className="eyebrow">Team</span><h3>Share one approved memory file</h3><p>Generate and review the complete file locally, then encrypt it before hosted coordination and delivery.</p></article>
     </div>
     <div className="form-actions">
       <button className="primary-btn" onClick={() => setConnecting(true)}>Connect this device <ArrowRight size={14}/></button>
@@ -464,7 +464,7 @@ function CloudSettings() {
       {pending.length > 0 && <p className="muted">{pending.length} device(s) are waiting for approval.</p>}
     </AgentGroup>
 
-    <AgentGroup title="Team" note="Members share one approved Context file. Review happens locally before anything is encrypted and sent.">
+    <AgentGroup title="Team" note="Members share one approved memory file. Review happens locally before anything is encrypted and sent.">
       {members.length === 0 && <p className="muted">No team members yet.</p>}
       {members.map((member) => <article key={String(member.email ?? member.member_id)} className="cloud-row">
         <div><strong>{String(member.email ?? member.member_id ?? "member")}</strong><small>{String(member.role ?? "member")} · {String(member.state ?? "active")}</small></div>

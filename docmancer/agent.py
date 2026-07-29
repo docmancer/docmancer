@@ -78,6 +78,7 @@ class DocmancerAgent:
         with_vectors: bool = True,
         embeddings_provider=None,
     ) -> int:
+        documents = [self._apply_chunking_defaults(document) for document in documents]
         logger.info("Indexing %d document(s) with SQLite FTS5", len(documents))
         result = self.store.add_documents(documents, recreate=recreate)
         logger.info("Stored %d source(s), %d section(s)", result.sources, result.sections)
@@ -104,7 +105,7 @@ class DocmancerAgent:
         consumed lazily and committed every ``batch_size`` rows.
         """
         result = self.store.add_documents_stream(
-            records,
+            (self._apply_chunking_defaults(document) for document in records),
             recreate=recreate,
             batch_size=batch_size,
             progress_callback=progress_callback,
@@ -120,6 +121,21 @@ class DocmancerAgent:
             except Exception as exc:
                 raise RuntimeError(f"vector indexing failed after FTS5 ingest: {exc}") from exc
         return result.sections
+
+    def _apply_chunking_defaults(self, document: Document) -> Document:
+        """Apply one chunking contract to local, fetched, and streamed input."""
+        metadata = document.metadata
+        format_name = str(metadata.get("format") or "markdown").casefold()
+        chunk_size, chunk_overlap = self.config.loaders.settings_for(format_name)
+        metadata.setdefault("chunk_size", chunk_size)
+        metadata.setdefault("chunk_overlap", chunk_overlap)
+        metadata.setdefault("chunk_unit", self.config.loaders.unit_for(format_name))
+        metadata.setdefault("chunker_version", "token-structural-v2")
+        metadata.setdefault(
+            "persist_extracted",
+            bool(self.config.index.persist_extracted),
+        )
+        return document
 
     def _vector_collection_name(self) -> str:
         explicit = self.config.vector_store.collection
@@ -287,6 +303,8 @@ class DocmancerAgent:
                 chunk_size, chunk_overlap = self.config.loaders.settings_for(format_name)
                 document.metadata.setdefault("chunk_size", chunk_size)
                 document.metadata.setdefault("chunk_overlap", chunk_overlap)
+                document.metadata.setdefault("chunk_unit", self.config.loaders.unit_for(format_name))
+                document.metadata.setdefault("chunker_version", "token-structural-v2")
                 document.metadata.setdefault("docset_root", str(path if path.is_dir() else file_path))
                 if path.is_dir():
                     document.metadata.setdefault("source_path", str(file_path.relative_to(path)))

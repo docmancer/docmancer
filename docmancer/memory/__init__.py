@@ -131,7 +131,16 @@ class MemoryAgent:
         self._embedding_provider = None
 
     def _build_config(self) -> "DocmancerConfig":
-        from docmancer.core.config import CaptureConfig, DocmancerConfig, IndexConfig, VectorStoreConfig
+        from docmancer.core.config import (
+            CaptureConfig,
+            DistillationConfig,
+            DocmancerConfig,
+            EmbeddingsConfig,
+            IndexConfig,
+            ProvidersConfig,
+            RetrievalConfig,
+            VectorStoreConfig,
+        )
 
         db = Path(self.db_path)
         db.parent.mkdir(parents=True, exist_ok=True)
@@ -139,13 +148,34 @@ class MemoryAgent:
         # diverge across runs (a fresh vec store beside a populated index is
         # the silent "0 indexed vectors" trap).
         vec_db = str(db.with_name(db.stem + "-vec.db"))
+        retrieval = self._load_user_config_block("retrieval", RetrievalConfig)
+        if retrieval.profile not in {"local", "scale"}:
+            raise ValueError("retrieval.profile must be 'local' or 'scale'")
+        vector_store = self._load_user_config_block("vector_store", VectorStoreConfig)
+        if retrieval.profile == "scale" and vector_store.provider == "sqlite-vec":
+            vector_store = vector_store.model_copy(
+                update={"provider": "qdrant", "collection": _MEMORY_COLLECTION}
+            )
+        elif vector_store.provider == "sqlite-vec":
+            vector_store = vector_store.model_copy(
+                update={
+                    "collection": _MEMORY_COLLECTION,
+                    "options": {**(vector_store.options or {}), "db_path": vec_db},
+                }
+            )
+        elif not vector_store.collection:
+            vector_store = vector_store.model_copy(
+                update={"collection": _MEMORY_COLLECTION}
+            )
         return DocmancerConfig(
             index=IndexConfig(db_path=str(db)),
-            vector_store=VectorStoreConfig(
-                provider="sqlite-vec",
-                collection=_MEMORY_COLLECTION,
-                options={"db_path": vec_db},
+            vector_store=vector_store,
+            embeddings=self._load_user_config_block("embeddings", EmbeddingsConfig),
+            retrieval=retrieval,
+            distillation=self._load_user_config_block(
+                "distillation", DistillationConfig
             ),
+            providers=self._load_user_config_block("providers", ProvidersConfig),
             discovery=self._load_user_discovery(),
             capture=self._load_user_config_block("capture", CaptureConfig),
         )
@@ -227,15 +257,19 @@ class MemoryAgent:
             for atom in atoms:
                 atom.status = states.get(atom.atom_id, atom.status)
             self._enqueue_cloud_graph_projection()
-            # Rebuild canonical FTS rows so removed sources disappear, while
-            # retaining vector bookkeeping. The vector pipeline compares
-            # content hashes, reuses unchanged embeddings, and prunes points
-            # whose rebuilt chunk rows no longer exist.
-            progress("index", f"Rebuilding the local search index with {len(atoms):,} memory atoms")
+            # Reconcile the atom projection incrementally. Stable atom sources
+            # update their existing retrieval units in place, removed atoms are
+            # tombstoned, and the vector pipeline embeds only changed hashes.
+            progress("index", f"Updating the local search index with {len(atoms):,} memory atoms")
             docs = self._retrieval_documents(atoms)
+            if not recreate:
+                self._agent.store.delete_sources_not_in(
+                    prefix="memory://atom/",
+                    keep={document.source for document in docs},
+                )
             self._agent.ingest_documents(
                 docs,
-                recreate=True,
+                recreate=recreate,
                 with_vectors=True,
                 embeddings_provider=self._embedding_provider,
             )
@@ -915,7 +949,18 @@ class MemoryAgent:
         # Do not construct the store when the index does not exist; that would
         # create an empty SQLite file and make `status` lie about existence.
         if not Path(self.db_path).exists():
-            return {"db_path": self.db_path, "sources": 0, "atoms": 0, "sections": 0}
+            return {
+                "db_path": self.db_path,
+                "sources": 0,
+                "atoms": 0,
+                "sections": 0,
+                "retrieval_profile": self.config.retrieval.profile,
+                "vector_backend": self.config.vector_store.provider,
+                "embeddings_provider": self.config.embeddings.provider,
+                "source_versions": 0,
+                "unit_revisions": 0,
+                "index_jobs": {},
+            }
         try:
             stats = self._agent.collection_stats()
         except Exception:  # noqa: BLE001
@@ -927,6 +972,12 @@ class MemoryAgent:
             "sources": len(rows),
             "atoms": stats.get("sections_count", 0),
             "sections": stats.get("sections_count", 0),
+            "retrieval_profile": self.config.retrieval.profile,
+            "vector_backend": self.config.vector_store.provider,
+            "embeddings_provider": self.config.embeddings.provider,
+            "source_versions": stats.get("source_versions_count", 0),
+            "unit_revisions": stats.get("unit_revisions_count", 0),
+            "index_jobs": stats.get("index_jobs", {}),
             "relations": len(relations),
             "conflicts": sum(
                 1 for row in relations

@@ -358,6 +358,15 @@ code, pre, kbd { font-family: var(--font-geist-mono), ui-monospace, monospace; }
 .segmented-tabs button strong { font-size: 12.5px; }
 .segmented-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: var(--faint); }
 .segmented-tabs button.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 4px rgb(20 20 30 / 8%); }
+.library-activity, .memory-activity {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line)); border-radius: 11px;
+  color: var(--blue); background: color-mix(in srgb, var(--blue-soft) 58%, var(--surface));
+}
+.library-activity > div, .memory-activity > div { display: grid; gap: 3px; }
+.library-activity strong, .memory-activity strong { color: var(--text); font-size: 11.5px; }
+.library-activity span, .memory-activity span { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.memory-activity.error { border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); color: var(--amber); background: color-mix(in srgb, var(--amber-soft) 60%, var(--surface)); }
 .library-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; box-shadow: var(--shadow-sm); }
 .library-toolbar { min-height: 80px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px; border-bottom: 1px solid var(--line); }
 .library-toolbar h2 { margin: 4px 0 0; font-size: 16px; letter-spacing: -.02em; }
@@ -819,4 +828,109 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
   .modal-backdrop { padding: 10px; align-items: end; }
   .modal { max-height: calc(100vh - 20px); border-radius: 17px 17px 8px 8px; }
   .background-jobs { right: 12px; bottom: 74px; width: calc(100vw - 24px); }
+}
+
+/* Shared Memory is intentionally filesystem-native: dense enough to scan,
+   quiet enough to read, and recognisably local rather than dashboard-like. */
+.shared-memory-workbench { display: grid; gap: 14px; }
+.memory-command-bar {
+  min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  border: 1px solid var(--line); border-radius: 12px; padding: 7px 8px 7px 13px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--action) 8%);
+}
+.memory-command-bar > label {
+  min-width: 220px; max-width: 430px; flex: 1; display: flex; align-items: center; gap: 9px; color: var(--muted);
+}
+.memory-command-bar input { width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; }
+.memory-command-actions { display: flex; align-items: center; gap: 10px; }
+.quiet-progress { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.memory-map-layout {
+  min-height: 610px; display: grid; grid-template-columns: minmax(250px, .78fr) minmax(390px, 1.45fr) minmax(230px, .72fr);
+  overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--surface);
+}
+.memory-map-panel, .memory-reading-panel, .agent-reach-panel { min-width: 0; }
+.memory-map-panel { border-right: 1px solid var(--line); background: color-mix(in srgb, var(--surface-soft) 78%, var(--surface) 22%); }
+.memory-map-panel > header, .agent-reach-panel > header {
+  min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 17px; border-bottom: 1px solid var(--line);
+}
+.memory-map-panel h2, .agent-reach-panel h2, .memory-reading-panel h2 { margin: 2px 0 0; font-size: 17px; letter-spacing: -.02em; }
+.file-total { padding: 4px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font: 10px var(--font-geist-mono); }
+.memory-root { border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.memory-root-row, .memory-folder > button, .memory-file-row {
+  width: 100%; min-height: 35px; display: grid; align-items: center; border: 0; color: var(--text); background: transparent; text-align: left;
+}
+.memory-root-row { grid-template-columns: 15px 18px minmax(0, 1fr) auto; gap: 6px; padding: 5px 12px; }
+.memory-root-row:hover, .memory-folder > button:hover, .memory-file-row:hover { background: color-mix(in srgb, var(--action) 8%, transparent); }
+.memory-root-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.memory-root-row span, .memory-folder > button span { color: var(--muted); font: 9px var(--font-geist-mono); }
+.memory-root-children { padding: 1px 0 8px; }
+.memory-folder > button { grid-template-columns: 14px 17px minmax(0, 1fr) auto; gap: 6px; padding: 4px 13px 4px 29px; }
+.memory-folder > button strong { font-size: 11px; font-weight: 600; }
+.memory-file-row { grid-template-columns: 17px minmax(0, 1fr) auto; gap: 6px; padding: 4px 12px 4px 48px; color: var(--muted); font: 10.5px var(--font-geist-mono); }
+.memory-file-row.nested { padding-left: 64px; }
+.memory-file-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-file-row small { color: var(--muted); font: 8px var(--font-geist-mono); text-transform: uppercase; }
+.memory-file-row.selected { color: var(--text); background: color-mix(in srgb, var(--action) 13%, transparent); box-shadow: inset 2px 0 var(--action); }
+.legacy-evidence-note { margin: 12px; display: flex; gap: 9px; padding: 11px; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--muted); }
+.legacy-evidence-note div { display: grid; gap: 2px; }
+.legacy-evidence-note strong { color: var(--text); font-size: 10px; }
+.legacy-evidence-note span { font-size: 9px; line-height: 1.45; }
+.memory-reading-panel { min-height: 610px; background: var(--surface); }
+.memory-reading-empty { height: 100%; max-width: 410px; margin: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; text-align: center; }
+.file-stack { width: 58px; height: 66px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid var(--line-strong); border-radius: 6px 13px 13px 6px; color: var(--action); box-shadow: -7px 7px 0 var(--surface-soft), -8px 8px 0 var(--line); }
+.memory-reading-empty h2 { margin: 8px 0; font-size: 25px; }
+.memory-reading-empty p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.memory-file-reader { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.memory-file-reader > header { min-height: 86px; display: flex; justify-content: space-between; gap: 18px; padding: 17px 20px; border-bottom: 1px solid var(--line); }
+.memory-file-reader > header h2 { margin: 3px 0 5px; }
+.memory-file-reader > header code, .memory-file-reader > footer code { color: var(--muted); font-size: 9px; }
+.file-meta-strip { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.file-meta-strip span { display: grid; gap: 2px; padding: 9px 14px; border-right: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.file-meta-strip span:last-child { border: 0; }
+.file-meta-strip strong { color: var(--text); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
+.memory-markdown { overflow: auto; padding: 24px 28px; }
+.memory-file-reader > footer { display: grid; gap: 3px; padding: 10px 18px; border-top: 1px solid var(--line); background: var(--surface-soft); }
+.memory-file-reader > footer span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
+.agent-reach-panel { border-left: 1px solid var(--line); background: var(--surface-soft); }
+.agent-reach-panel > header { display: block; }
+.agent-reach-panel > header p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.agent-reach-list { padding: 8px; }
+.agent-reach-list button { width: 100%; min-height: 54px; display: grid; grid-template-columns: 25px minmax(0, 1fr) 14px; align-items: center; gap: 8px; padding: 8px; border: 0; border-bottom: 1px solid var(--line); color: var(--text); background: transparent; text-align: left; }
+.agent-reach-list button:hover { border-radius: 8px; background: var(--surface); }
+.agent-reach-list button div { min-width: 0; display: grid; gap: 2px; }
+.agent-reach-list strong { font-size: 11px; }
+.agent-reach-list small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-state { width: 23px; height: 23px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); }
+.agent-state.connected { border-color: color-mix(in srgb, var(--mint) 40%, var(--line)); color: var(--mint); background: color-mix(in srgb, var(--mint) 8%, transparent); }
+.agent-empty, .projection-empty { display: grid; justify-items: center; gap: 10px; padding: 35px 20px; color: var(--muted); text-align: center; }
+.agent-empty p, .projection-empty p { margin: 0; font-size: 10px; line-height: 1.55; }
+.agent-empty code { font-size: 9px; }
+.memory-skeleton, .agent-skeleton { display: grid; gap: 11px; padding: 18px; }
+.memory-skeleton span, .agent-skeleton span { height: 11px; border-radius: 5px; background: linear-gradient(90deg, var(--surface-soft), var(--line), var(--surface-soft)); background-size: 200% 100%; animation: memory-shimmer 1.2s linear infinite; }
+.agent-skeleton span { height: 45px; }
+@keyframes memory-shimmer { to { background-position: -200% 0; } }
+.add-memory-form { display: grid; gap: 15px; }
+.add-memory-form label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 600; }
+.add-memory-form input, .add-memory-form textarea, .add-memory-form select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; color: var(--text); background: var(--surface); font: inherit; }
+.projection-preview { display: grid; gap: 12px; }
+.projection-metrics { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 9px; }
+.projection-metrics span { display: grid; gap: 2px; padding: 11px; color: var(--muted); font-size: 9px; }
+.projection-metrics span + span { border-left: 1px solid var(--line); }
+.projection-metrics strong { color: var(--text); font-size: 16px; }
+.projection-preview pre { max-height: 52vh; overflow: auto; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--surface-soft); font: 10px/1.6 var(--font-geist-mono); white-space: pre-wrap; }
+
+@media (max-width: 1100px) {
+  .memory-map-layout { grid-template-columns: 260px minmax(0, 1fr); }
+  .agent-reach-panel { grid-column: 1 / -1; border-top: 1px solid var(--line); border-left: 0; }
+  .agent-reach-list { display: grid; grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 720px) {
+  .memory-command-bar { align-items: stretch; flex-direction: column; }
+  .memory-command-actions { justify-content: space-between; }
+  .memory-map-layout { display: block; min-height: 0; overflow: visible; }
+  .memory-map-panel, .memory-reading-panel, .agent-reach-panel { min-height: 0; border: 0; border-bottom: 1px solid var(--line); }
+  .memory-reading-panel { min-height: 430px; }
+  .agent-reach-list { grid-template-columns: 1fr; }
+  .file-meta-strip { grid-template-columns: 1fr; }
+  .file-meta-strip span { border-right: 0; border-bottom: 1px solid var(--line); }
 }

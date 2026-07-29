@@ -9,10 +9,9 @@ import {
 import Link from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiJobMutation, apiMutation, establishSession, type JsonMap } from "@/lib/api";
-import { CanonicalCard, CanonicalEditor } from "./canonical-memory";
-import { ContextWorkbench } from "./context-workbench";
 import { LibraryView } from "./library-view";
 import { MarkdownContent } from "./markdown-content";
+import { SharedMemoryWorkbench } from "./shared-memory-workbench";
 import { AgentEditor, SettingsView, SetupFlow } from "./settings-view";
 import { WizardLogo } from "./wizard-logo";
 
@@ -22,7 +21,7 @@ export type ViewKey =
   | "inbox" | "memory" | "sources" | "intelligence" | "docs" | "audit"
   | "maintenance" | "sync" | "devices" | "team";
 
-type CanonicalView = "home" | "context" | "library" | "settings" | "help";
+type CanonicalView = "home" | "memory" | "library" | "settings" | "help";
 type ChatTurn = {
   id: string;
   role: "user" | "assistant";
@@ -33,13 +32,13 @@ type ChatTurn = {
 
 const PRIMARY = [
   { key: "home", label: "Home", href: "/", icon: Sparkles },
-  { key: "context", label: "Context", href: "/context/", icon: BrainCircuit },
+  { key: "memory", label: "Shared Memory", href: "/memory/", icon: BrainCircuit },
   { key: "library", label: "Library", href: "/library/", icon: Library },
 ] as const;
 
 function canonical(view: ViewKey): CanonicalView {
-  if (["context", "common", "delivery", "timeline", "intelligence"].includes(view)) return "context";
-  if (["library", "tree", "inbox", "memory", "sources", "docs"].includes(view)) return "library";
+  if (["context", "common", "delivery", "timeline", "intelligence", "memory", "tree", "inbox"].includes(view)) return "memory";
+  if (["library", "sources", "docs"].includes(view)) return "library";
   if (["settings", "audit", "maintenance", "sync", "devices", "team"].includes(view)) return "settings";
   if (view === "help") return "help";
   return "home";
@@ -105,9 +104,9 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
         </div>
       </header>
       {error && <Notice kind="error" onClose={() => setError("")}>{error}</Notice>}
-      {!ready && !error ? <Loading label="Opening your local memory"/> : <Page view={view}/>}
+      <Page view={view}/>
     </main>
-    {ready && <BackgroundJobs/>}
+    <BackgroundJobs/>
   </div>;
 }
 
@@ -117,7 +116,7 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
  * is the opposite: it is the single outcome the user has to act on, and these
  * jobs are explicitly advertised as safe to walk away from ("Running in the
  * background. You can keep using Docmancer."). Expiring a failure on the same
- * timer as a success meant a Context build that died 27 minutes in showed its
+ * timer as a success meant a memory organisation job that died 27 minutes in showed its
  * error for 15 seconds to an empty chair and then erased it, leaving a page
  * indistinguishable from one where nothing had ever run. Failures now stay
  * until the user dismisses them.
@@ -163,14 +162,14 @@ function BackgroundJobs() {
   // decision, and it must not be hidden behind a later job's progress.
   const job = visible.find((item) => item.state === "failed") ?? visible[0];
   const labels: Record<string, string> = {
-    "context.refresh": "Building your Context",
+    "context.refresh": "Organising shared memory",
     "memory.ask": "Answering with your memory",
     "agent.setup": "Connecting coding agents",
     "memory.sync": "Indexing agent memory",
     "memory.consolidate": "Consolidating memory",
     "memory.apply": "Applying memory changes",
     "docs.ingest": "Indexing documentation",
-    "cloud.sync": "Syncing encrypted Context",
+    "cloud.sync": "Syncing encrypted memory",
   };
   const label = labels[String(job.kind ?? "")] ?? "Docmancer is working";
   const completed = job.state === "completed";
@@ -179,7 +178,7 @@ function BackgroundJobs() {
     ? String(job.error ?? "The background task failed.")
     : completed
       ? String(job.kind) === "context.refresh"
-        ? "Context is ready. Open the Context page to review it."
+        ? "Shared memory is organised. Open Shared Memory to review the files."
         : String(job.kind) === "memory.ask"
           ? "The answer is saved in this conversation."
         : "The background task completed."
@@ -210,13 +209,13 @@ function SidebarCloudCard({ active }: { active: boolean }) {
     if (active) void apiGet("/api/v1/cloud").then(setCloud).catch(() => setCloud({}));
   }, [active]);
   return <a className="sidebar-cloud" href="/settings/?section=cloud">
-    <Cloud size={15}/><div><strong>{cloud.configured ? "Personal Sync connected" : "Keep Context in sync"}</strong><span>{cloud.configured ? "Manage devices and encrypted sync." : "Connect this device to start."}</span></div><ArrowRight size={13}/>
+    <Cloud size={15}/><div><strong>{cloud.configured ? "Personal Sync connected" : "Keep memory in sync"}</strong><span>{cloud.configured ? "Manage devices and encrypted sync." : "Connect this device to start."}</span></div><ArrowRight size={13}/>
   </a>;
 }
 
 function Page({ view }: { view: CanonicalView }) {
   if (view === "home") return <HomeView/>;
-  if (view === "context") return <ContextPage/>;
+  if (view === "memory") return <SharedMemoryPage/>;
   if (view === "library") return <LibraryView/>;
   if (view === "settings") return <SettingsView/>;
   return <HelpView/>;
@@ -231,8 +230,7 @@ function HomeView() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [busy, setBusy] = useState("");
-  const [modal, setModal] = useState<"agent" | "setup" | "canonical" | "">("");
-  const [canonical, setCanonical] = useState<JsonMap>({});
+  const [modal, setModal] = useState<"agent" | "setup" | "">("");
   const [error, setError] = useState("");
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<"top" | "bottom">("top");
@@ -244,16 +242,12 @@ function HomeView() {
   }, []);
   const load = useCallback(async () => {
     try {
-      const [setupData, conversationData, canonicalData] = await Promise.all([
+      const [setupData, conversationData] = await Promise.all([
         apiGet("/api/v1/agent/setup"),
         apiGet("/api/v1/ask/conversations?limit=60"),
-        // Never blocks the page: an unbuilt canonical tree is a normal first-run
-        // state, not an error worth showing above the chat.
-        apiGet("/api/v1/canonical").catch(() => ({})),
       ]);
       setSetup(setupData);
       setConversations(rows(conversationData.items));
-      setCanonical(canonicalData);
     } catch (reason) { setError(messageOf(reason)); }
   }, []);
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
@@ -526,53 +520,41 @@ function HomeView() {
         </div>
         <button className="primary-btn wide" onClick={() => setModal("setup")}>{connectionAction} <ArrowRight size={15}/></button>
       </article>
-      <CanonicalCard status={canonical} onOpen={() => setModal("canonical")}/>
+      <article className="feature-card canonical-card">
+        <div className="rail-card-heading"><div className="feature-icon blue"><BrainCircuit size={18}/></div><div><span className="eyebrow">Canonical files</span><h2>Shared Memory</h2></div></div>
+        <p>See how machine and project memory are arranged, then preview what each agent receives.</p>
+        <Link className="primary-btn wide" href="/memory/">Open Shared Memory <ArrowRight size={15}/></Link>
+      </article>
       <section className="home-cloud-card">
-        <div><span className="eyebrow">Optional Docmancer Cloud</span><h2>Carry Context beyond this machine</h2><p>Local intelligence stays free. Pay for encrypted continuity and coordination.</p></div>
+        <div><span className="eyebrow">Optional Docmancer Cloud</span><h2>Carry shared memory beyond this machine</h2><p>Local memory stays free. Pay for encrypted continuity and coordination.</p></div>
         <a href="/settings/?section=cloud"><Cloud size={16}/><span><strong>Personal Sync</strong><small>History, devices, and recovery</small></span><ArrowRight size={14}/></a>
-        <a href="/settings/?section=cloud"><ShieldCheck size={16}/><span><strong>Team</strong><small>Approved shared Context</small></span><ArrowRight size={14}/></a>
+        <a href="/settings/?section=cloud"><ShieldCheck size={16}/><span><strong>Team</strong><small>Approved shared memory</small></span><ArrowRight size={14}/></a>
       </section>
       </aside>
     </section>
     {modal === "agent" && <Modal title="Customise Docmancer" subtitle="This is the one agent humans interact with in the web UI." close={() => setModal("")}><AgentEditor onSaved={() => { setModal(""); void load(); }}/></Modal>}
     {modal === "setup" && <Modal title="Connect Docmancer" subtitle="Index local memory, install skills, and optionally add recall hooks." close={() => setModal("")}><SetupFlow initial={setup} onComplete={() => { setModal(""); void load(); }}/></Modal>}
-    {modal === "canonical" && <Modal title="What Docmancer knows about you" subtitle="One memory shared by every connected agent on this machine." close={() => { setModal(""); void load(); }}><CanonicalEditor/></Modal>}
   </div>;
 }
 
-function ContextPage() {
-  const [data, setData] = useState<JsonMap>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [contextData, statusData] = await Promise.all([apiGet("/api/v1/context"), apiGet("/api/v1/status")]);
-      setData({ ...contextData, counts: statusData.counts });
-      setError("");
-    }
-    catch (reason) { setError(messageOf(reason)); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { queueMicrotask(() => void load()); }, [load]);
+function SharedMemoryPage() {
   return <div className="page">
-    <PageHeading eyebrow="Portable agent memory" title="Context every agent can carry" description="See the useful knowledge Docmancer has consolidated, where it came from, and whether your agents can receive it."/>
-    {error && <Notice kind="error">{error}</Notice>}
-    {loading ? <Loading label="Loading Context"/> : <ContextWorkbench data={data} reload={load} inspect={() => Promise.resolve()}/>}
+    <PageHeading eyebrow="One local source of truth" title="Shared Memory" description="Inspect the canonical files on this machine, see how they are arranged, and preview exactly what each coding agent receives."/>
+    <SharedMemoryWorkbench/>
   </div>;
 }
 
 function HelpView() {
   const commands = [
     ["Start everything", "docmancer setup", "Index existing memory and install detected agent integrations."],
-    ["Preview Context", "docmancer context refresh --dry-run", "See what will be consolidated without writing files."],
-    ["Build Context", "docmancer context refresh", "Create the revisioned Context all connected agents can carry."],
+    ["Open shared memory", "docmancer web", "Inspect the canonical filesystem and agent delivery from the local workbench."],
+    ["Write durable memory", 'docmancer write "# Release\\n\\nUse the release script." --path decisions/release.md', "Save a project decision into the standard scaffold."],
     ["Ask from a terminal", 'docmancer ask "What do my agents know about deployment?"', "Use the same memory from the CLI."],
   ];
   return <div className="page">
     <PageHeading eyebrow="A short guide" title="Use the web UI. Let agents use the CLI." description="Docmancer gives you a human place to understand memory, while coding agents use skills, hooks, CLI, and MCP behind the scenes."/>
     <div className="help-grid">
-      <section className="feature-card help-intro"><BrainCircuit size={25}/><h2>The basic loop</h2><ol><li>Connect your coding agents.</li><li>Index what they already know.</li><li>Ask Docmancer and inspect shared Context.</li><li>Keep working. Connected agents recall it automatically.</li></ol></section>
+      <section className="feature-card help-intro"><BrainCircuit size={25}/><h2>The basic loop</h2><ol><li>Connect your coding agents.</li><li>Index what they already know.</li><li>Inspect the canonical files in Shared Memory.</li><li>Keep working. Connected agents recall the relevant files automatically.</li></ol></section>
       <section className="command-list">{commands.map(([title, command, note]) => <CommandRow key={command} title={title} command={command} note={note}/>)}</section>
     </div>
   </div>;
@@ -676,4 +658,4 @@ function compactDate(value: unknown): string {
   }
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
-function titleFor(view: CanonicalView) { return ({ home: "Home", context: "Context", library: "Library", settings: "Settings", help: "Help" } as const)[view]; }
+function titleFor(view: CanonicalView) { return ({ home: "Home", memory: "Shared Memory", library: "Library", settings: "Settings", help: "Help" } as const)[view]; }

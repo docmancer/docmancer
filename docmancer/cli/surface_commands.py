@@ -29,7 +29,17 @@ def _service():
 @click.option("--token-budget", type=click.IntRange(100, 100_000), default=4000, show_default=True)
 @click.option("--history", "include_history", is_flag=True, help="Include superseded and expired indexed evidence.")
 @click.option("--debug", is_flag=True, help="Show retrieval scores and raw evidence metadata.")
-@click.option("--no-refresh", is_flag=True, help="Use the current local index without checking agent sources.")
+@click.option(
+    "--fresh",
+    is_flag=True,
+    help="Wait for changed agent sources to be indexed before answering.",
+)
+@click.option(
+    "--no-refresh",
+    is_flag=True,
+    hidden=True,
+    help="Deprecated compatibility alias. Ask is read-only by default.",
+)
 @click.option(
     "--answer/--no-answer",
     default=None,
@@ -60,6 +70,7 @@ def ask_cmd(
     token_budget: int,
     include_history: bool,
     debug: bool,
+    fresh: bool,
     no_refresh: bool,
     answer: bool | None,
     mode: str,
@@ -89,7 +100,7 @@ def ask_cmd(
         limit=limit,
         scope=scope,
         include_history=include_history,
-        refresh=not no_refresh,
+        refresh=bool(fresh and not no_refresh),
         agent_name=agent_name,
         surface="cli",
         integration_mode="direct",

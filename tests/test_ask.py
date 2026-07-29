@@ -38,6 +38,7 @@ def test_ask_combines_curated_memory_and_agent_evidence(tmp_path, monkeypatch):
             str(project),
             "--agent",
             "cursor",
+            "--fresh",
             "--json",
         ],
     )
@@ -69,7 +70,14 @@ def test_ask_marks_indexed_instruction_files_as_mandatory(tmp_path, monkeypatch)
 
     result = CliRunner().invoke(
         cli,
-        ["ask", "What are my rules around env files?", "--project", str(project), "--json"],
+        [
+            "ask",
+            "What are my rules around env files?",
+            "--project",
+            str(project),
+            "--fresh",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -102,7 +110,15 @@ def test_ask_reports_an_unreadable_recall_index_instead_of_reporting_no_memory(
     monkeypatch.setattr(MemoryAgent, "query", _raise)
 
     result = CliRunner().invoke(
-        cli, ["ask", "How do production releases deploy?", "--project", str(project), "--json"]
+        cli,
+        [
+            "ask",
+            "How do production releases deploy?",
+            "--project",
+            str(project),
+            "--fresh",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -132,7 +148,7 @@ def test_ask_defaults_to_global_recall_across_projects(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCMANCER_MEMORY_DB", str(home / ".docmancer" / "memory.db"))
 
     result = CliRunner().invoke(
-        cli, ["ask", "How do production releases deploy?", "--json"]
+        cli, ["ask", "How do production releases deploy?", "--fresh", "--json"]
     )
 
     assert result.exit_code == 0, result.output
@@ -208,7 +224,12 @@ def test_ask_returns_both_adjacent_facts_from_one_file(tmp_path, monkeypatch):
 
     result = CliRunner().invoke(
         cli,
-        ["ask", "how much did wallet A and wallet B borrow in the exploit", "--json"],
+        [
+            "ask",
+            "how much did wallet A and wallet B borrow in the exploit",
+            "--fresh",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -232,3 +253,51 @@ def test_empty_ask_is_read_only_in_current_directory(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert not (work / ".docmancer").exists()
+
+
+def test_ask_calls_answer_provider_without_refreshing_sources(tmp_path, monkeypatch):
+    from docmancer.ai.provider_protocol import TextResult
+    from docmancer.memory import MemoryAgent
+    from docmancer.memory.ask import ask
+
+    project = tmp_path / "repo"
+    project.mkdir()
+    TreeStore(project / ".docmancer" / "tree").write(
+        relative_path="decisions/deploy.md",
+        text="# Deploy\n\nProduction deploys use Railway.\n",
+        scope="project",
+        project_id="repo",
+        expect="absent",
+    )
+
+    def forbidden_refresh(self):
+        raise AssertionError("Ask scanned source files")
+
+    monkeypatch.setattr(MemoryAgent, "refresh_if_changed", forbidden_refresh)
+    monkeypatch.setattr(MemoryAgent, "query", lambda self, *args, **kwargs: [])
+
+    class Provider:
+        provider_name = "test"
+        provider_id = "test"
+        model = "test-model"
+        timeout_ms = None
+        supports_streaming = False
+
+        def complete_text(self, messages, options, on_delta=None):
+            text = "Production deploys use Railway [1]."
+            if on_delta:
+                on_delta(text)
+            return TextResult(
+                text=text,
+                model=self.model,
+                provider=self.provider_name,
+            )
+
+    result = ask(
+        "How does production deploy?",
+        project_path=project,
+        answer_client=Provider(),
+    )
+
+    assert result["refresh"]["requested"] is False
+    assert result["answer"]["text"] == "Production deploys use Railway [1]."

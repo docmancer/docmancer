@@ -29,7 +29,7 @@ def ask(
     scope: str | None = None,
     evidence_budget: int | None = None,
     include_history: bool = False,
-    refresh: bool = True,
+    refresh: bool = False,
     agent_name: str = "unknown",
     surface: str = "library",
     integration_mode: str = "direct",
@@ -45,6 +45,11 @@ def ask(
     explicit ``project_path`` or ``scope="project"``. Evidence is also
     guaranteed a floor of the token budget so curated tree memory cannot crowd
     it out; ``evidence_budget`` overrides that floor.
+
+    Ask is read-only by default. It retrieves from the latest committed local
+    index and may call the configured answer provider after retrieval, but it
+    does not scan sources, rebuild indexes, or reconcile canonical memory unless
+    the caller explicitly requests ``refresh=True``.
     """
     from docmancer.memory import MemoryAgent
 
@@ -206,6 +211,7 @@ def ask(
         "generated_at": bundle.generated_at,
         "retrieval_trace": asdict(bundle.retrieval_trace),
         "refresh": {
+            "requested": bool(refresh),
             "refreshed": refreshed,
             "error": refresh_error,
             "canonical_changed": bool(reconcile.get("changed")),

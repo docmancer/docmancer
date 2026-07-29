@@ -193,6 +193,97 @@ def _enable_automatic_capture(config_path: Path) -> None:
                 temporary.unlink(missing_ok=True)
 
 
+def _persist_retrieval_profile(config_path: Path, profile: str) -> None:
+    """Persist an explicit local or scale retrieval profile atomically."""
+    import tempfile
+
+    import yaml as _yaml
+    from filelock import FileLock
+
+    path = Path(config_path).expanduser().resolve()
+    lock = FileLock(str(path) + ".lock", timeout=10)
+    temporary: Path | None = None
+    with lock:
+        loaded = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = loaded if isinstance(loaded, dict) else {}
+        retrieval = data.get("retrieval")
+        if not isinstance(retrieval, dict):
+            retrieval = {}
+        retrieval["profile"] = profile
+        data["retrieval"] = retrieval
+
+        if profile == "scale":
+            index = data.get("index")
+            if not isinstance(index, dict):
+                index = {}
+            index["persist_extracted"] = False
+            data["index"] = index
+
+            vector_store = data.get("vector_store")
+            if not isinstance(vector_store, dict):
+                vector_store = {}
+            vector_store.update({"provider": "qdrant", "collection": "docmancer"})
+            vector_store.pop("db_path", None)
+            vector_store.pop("local_path", None)
+            data["vector_store"] = vector_store
+
+            embeddings = data.get("embeddings")
+            if not isinstance(embeddings, dict):
+                embeddings = {}
+            embeddings.update(
+                {
+                    "provider": "fastembed",
+                    "model": "BAAI/bge-base-en-v1.5",
+                    "dimensions": 768,
+                    "sparse_model": "prithivida/Splade_PP_en_v1",
+                }
+            )
+            data["embeddings"] = embeddings
+        else:
+            index = data.get("index")
+            if not isinstance(index, dict):
+                index = {}
+            index["persist_extracted"] = True
+            data["index"] = index
+            data["vector_store"] = {
+                "provider": "sqlite-vec",
+                "options": {
+                    "db_path": str((_get_user_config_dir() / "memory-vec.db").resolve())
+                },
+            }
+            embeddings = data.get("embeddings")
+            if not isinstance(embeddings, dict):
+                embeddings = {}
+            embeddings.update(
+                {
+                    "provider": "model2vec",
+                    "model": "minishlab/potion-base-8M",
+                    "dimensions": 256,
+                    "sparse_model": None,
+                }
+            )
+            data["embeddings"] = embeddings
+
+        content = _yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
 def _load_config(config_path: str | None):
     DocmancerConfig = _get_config_class()
     if config_path:
@@ -2439,8 +2530,8 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
             if provider != "deterministic":
                 _emit_status_line(
                     f"Canonical memory is rebuilt with {provider} whenever your evidence "
-                    "changes, including on `docmancer ask`, `docmancer web`, "
-                    "`docmancer memory sync`, and session capture. Run "
+                    "changes during an explicit memory sync or session capture. "
+                    "`docmancer ask` and web startup only read the current index. Run "
                     "`docmancer memory canonical --refresh --deterministic` to rebuild "
                     "without a provider.",
                     state="info",
@@ -2454,7 +2545,7 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
         click.echo("  Try: docmancer memory canonical")
     else:
         _emit_status_line(
-            "No agent memory found yet. Changed sources refresh when you open `docmancer web` or run `docmancer ask`.",
+            "No agent memory found yet. Run `docmancer memory sync` after an agent writes memory.",
             state="info",
         )
 
@@ -2474,6 +2565,12 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
 @click.option("--agent", "agents", multiple=True, type=click.Choice(INSTALL_TARGETS, case_sensitive=False), help="Agent integration to install. Can be repeated.")
 @click.option("--index-memory/--no-index-memory", default=True, show_default=True, help="Index the memory your coding agents already wrote on this machine.")
 @click.option("--capture-hooks", is_flag=True, default=True, hidden=True)
+@click.option(
+    "--profile",
+    type=click.Choice(["local", "scale"], case_sensitive=False),
+    default=None,
+    help="Use the zero-daemon local stack or Qdrant plus FastEmbed scale stack.",
+)
 @click.option("-y", "--yes", "assume_yes", is_flag=True, default=False, help="Apply the displayed setup plan without prompting.")
 @click.option("--dry-run", is_flag=True, help="Preview the memory index (counts only); write nothing.")
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
@@ -2482,6 +2579,7 @@ def setup_cmd(
     agents: tuple[str, ...],
     index_memory: bool,
     capture_hooks: bool,
+    profile: str | None,
     assume_yes: bool,
     dry_run: bool,
     config_path: str | None,
@@ -2545,9 +2643,19 @@ def setup_cmd(
                 if config_file.is_file()
                 else _build_user_bootstrap_config()
             )
+            if profile:
+                config.retrieval.profile = profile
+                if profile == "scale":
+                    config.index.persist_extracted = False
+                    config.vector_store.provider = "qdrant"
+                    config.vector_store.collection = "docmancer"
+                    _apply_embedding_provider_shortcut(config, "fastembed")
+                    config.embeddings.sparse_model = "prithivida/Splade_PP_en_v1"
         else:
             config_file = _ensure_config_and_db(config_path)
             _enable_automatic_capture(config_file)
+            if profile:
+                _persist_retrieval_profile(config_file, profile)
             config = _get_config_class().from_yaml(config_file)
     finally:
         config_status.stop()
@@ -2555,6 +2663,15 @@ def setup_cmd(
     _emit_status_line(f"{prefix}: {display_path(config_file)}")
     index_prefix = "Would use SQLite index" if dry_run else "SQLite index"
     _emit_status_line(f"{index_prefix}: {display_path(config.index.db_path)}")
+    _emit_status_line(
+        f"Retrieval profile: {config.retrieval.profile} "
+        f"({config.vector_store.provider}, {config.embeddings.provider})."
+    )
+    if config.retrieval.profile == "scale":
+        _emit_status_line(
+            "The scale profile requires the embeddings-heavy extra and a reachable Qdrant service.",
+            state="info",
+        )
 
     refreshed_blocks = [] if dry_run else refresh_stale_instruction_blocks(config_path=config_file)
     for row in refreshed_blocks:

@@ -11,13 +11,14 @@ cd /path/to/project
 docmancer web
 ```
 
-`setup` previews a machine-wide plan and provider privacy warning, asks for confirmation, discovers existing memory, builds `~/.docmancer/tree`, installs every detected user-level integration, and adds automatic recall and capture hooks where supported. The same confirmed action is available in the local web UI. `web` resolves the project root, safely creates or adopts `.docmancer/{tree,inbox,trash}`, refreshes changed agent sources and laptop canonical memory, and opens the local workbench.
+`setup` previews a machine-wide plan and provider privacy warning, asks for confirmation, discovers existing memory, builds `~/.docmancer/tree`, installs every detected user-level integration, and adds automatic recall and capture hooks where supported. Pass `--profile local` for the zero-daemon stack or `--profile scale` for Qdrant, FastEmbed, and sparse retrieval. The same confirmed action is available in the local web UI. `web` resolves the project root, safely creates or adopts `.docmancer/{tree,inbox,trash}`, serves the latest committed index immediately, and schedules a changed-source refresh in the background.
 
 | Command | Purpose |
 | --- | --- |
 | `docmancer setup` | Confirm machine-wide discovery, canonical reconciliation, all detected integrations, and supported recall and capture hooks. |
-| `docmancer web` | Open the project workbench and refresh changed agent sources. |
-| `docmancer ask "task"` | Recall policy, curated memory, and supporting agent evidence. |
+| `docmancer web` | Open the project workbench without blocking on maintenance. |
+| `docmancer ask "task"` | Recall policy and evidence, then call the configured answer provider by default. |
+| `docmancer ask "task" --fresh` | Refresh changed agent sources before answering. |
 | `docmancer context refresh --dry-run` | Preview a Context build without calling a provider or writing a revision. |
 | `docmancer context refresh` | Build a deterministic local revision of consolidated Context. |
 | `docmancer common` | Show memory recurring across independent agent harnesses. |

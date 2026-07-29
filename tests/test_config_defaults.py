@@ -22,6 +22,7 @@ def test_hybrid_is_the_default_mode():
     # not something only a YAML auto-flip would set.
     assert RetrievalConfig().default_mode == "hybrid"
     assert DocmancerConfig().retrieval.default_mode == "hybrid"
+    assert DocmancerConfig().retrieval.profile == "local"
 
 
 def test_existing_qdrant_yaml_still_loads(tmp_path):

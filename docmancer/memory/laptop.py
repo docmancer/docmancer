@@ -30,8 +30,16 @@ from docmancer.memory.tree.zones import (
 )
 
 
-LAPTOP_MEMORY_SCHEMA_VERSION = 1
+LAPTOP_MEMORY_SCHEMA_VERSION = 2
 _STATE_FILENAME = "latest.json"
+CANONICAL_SCAFFOLD_VERSION = 1
+CANONICAL_SECTION_PATHS = {
+    "about": "profile/about.md",
+    "preferences": "profile/preferences.md",
+    "working-principles": "principles/working-style.md",
+    "active-projects": "projects/active.md",
+    "canonical-memory": "README.md",
+}
 _PROFILE_PATH_MARKERS = (
     "/about/",
     "agent instructions",
@@ -115,6 +123,31 @@ def laptop_memory_root() -> Path:
     """Return the stable machine-wide Docmancer home."""
     configured = os.environ.get("DOCMANCER_HOME")
     return Path(configured).expanduser().resolve() if configured else (Path.home() / ".docmancer").resolve()
+
+
+def migrate_canonical_scaffold(root: Path | None = None) -> list[dict[str, str]]:
+    """Move legacy top-level canonical files into the opinionated scaffold.
+
+    Tree addresses are derived from the ``memory_id`` stored in each file, so a
+    move preserves the durable address. Existing destinations are never
+    overwritten.
+    """
+    tree_root = (root or (laptop_memory_root() / "tree")).expanduser().resolve()
+    moves: list[dict[str, str]] = []
+    for section, relative in CANONICAL_SECTION_PATHS.items():
+        source = tree_root / f"{section}.md"
+        destination = tree_root / relative
+        if not source.is_file() or destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        moves.append(
+            {
+                "from": source.relative_to(tree_root).as_posix(),
+                "to": destination.relative_to(tree_root).as_posix(),
+            }
+        )
+    return moves
 
 
 def _now() -> str:
@@ -405,7 +438,7 @@ class LaptopMemoryReconciler:
         paraphrases = f"{paraphrases}, or {_SELF_DESCRIPTION_PARAPHRASES[-1]}"
 
         lines = [
-            "# Canonical Memory",
+            "# Shared Memory",
             "",
             "This entry describes the canonical memory store itself. Docmancer generates it",
             "automatically, so it is a description of the system rather than evidence",
@@ -425,10 +458,13 @@ class LaptopMemoryReconciler:
             "",
         ]
         for section in sections:
-            lines.append(f"- `{section.key}.md` holds {section.description[0].lower()}{section.description[1:]}")
+            lines.append(
+                f"- `{CANONICAL_SECTION_PATHS[section.key]}` holds "
+                f"{section.description[0].lower()}{section.description[1:]}"
+            )
         lines.extend(
             [
-                f"- `{_SELF_DESCRIPTION_KEY}.md` is this entry.",
+                f"- `{CANONICAL_SECTION_PATHS[_SELF_DESCRIPTION_KEY]}` is this entry.",
                 "",
                 f"The Docmancer home containing that tree is `{self.root}`. Set `DOCMANCER_HOME`",
                 "to relocate both.",
@@ -455,7 +491,7 @@ class LaptopMemoryReconciler:
                 "## How to read and change it",
                 "",
                 "Read one machine-wide entry with `docmancer read --global <address>`, where",
-                "the address is the file name in the tree, such as `about.md`. Recall with",
+                "the address is the file path in the tree, such as `profile/about.md`. Recall with",
                 "`docmancer ask \"<question>\"`. Write or revise a curated entry with",
                 "`docmancer write` and `docmancer edit`.",
                 "",
@@ -467,7 +503,7 @@ class LaptopMemoryReconciler:
         return "\n".join(lines).rstrip() + "\n"
 
     def _write_self_description(self, sections: list[CanonicalSection]) -> dict:
-        relative = f"{_SELF_DESCRIPTION_KEY}.md"
+        relative = CANONICAL_SECTION_PATHS[_SELF_DESCRIPTION_KEY]
         path = self.tree_root / relative
         expect = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
         entry = self.store.write(
@@ -500,16 +536,20 @@ class LaptopMemoryReconciler:
         provider_used: bool,
         revision: str = "",
     ) -> dict:
-        relative = f"{section.key}.md"
+        relative = CANONICAL_SECTION_PATHS[section.key]
         path = self.tree_root / relative
         expect = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
         # Carry the user's pinned zone forward untouched. Without this, every
         # reconcile silently destroys anything a human or an agent wrote into
         # the file, which is the defect this zone split exists to fix.
         pinned = ""
-        if path.is_file():
+        pinned_source = path
+        legacy_path = self.tree_root / f"{section.key}.md"
+        if not pinned_source.is_file() and legacy_path.is_file():
+            pinned_source = legacy_path
+        if pinned_source.is_file():
             try:
-                pinned = split_zones(parse_tree_file(path).body).pinned
+                pinned = split_zones(parse_tree_file(pinned_source).body).pinned
             except Exception:  # noqa: BLE001 - an unreadable file must not block reconcile
                 pinned = ""
         entry = self.store.write(
@@ -541,6 +581,7 @@ class LaptopMemoryReconciler:
         }
 
     def reconcile(self, *, use_provider: bool = True, force: bool = False) -> dict:
+        migrate_canonical_scaffold(self.tree_root)
         sections = self._sections()
         provider_fingerprint = self._provider_fingerprint(use_provider=use_provider)
         evidence = [
@@ -559,8 +600,11 @@ class LaptopMemoryReconciler:
             }
         )
         previous = self._state()
-        required = [self.tree_root / f"{section.key}.md" for section in sections]
-        required.append(self.tree_root / f"{_SELF_DESCRIPTION_KEY}.md")
+        required = [
+            self.tree_root / CANONICAL_SECTION_PATHS[section.key]
+            for section in sections
+        ]
+        required.append(self.tree_root / CANONICAL_SECTION_PATHS[_SELF_DESCRIPTION_KEY])
         if (
             not force
             and previous.get("evidence_fingerprint") == fingerprint
@@ -684,7 +728,7 @@ class LaptopMemoryReconciler:
                 f"'{key}' describes the store itself and cannot be pinned. "
                 f"Pin to one of: {', '.join(self.section_keys())}"
             )
-        return self.tree_root / f"{key}.md"
+        return self.tree_root / CANONICAL_SECTION_PATHS[key]
 
     def read_section(self, section: str) -> dict:
         """Return one section split into its zones, for display or editing."""
@@ -716,7 +760,7 @@ class LaptopMemoryReconciler:
         state = self._state()
         sections = []
         for key in [*self.section_keys(), _SELF_DESCRIPTION_KEY]:
-            path = self.tree_root / f"{key}.md"
+            path = self.tree_root / CANONICAL_SECTION_PATHS[key]
             if not path.is_file():
                 sections.append({"section": key, "present": False, "pinned_lines": 0})
                 continue
@@ -769,7 +813,7 @@ class LaptopMemoryReconciler:
                 "(a reconcile ran in between). Re-read it and reapply the edit."
             )
         written = self.store.write(
-            relative_path=f"{path.stem}.md",
+            relative_path=path.relative_to(self.tree_root).as_posix(),
             text=replace_pinned(entry.body, pinned, section=path.stem),
             memory_type=entry.type,
             scope="global",

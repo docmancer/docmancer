@@ -1,9 +1,7 @@
 """Every web route must mount the view named after it.
 
-The Context workbench shipped unreachable because `web/app/context/page.tsx`
-passed `initialView="agent-context"`. Nothing caught it: the route returned 200,
-the component compiled, and the bundle contained the workbench. A status-code
-assertion cannot distinguish "the right view rendered" from "a view rendered".
+A status-code assertion cannot distinguish "the right view rendered" from "a
+view rendered", so aliases remain explicit here.
 
 This checks the wiring at its source, which is where the mistake is made.
 """
@@ -23,7 +21,7 @@ _VIEW_KEY_LINE = re.compile(r"export type ViewKey =([^;]+);", re.DOTALL)
 # needs a reason. These two are retired routes kept as static fallbacks behind
 # the server-side 308 redirects asserted in test_web_app.py.
 INTENTIONAL_ALIASES: dict[str, str] = {
-    "memory": "ask",      # retired 0.8 route, redirects to /ask/
+    "context": "memory",  # compatibility route, redirects to Shared Memory
     "sources": "inbox",   # retired 0.8 route, redirects to /inbox/
 }
 
@@ -69,9 +67,36 @@ def test_every_mounted_view_is_a_declared_view_key():
     assert not unknown, "\n  ".join(unknown)
 
 
-def test_context_route_mounts_the_context_workbench():
-    """The specific regression, pinned by name so it cannot silently return."""
+def test_context_route_mounts_shared_memory_compatibility_view():
     page = WEB_APP / "context" / "page.tsx"
     if not page.is_file():
         pytest.skip("context route is not present in this checkout")
-    assert 'initialView="context"' in page.read_text(encoding="utf-8")
+    assert 'initialView="memory"' in page.read_text(encoding="utf-8")
+
+
+def test_route_session_handshake_does_not_block_page_rendering():
+    workspace = WEB_APP.parent / "components" / "workspace-app.tsx"
+    source = workspace.read_text(encoding="utf-8")
+
+    assert "<Page view={view}/>" in source
+    assert '!ready && !error ? <Loading label="Opening your local memory"/>' not in source
+
+
+def test_library_owns_runtime_readiness_and_background_copy():
+    library = WEB_APP.parent / "components" / "library-view.tsx"
+    source = library.read_text(encoding="utf-8")
+
+    assert 'apiGet("/api/v1/readiness")' in source
+    assert "Starting local memory services" in source
+    assert "The Library is already open." in source
+
+
+def test_shared_memory_uses_stale_while_revalidate_snapshots():
+    component = WEB_APP.parent / "components" / "shared-memory-workbench.tsx"
+    source = component.read_text(encoding="utf-8")
+
+    assert "sessionStorage.getItem" in source
+    assert "memorySnapshot" in source
+    assert 'apiGet("/api/v1/shared-memory").then' in source
+    assert 'apiGet("/api/v1/delivery").then' in source
+    assert "Promise.all" not in source

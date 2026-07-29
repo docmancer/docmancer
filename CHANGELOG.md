@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - Unreleased
+
+### Added
+
+- **Shared Memory replaces the generated Context workbench.** The local app now shows the real machine-wide and project Markdown trees, their opinionated folder scaffold, file provenance, stable addresses, agent connection state, and the exact bounded projection prepared for each agent. Machine memory uses `profile/`, `principles/`, `projects/`, and `shared/`; project memory uses `decisions/`, `constraints/`, `workflows/`, and `lessons/`.
+- **Safe canonical scaffold migration.** Existing top-level canonical files move into the new machine scaffold without changing their `docmancer://memory/...` identities or overwriting an existing destination. New project trees start with the standard folders and a lightweight `overview.md`.
+- **Explicit local and scale retrieval profiles.** `docmancer setup --profile local` keeps the zero-daemon Model2Vec and sqlite-vec path. `--profile scale` configures Qdrant, FastEmbed dense embeddings, sparse SPLADE retrieval, hybrid fusion, and SQLite-only extracted content for larger corpora. Status reports the selected profile, vector backend, embedding provider, source versions, unit revisions, and index-job state.
+- **Versioned retrieval data model.** Sources now have stable identities and immutable content versions. Documents, retrieval units, and unit revisions have separate stable identifiers, lifecycle state, and project, scope, and kind filters. Changed sources update only affected lexical rows and vector points; unchanged versions are no-ops.
+- **Token-aware structural chunking.** Markdown, prose, code, and tables use token budgets with stable structural boundaries. Oversized content is split losslessly, and memory-atom identity no longer depends on line numbers.
+- **Bounded embedding pipeline.** Vector synchronization streams sections in bounded batches, prunes stale vectors incrementally, and stores new cache entries in one WAL-mode SQLite database instead of one file per vector. Existing file-cache entries remain readable.
+
+### Changed
+
+- **Ask keeps AI generation but drops request-time maintenance.** Normal Ask retrieves from the latest committed index and calls the configured answer provider by default. It does not scan files, rewrite indexes, or reconcile canonical memory. `--fresh` explicitly waits for changed sources before answering.
+- **Web startup and navigation no longer block on corpus maintenance.** The static shell and local session render before runtime initialization. Changed-source refresh and Library indexing run in the background with visible activity messages. Library and Shared Memory keep their last valid snapshots usable while the background work finishes.
+- **Shared Memory uses stale-while-revalidate snapshots.** Returning to the page reuses browser-session and runtime snapshots immediately, refreshes the file tree and agent-delivery panels independently, and invalidates caches after real memory or integration mutations.
+- **AI Context distillation is batched and parallel.** Several independent topics share one structured provider request, bounded requests run concurrently, unchanged topic outputs come from the per-cluster cache, and a failed batch falls back locally without discarding completed work. Stable cluster IDs survive minor membership and label changes.
+
+### Fixed
+
+- **Library navigation no longer freezes behind “Opening your local memory.”** Route rendering is independent of the session handshake, Library owns its readiness state, and SQLite readers no longer renegotiate journal mode while a background catalog writer holds the database.
+- **Repeated Shared Memory visits no longer rescan everything.** Parsed tree metadata and integration delivery state are cached with safe invalidation, so a slow agent inspection cannot hold the canonical file tree hostage.
+
 ## [0.9.3] - 2026-07-28
 ### Added
 

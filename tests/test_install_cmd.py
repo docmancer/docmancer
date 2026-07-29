@@ -334,3 +334,27 @@ def test_setup_all_creates_config_db_and_installs_skills():
         assert (fake_home / ".codex" / "hooks.json").exists()
         assert (fake_home / ".claude" / "settings.json").exists()
         assert (fake_home / ".docmancer" / "exports" / "claude-desktop" / "docmancer.zip").exists()
+
+
+def test_setup_scale_profile_persists_qdrant_and_fastembed():
+    import yaml
+
+    runner = CliRunner()
+    with runner.isolated_filesystem() as tmp_dir:
+        fake_home = _home(tmp_dir)
+        with patch("docmancer.cli.commands.Path.home", return_value=fake_home), \
+             patch("docmancer.core.config.Path.home", return_value=fake_home):
+            result = runner.invoke(
+                cli,
+                ["setup", "--profile", "scale", "--no-index-memory", "--yes"],
+            )
+        assert result.exit_code == 0, result.output
+        data = yaml.safe_load(
+            (fake_home / ".docmancer" / "docmancer.yaml").read_text()
+        )
+        assert data["retrieval"]["profile"] == "scale"
+        assert data["index"]["persist_extracted"] is False
+        assert data["vector_store"]["provider"] == "qdrant"
+        assert data["embeddings"]["provider"] == "fastembed"
+        assert data["embeddings"]["sparse_model"] == "prithivida/Splade_PP_en_v1"
+        assert "requires the embeddings-heavy extra" in result.output

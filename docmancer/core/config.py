@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -16,6 +17,7 @@ class IndexConfig(BaseSettings):
     provider: str = "sqlite"
     db_path: str = Field(default_factory=default_user_db_path)
     extracted_dir: str = ""
+    persist_extracted: bool = True
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_INDEX_", extra="ignore")
 
 
@@ -36,11 +38,13 @@ class WebFetchConfig(BaseSettings):
 class LoaderFormatConfig(BaseModel):
     chunk_size: int | None = Field(default=None, ge=100)
     chunk_overlap: int | None = Field(default=None, ge=0)
+    chunk_unit: str | None = None
 
 
 class LoadersConfig(BaseModel):
-    default_chunk_size: int = Field(default=800, ge=100)
-    default_chunk_overlap: int = Field(default=100, ge=0)
+    default_chunk_size: int = Field(default=400, ge=100)
+    default_chunk_overlap: int = Field(default=64, ge=0)
+    default_chunk_unit: str = "tokens"
     formats: dict[str, LoaderFormatConfig] = Field(default_factory=dict)
 
     def settings_for(self, format_name: str) -> tuple[int, int]:
@@ -54,6 +58,13 @@ class LoadersConfig(BaseModel):
         if chunk_overlap >= chunk_size:
             raise ValueError("loader chunk_overlap must be smaller than chunk_size")
         return chunk_size, chunk_overlap
+
+    def unit_for(self, format_name: str) -> str:
+        override = self.formats.get(format_name.lower())
+        unit = override.chunk_unit if override and override.chunk_unit else self.default_chunk_unit
+        if unit not in {"tokens", "characters"}:
+            raise ValueError("loader chunk_unit must be 'tokens' or 'characters'")
+        return unit
 
 
 class VectorStoreConfig(BaseSettings):
@@ -115,6 +126,7 @@ class QueryRouter(BaseModel):
 
 
 class RetrievalConfig(BaseSettings):
+    profile: Literal["local", "scale"] = "local"
     default_mode: str = "hybrid"
     fusion: FusionConfig = Field(default_factory=FusionConfig)
     hierarchical: HierarchicalConfig = Field(default_factory=HierarchicalConfig)
@@ -123,6 +135,19 @@ class RetrievalConfig(BaseSettings):
     budget: int | None = None
     limit: int | None = None
     model_config = SettingsConfigDict(env_prefix="DOCMANCER_RETRIEVAL_", extra="ignore")
+
+
+class DistillationConfig(BaseSettings):
+    """Latency and cost bounds for incremental AI Context synthesis."""
+
+    max_concurrency: int = Field(default=16, ge=1, le=64)
+    topics_per_request: int = Field(default=16, ge=1, le=32)
+    max_input_tokens: int = Field(default=24_000, ge=1_000)
+    automatic_job_budget_usd: float = Field(default=0.25, ge=0)
+    automatic_daily_budget_usd: float = Field(default=1.0, ge=0)
+    target_seconds: float = Field(default=8.0, gt=0)
+    model: str | None = None
+    model_config = SettingsConfigDict(env_prefix="DOCMANCER_DISTILLATION_", extra="ignore")
 
 
 class DiscoveryExtraSource(BaseModel):
@@ -194,6 +219,7 @@ class DocmancerConfig(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    distillation: DistillationConfig = Field(default_factory=DistillationConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     capture: CaptureConfig = Field(default_factory=CaptureConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

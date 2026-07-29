@@ -24,7 +24,6 @@ _SPACE_RE = re.compile(r"\s+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9`])")
 _MIN_CHARS = 12
 _MAX_ATOM_CHARS = 700
-_MAX_PARAGRAPH_CHARS = 1_200
 
 _MANAGED_BLOCK_PATTERNS = (
     re.compile(
@@ -209,7 +208,7 @@ def extract_atoms(entry: "MemoryEntry") -> list[AtomicMemoryEntry]:
         memory_type = classify_memory(body)
         source_title = heading or entry.title or Path(entry.path).name
         content_hash = _hash(normalized)
-        atom_id = _atom_id(entry, line_start, normalized)
+        atom_id = _atom_id(entry, normalized)
         kind = str(entry.extra.get("kind", "agent-memory"))
         scope_prefix, _, scope_value = (entry.scope or "").partition(":")
         scope_prefix = scope_prefix or "unknown"
@@ -497,14 +496,35 @@ def _split_long_text(text: str) -> list[str]:
     normalized = _normalize_text(text)
     if len(normalized) <= _MAX_ATOM_CHARS:
         return [normalized]
-    if len(normalized) > _MAX_PARAGRAPH_CHARS:
-        normalized = normalized[:_MAX_PARAGRAPH_CHARS].rstrip()
     parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(normalized) if p.strip()]
     if not parts:
-        return [normalized]
+        parts = [normalized]
     merged: list[str] = []
     current = ""
     for part in parts:
+        if len(part) > _MAX_ATOM_CHARS:
+            if current:
+                merged.append(current)
+                current = ""
+            words = part.split()
+            window = ""
+            for word in words:
+                if window and len(window) + 1 + len(word) > _MAX_ATOM_CHARS:
+                    merged.append(window)
+                    window = word
+                elif len(word) > _MAX_ATOM_CHARS:
+                    if window:
+                        merged.append(window)
+                        window = ""
+                    merged.extend(
+                        word[start:start + _MAX_ATOM_CHARS]
+                        for start in range(0, len(word), _MAX_ATOM_CHARS)
+                    )
+                else:
+                    window = f"{window} {word}".strip()
+            if window:
+                merged.append(window)
+            continue
         if not current:
             current = part
         elif len(current) + 1 + len(part) <= _MAX_ATOM_CHARS:
@@ -542,8 +562,9 @@ def _dedupe_key(text: str) -> str:
     return _SPACE_RE.sub(" ", text.lower()).strip()
 
 
-def _atom_id(entry: "MemoryEntry", line_start: int, text: str) -> str:
-    raw = "\n".join([entry.harness, entry.scope, entry.path, str(line_start), _dedupe_key(text)])
+def _atom_id(entry: "MemoryEntry", text: str) -> str:
+    """Return a logical atom ID that survives unrelated line insertions."""
+    raw = "\n".join([entry.harness, entry.scope, entry.path, _dedupe_key(text)])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 

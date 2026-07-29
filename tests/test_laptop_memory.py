@@ -4,7 +4,9 @@ import pytest
 
 from docmancer.harness.secrets import redact_secrets
 from docmancer.memory.atomic import AtomicMemoryEntry
-from docmancer.memory.laptop import LaptopMemoryReconciler
+from docmancer.memory.laptop import LaptopMemoryReconciler, migrate_canonical_scaffold
+from docmancer.memory.tree.parser import parse_tree_file
+from docmancer.memory.tree.store import TreeStore
 
 
 def _atom(
@@ -48,6 +50,25 @@ class _Agent:
         return list(self._atoms)
 
 
+def test_scaffold_migration_moves_legacy_files_without_changing_address(tmp_path):
+    tree_root = tmp_path / "home" / "tree"
+    store = TreeStore(tree_root)
+    legacy = store.write(
+        relative_path="about.md",
+        text="# About\n\nA durable profile.",
+        memory_type="about",
+        scope="global",
+    )
+
+    moves = migrate_canonical_scaffold(tree_root)
+    migrated = parse_tree_file(tree_root / "profile" / "about.md")
+
+    assert moves == [{"from": "about.md", "to": "profile/about.md"}]
+    assert not (tree_root / "about.md").exists()
+    assert migrated.address == legacy.address
+    assert migrate_canonical_scaffold(tree_root) == []
+
+
 def test_reconcile_writes_stable_laptop_files_and_is_idempotent(tmp_path):
     project = tmp_path / "repos" / "docmancer"
     atoms = [
@@ -88,14 +109,20 @@ def test_reconcile_writes_stable_laptop_files_and_is_idempotent(tmp_path):
     assert second["changed"] is False
     assert first["provider"] == "deterministic"
     assert {path.name for path in (tmp_path / "home" / "tree").glob("*.md")} == {
-        "about.md",
-        "preferences.md",
-        "working-principles.md",
-        "active-projects.md",
-        "canonical-memory.md",
+        "README.md",
     }
-    assert "technical founder" in (tmp_path / "home" / "tree" / "about.md").read_text()
-    projects = (tmp_path / "home" / "tree" / "active-projects.md").read_text()
+    assert {
+        path.relative_to(tmp_path / "home" / "tree").as_posix()
+        for path in (tmp_path / "home" / "tree").rglob("*.md")
+    } == {
+        "README.md",
+        "profile/about.md",
+        "profile/preferences.md",
+        "principles/working-style.md",
+        "projects/active.md",
+    }
+    assert "technical founder" in (tmp_path / "home" / "tree" / "profile" / "about.md").read_text()
+    projects = (tmp_path / "home" / "tree" / "projects" / "active.md").read_text()
     assert str(project) in projects
     assert "active local agent-memory product" in projects
 
@@ -125,7 +152,7 @@ def test_provider_failure_falls_back_per_section_without_blocking(tmp_path, monk
     assert result["changed"] is True
     assert result["provider"] == "deterministic"
     assert len(result["provider_failures"]) == 1
-    assert "source attributed" in (tmp_path / "home" / "tree" / "preferences.md").read_text()
+    assert "source attributed" in (tmp_path / "home" / "tree" / "profile" / "preferences.md").read_text()
 
 
 def test_ready_provider_synthesizes_nonempty_sections_with_redacted_citations(tmp_path, monkeypatch):
@@ -172,7 +199,7 @@ def test_self_description_names_every_alias_for_the_store(tmp_path):
 
     reconciler.reconcile(use_provider=False)
 
-    body = (_tree(tmp_path) / "canonical-memory.md").read_text()
+    body = (_tree(tmp_path) / "README.md").read_text()
     for alias in (
         "canonical memory",
         "master memory",
@@ -193,7 +220,7 @@ def test_self_description_locates_the_tree_and_disowns_skill_files(tmp_path):
 
     reconciler.reconcile(use_provider=False)
 
-    body = (_tree(tmp_path) / "canonical-memory.md").read_text()
+    body = (_tree(tmp_path) / "README.md").read_text()
     assert str(_tree(tmp_path)) in body
     # The exact confusion that produced the wrong answer.
     assert "are not canonical memory" in body
@@ -209,8 +236,13 @@ def test_self_description_lists_each_section_file(tmp_path):
 
     reconciler.reconcile(use_provider=False)
 
-    body = (_tree(tmp_path) / "canonical-memory.md").read_text()
-    for name in ("about.md", "preferences.md", "working-principles.md", "active-projects.md"):
+    body = (_tree(tmp_path) / "README.md").read_text()
+    for name in (
+        "profile/about.md",
+        "profile/preferences.md",
+        "principles/working-style.md",
+        "projects/active.md",
+    ):
         assert f"`{name}`" in body
 
 
@@ -218,7 +250,7 @@ def test_self_description_is_regenerated_when_deleted(tmp_path):
     """The fingerprint short-circuit must not leave the entry missing."""
     reconciler = LaptopMemoryReconciler(_Agent([]), root=tmp_path / "home")
     reconciler.reconcile(use_provider=False)
-    target = _tree(tmp_path) / "canonical-memory.md"
+    target = _tree(tmp_path) / "README.md"
     target.unlink()
 
     result = reconciler.reconcile(use_provider=False)
@@ -250,7 +282,7 @@ def test_self_description_never_goes_through_the_provider(tmp_path, monkeypatch)
     monkeypatch.setattr(reconciler, "_provider_client", lambda: _Client())
     result = reconciler.reconcile()
 
-    body = (_tree(tmp_path) / "canonical-memory.md").read_text()
+    body = (_tree(tmp_path) / "README.md").read_text()
     assert "master memory" in body
     assert "paraphrased this away" not in body
     entry = next(row for row in result["sections"] if row["section"] == "canonical-memory")
@@ -344,7 +376,7 @@ def test_terminology_questions_retrieve_the_self_description(tmp_path):
         "where is the central memory kept?",
     ):
         titles = _compile(tree, task)
-        assert titles and titles[0] == "Canonical Memory", (task, titles)
+        assert titles and titles[0] == "Shared Memory", (task, titles)
 
 
 def test_self_description_stays_out_of_unrelated_questions(tmp_path):
@@ -523,7 +555,7 @@ def test_legacy_unzoned_section_migrates_without_losing_content(tmp_path):
     reconciler = LaptopMemoryReconciler(_Agent([_pref_atom()]), root=tmp_path / "home")
     reconciler.reconcile(use_provider=False)
 
-    path = tmp_path / "home" / "tree" / "preferences.md"
+    path = tmp_path / "home" / "tree" / "profile" / "preferences.md"
     raw = path.read_text()
     path.write_text(raw.replace(_zone_markers(raw), ""), encoding="utf-8")
 

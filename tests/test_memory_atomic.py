@@ -61,6 +61,31 @@ def test_extract_atoms_have_stable_ids_and_dedupe_repeated_items():
     assert first[0].type == "fact"
 
 
+def test_atom_id_survives_unrelated_line_insertion():
+    original = FakeEntry(content="# Deploy\n\n- Always run the release smoke test.\n")
+    shifted = FakeEntry(
+        content="# Notes\n\nUnrelated introductory material belongs here.\n\n"
+        "# Deploy\n\n- Always run the release smoke test.\n"
+    )
+
+    original_atom = extract_atoms(original)[0]
+    shifted_atom = next(atom for atom in extract_atoms(shifted) if "smoke test" in atom.text)
+
+    assert original_atom.atom_id == shifted_atom.atom_id
+    assert original_atom.line_start != shifted_atom.line_start
+
+
+def test_long_memory_paragraph_is_split_without_truncation():
+    ending = "The final durable instruction must remain searchable."
+    entry = FakeEntry(content=("A long durable statement. " * 100) + ending)
+
+    atoms = extract_atoms(entry)
+
+    assert len(atoms) > 1
+    assert ending in " ".join(atom.text for atom in atoms)
+    assert all(len(atom.text) <= 720 for atom in atoms)
+
+
 def test_atom_document_is_single_section_metadata_shape():
     entry = FakeEntry(content="- Do not read .env files when loading context.\n")
     [atom] = extract_atoms(entry)

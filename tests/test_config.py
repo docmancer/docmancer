@@ -6,7 +6,8 @@ from pydantic import ValidationError
 from docmancer.core.config import DocmancerConfig, IndexConfig, QueryConfig
 
 
-def test_default_config_uses_sqlite_index():
+def test_default_config_uses_sqlite_index(monkeypatch):
+    monkeypatch.delenv("DOCMANCER_INDEX_DB_PATH", raising=False)
     config = DocmancerConfig()
     assert config.index.provider == "sqlite"
     assert config.index.db_path.endswith(".docmancer/docmancer.db")
@@ -38,6 +39,7 @@ def test_loader_format_config_overrides_defaults():
     )
 
     assert config.loaders.settings_for("pdf") == (700, 70)
+    assert config.loaders.unit_for("pdf") == "tokens"
     assert config.loaders.settings_for("txt") == (900, 90)
 
 

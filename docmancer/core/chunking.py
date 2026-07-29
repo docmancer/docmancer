@@ -3,6 +3,118 @@ from __future__ import annotations
 import re
 
 
+_TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+
+
+def token_count(text: str) -> int:
+    """Return a deterministic local token estimate without loading a model.
+
+    The splitter counts word and punctuation tokens and keeps character spans,
+    which is substantially closer to embedding-model limits than the previous
+    character budgets while remaining offline and provider-independent.
+    """
+    return sum(1 for _ in _TOKEN_RE.finditer(text or ""))
+
+
+def _token_windows(text: str, chunk_tokens: int, overlap_tokens: int = 0) -> list[str]:
+    if overlap_tokens >= chunk_tokens:
+        raise ValueError("overlap_tokens must be smaller than chunk_tokens")
+    matches = list(_TOKEN_RE.finditer(text or ""))
+    if not matches:
+        return []
+    chunks: list[str] = []
+    start = 0
+    while start < len(matches):
+        end = min(len(matches), start + chunk_tokens)
+        char_start = 0 if start == 0 else matches[start].start()
+        char_end = len(text) if end == len(matches) else matches[end - 1].end()
+        value = text[char_start:char_end].strip()
+        if value:
+            chunks.append(value)
+        if end >= len(matches):
+            break
+        start = end - overlap_tokens
+    return chunks
+
+
+def _pack_token_parts(
+    parts: list[str],
+    *,
+    prefix: str,
+    chunk_tokens: int,
+    separator: str,
+) -> list[str]:
+    """Pack structural parts without dropping an oversized part."""
+    effective = max(1, chunk_tokens - token_count(prefix))
+    chunks: list[str] = []
+    current: list[str] = []
+    for part in parts:
+        if token_count(part) > effective:
+            if current:
+                chunks.append(prefix + separator.join(current))
+                current = []
+            chunks.extend(
+                prefix + value
+                for value in _token_windows(part, effective, 0)
+            )
+            continue
+        candidate = separator.join([*current, part])
+        if current and token_count(candidate) > effective:
+            chunks.append(prefix + separator.join(current))
+            current = [part]
+        else:
+            current.append(part)
+    if current:
+        chunks.append(prefix + separator.join(current))
+    return chunks
+
+
+def chunk_paragraphs_tokens(
+    text: str,
+    chunk_tokens: int = 400,
+    overlap_tokens: int = 64,
+    *,
+    prefix: str = "",
+) -> list[str]:
+    """Losslessly chunk prose using token budgets and paragraph boundaries."""
+    if not text.strip():
+        return []
+    if overlap_tokens >= chunk_tokens:
+        raise ValueError("overlap_tokens must be smaller than chunk_tokens")
+    effective = max(1, chunk_tokens - token_count(prefix))
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+    if not paragraphs:
+        return [prefix + value for value in _token_windows(text, effective, overlap_tokens)]
+
+    packed = _pack_token_parts(
+        paragraphs,
+        prefix="",
+        chunk_tokens=effective,
+        separator="\n\n",
+    )
+    if overlap_tokens and len(packed) > 1:
+        overlapped: list[str] = []
+        previous = ""
+        for chunk in packed:
+            if previous:
+                tail = _token_windows(
+                    previous,
+                    max(1, token_count(previous)),
+                    0,
+                )[0]
+                tail_matches = list(_TOKEN_RE.finditer(tail))
+                if tail_matches:
+                    start = max(0, len(tail_matches) - overlap_tokens)
+                    tail = tail[tail_matches[start].start():].strip()
+                    candidate = f"{tail}\n\n{chunk}"
+                    if token_count(candidate) <= effective:
+                        chunk = candidate
+            overlapped.append(chunk)
+            previous = chunk
+        packed = overlapped
+    return [prefix + chunk for chunk in packed if chunk.strip()]
+
+
 def _sliding_window(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     """Split normalized text into overlapping windows."""
     chunks: list[str] = []
@@ -456,3 +568,104 @@ def chunk_markdown(text: str, chunk_size: int = 800, chunk_overlap: int = 120) -
                     raw_chunks.extend(_chunk_prose_section(block_text, prefix, chunk_size, chunk_overlap))
 
     return _merge_small_chunks([c for c in raw_chunks if c.strip()], chunk_size)
+
+
+def _chunk_table_block_tokens(
+    table_text: str,
+    prefix: str,
+    chunk_tokens: int,
+) -> list[str]:
+    full = f"{prefix}{table_text.strip()}"
+    if token_count(full) <= chunk_tokens:
+        return [full]
+    rows = [row for row in table_text.splitlines() if row.strip()]
+    if len(rows) < 3:
+        return [
+            prefix + value
+            for value in _token_windows(table_text, max(1, chunk_tokens - token_count(prefix)), 0)
+        ]
+    header = rows[:2]
+    available = max(1, chunk_tokens - token_count(prefix + "\n".join(header)))
+    row_chunks = _pack_token_parts(
+        rows[2:],
+        prefix="",
+        chunk_tokens=available,
+        separator="\n",
+    )
+    return [prefix + "\n".join([*header, chunk]) for chunk in row_chunks]
+
+
+def _chunk_code_block_tokens(
+    code_text: str,
+    prefix: str,
+    chunk_tokens: int,
+) -> list[str]:
+    full = f"{prefix}{code_text.strip()}"
+    if token_count(full) <= chunk_tokens:
+        return [full]
+    lines = code_text.splitlines()
+    if not lines:
+        return []
+    opening = lines[0]
+    closing = lines[-1] if len(lines) > 1 and _FENCE_OPEN_RE.match(lines[-1]) else opening
+    content = lines[1:-1] if closing == lines[-1] and len(lines) > 1 else lines[1:]
+    available = max(1, chunk_tokens - token_count(f"{prefix}{opening}\n{closing}"))
+    groups = _pack_token_parts(
+        content,
+        prefix="",
+        chunk_tokens=available,
+        separator="\n",
+    )
+    return [prefix + "\n".join([opening, group, closing]) for group in groups]
+
+
+def chunk_markdown_tokens(
+    text: str,
+    chunk_tokens: int = 400,
+    overlap_tokens: int = 64,
+) -> list[str]:
+    """Structure-aware Markdown chunking using token rather than character limits."""
+    if not text.strip():
+        return []
+    if overlap_tokens >= chunk_tokens:
+        raise ValueError("overlap_tokens must be smaller than chunk_tokens")
+    chunks: list[str] = []
+    for header_stack, body in _parse_sections(text):
+        prefix = _build_header_prefix(header_stack)
+        if _is_list_heavy(body):
+            chunks.extend(
+                _pack_token_parts(
+                    _split_into_bullet_items(body),
+                    prefix=prefix,
+                    chunk_tokens=chunk_tokens,
+                    separator="\n",
+                )
+            )
+            continue
+        for block_type, block_text in _split_tables_and_code(body):
+            if block_type == "table":
+                chunks.extend(_chunk_table_block_tokens(block_text, prefix, chunk_tokens))
+            elif block_type == "code":
+                chunks.extend(_chunk_code_block_tokens(block_text, prefix, chunk_tokens))
+            else:
+                chunks.extend(
+                    chunk_paragraphs_tokens(
+                        block_text,
+                        chunk_tokens,
+                        overlap_tokens,
+                        prefix=prefix,
+                    )
+                )
+
+    merged: list[str] = []
+    for chunk in (value for value in chunks if value.strip()):
+        if (
+            merged
+            and token_count(merged[-1]) < chunk_tokens // 2
+            and token_count(chunk) < chunk_tokens // 2
+            and token_count(f"{merged[-1]}\n{chunk}") <= chunk_tokens
+        ):
+            merged[-1] = f"{merged[-1]}\n{chunk}"
+        else:
+            merged.append(chunk)
+    return merged

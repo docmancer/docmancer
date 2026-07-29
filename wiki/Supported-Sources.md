@@ -4,7 +4,7 @@ Docmancer keeps three kinds of knowledge distinct because they have different le
 
 ## Agent evidence
 
-`docmancer setup` discovers memory, instructions, rules, and eligible session evidence that supported coding agents already wrote. Opening `docmancer web` or running `docmancer ask` refreshes registered sources when they change.
+`docmancer setup` discovers memory, instructions, rules, and eligible session evidence that supported coding agents already wrote. Supported lifecycle hooks and `docmancer memory sync` update registered sources. The web app schedules a non-blocking refresh after startup. Normal Ask reads the current index; pass `--fresh` when a question must wait for changed files.
 
 | Kind | Examples |
 | --- | --- |

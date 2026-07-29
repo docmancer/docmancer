@@ -11,7 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from docmancer.core.chunking import chunk_paragraphs
+from docmancer.core.chunking import (
+    chunk_markdown_tokens,
+    chunk_paragraphs,
+    chunk_paragraphs_tokens,
+)
 from docmancer.core.models import Document, RetrievedChunk
 
 
@@ -112,10 +116,23 @@ def _sections_for_document(doc: Document) -> list[tuple[str, int, str, dict[str,
     strategy = str(metadata.get("chunking_strategy") or "heading")
     chunk_size = int(metadata.get("chunk_size") or 800)
     chunk_overlap = int(metadata.get("chunk_overlap") or 100)
+    chunk_unit = str(metadata.get("chunk_unit") or "characters")
 
     if strategy == "paragraph":
         title = str(metadata.get("title") or Path(doc.source).stem or "Document")
-        chunks = chunk_paragraphs(doc.content, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        chunks = (
+            chunk_paragraphs_tokens(
+                doc.content,
+                chunk_tokens=chunk_size,
+                overlap_tokens=chunk_overlap,
+            )
+            if chunk_unit == "tokens"
+            else chunk_paragraphs(
+                doc.content,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+        )
         sections: list[tuple[str, int, str, dict[str, str]]] = []
         for index, text in enumerate(chunks):
             page_match = re.search(r"##\s+Page\s+(\d+)", text)
@@ -135,14 +152,29 @@ def _sections_for_document(doc: Document) -> list[tuple[str, int, str, dict[str,
             return []
         return [(title, 1, text, {"anchor": anchor})]
 
-    return [
-        (title, level, text, {"anchor": anchor})
-        for title, level, text, anchor in _split_sections_with_anchors(doc.content)
-    ]
+    sections: list[tuple[str, int, str, dict[str, str]]] = []
+    for title, level, text, anchor in _split_sections_with_anchors(doc.content):
+        if chunk_unit != "tokens":
+            sections.append((title, level, text, {"anchor": anchor}))
+            continue
+        chunks = chunk_markdown_tokens(
+            text,
+            chunk_tokens=chunk_size,
+            overlap_tokens=chunk_overlap,
+        )
+        for index, chunk in enumerate(chunks):
+            chunk_anchor = anchor if len(chunks) == 1 else f"{anchor} / part {index + 1}"
+            sections.append((title, level, chunk, {"anchor": chunk_anchor}))
+    return sections
 
 
 def _chunk_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _stable_id(prefix: str, *parts: object, length: int = 32) -> str:
+    raw = "\0".join(str(part or "") for part in parts)
+    return f"{prefix}_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:length]}"
 
 
 def _lexical_relevance_score(
@@ -191,12 +223,16 @@ class SQLiteStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             try:
                 conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS fts5_check USING fts5(value)")
                 conn.execute("DROP TABLE IF EXISTS fts5_check")
@@ -217,7 +253,10 @@ class SQLiteStore:
                     markdown_path TEXT NOT NULL DEFAULT '',
                     json_path TEXT NOT NULL DEFAULT '',
                     raw_tokens INTEGER NOT NULL DEFAULT 0,
-                    ingested_at TEXT NOT NULL
+                    ingested_at TEXT NOT NULL,
+                    source_uid TEXT,
+                    current_version_id TEXT,
+                    content_hash TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS sections (
@@ -234,7 +273,15 @@ class SQLiteStore:
                     format TEXT,
                     anchor TEXT,
                     content_hash TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    document_id TEXT,
+                    unit_id TEXT,
+                    unit_revision_id TEXT,
+                    project_id TEXT,
+                    scope_kind TEXT,
+                    kind TEXT,
+                    lifecycle TEXT NOT NULL DEFAULT 'active',
+                    updated_at TEXT
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
@@ -252,8 +299,65 @@ class SQLiteStore:
             self._ensure_nullable_column(conn, "sections", "format", "TEXT")
             self._ensure_nullable_column(conn, "sections", "anchor", "TEXT")
             self._ensure_nullable_column(conn, "sections", "content_hash", "TEXT")
+            self._ensure_nullable_column(conn, "sources", "source_uid", "TEXT")
+            self._ensure_nullable_column(conn, "sources", "current_version_id", "TEXT")
+            self._ensure_nullable_column(conn, "sources", "content_hash", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "document_id", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "unit_id", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "unit_revision_id", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "project_id", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "scope_kind", "TEXT")
+            self._ensure_nullable_column(conn, "sections", "kind", "TEXT")
+            self._ensure_nullable_column(
+                conn, "sections", "lifecycle", "TEXT NOT NULL DEFAULT 'active'"
+            )
+            self._ensure_nullable_column(conn, "sections", "updated_at", "TEXT")
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS source_versions (
+                    version_id TEXT PRIMARY KEY,
+                    source_uid TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    parser_version TEXT NOT NULL,
+                    chunker_version TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    lifecycle TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_versions_source
+                    ON source_versions(source_uid, created_at);
+
+                CREATE TABLE IF NOT EXISTS retrieval_unit_revisions (
+                    revision_id TEXT PRIMARY KEY,
+                    unit_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    source_version_id TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    lifecycle TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_unit_revisions_unit
+                    ON retrieval_unit_revisions(unit_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS index_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    source_version_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    stage_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    checkpoint_json TEXT NOT NULL DEFAULT '{}',
+                    last_error TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    UNIQUE(source_version_id, stage, stage_version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_index_jobs_status
+                    ON index_jobs(status, stage);
+
                 CREATE TABLE IF NOT EXISTS embedding_upserts (
                     chunk_id INTEGER NOT NULL,
                     qdrant_collection TEXT NOT NULL,
@@ -265,14 +369,168 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_embedding_upserts_collection
                     ON embedding_upserts(qdrant_collection);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_sections_unit_id
+                    ON sections(unit_id) WHERE unit_id IS NOT NULL AND unit_id <> '';
+                CREATE INDEX IF NOT EXISTS idx_sections_document_id
+                    ON sections(document_id);
+                CREATE INDEX IF NOT EXISTS idx_sections_source_id
+                    ON sections(source_id);
+                CREATE INDEX IF NOT EXISTS idx_sections_project_scope
+                    ON sections(project_id, scope_kind, kind, lifecycle);
                 """
             )
+            self._ensure_nullable_column(
+                conn,
+                "source_versions",
+                "lifecycle",
+                "TEXT NOT NULL DEFAULT 'active'",
+            )
+            self._backfill_v2_identity(conn)
 
     @staticmethod
     def _ensure_nullable_column(conn: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    @staticmethod
+    def _backfill_v2_identity(conn: sqlite3.Connection) -> None:
+        """Give pre-v2 rows stable source, document, and retrieval-unit identities."""
+        source_needs_backfill = conn.execute(
+            """
+            SELECT 1 FROM sources
+            WHERE source_uid IS NULL OR source_uid = ''
+               OR current_version_id IS NULL OR current_version_id = ''
+               OR content_hash IS NULL OR content_hash = ''
+            LIMIT 1
+            """
+        ).fetchone()
+        section_needs_backfill = conn.execute(
+            """
+            SELECT 1 FROM sections
+            WHERE document_id IS NULL OR document_id = ''
+               OR unit_id IS NULL OR unit_id = ''
+               OR unit_revision_id IS NULL OR unit_revision_id = ''
+            LIMIT 1
+            """
+        ).fetchone()
+        if source_needs_backfill is None and section_needs_backfill is None:
+            return
+
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        sources = list(
+            conn.execute(
+                "SELECT id, source, content, metadata_json, source_uid, "
+                "current_version_id, content_hash FROM sources"
+            )
+        )
+        for source in sources:
+            try:
+                metadata = json.loads(source["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            source_uid = source["source_uid"] or _stable_id("src", source["source"])
+            content_hash = source["content_hash"] or str(
+                metadata.get("content_hash") or _chunk_hash(source["content"] or "")
+            )
+            parser_version = str(metadata.get("parser_version") or "legacy")
+            chunker_version = str(metadata.get("chunker_version") or "character-v1")
+            version_id = source["current_version_id"] or _stable_id(
+                "ver", source_uid, content_hash, parser_version, chunker_version
+            )
+            conn.execute(
+                "UPDATE sources SET source_uid=?, current_version_id=?, content_hash=? WHERE id=?",
+                (source_uid, version_id, content_hash, int(source["id"])),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO source_versions
+                    (version_id, source_uid, source_id, content_hash, parser_version,
+                     chunker_version, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id,
+                    source_uid,
+                    int(source["id"]),
+                    content_hash,
+                    parser_version,
+                    chunker_version,
+                    source["metadata_json"] or "{}",
+                    now,
+                ),
+            )
+            rows = list(
+                conn.execute(
+                    """
+                    SELECT id, chunk_index, anchor, content_hash, text, metadata_json,
+                           document_id, unit_id, unit_revision_id
+                    FROM sections WHERE source_id=? ORDER BY chunk_index
+                    """,
+                    (int(source["id"]),),
+                )
+            )
+            seen_anchors: dict[str, int] = {}
+            for row in rows:
+                try:
+                    section_meta = json.loads(row["metadata_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    section_meta = {}
+                document_id = row["document_id"] or str(
+                    section_meta.get("document_id") or source_uid
+                )
+                anchor = str(row["anchor"] or section_meta.get("anchor") or row["chunk_index"])
+                occurrence = seen_anchors.get(anchor, 0)
+                seen_anchors[anchor] = occurrence + 1
+                unit_id = row["unit_id"] or _stable_id(
+                    "unit", document_id, anchor, occurrence
+                )
+                row_hash = row["content_hash"] or _chunk_hash(row["text"] or "")
+                revision_id = row["unit_revision_id"] or _stable_id(
+                    "urev", unit_id, row_hash, chunker_version
+                )
+                section_meta.update(
+                    {
+                        "document_id": document_id,
+                        "unit_id": unit_id,
+                        "unit_revision_id": revision_id,
+                        "source_version_id": version_id,
+                    }
+                )
+                conn.execute(
+                    """
+                    UPDATE sections
+                    SET document_id=?, unit_id=?, unit_revision_id=?, lifecycle='active',
+                        updated_at=?, metadata_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        document_id,
+                        unit_id,
+                        revision_id,
+                        now,
+                        json.dumps(section_meta, ensure_ascii=False),
+                        int(row["id"]),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO retrieval_unit_revisions
+                        (revision_id, unit_id, document_id, source_version_id, content_hash,
+                         text, metadata_json, lifecycle, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                    """,
+                    (
+                        revision_id,
+                        unit_id,
+                        document_id,
+                        version_id,
+                        row_hash,
+                        row["text"] or "",
+                        json.dumps(section_meta, ensure_ascii=False),
+                        now,
+                    ),
+                )
 
     def add_documents(self, documents: Iterable[Document], recreate: bool = False) -> IndexResult:
         docs = list(documents)
@@ -281,6 +539,9 @@ class SQLiteStore:
                 conn.execute("DELETE FROM sections_fts")
                 conn.execute("DELETE FROM sections")
                 conn.execute("DELETE FROM sources")
+                conn.execute("DELETE FROM source_versions")
+                conn.execute("DELETE FROM retrieval_unit_revisions")
+                conn.execute("DELETE FROM index_jobs")
 
             section_count = 0
             for doc in docs:
@@ -310,6 +571,9 @@ class SQLiteStore:
                 conn.execute("DELETE FROM sections_fts")
                 conn.execute("DELETE FROM sections")
                 conn.execute("DELETE FROM sources")
+                conn.execute("DELETE FROM source_versions")
+                conn.execute("DELETE FROM retrieval_unit_revisions")
+                conn.execute("DELETE FROM index_jobs")
                 conn.commit()
             for doc in documents:
                 section_count += self._add_document(conn, doc)
@@ -329,41 +593,89 @@ class SQLiteStore:
         metadata = dict(doc.metadata or {})
         docset_root = str(metadata.get("docset_root") or "")
         ingested_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        source_uid = str(metadata.get("source_id") or _stable_id("src", doc.source))
+        source_content_hash = str(
+            metadata.get("content_hash") or _chunk_hash(doc.content)
+        )
+        parser_version = str(metadata.get("parser_version") or "parser-v1")
+        chunker_version = str(
+            metadata.get("chunker_version")
+            or (
+                "token-structural-v2"
+                if metadata.get("chunk_unit") == "tokens"
+                else "character-v1"
+            )
+        )
+        source_version_id = _stable_id(
+            "ver",
+            source_uid,
+            source_content_hash,
+            parser_version,
+            chunker_version,
+        )
+        document_id = str(metadata.get("document_id") or source_uid)
         source_slug = _slug(doc.source)
-        markdown_path = self.extracted_dir / f"{source_slug}.md"
-        json_path = self.extracted_dir / f"{source_slug}.json"
-        markdown_path.write_text(doc.content, encoding="utf-8")
-        json_path.write_text(
-            json.dumps(
-                {"source": doc.source, "metadata": metadata, "content": doc.content},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        persist_extracted = bool(metadata.get("persist_extracted", True))
+        markdown_path = (
+            self.extracted_dir / f"{source_slug}.md"
+            if persist_extracted
+            else None
+        )
+        json_path = (
+            self.extracted_dir / f"{source_slug}.json"
+            if persist_extracted
+            else None
         )
 
-        existing = conn.execute("SELECT id FROM sources WHERE source = ?", (doc.source,)).fetchone()
+        existing = conn.execute(
+            "SELECT id, current_version_id FROM sources WHERE source = ?",
+            (doc.source,),
+        ).fetchone()
+        if existing and str(existing["current_version_id"] or "") == source_version_id:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM sections WHERE source_id=?",
+                (int(existing["id"]),),
+            ).fetchone()
+            return int(row["n"] or 0)
+
+        if markdown_path is not None and json_path is not None:
+            markdown_path.write_text(doc.content, encoding="utf-8")
+            json_path.write_text(
+                json.dumps(
+                    {
+                        "source": doc.source,
+                        "source_id": source_uid,
+                        "source_version_id": source_version_id,
+                        "metadata": metadata,
+                        "content": doc.content,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
         if existing:
             source_id = int(existing["id"])
-            row_ids = [row["id"] for row in conn.execute("SELECT id FROM sections WHERE source_id = ?", (source_id,))]
-            for row_id in row_ids:
-                conn.execute("DELETE FROM sections_fts WHERE rowid = ?", (row_id,))
-            conn.execute("DELETE FROM sections WHERE source_id = ?", (source_id,))
             conn.execute(
                 """
                 UPDATE sources
                 SET docset_root = ?, content = ?, metadata_json = ?, markdown_path = ?,
-                    json_path = ?, raw_tokens = ?, ingested_at = ?
+                    json_path = ?, raw_tokens = ?, ingested_at = ?, source_uid = ?,
+                    current_version_id = ?, content_hash = ?
                 WHERE id = ?
                 """,
                 (
                     docset_root,
                     doc.content,
                     json.dumps(metadata, ensure_ascii=False),
-                    str(markdown_path),
-                    str(json_path),
+                    str(markdown_path or ""),
+                    str(json_path or ""),
                     estimate_tokens(doc.content),
                     ingested_at,
+                    source_uid,
+                    source_version_id,
+                    source_content_hash,
                     source_id,
                 ),
             )
@@ -371,29 +683,87 @@ class SQLiteStore:
             cursor = conn.execute(
                 """
                 INSERT INTO sources
-                    (source, docset_root, content, metadata_json, markdown_path, json_path, raw_tokens, ingested_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (source, docset_root, content, metadata_json, markdown_path, json_path,
+                     raw_tokens, ingested_at, source_uid, current_version_id, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     doc.source,
                     docset_root,
                     doc.content,
                     json.dumps(metadata, ensure_ascii=False),
-                    str(markdown_path),
-                    str(json_path),
+                    str(markdown_path or ""),
+                    str(json_path or ""),
                     estimate_tokens(doc.content),
                     ingested_at,
+                    source_uid,
+                    source_version_id,
+                    source_content_hash,
                 ),
             )
             source_id = int(cursor.lastrowid)
+
+        conn.execute(
+            """
+            UPDATE source_versions
+            SET lifecycle='superseded'
+            WHERE source_uid=? AND lifecycle='active' AND version_id<>?
+            """,
+            (source_uid, source_version_id),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO source_versions
+                (version_id, source_uid, source_id, content_hash, parser_version,
+                 chunker_version, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_version_id,
+                source_uid,
+                source_id,
+                source_content_hash,
+                parser_version,
+                chunker_version,
+                json.dumps(metadata, ensure_ascii=False),
+                ingested_at,
+            ),
+        )
 
         section_count = 0
         source_path = str(metadata.get("source_path") or doc.source)
         document_title = str(metadata.get("title") or Path(doc.source).stem or "Document")
         format_name = str(metadata.get("format") or "")
+        project_id = str(metadata.get("project_id") or "")
+        scope_kind = str(metadata.get("scope_kind") or "")
+        kind = str(metadata.get("kind") or "")
+        raw_lifecycle = str(metadata.get("status") or "active").casefold()
+        lifecycle = "active" if raw_lifecycle in {"active", "current"} else raw_lifecycle
+        existing_sections = {
+            str(row["unit_id"]): row
+            for row in conn.execute(
+                """
+                SELECT id, unit_id, unit_revision_id
+                FROM sections WHERE source_id=? AND unit_id IS NOT NULL
+                """,
+                (source_id,),
+            )
+        }
+        active_unit_ids: set[str] = set()
+        anchor_occurrences: dict[str, int] = {}
         for chunk_index, (title, level, text, chunk_meta) in enumerate(_sections_for_document(doc)):
             anchor = str(chunk_meta.get("anchor") or title)
+            occurrence = anchor_occurrences.get(anchor, 0)
+            anchor_occurrences[anchor] = occurrence + 1
             content_hash = _chunk_hash(text)
+            unit_id = str(
+                metadata.get("atom_id")
+                or _stable_id("unit", document_id, anchor, occurrence)
+            )
+            unit_revision_id = _stable_id(
+                "urev", unit_id, content_hash, chunker_version
+            )
+            active_unit_ids.add(unit_id)
             section_meta = {
                 **metadata,
                 "section_title": title,
@@ -406,36 +776,159 @@ class SQLiteStore:
                 "format": format_name,
                 "anchor": anchor,
                 "content_hash": content_hash,
+                "document_id": document_id,
+                "unit_id": unit_id,
+                "unit_revision_id": unit_revision_id,
+                "source_version_id": source_version_id,
+                "lifecycle": lifecycle,
             }
-            cursor = conn.execute(
-                """
-                INSERT INTO sections
-                    (source_id, source, chunk_index, title, level, text, token_estimate,
-                     source_path, document_title, format, anchor, content_hash, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_id,
-                    doc.source,
-                    chunk_index,
-                    title,
-                    level,
-                    text,
-                    estimate_tokens(text),
-                    source_path,
-                    document_title,
-                    format_name,
-                    anchor,
-                    content_hash,
-                    json.dumps(section_meta, ensure_ascii=False),
-                ),
-            )
-            row_id = int(cursor.lastrowid)
+            previous = existing_sections.get(unit_id)
+            if previous:
+                row_id = int(previous["id"])
+                previous_revision = str(previous["unit_revision_id"] or "")
+                if previous_revision and previous_revision != unit_revision_id:
+                    conn.execute(
+                        "UPDATE retrieval_unit_revisions SET lifecycle='superseded' "
+                        "WHERE revision_id=?",
+                        (previous_revision,),
+                    )
+                conn.execute("DELETE FROM sections_fts WHERE rowid=?", (row_id,))
+                conn.execute(
+                    """
+                    UPDATE sections
+                    SET source=?, chunk_index=?, title=?, level=?, text=?, token_estimate=?,
+                        source_path=?, document_title=?, format=?, anchor=?, content_hash=?,
+                        metadata_json=?, document_id=?, unit_revision_id=?, project_id=?,
+                        scope_kind=?, kind=?, lifecycle=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        doc.source,
+                        chunk_index,
+                        title,
+                        level,
+                        text,
+                        estimate_tokens(text),
+                        source_path,
+                        document_title,
+                        format_name,
+                        anchor,
+                        content_hash,
+                        json.dumps(section_meta, ensure_ascii=False),
+                        document_id,
+                        unit_revision_id,
+                        project_id,
+                        scope_kind,
+                        kind,
+                        lifecycle,
+                        ingested_at,
+                        row_id,
+                    ),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO sections
+                        (source_id, source, chunk_index, title, level, text, token_estimate,
+                         source_path, document_title, format, anchor, content_hash, metadata_json,
+                         document_id, unit_id, unit_revision_id, project_id, scope_kind, kind,
+                         lifecycle, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        source_id,
+                        doc.source,
+                        chunk_index,
+                        title,
+                        level,
+                        text,
+                        estimate_tokens(text),
+                        source_path,
+                        document_title,
+                        format_name,
+                        anchor,
+                        content_hash,
+                        json.dumps(section_meta, ensure_ascii=False),
+                        document_id,
+                        unit_id,
+                        unit_revision_id,
+                        project_id,
+                        scope_kind,
+                        kind,
+                        lifecycle,
+                        ingested_at,
+                    ),
+                )
+                row_id = int(cursor.lastrowid)
             conn.execute(
                 "INSERT INTO sections_fts(rowid, title, text, source) VALUES (?, ?, ?, ?)",
                 (row_id, title, text, doc.source),
             )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO retrieval_unit_revisions
+                    (revision_id, unit_id, document_id, source_version_id, content_hash,
+                     text, metadata_json, lifecycle, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    unit_revision_id,
+                    unit_id,
+                    document_id,
+                    source_version_id,
+                    content_hash,
+                    text,
+                    json.dumps(section_meta, ensure_ascii=False),
+                    lifecycle,
+                    ingested_at,
+                ),
+            )
             section_count += 1
+
+        stale_rows = [
+            row
+            for unit_id, row in existing_sections.items()
+            if unit_id not in active_unit_ids
+        ]
+        for row in stale_rows:
+            row_id = int(row["id"])
+            revision_id = str(row["unit_revision_id"] or "")
+            if revision_id:
+                conn.execute(
+                    "UPDATE retrieval_unit_revisions SET lifecycle='deleted' "
+                    "WHERE revision_id=?",
+                    (revision_id,),
+                )
+            conn.execute("DELETE FROM sections_fts WHERE rowid=?", (row_id,))
+            conn.execute("DELETE FROM sections WHERE id=?", (row_id,))
+
+        for stage in ("unitize", "lexical-index"):
+            stage_version = "v2"
+            job_id = _stable_id("job", source_version_id, stage, stage_version)
+            conn.execute(
+                """
+                INSERT INTO index_jobs
+                    (job_id, source_version_id, stage, stage_version, status, attempts,
+                     checkpoint_json, started_at, finished_at)
+                VALUES (?, ?, ?, ?, 'completed', 1, ?, ?, ?)
+                ON CONFLICT(source_version_id, stage, stage_version) DO UPDATE SET
+                    status='completed',
+                    attempts=index_jobs.attempts + 1,
+                    checkpoint_json=excluded.checkpoint_json,
+                    last_error=NULL,
+                    started_at=excluded.started_at,
+                    finished_at=excluded.finished_at
+                """,
+                (
+                    job_id,
+                    source_version_id,
+                    stage,
+                    stage_version,
+                    json.dumps({"sections": section_count}),
+                    ingested_at,
+                    ingested_at,
+                ),
+            )
         return section_count
 
     def query(
@@ -681,6 +1174,12 @@ class SQLiteStore:
             "source": "sections.source",
             "source_path": "sections.source_path",
             "format": "sections.format",
+            "document_id": "sections.document_id",
+            "document_title_hash": "sections.document_id",
+            "project_id": "sections.project_id",
+            "scope_kind": "sections.scope_kind",
+            "kind": "sections.kind",
+            "lifecycle": "sections.lifecycle",
         }
         for key, value in (filters or {}).items():
             column = allowed_columns.get(str(key))
@@ -816,6 +1315,15 @@ class SQLiteStore:
         with self._connect() as conn:
             sources = conn.execute("SELECT COUNT(*) AS count FROM sources").fetchone()["count"]
             sections = conn.execute("SELECT COUNT(*) AS count FROM sections").fetchone()["count"]
+            source_versions = conn.execute(
+                "SELECT COUNT(*) AS count FROM source_versions"
+            ).fetchone()["count"]
+            unit_revisions = conn.execute(
+                "SELECT COUNT(*) AS count FROM retrieval_unit_revisions"
+            ).fetchone()["count"]
+            job_rows = conn.execute(
+                "SELECT status, COUNT(*) AS count FROM index_jobs GROUP BY status"
+            ).fetchall()
             format_rows = conn.execute(
                 """
                 SELECT COALESCE(NULLIF(format, ''), 'unknown') AS format, COUNT(*) AS count
@@ -838,6 +1346,9 @@ class SQLiteStore:
             "sources_count": int(sources),
             "points_count": int(sections),
             "sections_count": int(sections),
+            "source_versions_count": int(source_versions),
+            "unit_revisions_count": int(unit_revisions),
+            "index_jobs": {str(row["status"]): int(row["count"]) for row in job_rows},
             "sources_by_format": {str(row["format"]): int(row["count"]) for row in source_format_rows},
             "sections_by_format": {str(row["format"]): int(row["count"]) for row in format_rows},
             "db_path": str(self.db_path),
@@ -984,6 +1495,50 @@ class SQLiteStore:
                 for row in rows
             }
 
+    def embedding_upserts_for_ids(
+        self,
+        collection: str,
+        chunk_ids: list[int],
+    ) -> dict[int, dict]:
+        if not chunk_ids:
+            return {}
+        output: dict[int, dict] = {}
+        with self._connect() as conn:
+            for start in range(0, len(chunk_ids), 500):
+                batch = chunk_ids[start:start + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"""
+                    SELECT chunk_id, content_hash, embedding_hash, upserted_at, status
+                    FROM embedding_upserts
+                    WHERE qdrant_collection=? AND chunk_id IN ({placeholders})
+                    """,
+                    (collection, *batch),
+                )
+                for row in rows:
+                    output[int(row["chunk_id"])] = {
+                        "content_hash": row["content_hash"] or "",
+                        "embedding_hash": row["embedding_hash"] or "",
+                        "upserted_at": row["upserted_at"] or "",
+                        "status": row["status"] or "",
+                    }
+        return output
+
+    def stale_embedding_upsert_ids(self, collection: str) -> list[int]:
+        """Return vector bookkeeping IDs with no active SQLite retrieval unit."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT up.chunk_id
+                FROM embedding_upserts AS up
+                LEFT JOIN sections AS sec ON sec.id = up.chunk_id
+                WHERE up.qdrant_collection=? AND sec.id IS NULL
+                ORDER BY up.chunk_id
+                """,
+                (collection,),
+            )
+            return [int(row["chunk_id"]) for row in rows]
+
     def record_embedding_upserts(
         self,
         collection: str,
@@ -1086,12 +1641,10 @@ class SQLiteStore:
             return [int(r["id"]) for r in rows]
 
     def document_title_hashes_for(self, section_ids: list[int]) -> dict[int, str]:
-        """Return ``{section_id: document_title_hash}`` for hierarchical retrieval.
+        """Return stable document identities for hierarchical retrieval.
 
-        Pulled from ``metadata_json`` because the field is loader-set and
-        not promoted to a top-level column. Empty hash means the loader
-        did not record one (atomic records, etc.) and the section
-        should not participate in document-level grouping.
+        The compatibility method name predates ``document_id``. New indexes use
+        the stable top-level identity; older rows fall back to their metadata.
         """
         if not section_ids:
             return {}
@@ -1099,14 +1652,21 @@ class SQLiteStore:
         out: dict[int, str] = {}
         with self._connect() as conn:
             for row in conn.execute(
-                f"SELECT id, metadata_json FROM sections WHERE id IN ({placeholders})",
+                f"SELECT id, document_id, metadata_json "
+                f"FROM sections WHERE id IN ({placeholders})",
                 section_ids,
             ):
                 try:
                     md = json.loads(row["metadata_json"] or "{}")
                 except json.JSONDecodeError:
                     md = {}
-                doc_hash = md.get("document_title_hash") or md.get("docset_root") or ""
+                doc_hash = (
+                    row["document_id"]
+                    or md.get("document_id")
+                    or md.get("document_title_hash")
+                    or md.get("docset_root")
+                    or ""
+                )
                 if doc_hash:
                     out[int(row["id"])] = str(doc_hash)
         return out
@@ -1114,15 +1674,13 @@ class SQLiteStore:
     def distinct_document_count(self) -> int:
         """Return the number of distinct documents in the index.
 
-        Mirrors what ``document_title_hash`` would group by: the hash is
-        derived from ``document_title``, so counting distinct
-        non-empty ``document_title`` values is equivalent and avoids a
-        scan through ``metadata_json``.
+        Documents are grouped by stable source-derived identity rather than
+        title, so unrelated files named README or index never collapse.
         """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(DISTINCT document_title) AS n "
-                "FROM sections WHERE document_title IS NOT NULL AND document_title <> ''"
+                "SELECT COUNT(DISTINCT document_id) AS n "
+                "FROM sections WHERE document_id IS NOT NULL AND document_id <> ''"
             ).fetchone()
             return int(row["n"]) if row else 0
 
@@ -1145,38 +1703,62 @@ class SQLiteStore:
         section_id (int), source, chunk_index, title, level, text, and
         token_estimate.
         """
-        with self._connect() as conn:
-            rows = conn.execute(
+        return [
+            section
+            for batch in self.iter_sections_for_embedding(batch_size=1_000)
+            for section in batch
+        ]
+
+    def iter_sections_for_embedding(self, *, batch_size: int = 256):
+        """Yield bounded batches of active retrieval units for vector indexing."""
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
                 """
                 SELECT id, source, chunk_index, title, level, text, token_estimate,
                        source_path, document_title, format, anchor, content_hash,
-                       metadata_json
+                       metadata_json, document_id, unit_id, unit_revision_id,
+                       project_id, scope_kind, kind, lifecycle
                 FROM sections
+                WHERE lifecycle='active'
                 ORDER BY source, chunk_index
                 """
             )
-            output = []
-            for row in rows:
-                try:
-                    metadata = json.loads(row["metadata_json"] or "{}")
-                except (json.JSONDecodeError, ValueError):
-                    metadata = {}
-                output.append({
-                    "section_id": int(row["id"]),
-                    "source": str(row["source"]),
-                    "chunk_index": int(row["chunk_index"]),
-                    "title": str(row["title"] or ""),
-                    "level": int(row["level"] or 0),
-                    "text": str(row["text"] or ""),
-                    "token_estimate": int(row["token_estimate"] or 0),
-                    "source_path": str(row["source_path"] or ""),
-                    "document_title": str(row["document_title"] or ""),
-                    "format": str(row["format"] or ""),
-                    "anchor": str(row["anchor"] or ""),
-                    "content_hash": str(row["content_hash"] or ""),
-                    "metadata": metadata,
-                })
-            return output
+            while True:
+                rows = cursor.fetchmany(max(1, batch_size))
+                if not rows:
+                    break
+                output = []
+                for row in rows:
+                    try:
+                        metadata = json.loads(row["metadata_json"] or "{}")
+                    except (json.JSONDecodeError, ValueError):
+                        metadata = {}
+                    output.append({
+                        "section_id": int(row["id"]),
+                        "source": str(row["source"]),
+                        "chunk_index": int(row["chunk_index"]),
+                        "title": str(row["title"] or ""),
+                        "level": int(row["level"] or 0),
+                        "text": str(row["text"] or ""),
+                        "token_estimate": int(row["token_estimate"] or 0),
+                        "source_path": str(row["source_path"] or ""),
+                        "document_title": str(row["document_title"] or ""),
+                        "format": str(row["format"] or ""),
+                        "anchor": str(row["anchor"] or ""),
+                        "content_hash": str(row["content_hash"] or ""),
+                        "document_id": str(row["document_id"] or ""),
+                        "unit_id": str(row["unit_id"] or ""),
+                        "unit_revision_id": str(row["unit_revision_id"] or ""),
+                        "project_id": str(row["project_id"] or ""),
+                        "scope_kind": str(row["scope_kind"] or ""),
+                        "kind": str(row["kind"] or ""),
+                        "lifecycle": str(row["lifecycle"] or "active"),
+                        "metadata": metadata,
+                    })
+                yield output
+        finally:
+            conn.close()
 
     def get_document_content(self, source: str) -> str | None:
         with self._connect() as conn:
@@ -1213,12 +1795,41 @@ class SQLiteStore:
             if not row:
                 return False
             source_id = int(row["id"])
-            row_ids = [r["id"] for r in conn.execute("SELECT id FROM sections WHERE source_id = ?", (source_id,))]
-            for row_id in row_ids:
+            rows = list(
+                conn.execute(
+                    "SELECT id, unit_revision_id FROM sections WHERE source_id=?",
+                    (source_id,),
+                )
+            )
+            for row in rows:
+                row_id = int(row["id"])
                 conn.execute("DELETE FROM sections_fts WHERE rowid = ?", (row_id,))
+                if row["unit_revision_id"]:
+                    conn.execute(
+                        "UPDATE retrieval_unit_revisions SET lifecycle='deleted' "
+                        "WHERE revision_id=?",
+                        (str(row["unit_revision_id"]),),
+                    )
+            conn.execute(
+                "UPDATE source_versions SET lifecycle='deleted' WHERE source_id=?",
+                (source_id,),
+            )
             conn.execute("DELETE FROM sections WHERE source_id = ?", (source_id,))
             conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
             return True
+
+    def delete_sources_not_in(self, *, prefix: str, keep: set[str]) -> int:
+        """Delete derived sources under ``prefix`` that are absent from a projection."""
+        with self._connect() as conn:
+            sources = [
+                str(row["source"])
+                for row in conn.execute(
+                    "SELECT source FROM sources WHERE source LIKE ?",
+                    (f"{prefix}%",),
+                )
+                if str(row["source"]) not in keep
+            ]
+        return sum(1 for source in sources if self.delete_source(source))
 
     def delete_sources_under_roots(self, roots: Iterable[str | Path]) -> int:
         """Delete sources whose source/docset_root live under any local root."""

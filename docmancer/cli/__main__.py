@@ -1,5 +1,4 @@
 from copy import copy
-from time import monotonic
 
 import click
 
@@ -22,7 +21,6 @@ from docmancer.cli.context_commands import context_group
 from docmancer.cli.distribution_commands import package_check_cmd
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.mcp_commands import mcp_group
-from docmancer.cli.ui import LiveStatus
 from docmancer.cli.memory_commands import memory_group
 from docmancer.cli.okf_commands import okf_group
 from docmancer.cli.provider_commands import providers_group
@@ -93,17 +91,6 @@ def cli(ctx, config_path: str | None):
         click.echo(ctx.get_help())
 
 
-_WEB_PROGRESS_MESSAGES = {
-    "lock": "Waiting politely in the memory queue",
-    "harvest": "Sniffing out every agent's memory files",
-    "redact": "Blacking out anything that looks like a secret",
-    "merge": "Untangling duplicate memories",
-    "graph": "Wiring memories together into a graph",
-    "index": "Rebuilding the local search index",
-    "finalize": "Filing away provenance and schema metadata",
-}
-
-
 @click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the local browser application.")
 @click.option("--port", type=click.IntRange(0, 65535), default=0, show_default="automatic")
 @click.option("--no-open", is_flag=True, help="Start the server without opening a browser.")
@@ -130,30 +117,10 @@ def web_cmd(
     from docmancer.web import run_web
 
     project = ensure_project(project_path)
-    live_status = LiveStatus(started_at=monotonic())
-
-    def on_progress(stage: str, detail: str = "") -> None:
-        if stage == "done":
-            live_status.stop()
-            return
-        live_status.start(_WEB_PROGRESS_MESSAGES.get(stage, detail))
-
-    try:
-        from docmancer.memory import MemoryAgent
-
-        memory = MemoryAgent()
-        memory.refresh_if_changed(progress_callback=on_progress)
-        from docmancer.memory.laptop import LaptopMemoryReconciler
-
-        live_status.start("Reconciling machine-wide canonical memory")
-        LaptopMemoryReconciler(memory).reconcile()
-    except Exception as exc:  # noqa: BLE001 - the workbench remains usable with its last valid index
-        click.echo(
-            f"Agent-source refresh failed; opening with the last valid local index. {exc}",
-            err=True,
-        )
-    finally:
-        live_status.stop()
+    # The server opens against the latest committed index. Its lifespan queues
+    # a non-blocking source refresh after startup, so launching the workbench
+    # never waits on a corpus scan, embedding rebuild, canonical write, or
+    # provider call.
     run_web(
         port=port,
         open_browser=not no_open,

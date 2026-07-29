@@ -223,7 +223,9 @@ def test_tree_init_creates_tree_inbox_trash_without_enabling_capture(tmp_path):
     payload = json.loads(result.output)
     assert payload["created"] is True
     assert payload["capture_enabled"] is False
-    assert (tmp_path / "tree" / "context.md").is_file()
+    assert (tmp_path / "tree" / "overview.md").is_file()
+    for folder in ("decisions", "constraints", "workflows", "lessons"):
+        assert (tmp_path / "tree" / folder).is_dir()
     assert (tmp_path / "inbox").is_dir()
     assert (tmp_path / "trash").is_dir()
 
@@ -340,7 +342,7 @@ def test_import_copies_markdown_to_project_inbox_without_rewriting_source(tmp_pa
     assert inbox_path.is_file()
     assert "Use Railway." in inbox_path.read_text()
     assert note.read_text() == original
-    assert (project / ".docmancer" / "tree" / "context.md").is_file()
+    assert (project / ".docmancer" / "tree" / "overview.md").is_file()
 
 
 def test_bare_harvest_previews_registered_sources_for_current_project(tmp_path, monkeypatch):

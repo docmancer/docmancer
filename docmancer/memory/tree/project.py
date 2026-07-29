@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _DENIED_ROOT_PARTS = {".ssh", ".aws", ".gnupg", "credentials", "wallet", "wallets", "keychain"}
+PROJECT_SCAFFOLD_FOLDERS = (
+    "decisions",
+    "constraints",
+    "workflows",
+    "lessons",
+)
 
 
 def _validate_state_root(path: Path) -> None:
@@ -86,14 +92,21 @@ def ensure_project(
     resolved_tree.mkdir(parents=True, exist_ok=True)
     inbox_root.mkdir(parents=True, exist_ok=True)
     trash_root.mkdir(parents=True, exist_ok=True)
-    context_path = resolved_tree / "context.md"
+    for folder in PROJECT_SCAFFOLD_FOLDERS:
+        (resolved_tree / folder).mkdir(parents=True, exist_ok=True)
+    context_path = resolved_tree / "overview.md"
     if not context_path.exists():
         TreeStore(resolved_tree).write(
-            relative_path="context.md",
-            text="# Project context\n\nCurated project memory lives in this tree.\n",
-            memory_type="context",
+            relative_path="overview.md",
+            text=(
+                "# Project memory\n\n"
+                "Durable project decisions, constraints, workflows, and lessons live here.\n"
+            ),
+            memory_type="fact",
             scope="project",
             project_id=project_id,
+            tags=["docmancer-scaffold"],
+            curation_origin="deterministic_curation",
             expect="absent",
         )
     return ProjectTree(
@@ -107,4 +120,10 @@ def ensure_project(
     )
 
 
-__all__ = ["ProjectTree", "ensure_project", "resolve_project_root", "tree_paths"]
+__all__ = [
+    "PROJECT_SCAFFOLD_FOLDERS",
+    "ProjectTree",
+    "ensure_project",
+    "resolve_project_root",
+    "tree_paths",
+]

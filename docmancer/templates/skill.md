@@ -53,7 +53,7 @@ docmancer import ./notes
 
 Existing-file operations use the current content hash. Harvested files remain read-only evidence, ambiguous material stays in the inbox, and `docmancer://memory/<id>` citations survive moves.
 
-`ask` returns cited evidence without requiring a provider. When a generation provider is configured, `--answer` adds grounded prose and six separate verification checks. Agents should use the read-only `context status`, `context projection`, and `context delivery` commands. `context refresh`, `rollback`, `adopt`, and `retire` remain human-controlled operations.
+`ask` reads the latest committed index and returns cited evidence without requiring a provider. When a generation provider is configured, Ask uses it by default for grounded prose and six separate verification checks. Pass `--no-answer` for evidence only or `--fresh` to wait for changed agent files to be indexed. Agents can use the read-only `context projection` compatibility command to inspect the bounded file selection prepared for them. Generated-artifact mutations such as `context refresh`, `rollback`, `adopt`, and `retire` remain human-controlled operations.
 
 <!-- docmancer:providers:start -->
 ## Generation providers

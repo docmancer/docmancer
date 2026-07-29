@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 from docmancer.embeddings.base import (
@@ -39,6 +41,20 @@ def test_embeddings_cache_round_trip(tmp_path):
     cache.put("abc", [0.1, 0.2, 0.3])
     assert cache.get("abc") == pytest.approx([0.1, 0.2, 0.3], rel=1e-3)
     assert cache.get("missing") is None
+    assert (tmp_path / "embeddings.sqlite3").is_file()
+    assert list(tmp_path.rglob("*.f32")) == []
+
+
+def test_embeddings_cache_reads_legacy_file_without_rewriting_it(tmp_path):
+    key = "abcdef"
+    legacy = tmp_path / key[:2] / f"{key}.f32"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(struct.pack("<2f", 0.25, 0.75))
+
+    cache = EmbeddingsCache(tmp_path)
+
+    assert cache.get_many([key])[key] == pytest.approx([0.25, 0.75])
+    assert legacy.is_file()
 
 
 def test_embed_with_cache_reuses_hits(tmp_path):

@@ -3,6 +3,9 @@ from docmancer.core.chunking import (
     chunk_text,
     chunk_paragraphs,
     chunk_markdown,
+    chunk_markdown_tokens,
+    chunk_paragraphs_tokens,
+    token_count,
     _is_list_heavy,
     _fence_ranges,
     _parse_sections,
@@ -36,6 +39,36 @@ def test_chunk_paragraphs_prefers_paragraph_boundaries():
 def test_chunk_markdown_empty():
     assert chunk_markdown("") == []
     assert chunk_markdown("   \n  ") == []
+
+
+def test_token_chunking_uses_token_budget_and_keeps_the_tail():
+    text = " ".join(f"word{index}" for index in range(1_000))
+
+    chunks = chunk_paragraphs_tokens(text, chunk_tokens=100, overlap_tokens=10)
+
+    assert len(chunks) > 1
+    assert all(token_count(chunk) <= 100 for chunk in chunks)
+    assert "word999" in chunks[-1]
+
+
+def test_token_markdown_never_truncates_long_prose_code_or_tables():
+    prose = " ".join(f"paragraphword{index}" for index in range(600))
+    code_lines = "\n".join(f"value_{index} = {index}" for index in range(300))
+    table_rows = "\n".join(f"| row-{index} | value-{index} |" for index in range(300))
+    text = (
+        f"# Prose\n\n{prose}\n\n"
+        f"## Code\n\n```python\n{code_lines}\n```\n\n"
+        "## Table\n\n| Name | Value |\n|---|---|\n"
+        f"{table_rows}\n"
+    )
+
+    chunks = chunk_markdown_tokens(text, chunk_tokens=120, overlap_tokens=16)
+    combined = "\n".join(chunks)
+
+    assert "paragraphword599" in combined
+    assert "value_299 = 299" in combined
+    assert "row-299" in combined
+    assert all(token_count(chunk) <= 120 for chunk in chunks)
 
 
 def test_chunk_markdown_no_headers():

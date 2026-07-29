@@ -32,14 +32,14 @@ def test_setup_indexes_memory(tmp_path, monkeypatch):
     assert "Waiting for the local sync lock" in r.output
     assert "Discovering memory and instruction files" in r.output
     assert "Redacting and extracting" in r.output
-    assert "Rebuilding the local search index" in r.output
+    assert "Updating the local search index" in r.output
     assert "Indexed 1 memory atoms" in r.output
     assert "Installing integration for codex" in r.output
     assert "Finished integration for codex" in r.output
     assert "Install automatic recall hooks" in r.output
     assert "Automatic session capture will be enabled" in r.output
     assert (home / ".codex" / "hooks.json").exists()
-    assert (home / ".docmancer" / "tree" / "active-projects.md").exists()
+    assert (home / ".docmancer" / "tree" / "projects" / "active.md").exists()
     config = (home / ".docmancer" / "docmancer.yaml").read_text()
     assert "claude-code: true" in config
     assert "codex: true" in config

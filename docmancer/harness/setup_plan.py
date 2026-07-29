@@ -50,7 +50,7 @@ def build_setup_confirmation(
         steps.append({
             "kind": "index",
             "title": "Index existing agent memory",
-            "detail": "Discover local memory and instruction files, then rebuild Docmancer's local search index.",
+            "detail": "Discover local memory and instruction files, then update Docmancer's local search index incrementally.",
         })
     if automatic_reconciliation:
         steps.append({

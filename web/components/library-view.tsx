@@ -17,6 +17,8 @@ type TabData = {
   refreshError: string;
 };
 
+type RuntimeState = "starting" | "ready" | "error";
+
 const TABS: { id: Tab; label: string; note: string }[] = [
   { id: "memory", label: "Curated memory", note: "Markdown you chose to keep" },
   { id: "evidence", label: "Agent evidence", note: "What coding agents wrote" },
@@ -43,9 +45,41 @@ export function LibraryView() {
   const [detailQuery, setDetailQuery] = useState("");
   const [detailResults, setDetailResults] = useState<JsonMap[]>([]);
   const [detailSearchBusy, setDetailSearchBusy] = useState(false);
+  const [runtimeState, setRuntimeState] = useState<RuntimeState>("starting");
+  const [runtimeError, setRuntimeError] = useState("");
   const request = useRef<AbortController | null>(null);
   const requestNumber = useRef(0);
   const prefetched = useRef(new Map<string, JsonMap>());
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = 0;
+    const check = async () => {
+      try {
+        const state = await apiGet("/api/v1/readiness");
+        if (cancelled) return;
+        if (state.error) {
+          setRuntimeError(String(state.error));
+          setRuntimeState("error");
+          return;
+        }
+        if (state.ready) {
+          setRuntimeState("ready");
+          return;
+        }
+        timer = window.setTimeout(check, 500);
+      } catch (reason) {
+        if (cancelled) return;
+        setRuntimeError(messageOf(reason));
+        setRuntimeState("error");
+      }
+    };
+    void check();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const load = useCallback(async (
     selectedTab: Tab,
@@ -96,9 +130,11 @@ export function LibraryView() {
     const url = new URL(window.location.href);
     url.searchParams.set("tab", tab);
     window.history.replaceState({}, "", url);
-    if (!cache[tab]) queueMicrotask(() => void load(tab, activeQuery));
+    if (runtimeState === "ready" && !cache[tab]) {
+      queueMicrotask(() => void load(tab, activeQuery));
+    }
     return () => request.current?.abort();
-  }, [tab, activeQuery, cache, load]);
+  }, [tab, activeQuery, cache, load, runtimeState]);
 
   const current = cache[tab] ?? EMPTY_DATA;
   useEffect(() => {
@@ -167,6 +203,11 @@ export function LibraryView() {
 
   return <div className="page library-page">
     <PageHeading eyebrow="Sources you can understand" title="Your memory library" description="Curated memory, agent evidence, and documentation stay separate, searchable, and fast."/>
+    {runtimeState === "starting" && <div className="library-activity" role="status">
+      <LoaderCircle className="spin" size={16}/>
+      <div><strong>Starting local memory services</strong><span>The Library is already open. Its local index will appear here when ready, and you can use the rest of Docmancer meanwhile.</span></div>
+    </div>}
+    {runtimeState === "error" && <Notice kind="error">The Library shell is available, but local memory services did not start. {runtimeError}</Notice>}
     <div className="segmented-tabs" role="tablist">{TABS.map((item) =>
       <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => chooseTab(item.id)}>
         <strong>{item.label}</strong><span>{item.note}</span>
@@ -183,7 +224,7 @@ export function LibraryView() {
       </header>
       {error && <Notice kind="error">{error}</Notice>}
       {current.refreshError && <Notice kind="error">The Library could not refresh its local summary index. Existing items remain available. {current.refreshError}</Notice>}
-      {!current.items.length && loading ? <LibrarySkeleton/> : current.items.length ? <>
+      {!current.items.length && (loading || runtimeState === "starting") ? <LibrarySkeleton/> : current.items.length ? <>
         <div className="library-list">
           {current.items.map((item) => <button key={String(item.record_id)} onClick={() => void openDetail(item)}>
             <span className={`file-icon ${tab}`}>{tab === "docs" ? <BookOpen size={17}/> : tab === "memory" ? <FileText size={17}/> : <FolderOpen size={17}/>}</span>

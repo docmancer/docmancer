@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,27 +26,26 @@ from docmancer.memory.tree.providerless_context import (
 from docmancer.memory.tree.compiler import authority_for_kind
 from docmancer.memory.tree.revision_identity import content_revision_id
 
-CONTEXT_SCHEMA_VERSION = 1
-CLUSTERING_VERSION = "topic-jaccard-indexed-v2"
+CONTEXT_SCHEMA_VERSION = 2
+CLUSTERING_VERSION = "topic-jaccard-stable-v3"
 DEDUP_POLICY_VERSION = "safe-two-tier-indexed-v2"
 AUTHORITY_RULES_VERSION = "authority-v1"
 REDACTION_POLICY_VERSION = "privacy-filter-v1"
 CONTEXT_POLICY_VERSION = "context-v1"
-PROMPT_VERSION = "context-cluster-v1"
+PROMPT_VERSION = "context-cluster-batched-v2"
 DEFAULT_SIMILARITY_THRESHOLD = 0.18
 DEFAULT_SEMANTIC_DUPLICATE_THRESHOLD = 0.96
 DEFAULT_MAX_CLUSTER_MEMBERS = 25
 # Order-of-magnitude rates for the dry-run cost preview, based on a small
 # model such as gpt-4.1-nano. Deliberately a planning estimate, not billing:
 # the report labels it as such and a real run reports actual cost.
-# A Context build makes one provider call per cluster, hundreds on a large
-# corpus, over tens of minutes. Transport faults are near-certain across a run
-# that long, and previously any one of them discarded every completed cluster.
+# Context builds batch several topics into each request and execute bounded
+# batches concurrently. Retries remain isolated to the failed batch.
 CONTEXT_PROVIDER_ATTEMPTS = 4
 CONTEXT_PROVIDER_BACKOFF_SECONDS = 1.5
-# Each cluster is one independent request, so the build is network-bound rather
-# than CPU-bound. Kept modest to stay well inside provider rate limits.
-CONTEXT_BUILD_CONCURRENCY = 8
+# Provider work is network-bound. This is the fallback when an older config
+# does not contain a distillation block.
+CONTEXT_BUILD_CONCURRENCY = 16
 
 
 def _is_transient_provider_error(exc: BaseException) -> bool:
@@ -420,25 +420,75 @@ def cluster_topics(
         if len(group_list) <= max_members:
             split.append(group_list)
             continue
-        ordered = sorted(group_list, key=lambda group: group.representative.address)
-        for start in range(0, len(ordered), max_members):
-            split.append(ordered[start : start + max_members])
+        candidates = sorted(
+            group_list,
+            key=lambda group: (
+                -len(_tokens(f"{group.representative.title} {group.representative.text}")),
+                group.representative.address,
+            ),
+        )
+        buckets: list[list[DedupGroup]] = []
+        bucket_tokens: list[set[str]] = []
+        for group in candidates:
+            tokens = _tokens(f"{group.representative.title} {group.representative.text}")
+            choices: list[tuple[float, int]] = []
+            for index, bucket in enumerate(buckets):
+                if len(bucket) >= max_members:
+                    continue
+                current = bucket_tokens[index]
+                score = (
+                    len(tokens.intersection(current)) / len(tokens.union(current))
+                    if tokens and current
+                    else 0.0
+                )
+                choices.append((score, index))
+            if not choices:
+                buckets.append([group])
+                bucket_tokens.append(set(tokens))
+                continue
+            score, bucket_index = max(choices, key=lambda item: (item[0], -item[1]))
+            if score < threshold and len(buckets) * max_members < len(group_list):
+                buckets.append([group])
+                bucket_tokens.append(set(tokens))
+                continue
+            buckets[bucket_index].append(group)
+            bucket_tokens[bucket_index].update(tokens)
+        split.extend(buckets)
 
     clusters = []
     for group_list in split:
         label = _topic_label(group_list)
         seed = min(group.representative.address for group in group_list)
-        cluster_id = "ctx_" + _hash_text(f"{seed}\0{label.casefold()}")[:20]
+        cluster_id = "ctx_" + _hash_text(seed)[:20]
         clusters.append(TopicCluster(cluster_id, label, group_list))
 
     previous = previous or []
+    claimed_previous: set[str] = set()
     for cluster in clusters:
         current_members = {source.address for source in cluster.sources}
-        overlaps = [
-            row
-            for row in previous
-            if current_members.intersection(set(row.get("member_addresses") or []))
-        ]
+        ranked_overlaps = sorted(
+            (
+                (
+                    len(current_members.intersection(set(row.get("member_addresses") or []))),
+                    row,
+                )
+                for row in previous
+            ),
+            key=lambda item: (-item[0], str(item[1].get("cluster_id") or "")),
+        )
+        overlaps = [row for overlap, row in ranked_overlaps if overlap]
+        if ranked_overlaps and ranked_overlaps[0][0]:
+            overlap, prior = ranked_overlaps[0]
+            prior_id = str(prior.get("cluster_id") or "")
+            prior_members = set(prior.get("member_addresses") or [])
+            if (
+                prior_id
+                and prior_id not in claimed_previous
+                and overlap / max(1, len(current_members)) >= 0.5
+                and overlap / max(1, len(prior_members)) >= 0.5
+            ):
+                cluster.cluster_id = prior_id
+                claimed_previous.add(prior_id)
         if len(overlaps) > 1:
             cluster.merged_from = sorted(str(row["cluster_id"]) for row in overlaps)
         elif len(overlaps) == 1 and str(overlaps[0].get("cluster_id")) != cluster.cluster_id:
@@ -550,6 +600,12 @@ class ContextEngine:
         self.topic_threshold = DEFAULT_SIMILARITY_THRESHOLD
         self.semantic_threshold = DEFAULT_SEMANTIC_DUPLICATE_THRESHOLD
         self.agent = agent or MemoryAgent()
+        self.distillation = getattr(
+            getattr(self.agent, "config", None),
+            "distillation",
+            None,
+        )
+        self._last_render_stats: dict[str, Any] = {}
 
     def _generation_options(self, mode: str) -> CompletionOptions:
         """Per-role options from config, falling back to the consolidate defaults."""
@@ -617,7 +673,11 @@ class ContextEngine:
         from docmancer.memory.tree.store import TreeStore
 
         for entry in TreeStore(self.tree_root).index.entries():
-            if entry.is_generated or entry.status != "active":
+            if (
+                entry.is_generated
+                or entry.status != "active"
+                or "docmancer-scaffold" in entry.tags
+            ):
                 continue
             sources.append(
                 ContextSource(
@@ -671,39 +731,7 @@ class ContextEngine:
         value = self._load_json(self.tombstones_path, [])
         return {str(item) for item in value if item}
 
-    def _render_cluster(
-        self,
-        cluster: TopicCluster,
-        *,
-        client=None,
-        mode: str = "normal",
-    ) -> tuple[str, bool, float | None, bool]:
-        provider = getattr(client, "provider_id", None) if client else None
-        model = getattr(client, "model", None) if client else None
-        generation = {
-            "top_p": 0.95,
-            "max_output_tokens": 8192,
-            "reasoning_effort": "low",
-            "mode": mode,
-        }
-        cache_key = context_cache_key(
-            cluster,
-            provider=provider,
-            model=model,
-            generation=generation if client else {},
-            topic_threshold=self.topic_threshold,
-            semantic_threshold=self.semantic_threshold,
-        )
-        cache_path = self.cache_root / f"{cache_key}.json"
-        cached = self._load_json(cache_path, None)
-        if isinstance(cached, dict) and isinstance(cached.get("body"), str):
-            return (
-                cached["body"],
-                bool(cached.get("synthesized")),
-                cached.get("cost_usd"),
-                True,
-            )
-
+    def _providerless_cluster(self, cluster: TopicCluster) -> ProviderlessCluster:
         collapsed_sources = {
             group.representative.address: tuple(source.path for source in group.collapsed)
             for group in cluster.groups
@@ -716,18 +744,28 @@ class ContextEngine:
         }
         conflicts: list[ConflictEntry] = []
         for left_index, left in enumerate(cluster.sources):
-            for right in cluster.sources[left_index + 1 :]:
+            for right in cluster.sources[left_index + 1:]:
                 if _contradicts(left, right):
                     conflicts.append(
                         ConflictEntry(
                             description=f"{left.title} has conflicting recorded values",
                             sides=(
-                                ConflictSide(left.text, left.recorded_at, left.path, left.address),
-                                ConflictSide(right.text, right.recorded_at, right.path, right.address),
+                                ConflictSide(
+                                    left.text,
+                                    left.recorded_at,
+                                    left.path,
+                                    left.address,
+                                ),
+                                ConflictSide(
+                                    right.text,
+                                    right.recorded_at,
+                                    right.path,
+                                    right.address,
+                                ),
                             ),
                         )
                     )
-        providerless = ProviderlessCluster(
+        return ProviderlessCluster(
             cluster_id=cluster.cluster_id,
             topic_label=cluster.topic_label,
             members=tuple(
@@ -744,6 +782,71 @@ class ContextEngine:
             collapsed_sources=collapsed_sources,
             conflicts=tuple(conflicts),
         )
+
+    def _cluster_cache_path(
+        self,
+        cluster: TopicCluster,
+        *,
+        client,
+        mode: str,
+    ) -> tuple[str, Path]:
+        generation = asdict(self._generation_options(mode))
+        key = context_cache_key(
+            cluster,
+            provider=getattr(client, "provider_id", None) if client else None,
+            model=getattr(client, "model", None) if client else None,
+            generation=generation if client else {},
+            topic_threshold=self.topic_threshold,
+            semantic_threshold=self.semantic_threshold,
+        )
+        return key, self.cache_root / f"{key}.json"
+
+    @staticmethod
+    def _validated_provider_body(cluster: TopicCluster, value: object) -> str:
+        body = str(value or "").strip()
+        if not body:
+            raise ValueError(f"provider returned an empty topic for {cluster.cluster_id}")
+        allowed = {source.address for source in cluster.sources}
+        if allowed and not any(address in body for address in allowed):
+            raise ValueError(
+                f"provider omitted source attribution for {cluster.cluster_id}"
+            )
+        cited = set(re.findall(r"docmancer://[^\s)]+", body))
+        unknown = {
+            address.rstrip(".,;:")
+            for address in cited
+            if address.rstrip(".,;:") not in allowed
+        }
+        if unknown:
+            raise ValueError(
+                f"provider invented source addresses for {cluster.cluster_id}"
+            )
+        if "\u2014" in body:
+            raise ValueError("provider returned prohibited punctuation")
+        return f"# {cluster.topic_label}\n\n{body}\n"
+
+    def _render_cluster(
+        self,
+        cluster: TopicCluster,
+        *,
+        client=None,
+        mode: str = "normal",
+    ) -> tuple[str, bool, float | None, bool]:
+        cache_key, cache_path = self._cluster_cache_path(
+            cluster,
+            client=client,
+            mode=mode,
+        )
+        cached = self._load_json(cache_path, None)
+        if isinstance(cached, dict) and isinstance(cached.get("body"), str):
+            return (
+                cached["body"],
+                bool(cached.get("synthesized")),
+                cached.get("cost_usd"),
+                True,
+            )
+
+        providerless = self._providerless_cluster(cluster)
         if client is None:
             body = render_providerless_cluster(providerless)
             synthesized = False
@@ -763,7 +866,7 @@ class ContextEngine:
                 [{"role": "user", "content": prompt}],
                 self._generation_options(mode),
             )
-            body = f"# {cluster.topic_label}\n\n{result.text.strip()}\n"
+            body = self._validated_provider_body(cluster, result.text)
             synthesized = True
             cost = result.cost_usd
         _atomic_text(
@@ -828,33 +931,225 @@ class ContextEngine:
             + (body if body.endswith("\n") else body + "\n")
         )
 
-    def _render_clusters(self, clusters, *, client, mode: str) -> dict:
-        """Render every cluster, overlapping provider calls where it is safe.
+    def _cluster_batches(self, clusters: list[TopicCluster]) -> list[list[TopicCluster]]:
+        topic_limit = int(
+            getattr(self.distillation, "topics_per_request", 16) or 16
+        )
+        token_limit = int(
+            getattr(self.distillation, "max_input_tokens", 24_000) or 24_000
+        )
+        batches: list[list[TopicCluster]] = []
+        current: list[TopicCluster] = []
+        current_tokens = 0
+        for cluster in clusters:
+            estimate = max(
+                1,
+                len(render_providerless_cluster(self._providerless_cluster(cluster))) // 4,
+            )
+            if current and (
+                len(current) >= topic_limit
+                or current_tokens + estimate > token_limit
+            ):
+                batches.append(current)
+                current = []
+                current_tokens = 0
+            current.append(cluster)
+            current_tokens += estimate
+        if current:
+            batches.append(current)
+        return batches
 
-        Returns ``{cluster_id: (body, synthesized, cost, cache_hit)}``. Without a
-        client the work is local and cheap, so it stays sequential. The cache is
-        keyed per cluster and written atomically, so concurrent renders touch
-        disjoint files.
-        """
-        if client is None or len(clusters) < 2:
-            return {
-                cluster.cluster_id: self._render_cluster(cluster, client=client, mode=mode)
-                for cluster in clusters
-            }
+    def _render_provider_batch(
+        self,
+        clusters: list[TopicCluster],
+        *,
+        client,
+        mode: str,
+    ) -> dict[str, tuple[str, bool, float | None, bool]]:
+        from docmancer.harness.secrets import redact_secrets
 
-        from concurrent.futures import ThreadPoolExecutor
-
-        workers = max(1, min(CONTEXT_BUILD_CONCURRENCY, len(clusters)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                cluster.cluster_id: pool.submit(
-                    self._render_cluster, cluster, client=client, mode=mode
+        evidence_blocks = []
+        for cluster in clusters:
+            evidence_blocks.append(
+                "TOPIC "
+                + cluster.cluster_id
+                + "\n"
+                + redact_secrets(
+                    render_providerless_cluster(
+                        self._providerless_cluster(cluster)
+                    )
                 )
-                for cluster in clusters
+            )
+        prompt = (
+            "Synthesize each independent topic into concise durable context. "
+            "Return only JSON with this shape: "
+            '{"topics":[{"cluster_id":"ctx_...","body":"..."}]}. '
+            "Return exactly one item for every supplied cluster_id and no others. "
+            "The body must not include a Markdown heading. Preserve conflicts as "
+            "both-sided warnings. Every factual sentence must end with an exact "
+            "source address from that topic in parentheses. Do not invent facts "
+            "and do not use em dashes.\n\n"
+            + "\n\n".join(evidence_blocks)
+        )
+        result = _complete_with_retry(
+            client,
+            [{"role": "user", "content": prompt}],
+            self._generation_options(mode),
+        )
+        raw = result.text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("provider did not return the requested JSON object")
+        payload = json.loads(raw[start:end + 1])
+        rows = payload.get("topics") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("provider JSON is missing the topics list")
+        by_id = {
+            str(row.get("cluster_id")): row.get("body")
+            for row in rows
+            if isinstance(row, dict) and row.get("cluster_id")
+        }
+        expected = {cluster.cluster_id for cluster in clusters}
+        if set(by_id) != expected:
+            raise ValueError("provider JSON did not return exactly the requested topics")
+
+        weights = {
+            cluster.cluster_id: max(
+                1,
+                sum(max(1, len(source.text) // 4) for source in cluster.sources),
+            )
+            for cluster in clusters
+        }
+        weight_total = sum(weights.values()) or 1
+        output: dict[str, tuple[str, bool, float | None, bool]] = {}
+        for cluster in clusters:
+            body = self._validated_provider_body(
+                cluster,
+                by_id[cluster.cluster_id],
+            )
+            cost = (
+                float(result.cost_usd) * weights[cluster.cluster_id] / weight_total
+                if result.cost_usd is not None
+                else None
+            )
+            cache_key, cache_path = self._cluster_cache_path(
+                cluster,
+                client=client,
+                mode=mode,
+            )
+            _atomic_text(
+                cache_path,
+                json.dumps(
+                    {
+                        "cache_key": cache_key,
+                        "body": body,
+                        "synthesized": True,
+                        "cost_usd": cost,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+            )
+            output[cluster.cluster_id] = (body, True, cost, False)
+        return output
+
+    def _render_clusters(self, clusters, *, client, mode: str) -> dict:
+        """Render changed topics in bounded parallel provider batches."""
+        started = time.monotonic()
+        cluster_list = list(clusters)
+        if client is None:
+            result = {
+                cluster.cluster_id: self._render_cluster(
+                    cluster, client=None, mode=mode
+                )
+                for cluster in cluster_list
             }
-            # Resolving in cluster order makes the first failure raised
-            # deterministic rather than whichever worker happened to lose first.
-            return {cluster_id: future.result() for cluster_id, future in futures.items()}
+            self._last_render_stats = {
+                "provider_calls": 0,
+                "provider_batches": 0,
+                "provider_failures": 0,
+                "elapsed_seconds": time.monotonic() - started,
+            }
+            return result
+
+        rendered: dict[str, tuple[str, bool, float | None, bool]] = {}
+        pending: list[TopicCluster] = []
+        for cluster in cluster_list:
+            _cache_key, cache_path = self._cluster_cache_path(
+                cluster,
+                client=client,
+                mode=mode,
+            )
+            cached = self._load_json(cache_path, None)
+            if isinstance(cached, dict) and isinstance(cached.get("body"), str):
+                rendered[cluster.cluster_id] = (
+                    cached["body"],
+                    bool(cached.get("synthesized")),
+                    cached.get("cost_usd"),
+                    True,
+                )
+            else:
+                pending.append(cluster)
+
+        batches = self._cluster_batches(pending)
+        failures = 0
+        if batches:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            configured = int(
+                getattr(
+                    self.distillation,
+                    "max_concurrency",
+                    CONTEXT_BUILD_CONCURRENCY,
+                )
+                or CONTEXT_BUILD_CONCURRENCY
+            )
+            workers = max(1, min(configured, len(batches)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(
+                        self._render_provider_batch,
+                        batch,
+                        client=client,
+                        mode=mode,
+                    ): batch
+                    for batch in batches
+                }
+                for future in as_completed(futures):
+                    batch = futures[future]
+                    try:
+                        rendered.update(future.result())
+                    except Exception:
+                        failures += 1
+                        # A failed provider batch must not discard successful
+                        # work or fail the whole build. Keep every topic visible
+                        # through the deterministic renderer and leave the
+                        # provider-specific cache empty for a future retry.
+                        for cluster in batch:
+                            rendered[cluster.cluster_id] = self._render_cluster(
+                                cluster,
+                                client=None,
+                                mode=mode,
+                            )
+
+        self._last_render_stats = {
+            "provider_calls": len(batches),
+            "provider_batches": len(batches),
+            "provider_failures": failures,
+            "elapsed_seconds": time.monotonic() - started,
+        }
+        target = float(
+            getattr(self.distillation, "target_seconds", 8.0) or 8.0
+        )
+        self._last_render_stats["target_seconds"] = target
+        self._last_render_stats["target_met"] = (
+            self._last_render_stats["elapsed_seconds"] <= target
+        )
+        return rendered
 
     def _artifact_path(self, cluster: TopicCluster) -> Path:
         return self.generated_root / f"{_slug(cluster.topic_label)}-{cluster.cluster_id[4:12]}.md"
@@ -868,13 +1163,15 @@ class ContextEngine:
             for cluster in cluster_topics(groups, previous=previous.get("clusters"), threshold=self.topic_threshold)
             if cluster.cluster_id not in self._retired()
         ]
+        batches = self._cluster_batches(clusters)
         return {
             "sources": sources,
             "groups": groups,
             "conflicts": conflicts,
             "dedup": dedup_stats,
             "clusters": clusters,
-            "estimated_provider_calls": len(clusters),
+            "estimated_provider_calls": len(batches),
+            "estimated_provider_batches": len(batches),
             "estimated_input_tokens": sum(max(1, len(source.text) // 4) for source in sources),
             "estimated_output_tokens": len(clusters) * ESTIMATED_OUTPUT_TOKENS_PER_CLUSTER,
             "estimated_cost_usd": round(
@@ -1142,8 +1439,25 @@ class ContextEngine:
                 ),
             },
             "cost_estimate": {
-                "provider_calls": len(plan["clusters"]) - cache_hits if client else 0,
+                "provider_calls": (
+                    int(self._last_render_stats.get("provider_calls") or 0)
+                    if client
+                    else 0
+                ),
                 "provider_cost_usd": cost if client else 0.0,
+                "provider_failures": int(
+                    self._last_render_stats.get("provider_failures") or 0
+                ),
+                "elapsed_seconds": round(
+                    float(self._last_render_stats.get("elapsed_seconds") or 0.0),
+                    6,
+                ),
+                "target_seconds": float(
+                    self._last_render_stats.get("target_seconds")
+                    or getattr(self.distillation, "target_seconds", 8.0)
+                    or 8.0
+                ),
+                "target_met": bool(self._last_render_stats.get("target_met")),
             },
             "build_inputs": policy,
             "topics": topics,

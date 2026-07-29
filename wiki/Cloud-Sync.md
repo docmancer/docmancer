@@ -9,7 +9,7 @@ docmancer cloud devices
 docmancer cloud disconnect
 ```
 
-`docmancer cloud sync` is encrypted Cloud push and pull. Local agent sources refresh automatically when `web` opens or `ask` runs. `reindex` remains an advanced recovery command for disposable curated-tree retrieval state.
+`docmancer cloud sync` is encrypted Cloud push and pull. It is separate from local index maintenance. Use lifecycle capture, `docmancer memory sync`, the web app's non-blocking background refresh, or `docmancer ask --fresh` to update local agent sources. `reindex` remains an advanced recovery command for disposable curated-tree retrieval state.
 
 The client encrypts and signs revisions before transport. The hosted API receives opaque encrypted envelopes and routing metadata, not plaintext memory, local paths, private keys, workspace keys, or recovery keys. The hosted service cannot connect back to `docmancer web` or request local filesystem actions.
 

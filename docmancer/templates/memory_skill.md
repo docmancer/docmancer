@@ -22,9 +22,13 @@ Docmancer combines an automatically reconciled laptop-wide canonical memory, cur
 6. Use `docmancer common`, `delivery`, or `timeline` for cross-agent recurrence, delivery proof, or canonical decision history.
 7. Use `docmancer docs ...` separately for library and vendor documentation.
 
-## Canonical memory
+Normal Ask reads the latest committed index and may call the configured answer provider. It does not scan files or reconcile canonical memory. Use `docmancer ask "<the task>" --fresh` only when the task must wait for newly changed agent files.
 
-`docmancer memory canonical` shows the laptop-wide memory shared by every agent on this machine: `about`, `preferences`, `working-principles`, and `active-projects`. Read one section with `docmancer memory canonical show <section>`, or `docmancer read --global <section>.md` for the raw file. Note that `--global` is required, because `docmancer read` otherwise resolves against the current project's tree.
+## Shared Memory scaffold
+
+`docmancer memory canonical` shows the laptop-wide memory shared by every agent on this machine. Its files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project memory belongs under `decisions/`, `constraints/`, `workflows/`, and `lessons/`. Choose the narrowest conventional folder instead of inventing a new top-level category.
+
+Read one generated section with `docmancer memory canonical show <section>`, or read its raw file with paths such as `docmancer read --global profile/preferences.md`. Note that `--global` is required, because `docmancer read` otherwise resolves against the current project's tree.
 
 Each section has two zones. The generated zone is rebuilt automatically whenever the evidence changes, so anything written there is destroyed on the next sync. The pinned zone is preserved exactly.
 
@@ -41,6 +45,7 @@ Never use `docmancer edit` to change a canonical section's generated zone. That 
 
 ```bash
 docmancer ask "what deployment decisions apply?"
+docmancer ask "what changed in the latest agent notes?" --fresh
 docmancer ask "how did this policy change?" --history
 docmancer ask "why was this chosen?" --answer --mode thorough
 docmancer common
@@ -49,7 +54,7 @@ docmancer timeline
 docmancer memory canonical
 docmancer memory canonical show preferences
 docmancer memory canonical pin preferences "Never use em dashes in public prose."
-docmancer read --global about.md
+docmancer read --global profile/about.md
 docmancer context status
 docmancer context projection --agent codex
 docmancer brief --scope project --dry-run
@@ -69,7 +74,7 @@ docmancer status --json
 - Existing-file mutations require the current content hash. Re-read after a stale-hash error.
 - Imported source files are read-only and must never be rewritten.
 - Keep memory and documentation results separate.
-- Context mutations (`refresh`, `rollback`, `adopt`, and `retire`) are human-controlled. Agents use the read-only status, projection, and delivery surfaces.
+- Generated-artifact mutations (`context refresh`, `rollback`, `adopt`, and `retire`) are compatibility operations and remain human-controlled. Agents use read-only projection and delivery surfaces.
 
 The 0.8 aliases have been removed. Use `ask`, `web`, `import`, and `cloud sync` directly.
 

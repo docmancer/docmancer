@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -319,6 +321,64 @@ def test_library_catalog_searches_and_cursor_paginates(tmp_path: Path) -> None:
 
     catalog.replace([])
     assert catalog.list(corpus="memory")["items"] == []
+
+
+def test_library_catalog_reads_do_not_wait_for_background_writer(tmp_path: Path) -> None:
+    path = tmp_path / "library.sqlite"
+    catalog = LibraryCatalog(path)
+    catalog.replace([{
+        "corpus": "memory",
+        "record_id": "release",
+        "title": "Release decision",
+        "summary": "Use Railway.",
+        "detail_key": "docmancer://memory/release",
+    }])
+    writer = sqlite3.connect(path)
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        "UPDATE library_records SET summary = ? WHERE record_id = ?",
+        ("Uncommitted background update", "release"),
+    )
+    try:
+        started = time.perf_counter()
+        result = catalog.list(corpus="memory")
+        elapsed = time.perf_counter() - started
+    finally:
+        writer.rollback()
+        writer.close()
+
+    assert result["items"][0]["summary"] == "Use Railway."
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_shared_memory_and_delivery_reuse_runtime_snapshots(tmp_path: Path) -> None:
+    runtime = LocalRuntime(project_path=tmp_path)
+    memory_calls = 0
+    delivery_calls = 0
+
+    async def build_memory():
+        nonlocal memory_calls
+        memory_calls += 1
+        return {"roots": [], "scaffold_version": 1}
+
+    async def setup_plan():
+        nonlocal delivery_calls
+        delivery_calls += 1
+        return {"items": [{"id": "codex", "last_successful_recall": None}]}
+
+    runtime._build_shared_memory = build_memory  # type: ignore[method-assign]
+    runtime.agent_setup_plan = setup_plan  # type: ignore[method-assign]
+
+    first_memory = await runtime.shared_memory()
+    second_memory = await runtime.shared_memory()
+    first_delivery = await runtime.context_delivery()
+    second_delivery = await runtime.context_delivery()
+
+    assert first_memory is second_memory
+    assert first_delivery is second_delivery
+    assert memory_calls == 1
+    assert delivery_calls == 1
 
 
 @pytest.mark.asyncio

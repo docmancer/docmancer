@@ -55,7 +55,7 @@ def test_sync_prints_intermediate_progress_states(tmp_path, monkeypatch):
     assert "Waiting for the local sync lock" in result.output
     assert "Discovering memory and instruction files" in result.output
     assert "Redacting and extracting" in result.output
-    assert "Rebuilding the local search index" in result.output
+    assert "Updating the local search index" in result.output
 
 
 def test_sync_rebuilds_stale_atoms_after_source_change(tmp_path, monkeypatch):

@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 
-<img src="readme-assets/web-readme.png" alt="Docmancer local app showing agent memory, shared Context, and the Library" style="width: 92%; max-width: 1120px; height: auto;" />
+<img src="readme-assets/web-readme.png" alt="Docmancer local app showing agent memory, Shared Memory files, and the Library" style="width: 92%; max-width: 1120px; height: auto;" />
 
 </div>
 
@@ -19,7 +19,7 @@ Docmancer helps answer two questions:
 1. **What do my coding agents already know?**
 2. **How do I carry the useful parts to every agent?**
 
-It discovers existing agent memory, keeps its sources attached, and gives you one local place to ask questions, build readable Context, and connect that Context back to your agents.
+It discovers existing agent memory, keeps its sources attached, arranges the durable parts as local Markdown, and gives every connected agent the relevant files.
 
 The complete single-machine product is free and local. The browser app is for people. The CLI, skills, hooks, and MCP are how agents use the same memory.
 
@@ -34,14 +34,36 @@ docmancer web
 
 `setup` finds every supported coding agent on the machine, shows one complete preflight plan and privacy warning, and asks for confirmation before changing anything. Once confirmed, it indexes existing memory and instructions, builds one laptop-wide canonical memory under `~/.docmancer/tree`, installs or updates every detected user-level Docmancer skill, and enables automatic recall and session capture wherever the agent supports them. It does not modify the project in your current directory.
 
-The canonical memory keeps the main things that should follow you between agents: who you are, durable preferences, working principles, and active projects or repositories. Changed evidence is reconciled automatically when setup, Ask, the local web app, memory sync, or a supported lifecycle hook runs. If a configured AI provider is ready, Docmancer uses it to merge and compress the evidence after redaction. If no provider is ready, or the provider fails, deterministic local rules produce the same stable files without blocking memory.
+The canonical memory keeps the main things that should follow you between agents in a predictable scaffold:
+
+```text
+~/.docmancer/tree/
+├── README.md
+├── profile/
+│   ├── about.md
+│   └── preferences.md
+├── principles/
+│   └── working-style.md
+├── projects/
+│   └── active.md
+└── shared/
+
+<project>/.docmancer/tree/
+├── overview.md
+├── decisions/
+├── constraints/
+├── workflows/
+└── lessons/
+```
+
+Setup, explicit memory sync, and supported lifecycle capture reconcile changed evidence. Ask and web startup only read the latest committed index, so the browser shell appears immediately and memory loading continues in the background. If a configured AI provider is ready, Docmancer can merge and compress redacted evidence during reconciliation. If no provider is ready, or the provider fails, deterministic local rules produce the same stable files without blocking memory.
 
 `web` opens a loopback-only app for the current project. Its main pages each have one purpose:
 
 - **Home** lets you ask Docmancer what your agents know, customise the Docmancer agent, and connect coding agents.
-- **Context** turns scattered evidence into readable, revisioned knowledge that connected agents can carry.
+- **Shared Memory** shows every canonical file, how it is arranged, and the exact bounded projection prepared for each connected agent.
 - **Library** keeps curated memory, attributable agent evidence, and technical documentation easy to inspect without mixing them together.
-- **Settings** chooses the provider and model used for grounded answers and AI-assisted Context distillation.
+- **Settings** chooses the optional provider and model used for grounded answers and maintenance.
 
 Claude Desktop requires a manual skill upload. Other supported integrations can be installed from the web app or CLI. Detection and installation are shown as separate states so an installed application is never mistaken for a connected agent.
 
@@ -51,33 +73,35 @@ Claude Desktop requires a manual skill upload. Other supported integrations can 
 docmancer ask "Why did we choose Railway?"
 ```
 
-Docmancer checks for changed sources and returns a bounded answer with relevant project policy, curated memory, supporting agent evidence, and citations. It can recall evidence without a generation provider. Add `--answer` when you want a configured model to turn that evidence into grounded prose.
+Docmancer reads the current index and returns a bounded result with relevant project policy, curated memory, supporting agent evidence, and citations. When a generation provider is configured, Ask calls it by default to turn that evidence into grounded prose. Use `--no-answer` for evidence only, or `--fresh` when the question must wait for changed agent files to be indexed first.
 
 ```bash
-docmancer ask "What changed in our release process?" --answer
+docmancer ask "What changed in our release process?" --no-answer
 ```
 
-## Build Context every agent can carry
+## Choose the retrieval profile
 
-Context is the readable, revisioned result of consolidating the useful evidence Docmancer found. Preview the plan first:
+The default local profile needs no daemon or large model download:
 
 ```bash
-docmancer context refresh --dry-run
+docmancer setup --profile local
 ```
 
-Build AI-assisted Context from the CLI by naming the provider and model:
+It uses SQLite FTS5, sqlite-vec, and the bundled Model2Vec model. For sustained ingestion and filtered vector search across roughly 50,000 to 100,000 documents, install the heavy extra, run Qdrant, and select the scale profile:
 
 ```bash
-docmancer context refresh --provider openai --model <model-id>
+pipx install "docmancer[embeddings-heavy]"
+docmancer qdrant start
+docmancer setup --profile scale
 ```
 
-Or build deterministic Context locally without an LLM:
+The scale profile uses Qdrant, FastEmbed dense embeddings, sparse SPLADE retrieval, lexical search, and reciprocal-rank fusion. It also keeps extracted content in SQLite instead of creating two inspectable files per source. Qdrant helps with vector filtering, concurrent writes, and operational headroom. It does not fix poor source coverage, unstable retrieval units, or weak evaluation, which are handled separately by versioned sources, stable token-aware units, and retrieval benchmarks.
 
-```bash
-docmancer context refresh --provider none
-```
+## Browse Shared Memory
 
-The web app shows the source count, cluster plan, provider, estimated calls, and cost before an AI build begins. Previous Context revisions remain available for comparison and rollback.
+Open `docmancer web`, then choose **Shared Memory**. The left side is the real machine and project file tree, the centre reads the selected Markdown file with its provenance and stable address, and the right side shows connected agents. Select an agent to inspect the exact bounded projection it receives.
+
+The scaffold is opinionated, but the files are yours. You can edit them directly or use `docmancer write`, `read`, `edit`, and `move`. Stable `docmancer://memory/<id>` addresses survive file moves.
 
 ## Connect coding agents
 
@@ -121,8 +145,6 @@ Import copies Markdown into the project inbox. Docmancer never rewrites or moves
 | `docmancer setup` | Discover agent memory and connect supported coding agents. |
 | `docmancer web` | Open the local human interface for the current project. |
 | `docmancer ask "..."` | Recall curated memory and supporting agent evidence. |
-| `docmancer context refresh --dry-run` | Preview a Context build without writing files or calling a provider. |
-| `docmancer context refresh` | Build a deterministic local revision of shared Context. |
 | `docmancer common` | Show knowledge recorded independently by several agents. |
 | `docmancer delivery` | Show installed integrations, recall state, and recent use. |
 | `docmancer timeline` | Show how curated memory changed. |
@@ -150,9 +172,9 @@ Use `ask` for your decisions, preferences, rules, and agent evidence. Use `docs 
 
 ## Local privacy and optional Cloud
 
-Your memory, Context, credentials, indexes, and local web app stay on your machine. Docmancer has no telemetry. Network access occurs only when you explicitly fetch online documentation, use an external model, check package registries, or enable Cloud.
+Your memory, credentials, indexes, and local web app stay on your machine. Docmancer has no telemetry. Network access occurs only when you explicitly fetch online documentation, use an external model, check package registries, or enable Cloud.
 
-Paid Personal Sync adds encrypted continuity across approved devices, managed history, and recovery. Team adds locally approved shared Context and encrypted coordination. The hosted service receives ciphertext and cannot read your plaintext memory or execute local actions.
+Paid Personal Sync adds encrypted continuity across approved devices, managed history, and recovery. Team adds locally approved shared files and encrypted coordination. The hosted service receives ciphertext and cannot read your plaintext memory or execute local actions.
 
 ```bash
 docmancer cloud connect
@@ -163,14 +185,15 @@ docmancer cloud sync
 
 | Location | Contents |
 | --- | --- |
-| `<project>/.docmancer/tree/` | Curated project memory as Markdown. |
-| `<project>/.docmancer/context/` | Revisioned generated Context artifacts. |
+| `<project>/.docmancer/tree/` | Curated project memory under `decisions/`, `constraints/`, `workflows/`, and `lessons/`. |
+| `<project>/.docmancer/context/` | Compatibility storage for revisioned generated artifacts. It is not part of the primary Shared Memory workflow. |
 | `<project>/.docmancer/inbox/` | Markdown explicitly imported for optional whole-file curation. Automatic session capture is processed as a transient spool. |
 | `<project>/.docmancer/trash/` | Recoverable deleted memory files. |
 | `<project>/.docmancer/state/decision-journal.jsonl` | Append-only curated-file history. |
-| `<project>/.docmancer/state/delivery.json` | Recent successful Context delivery receipts. |
+| `<project>/.docmancer/state/delivery.json` | Recent successful memory delivery receipts. |
 | `~/.docmancer/memory.db` | Rebuildable machine-wide agent-memory index. |
-| `~/.docmancer/tree/` | Automatically reconciled laptop-wide canonical memory as source-attributed Markdown. |
+| `~/.docmancer/embeddings-cache/embeddings.sqlite3` | Content-addressed embedding cache. Older per-vector files remain readable. |
+| `~/.docmancer/tree/` | Automatically reconciled laptop-wide Markdown under `profile/`, `principles/`, `projects/`, and `shared/`. |
 | `~/.docmancer/state/laptop-memory/` | Reconciliation manifest and revision history. |
 | `~/.docmancer/docmancer.yaml` | Local configuration. |
 

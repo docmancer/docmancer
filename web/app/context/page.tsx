@@ -1,2 +1,2 @@
 import { WorkspaceApp } from "@/components/workspace-app";
-export default function Page() { return <WorkspaceApp initialView="context" />; }
+export default function Page() { return <WorkspaceApp initialView="memory" />; }

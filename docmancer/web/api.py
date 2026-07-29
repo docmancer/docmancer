@@ -199,6 +199,16 @@ class LocalApi:
         session = request.state.browser_session
         return JSONResponse({"csrf_token": session.csrf_token, "api_version": LOCAL_API_VERSION})
 
+    async def readiness(self, request: Request) -> JSONResponse:
+        readiness = getattr(self.runtime, "readiness", None)
+        if callable(readiness):
+            return JSONResponse(jsonable(readiness()))
+        return JSONResponse({
+            "ready": bool(getattr(self.runtime, "ready", True)),
+            "initializing": False,
+            "error": None,
+        })
+
     async def status(self, request: Request) -> JSONResponse:
         status, counts = await asyncio.gather(self.runtime.status(), self.runtime.counts())
         return JSONResponse(jsonable({"status": status, "counts": counts}))
@@ -212,6 +222,30 @@ class LocalApi:
 
     async def tree_root(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.tree_root()))
+
+    async def shared_memory(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.shared_memory()))
+
+    async def shared_memory_file(self, request: Request) -> JSONResponse:
+        address = str(request.query_params.get("address") or "")
+        if not address:
+            return error_response(ValueError("address is required"))
+        try:
+            return JSONResponse(jsonable(await self.runtime.shared_memory_read(address)))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def agent_projection(self, request: Request) -> JSONResponse:
+        try:
+            budget = bounded_int(
+                request.query_params.get("token_budget"), 2_000, maximum=100_000
+            )
+            return JSONResponse(jsonable(await self.runtime.agent_projection(
+                str(request.path_params["agent"]),
+                token_budget=budget,
+            )))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
 
     async def tree(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(paginate(await self.runtime.tree_list(), request)))

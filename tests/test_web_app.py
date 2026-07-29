@@ -213,6 +213,39 @@ class FakeRuntime:
     async def tree_root(self) -> dict:
         return {"scope": "project", "project_id": "project-1", "display_label": "project", "health": "ready"}
 
+    async def shared_memory(self) -> dict:
+        return {
+            "scaffold_version": 1,
+            "roots": [{
+                "key": "machine",
+                "label": "This machine",
+                "count": 1,
+                "folders": [{"path": "profile", "name": "profile", "parent": ""}],
+                "files": [{"address": "docmancer://memory/one", "path": "profile/about.md", "title": "About"}],
+            }],
+            "legacy_generated_files": 2,
+        }
+
+    async def shared_memory_read(self, address: str) -> dict:
+        if address != "docmancer://memory/one":
+            from docmancer.memory.tree.errors import AddressNotFoundError
+
+            raise AddressNotFoundError(address)
+        return {
+            "address": address,
+            "root": "machine",
+            "path": "profile/about.md",
+            "title": "About",
+            "markdown": "# About\n",
+        }
+
+    async def agent_projection(self, agent: str, *, token_budget: int = 2_000) -> dict:
+        return {
+            "available": True,
+            "projection": {"target_agent": agent, "token_budget": token_budget},
+            "rendered": "# Shared memory\n",
+        }
+
     async def tree_list(self) -> list[dict]:
         return [{"address": "docmancer://memory/one", "title": "Release", "content_hash": "hash-1"}]
 
@@ -401,17 +434,70 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
     with client:
         authenticate(client, app)
         expected = {
-            "/memory/": "/library/?tab=evidence",
             "/sources/": "/library/?tab=evidence",
-            "/intelligence/": "/context/?tab=knowledge",
+            "/intelligence/": "/memory/",
+            "/context/": "/memory/",
         }
         for source, destination in expected.items():
             response = client.get(source, follow_redirects=False)
             assert response.status_code == 308
             assert response.headers["location"] == destination
-        context = client.get("/context/", follow_redirects=False)
-        assert context.status_code == 200
-        assert "location" not in context.headers
+        memory = client.get("/memory/", follow_redirects=False)
+        assert memory.status_code == 200
+        assert "location" not in memory.headers
+
+
+def test_static_shell_and_session_do_not_wait_for_runtime_initialization(tmp_path: Path) -> None:
+    import asyncio
+
+    class SlowRuntime:
+        project_path = Path("/tmp/project")
+        ready = False
+        initializing = True
+
+        async def initialize(self):
+            await asyncio.sleep(2)
+            self.ready = True
+            self.initializing = False
+            return {"ready": True}
+
+        def readiness(self):
+            return {
+                "ready": self.ready,
+                "initializing": self.initializing,
+                "error": None,
+            }
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html>loading shell</html>", encoding="utf-8")
+    runtime = SlowRuntime()
+    app = create_app(port=48123, static_dir=static, runtime=runtime)
+    started = time.monotonic()
+    with TestClient(app, base_url="http://127.0.0.1:48123") as client:
+        assert time.monotonic() - started < 0.5
+        token = app.state.security.bootstrap_token
+        assert client.get(f"/?bootstrap={token}", follow_redirects=False).status_code == 303
+        assert client.get("/api/v1/session").status_code == 200
+        state = client.get("/api/v1/readiness").json()
+        assert state["ready"] is False
+        assert state["initializing"] is True
+
+
+def test_shared_memory_and_projection_routes(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        authenticate(client, app)
+        memory = client.get("/api/v1/shared-memory")
+        assert memory.status_code == 200
+        assert memory.json()["roots"][0]["files"][0]["path"] == "profile/about.md"
+        file = client.get(
+            "/api/v1/shared-memory/file",
+            params={"address": "docmancer://memory/one"},
+        )
+        assert file.json()["markdown"] == "# About\n"
+        projection = client.get("/api/v1/agents/codex/projection")
+        assert projection.json()["projection"]["target_agent"] == "codex"
 
 
 def test_human_agent_settings_and_setup_plan_are_exposed(tmp_path: Path) -> None:
