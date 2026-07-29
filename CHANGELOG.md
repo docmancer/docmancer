@@ -4,8 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.4] - Unreleased
-
+## [0.9.4] - 2026-07-29
 ### Added
 
 - **Shared Memory replaces the generated Context workbench.** The local app now shows the real machine-wide and project Markdown trees, their opinionated folder scaffold, file provenance, stable addresses, agent connection state, and the exact bounded projection prepared for each agent. Machine memory uses `profile/`, `principles/`, `projects/`, and `shared/`; project memory uses `decisions/`, `constraints/`, `workflows/`, and `lessons/`.
