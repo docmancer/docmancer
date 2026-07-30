@@ -83,14 +83,16 @@ def queue_tree_changes(
             )
         )
     queued = enqueue_revisions_if_enabled(payloads, root=root, keystore=keystore)
-    for payload in payloads:
-        state.set_tree_head(
-            project_id=project_id,
-            file_id=payload["file_id"],
-            revision_id=payload["revision_id"],
-            relative_path=payload["relative_path"],
-            deleted=payload["deleted"],
-        )
+    state.set_tree_heads(
+        {
+            "project_id": project_id,
+            "file_id": payload["file_id"],
+            "revision_id": payload["revision_id"],
+            "relative_path": payload["relative_path"],
+            "deleted": payload["deleted"],
+        }
+        for payload in payloads
+    )
     return {"changed": len(payloads), "queued": queued}
 
 

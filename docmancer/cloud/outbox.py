@@ -177,15 +177,38 @@ class CloudState:
         self, *, project_id: str, file_id: str, revision_id: str,
         relative_path: str, deleted: bool,
     ) -> None:
+        self.set_tree_heads(
+            [
+                {
+                    "project_id": project_id,
+                    "file_id": file_id,
+                    "revision_id": revision_id,
+                    "relative_path": relative_path,
+                    "deleted": deleted,
+                }
+            ]
+        )
+
+    def set_tree_heads(self, heads: Iterable[dict[str, Any]]) -> None:
+        """Upsert tree heads in one transaction for large first syncs."""
         with self._connect() as conn:
-            conn.execute(
+            conn.executemany(
                 """INSERT INTO tree_heads(project_id,file_id,revision_id,relative_path,deleted)
                    VALUES(?,?,?,?,?)
                    ON CONFLICT(project_id,file_id) DO UPDATE SET
                      revision_id=excluded.revision_id,
                      relative_path=excluded.relative_path,
                      deleted=excluded.deleted""",
-                (project_id, file_id, revision_id, relative_path, int(deleted)),
+                (
+                    (
+                        str(head["project_id"]),
+                        str(head["file_id"]),
+                        str(head["revision_id"]),
+                        str(head["relative_path"]),
+                        int(bool(head["deleted"])),
+                    )
+                    for head in heads
+                ),
             )
 
 
