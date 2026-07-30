@@ -1,6 +1,7 @@
 """Explicit push/pull coordinator."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from docmancer.cloud.apply import apply_envelopes
@@ -11,8 +12,66 @@ from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allow
 
 
 _PUSH_BATCH_SIZE = 100
+_PUSH_BATCH_BYTES = 6_000_000
 _PULL_PAGE_SIZE = 500
 _MAX_PULL_PAGES = 100
+
+
+def _push_batches(
+    envelopes: list[dict],
+    *,
+    cursor: int,
+    protocol_version: int,
+) -> list[list[dict]]:
+    """Split one protocol group below both the count and request-byte limits."""
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    for envelope in envelopes:
+        candidate = [*current, envelope]
+        payload = {
+            "protocol_version": protocol_version,
+            "base_cursor": cursor,
+            "device_ack_cursor": cursor,
+            "envelopes": candidate,
+        }
+        encoded_bytes = len(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if encoded_bytes <= _PUSH_BATCH_BYTES:
+            current = candidate
+            continue
+        if not current:
+            raise ValueError(
+                "one encrypted revision exceeds the safe cloud request size; "
+                "the encrypted outbox was preserved"
+            )
+        batches.append(current)
+        single_payload = {
+            "protocol_version": protocol_version,
+            "base_cursor": cursor,
+            "device_ack_cursor": cursor,
+            "envelopes": [envelope],
+        }
+        single_bytes = len(
+            json.dumps(
+                single_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if single_bytes > _PUSH_BATCH_BYTES:
+            raise ValueError(
+                "one encrypted revision exceeds the safe cloud request size; "
+                "the encrypted outbox was preserved"
+            )
+        current = [envelope]
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _push_pending(client, *, state: CloudState, workspace_id: str, cursor: int) -> int:
@@ -23,33 +82,38 @@ def _push_pending(client, *, state: CloudState, workspace_id: str, cursor: int) 
         for envelope in pending:
             batches.setdefault(int(envelope.get("protocol_version") or 1), []).append(envelope)
         acknowledged_this_round = 0
-        for version, batch in sorted(batches.items()):
-            operation = f"push:v{version}"
-            response = client.push(
-                workspace_id,
-                batch,
-                idempotency_key=state.idempotency_key(operation),
+        for version, protocol_batch in sorted(batches.items()):
+            for batch in _push_batches(
+                protocol_batch,
                 cursor=cursor,
                 protocol_version=version,
-            )
-            newly_accepted = {str(value) for value in response.get("accepted", [])}
-            accepted_ids = set(newly_accepted)
-            accepted_ids.update(str(value) for value in response.get("already_present", []))
-            acknowledged_refs = [
-                str(envelope["revision_ref"])
-                for envelope in batch
-                if str(envelope.get("envelope_id")) in accepted_ids
-            ]
-            state.acknowledge(acknowledged_refs)
-            state.clear_idempotency_key(operation)
-            acknowledged_this_round += len(acknowledged_refs)
-            pushed += len(newly_accepted)
-            rejected = list(response.get("rejected") or [])
-            if rejected:
-                codes = sorted({str(item.get("code") or "UNKNOWN") for item in rejected})
-                raise ValueError(
-                    f"cloud rejected {len(rejected)} encrypted envelope(s): {', '.join(codes)}"
+            ):
+                operation = f"push:v{version}"
+                response = client.push(
+                    workspace_id,
+                    batch,
+                    idempotency_key=state.idempotency_key(operation),
+                    cursor=cursor,
+                    protocol_version=version,
                 )
+                newly_accepted = {str(value) for value in response.get("accepted", [])}
+                accepted_ids = set(newly_accepted)
+                accepted_ids.update(str(value) for value in response.get("already_present", []))
+                acknowledged_refs = [
+                    str(envelope["revision_ref"])
+                    for envelope in batch
+                    if str(envelope.get("envelope_id")) in accepted_ids
+                ]
+                state.acknowledge(acknowledged_refs)
+                state.clear_idempotency_key(operation)
+                acknowledged_this_round += len(acknowledged_refs)
+                pushed += len(newly_accepted)
+                rejected = list(response.get("rejected") or [])
+                if rejected:
+                    codes = sorted({str(item.get("code") or "UNKNOWN") for item in rejected})
+                    raise ValueError(
+                        f"cloud rejected {len(rejected)} encrypted envelope(s): {', '.join(codes)}"
+                    )
         if acknowledged_this_round == 0:
             raise ValueError("cloud push made no progress; encrypted outbox was preserved")
     return pushed

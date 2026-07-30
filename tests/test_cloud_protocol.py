@@ -23,7 +23,13 @@ from docmancer.cloud.outbox import CloudState
 from docmancer.cloud.recovery import create_recovery, verify_recovery
 from docmancer.cloud.serialize import build_graph_payload, build_record_payload, canonicalize, revision_id
 from docmancer.cloud.snapshot import build_snapshot, open_snapshot
-from docmancer.cloud.sync import _pull_all, _push_pending, sync_once
+from docmancer.cloud.sync import (
+    _PUSH_BATCH_BYTES,
+    _pull_all,
+    _push_batches,
+    _push_pending,
+    sync_once,
+)
 from docmancer.memory.records import MemoryRecordStore
 
 
@@ -273,6 +279,74 @@ def test_cloud_push_drains_every_bounded_protocol_batch(tmp_path):
     ) == 235
     assert state.status()["pending"] == 0
     assert sum(size for _version, size in client.batches) == 235
+
+
+def test_cloud_push_splits_large_envelopes_below_the_request_byte_limit(tmp_path):
+    state = CloudState(tmp_path / "cloud-state.sqlite3")
+    for index in range(4):
+        state.enqueue(
+            {
+                "revision_ref": f"revision-{index}",
+                "envelope_id": f"envelope-{index}",
+                "protocol_version": 3,
+                "ciphertext": "x" * 2_500_000,
+            }
+        )
+
+    class Client:
+        def __init__(self):
+            self.batches = []
+
+        def push(
+            self,
+            _workspace_id,
+            envelopes,
+            *,
+            idempotency_key,
+            cursor,
+            protocol_version,
+        ):
+            payload_bytes = len(
+                json.dumps(
+                    {
+                        "protocol_version": protocol_version,
+                        "base_cursor": cursor,
+                        "device_ack_cursor": cursor,
+                        "envelopes": envelopes,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            assert payload_bytes <= _PUSH_BATCH_BYTES
+            assert idempotency_key
+            self.batches.append(len(envelopes))
+            return {
+                "accepted": [item["envelope_id"] for item in envelopes],
+                "already_present": [],
+                "rejected": [],
+            }
+
+    client = Client()
+    assert _push_pending(
+        client,
+        state=state,
+        workspace_id="workspace",
+        cursor=0,
+    ) == 4
+    assert client.batches == [2, 2]
+    assert state.status()["pending"] == 0
+
+
+def test_cloud_push_preserves_an_individually_oversized_envelope():
+    envelope = {
+        "revision_ref": "revision-large",
+        "envelope_id": "envelope-large",
+        "protocol_version": 3,
+        "ciphertext": "x" * _PUSH_BATCH_BYTES,
+    }
+    with pytest.raises(ValueError, match="exceeds the safe cloud request size"):
+        _push_batches([envelope], cursor=0, protocol_version=3)
 
 
 def test_cloud_pull_fetches_every_page_before_apply():
