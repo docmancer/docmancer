@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from docmancer.memory.actions import (
     MemoryActionEngine,
     is_mutation_request,
 )
+from docmancer.memory.laptop import CANONICAL_EXCLUSIONS_PATH
 from docmancer.memory.tree.errors import AlreadyExistsError, StaleWriteError
 from docmancer.memory.tree.store import TreeStore
 from docmancer.memory.tree.zones import render_zones
@@ -21,9 +23,11 @@ class FakePlanner:
     def __init__(self, draft: MemoryActionDraft) -> None:
         self.draft = draft
         self.calls = 0
+        self.last_payload: dict = {}
 
-    def parse(self, *_args, **_kwargs):
+    def parse(self, messages, *_args, **_kwargs):
         self.calls += 1
+        self.last_payload = json.loads(messages[-1]["content"])
         return self.draft
 
 
@@ -64,10 +68,103 @@ def test_plan_and_execute_one_guarded_project_edit(tmp_path: Path) -> None:
     assert result["kind"] == "proposal"
     proposal = result["proposal"]
     assert proposal["expected_hash"] == entry.content_hash
+    assert proposal["path"] == "workflows/release.md"
     assert "+Run tests and a smoke test." in proposal["diff"]
     applied = engine.execute(proposal, actor_surface="test")
     assert applied["content_hash"] != entry.content_hash
     assert "smoke test" in store.read(entry.address).body
+
+
+def test_global_forget_request_prepares_a_valid_canonical_exclusion(tmp_path: Path) -> None:
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="create",
+        scope="machine",
+        path=CANONICAL_EXCLUSIONS_PATH,
+        markdown=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- /rwa_stuff/token_tape\n"
+            "- project_mewline_cat_collar.md\n\n"
+            "## Text contains\n\n"
+            "- TokenTape\n"
+        ),
+        rationale="Keep these projects out of generated machine-wide memory.",
+    ))
+    engine = MemoryActionEngine(tmp_path / "project")
+
+    result = engine.plan(
+        "Remove TokenTape and pet projects from Shared Memory globally, never source files.",
+        client=planner,
+    )
+
+    assert result["kind"] == "proposal"
+    assert result["proposal"]["scope"] == "machine"
+    assert result["proposal"]["path"] == CANONICAL_EXCLUSIONS_PATH
+    payload = planner.last_payload
+    assert payload["scope_hint"] == "machine"
+    assert "without touching source files" in " ".join(payload["rules"])
+
+
+def test_invalid_canonical_exclusion_is_refused(tmp_path: Path) -> None:
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="create",
+        scope="machine",
+        path=CANONICAL_EXCLUSIONS_PATH,
+        markdown="# Canonical memory exclusions\n\nDelete everything.\n",
+    ))
+
+    result = MemoryActionEngine(tmp_path / "project").plan(
+        "Forget an old project globally.",
+        client=planner,
+    )
+
+    assert result["kind"] == "unavailable"
+    assert "exclusion" in result["message"].casefold()
+
+
+def test_server_resolves_existing_exclusion_target_instead_of_trusting_provider(
+    tmp_path: Path,
+) -> None:
+    engine = MemoryActionEngine(tmp_path / "project")
+    existing = engine.machine_store.write(
+        relative_path=CANONICAL_EXCLUSIONS_PATH,
+        text=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- old-project\n\n"
+            "## Text contains\n"
+        ),
+        memory_type="constraint",
+        scope="global",
+        expect="absent",
+    )
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="create",
+        scope="machine",
+        target_address="docmancer://memory/provider-invented-target",
+        path=CANONICAL_EXCLUSIONS_PATH,
+        markdown=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- old-project\n"
+            "- /rwa_stuff/token_tape\n\n"
+            "## Text contains\n\n"
+            "- TokenTape\n"
+        ),
+    ))
+
+    result = engine.plan(
+        "Remove TokenTape from Shared Memory globally without touching source files.",
+        client=planner,
+    )
+
+    assert result["kind"] == "proposal"
+    assert result["proposal"]["operation"] == "edit"
+    assert result["proposal"]["address"] == existing.address
+    assert result["proposal"]["expected_hash"] == existing.content_hash
 
 
 def test_stale_action_never_overwrites_a_newer_file(tmp_path: Path) -> None:

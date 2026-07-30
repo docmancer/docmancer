@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  ArrowRight, Check, ChevronDown, ChevronRight, CircleDot, FileText,
+  ArrowRight, Check, ChevronDown, ChevronRight, CircleDot, FileText, LoaderCircle,
   Folder, FolderOpen, Plus, Radio, RefreshCw, Search, ShieldCheck, X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiMutation, type JsonMap } from "@/lib/api";
 import { MarkdownContent } from "./markdown-content";
 import { messageOf, Modal, Notice, rows } from "./workspace-app";
@@ -34,6 +34,11 @@ function writeSessionCache(key: string, value: unknown) {
   }
 }
 
+function mainReadme(memory: JsonMap): JsonMap | undefined {
+  const machine = rows(memory.roots).find((root) => root.key === "machine");
+  return rows(machine?.files).find((file) => String(file.path).toLowerCase() === "readme.md");
+}
+
 export function SharedMemoryWorkbench() {
   const [cachedMemory] = useState<JsonMap | null>(
     () => memorySnapshot ?? readSessionCache(MEMORY_CACHE_KEY),
@@ -46,6 +51,7 @@ export function SharedMemoryWorkbench() {
   const [data, setData] = useState<JsonMap>(cachedMemory ?? {});
   const [delivery, setDelivery] = useState<JsonMap[]>(cachedDelivery ?? []);
   const [selected, setSelected] = useState<JsonMap | null>(null);
+  const [openingFile, setOpeningFile] = useState<JsonMap | null>(null);
   const [projection, setProjection] = useState<JsonMap | null>(null);
   const [expanded, setExpanded] = useState<string[]>([
     "machine:profile", "machine:principles", "machine:projects", "machine:shared",
@@ -59,6 +65,8 @@ export function SharedMemoryWorkbench() {
   const [backgroundError, setBackgroundError] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const hasOpenedMainReadme = useRef(false);
+  const openingAddress = useRef("");
 
   const load = useCallback(async () => {
     setError("");
@@ -74,6 +82,13 @@ export function SharedMemoryWorkbench() {
         writeSessionCache(MEMORY_CACHE_KEY, memory);
         setData(memory);
         setLoading(false);
+        const readme = !hasOpenedMainReadme.current && mainReadme(memory);
+        if (readme) {
+          hasOpenedMainReadme.current = true;
+          void apiGet(`/api/v1/shared-memory/file?address=${encodeURIComponent(String(readme.address))}`)
+            .then((file) => setSelected(file))
+            .catch((reason) => setError(messageOf(reason)));
+        }
       }).catch((reason) => {
         setLoading(false);
         if (!cachedMemory) setError(messageOf(reason));
@@ -142,12 +157,20 @@ export function SharedMemoryWorkbench() {
     [data],
   );
 
-  const openFile = async (file: JsonMap) => {
+  const openFile = useCallback(async (file: JsonMap) => {
+    const address = String(file.address);
     setError("");
+    openingAddress.current = address;
+    setOpeningFile(file);
     try {
-      setSelected(await apiGet(`/api/v1/shared-memory/file?address=${encodeURIComponent(String(file.address))}`));
-    } catch (reason) { setError(messageOf(reason)); }
-  };
+      const result = await apiGet(`/api/v1/shared-memory/file?address=${encodeURIComponent(address)}`);
+      if (openingAddress.current === address) setSelected(result);
+    } catch (reason) {
+      if (openingAddress.current === address) setError(messageOf(reason));
+    } finally {
+      if (openingAddress.current === address) setOpeningFile(null);
+    }
+  }, []);
 
   const inspectAgent = async (agent: JsonMap) => {
     const id = String(agent.agent ?? agent.id ?? "");
@@ -220,7 +243,7 @@ export function SharedMemoryWorkbench() {
       </section>
 
       <section className="memory-reading-panel">
-        {selected ? <FileReader file={selected} close={() => setSelected(null)}/> : <div className="memory-reading-empty">
+        {openingFile ? <FileReaderLoading file={openingFile}/> : selected ? <FileReader file={selected} close={() => setSelected(null)}/> : <div className="memory-reading-empty">
           <span className="file-stack"><FileText size={27}/></span>
           <span className="eyebrow">A filesystem you can inspect</span>
           <h2>Select a memory file</h2>
@@ -288,6 +311,16 @@ function FileRow({ file, selected, openFile, nested = false }: {
     <FileText size={14}/><span>{String(file.path).split("/").at(-1)}</span>
     <small>{file.curation_origin === "deliberate_write" ? "you" : file.curation_origin ? "generated" : ""}</small>
   </button>;
+}
+
+function FileReaderLoading({ file }: { file: JsonMap }) {
+  const title = String(file.title ?? file.path).trim() || "memory file";
+  return <div className="memory-reading-empty memory-file-loading" role="status" aria-live="polite">
+    <span className="file-stack"><LoaderCircle className="spin" size={24}/></span>
+    <span className="eyebrow">Opening memory file</span>
+    <h2>{title}</h2>
+    <p>Loading the Markdown, source details, and stable address.</p>
+  </div>;
 }
 
 function FileReader({ file, close }: { file: JsonMap; close: () => void }) {

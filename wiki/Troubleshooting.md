@@ -76,7 +76,13 @@ docmancer providers list
 docmancer ask "Remember that releases require a smoke test"
 ```
 
-Docmancer asks for clarification when the scope or target is ambiguous. It also refuses AI rewriting when the complete file exceeds 16,000 characters or secret redaction would alter the request or file. Use `docmancer read`, `write`, `edit`, `move`, `trash`, or `restore` for an explicit manual operation in those cases.
+Docmancer asks for clarification when the scope or target is ambiguous. The next reply continues the original request, and a second clarification is refused instead of looping. A referential retry such as `remove them now` also recovers the latest explicit machine-wide mutation request after a failed proposal, including conversations created before action-state persistence was added. If an unambiguous request still produces a scope question, confirm that the latest server code is running.
+
+Typing `yes` or `ok` does not apply a pending proposal. Use Apply on the web action card, accept the CLI prompt, or pass explicit `--apply`.
+
+Docmancer also refuses AI rewriting when the complete file exceeds 16,000 characters or secret redaction would alter the request or file. Use `docmancer read`, `write`, `edit`, `move`, `trash`, or `restore` for an explicit manual operation in those cases.
+
+For a broad request to remove an old project from generated machine-wide memory without touching its files, ask Docmancer to update `shared/canonical-exclusions.md`. Applying the proposal rebuilds generated Shared Memory from the filtered evidence while leaving source repositories and agent-owned memory unchanged.
 
 ## A memory action reports a conflict
 

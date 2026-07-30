@@ -8,7 +8,9 @@
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=for-the-badge)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/docmancer/)
 
-<img src="readme-assets/web-readme.png" alt="Docmancer local app showing agent memory, Shared Memory files, and the Library" style="width: 92%; max-width: 1120px; height: auto;" />
+[**Website**](https://docmancer.dev) &nbsp;·&nbsp; [**Documentation**](https://docmancer.dev/docs/getting-started) &nbsp;·&nbsp; [**Blog**](https://docmancer.dev/blog) &nbsp;·&nbsp; [**Changelog**](https://github.com/docmancer/docmancer/blob/main/CHANGELOG.md)
+
+<img src="https://raw.githubusercontent.com/docmancer/docmancer/main/readme-assets/web-readme.png" alt="Docmancer local app showing agent memory, Shared Memory files, and the Library" width="1000" />
 
 </div>
 
@@ -26,7 +28,7 @@ The complete single-machine product is free and local. The browser app is for pe
 ## Start here
 
 ```bash
-pipx install docmancer
+pipx install docmancer --python python3.13
 docmancer setup
 cd /path/to/your-project
 docmancer web
@@ -92,6 +94,10 @@ docmancer ask "Forget the old Railway decision" --read-only
 In an interactive terminal, Docmancer prints the complete proposal and diff, then asks once with No as the default. `--apply` is required for non-interactive execution. `--read-only` disables action planning, and `--json` returns `action` and `result` without applying unless it is combined with `--apply`. Typing “yes” in a later message never authorises a stored proposal.
 
 The same approval flow appears as an action card in saved web conversations. Temporary chats remain read-only. The proposal is stored locally, every existing-file action is hash guarded, and the browser submits only Apply or Cancel. If the file changed after planning, Docmancer reports a conflict and leaves it untouched.
+
+If an action genuinely needs one clarification, the reply remains attached to the original request instead of becoming a new read-only question. Docmancer will not keep asking clarification questions in a loop. A short reply such as `ok` or `yes` never applies a pending proposal; use its Apply control.
+
+Broad machine-wide requests such as “forget this old project everywhere” use `shared/canonical-exclusions.md`. The file contains precise literal evidence-path and text filters. Reconciliation then removes matching evidence from generated Shared Memory without editing or deleting the underlying repository, instruction file, or agent-owned memory.
 
 ## Choose the retrieval profile
 
@@ -249,11 +255,10 @@ docmancer cloud sync
 
 ## Requirements
 
-Docmancer supports Python 3.11, 3.12, and 3.13. If `pipx` selects Python 3.14, choose a supported interpreter:
+Docmancer supports Python 3.11, 3.12, and 3.13. The install command above pins the interpreter because `pipx` otherwise selects the newest Python it can find, including 3.14, which this package does not support. If an install already went wrong, check it with:
 
 ```bash
-pipx install docmancer --python python3.13
 docmancer doctor
 ```
 
-For detailed commands, architecture, supported sources, Cloud boundaries, and troubleshooting, see the [wiki](./wiki/Home.md).
+For detailed commands, architecture, supported sources, Cloud boundaries, and troubleshooting, see the [wiki](https://github.com/docmancer/docmancer/blob/main/wiki/Home.md). Full documentation lives at [docmancer.dev/docs](https://docmancer.dev/docs/getting-started).

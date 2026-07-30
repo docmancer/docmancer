@@ -12,6 +12,11 @@ from typing import Any
 
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+_EXPLICIT_MACHINE_MUTATION_RE = re.compile(
+    r"\b(?:remember|save|update|edit|move|duplicate|delete|remove|forget|trash|restore)\b"
+    r".*\b(?:shared memory|canonical memory|machine[- ]wide|global(?:ly)?|all memory files)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _now() -> str:
@@ -236,6 +241,15 @@ class AskHistoryStore:
                 """,
                 (identifier,),
             ).fetchone()
+            recent_users = connection.execute(
+                """
+                SELECT content FROM ask_messages
+                WHERE conversation_id=? AND role='user' AND status='complete'
+                ORDER BY rowid DESC
+                LIMIT 20
+                """,
+                (identifier,),
+            ).fetchall()
         result: dict[str, Any] = {
             "pending_action": self._action(pending) if pending is not None else None,
             "clarification_request": None,
@@ -247,8 +261,18 @@ class AskHistoryStore:
             metadata = json.loads(str(assistant["metadata_json"] or "{}"))
         except json.JSONDecodeError:
             return result
-        if metadata.get("action_kind") == "clarification":
-            result["clarification_request"] = str(metadata.get("action_request") or "").strip() or None
+        if metadata.get("action_kind") in {"clarification", "unavailable"}:
+            request = str(metadata.get("action_request") or "").strip()
+            if not request and metadata.get("action_kind") == "unavailable":
+                request = next(
+                    (
+                        str(row["content"]).strip()
+                        for row in recent_users
+                        if _EXPLICIT_MACHINE_MUTATION_RE.search(str(row["content"]))
+                    ),
+                    "",
+                )
+            result["clarification_request"] = request or None
             result["clarification_count"] = int(metadata.get("action_clarification_count") or 1)
         return result
 

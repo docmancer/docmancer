@@ -4,7 +4,12 @@ import pytest
 
 from docmancer.harness.secrets import redact_secrets
 from docmancer.memory.atomic import AtomicMemoryEntry
-from docmancer.memory.laptop import LaptopMemoryReconciler, migrate_canonical_scaffold
+from docmancer.memory.laptop import (
+    CANONICAL_EXCLUSIONS_PATH,
+    LaptopMemoryReconciler,
+    migrate_canonical_scaffold,
+    parse_canonical_exclusions,
+)
 from docmancer.memory.tree.parser import parse_tree_file
 from docmancer.memory.tree.store import TreeStore
 
@@ -125,6 +130,78 @@ def test_reconcile_writes_stable_laptop_files_and_is_idempotent(tmp_path):
     projects = (tmp_path / "home" / "tree" / "projects" / "active.md").read_text()
     assert str(project) in projects
     assert "active local agent-memory product" in projects
+
+
+def test_canonical_exclusion_file_withholds_projects_without_touching_sources(tmp_path):
+    token_tape = tmp_path / "repos" / "token_tape"
+    pets = tmp_path / "repos" / "wecasa-for-pets"
+    docmancer = tmp_path / "repos" / "docmancer"
+    atoms = [
+        _atom(
+            "token-tape",
+            "TokenTape is a tokenized equities product.",
+            "decision",
+            source_path=str(token_tape / "AGENTS.md"),
+            scope_kind="project",
+            project_path=str(token_tape),
+        ),
+        _atom(
+            "pets",
+            "The pet marketplace targets behavioural experts.",
+            "decision",
+            source_path=str(pets / "memory.md"),
+            scope_kind="project",
+            project_path=str(pets),
+        ),
+        _atom(
+            "docmancer",
+            "Docmancer is the active memory product.",
+            "decision",
+            source_path=str(docmancer / "AGENTS.md"),
+            scope_kind="project",
+            project_path=str(docmancer),
+        ),
+    ]
+    root = tmp_path / "home"
+    TreeStore(root / "tree").write(
+        relative_path=CANONICAL_EXCLUSIONS_PATH,
+        text=(
+            "# Canonical memory exclusions\n\n"
+            "These rules affect generated Shared Memory only.\n\n"
+            "## Evidence path contains\n\n"
+            "- token_tape\n"
+            "- wecasa-for-pets\n\n"
+            "## Text contains\n"
+        ),
+        memory_type="constraint",
+        scope="global",
+        expect="absent",
+    )
+    reconciler = LaptopMemoryReconciler(_Agent(atoms), root=root)
+
+    result = reconciler.reconcile(use_provider=False)
+    projects = (root / "tree" / "projects" / "active.md").read_text()
+
+    assert result["changed"] is True
+    assert "TokenTape" not in projects
+    assert "pet marketplace" not in projects
+    assert "Docmancer is the active memory product" in projects
+    assert (token_tape / "AGENTS.md").as_posix() not in projects
+
+
+def test_canonical_exclusion_parser_is_case_insensitive_and_literal():
+    rules = parse_canonical_exclusions(
+        "# Canonical memory exclusions\n\n"
+        "## Evidence path contains\n\n"
+        "- `Token_Tape`\n\n"
+        "## Text contains\n\n"
+        "- Pet Marketplace\n"
+    )
+
+    assert rules == {
+        "evidence_path_contains": ("token_tape",),
+        "text_contains": ("pet marketplace",),
+    }
 
 
 def test_provider_failure_falls_back_per_section_without_blocking(tmp_path, monkeypatch):

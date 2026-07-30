@@ -8,7 +8,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 
-Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `delivery`, and `timeline` to inspect recurring cross-agent memory, delivery proof, and canonical changes. When the user explicitly asks to remember or manage durable context, use Ask to prepare one complete-file proposal and apply it only after explicit authorisation. Direct `write`, `edit`, or `move` commands remain available and existing files require current content hashes. Use `docmancer docs ...` for documentation.
+Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `delivery`, and `timeline` to inspect recurring cross-agent memory, delivery proof, and canonical changes. When the user explicitly asks to remember or manage durable context, use Ask to prepare one complete-file proposal and apply it only after explicit authorisation. One clarification continues the same action request, while `yes` or `ok` never executes a proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` and leave source repositories and agent-owned memory unchanged. Direct `write`, `edit`, or `move` commands remain available and existing files require current content hashes. Use `docmancer docs ...` for documentation.
 
 ## Workflow
 

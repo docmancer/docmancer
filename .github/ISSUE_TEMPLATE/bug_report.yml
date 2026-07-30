@@ -1,0 +1,78 @@
+name: Bug report
+description: Something in the CLI, MCP server, local web app, or an agent integration does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        Docmancer indexes real project memory, so please redact anything private
+        before pasting output. Never paste API keys or credentials.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+      placeholder: I ran `docmancer ask "..."` and it returned no evidence, but the decision is in my project memory.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence of commands that shows the problem.
+      value: |
+        1.
+        2.
+        3.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `docmancer doctor`
+      description: This reports your version, interpreter, profile, and configuration health. Redact any paths you would rather not share.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Retrieval profile
+      options:
+        - local (default)
+        - scale (Qdrant + FastEmbed)
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.3 (Apple Silicon), Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: agents
+    attributes:
+      label: Coding agents involved
+      placeholder: Claude Code, Codex, Cursor
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output or traceback
+      description: Paste the error. Remove memory content, file paths, and credentials you do not want public.
+      render: shell
+    validations:
+      required: false

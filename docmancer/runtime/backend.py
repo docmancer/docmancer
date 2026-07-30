@@ -2559,15 +2559,20 @@ class LocalRuntime:
                     "model": action_result.get("model"),
                 }
                 result["action"] = action_result.get("proposal")
-                result["action_kind"] = action_result.get("kind")
+                action_kind = str(action_result.get("kind") or "")
+                result["action_kind"] = action_kind
+                retryable_action = action_kind == "clarification" or (
+                    action_kind == "unavailable"
+                    and action_clarification_count == 0
+                )
                 result["action_request"] = (
                     continued_request or task
-                    if action_result.get("kind") == "clarification"
+                    if retryable_action
                     else None
                 )
                 result["action_clarification_count"] = (
                     action_clarification_count + 1
-                    if action_result.get("kind") == "clarification"
+                    if retryable_action
                     else 0
                 )
         return result

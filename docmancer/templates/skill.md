@@ -28,6 +28,8 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 Read-only Ask reads the latest committed index. When a generation provider is configured, it produces grounded prose by default after retrieval. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Pass `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `--fresh` only when the task must wait for changed agent sources to be indexed first.
 
+A reply to one action clarification continues the original request. Do not treat it as a new read-only question. Never interpret `yes` or `ok` as approval to execute a stored proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` to filter generated Shared Memory; they never edit the underlying repository or agent-owned source memory.
+
 ```bash
 docmancer ask "what deployment decisions apply?"
 docmancer ask "how did this policy change?" --history

@@ -47,7 +47,6 @@ function canonical(view: ViewKey): CanonicalView {
 
 export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
   const view = canonical(initialView);
-  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [dark, setDark] = useState(() => typeof window !== "undefined" && (
     window.localStorage.getItem("docmancer-theme") === "dark"
@@ -58,7 +57,7 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
   useEffect(() => {
-    establishSession().then(() => setReady(true)).catch((reason) => setError(messageOf(reason)));
+    establishSession().catch((reason) => setError(messageOf(reason)));
   }, []);
 
   const toggleTheme = () => {
@@ -82,13 +81,6 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
           </Link>
         )}
       </nav>
-      <div className="sidebar-lower">
-      <SidebarCloudCard active={ready}/>
-      <div className="sidebar-note">
-        <ShieldCheck size={15}/>
-        <div><strong>Private by default</strong><span>Everything here runs on 127.0.0.1.</span></div>
-      </div>
-      </div>
       <div className="secondary-nav">
         <Link href="/settings/" className={view === "settings" ? "nav-link active" : "nav-link"}><Settings size={17}/>Settings</Link>
         <Link href="/help/" className={view === "help" ? "nav-link active" : "nav-link"}><CircleHelp size={17}/>Help</Link>
@@ -98,7 +90,6 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
       <header className="app-bar">
         <div className="page-path"><span>Docmancer</span><ChevronRight size={14}/><strong>{titleFor(view)}</strong></div>
         <div className="app-actions">
-          <span className="local-chip"><span/>Local session</span>
           <button className="icon-btn" onClick={toggleTheme} aria-label="Toggle theme">
             {dark ? <Sun size={16}/> : <Moon size={16}/>}
           </button>
@@ -175,17 +166,20 @@ function BackgroundJobs() {
   const label = labels[String(job.kind ?? "")] ?? "Docmancer is working";
   const completed = job.state === "completed";
   const failed = job.state === "failed";
+  const temporaryAsk = String(job.kind) === "memory.ask" && Boolean(objectAt(job, "result").temporary);
   const detail = failed
     ? String(job.error ?? "The background task failed.")
     : completed
       ? String(job.kind) === "context.refresh"
         ? "Shared memory is organised. Open Shared Memory to review the files."
         : String(job.kind) === "memory.ask"
-          ? "The answer is saved in this conversation."
+          ? temporaryAsk
+            ? "This temporary answer is not saved."
+            : "The answer is saved in this conversation."
         : "The background task completed."
       : "Running in the background. You can keep using Docmancer.";
   const title = completed && String(job.kind) === "memory.ask"
-    ? "Answer ready"
+    ? temporaryAsk ? "Temporary answer ready" : "Answer ready"
     : completed
       ? `${label} complete`
       : failed
@@ -204,16 +198,6 @@ function BackgroundJobs() {
   </aside>;
 }
 
-function SidebarCloudCard({ active }: { active: boolean }) {
-  const [cloud, setCloud] = useState<JsonMap>({});
-  useEffect(() => {
-    if (active) void apiGet("/api/v1/cloud").then(setCloud).catch(() => setCloud({}));
-  }, [active]);
-  return <a className="sidebar-cloud" href="/settings/?section=cloud">
-    <Cloud size={15}/><div><strong>{cloud.configured ? "Personal Sync connected" : "Keep memory in sync"}</strong><span>{cloud.configured ? "Manage devices and encrypted sync." : "Connect this device to start."}</span></div><ArrowRight size={13}/>
-  </a>;
-}
-
 function Page({ view }: { view: CanonicalView }) {
   if (view === "home") return <HomeView/>;
   if (view === "memory") return <SharedMemoryPage/>;
@@ -224,8 +208,14 @@ function Page({ view }: { view: CanonicalView }) {
 
 function HomeView() {
   const [setup, setSetup] = useState<JsonMap>({});
+  const [setupLoaded, setSetupLoaded] = useState(false);
+  const [setupUnavailable, setSetupUnavailable] = useState(false);
+  const [cloud, setCloud] = useState<JsonMap>({});
+  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [cloudUnavailable, setCloudUnavailable] = useState(false);
   const [conversations, setConversations] = useState<JsonMap[]>([]);
   const [activeConversation, setActiveConversation] = useState("");
+  const [conversationToDelete, setConversationToDelete] = useState<JsonMap | null>(null);
   const [temporary, setTemporary] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [question, setQuestion] = useState("");
@@ -242,14 +232,24 @@ function HomeView() {
     setConversations(rows(data.items));
   }, []);
   const load = useCallback(async () => {
-    try {
-      const [setupData, conversationData] = await Promise.all([
+    setSetupLoaded(false);
+    setSetupUnavailable(false);
+    setCloudLoaded(false);
+    setCloudUnavailable(false);
+    const [setupResult, conversationResult, cloudResult] = await Promise.allSettled([
         apiGet("/api/v1/agent/setup"),
         apiGet("/api/v1/ask/conversations?limit=60"),
-      ]);
-      setSetup(setupData);
-      setConversations(rows(conversationData.items));
-    } catch (reason) { setError(messageOf(reason)); }
+        apiGet("/api/v1/cloud"),
+    ]);
+    if (setupResult.status === "fulfilled") setSetup(setupResult.value);
+    else setSetupUnavailable(true);
+    if (conversationResult.status === "fulfilled") setConversations(rows(conversationResult.value.items));
+    if (cloudResult.status === "fulfilled") setCloud(cloudResult.value);
+    else setCloudUnavailable(true);
+    setSetupLoaded(true);
+    setCloudLoaded(true);
+    const failed = [setupResult, conversationResult].find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") setError(messageOf(failed.reason));
   }, []);
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
   useEffect(() => {
@@ -300,6 +300,7 @@ function HomeView() {
   };
   const deleteConversation = async (conversationId: string) => {
     if (busy) return;
+    setBusy("delete"); setError("");
     try {
       await apiMutation(
         `/api/v1/ask/conversations/${encodeURIComponent(conversationId)}`,
@@ -307,9 +308,12 @@ function HomeView() {
         "DELETE",
       );
       if (activeConversation === conversationId) newChat();
+      setConversationToDelete(null);
       await refreshConversations();
     } catch (reason) {
       setError(messageOf(reason));
+    } finally {
+      setBusy("");
     }
   };
 
@@ -397,13 +401,13 @@ function HomeView() {
 
   const integrations = rows(setup.items);
   const connected = integrations.filter((item) => item.integration_state === "connected" && !item.recall_setup_required);
-  const installed = integrations.filter((item) => Boolean(item.connected));
   const updates = integrations.filter((item) => item.action_kind === "automatic" && item.integration_state === "stale");
   const repairs = integrations.filter((item) => item.action_kind === "automatic" && item.integration_state === "partial");
   const automatic = integrations.filter((item) => item.action_kind === "automatic" && item.integration_state === "ready-to-connect");
   const recallSetup = integrations.filter((item) => item.action_kind === "automatic" && item.integration_state === "connected" && item.recall_setup_required);
-  const manual = integrations.filter((item) => item.action_kind === "manual");
+  const manual = integrations.filter((item) => item.action_kind === "manual" && item.detected);
   const attentionCount = automatic.length + recallSetup.length + updates.length + repairs.length + manual.length;
+  const showConnectionBanner = setupLoaded && !setupUnavailable && (attentionCount > 0 || connected.length === 0);
   const activeTitle = temporary
     ? "Temporary chat"
     : String(conversations.find((item) => item.id === activeConversation)?.title ?? "Ask Docmancer");
@@ -432,9 +436,9 @@ function HomeView() {
             ? `Finish ${String(manual[0].label)} setup`
             : "Manage connections";
   const suggestions = [
-    "What decisions have my agents made about this project?",
-    "What working preferences recur across my agents?",
-    "Remember that production releases require a smoke test",
+    { kind: "Ask", prompt: "What decisions have my agents made about this project?" },
+    { kind: "Ask", prompt: "What working preferences recur across my agents?" },
+    { kind: "Remember", prompt: "Remember that production releases require a smoke test" },
   ];
 
   return <div className="page home-page">
@@ -460,14 +464,14 @@ function HomeView() {
               </button>
               <button
                 className="chat-history-delete"
-                onClick={() => void deleteConversation(String(conversation.id))}
+                onClick={() => setConversationToDelete(conversation)}
                 aria-label={`Delete ${String(conversation.title ?? "conversation")}`}
               ><Trash2 size={13}/></button>
             </div>)}
           </div>
           <button className={temporary ? "temporary-chat active" : "temporary-chat"} onClick={() => newChat(true)}>
             <ShieldCheck size={14}/>
-            <span><strong>Temporary chat</strong><small>Nothing is saved</small></span>
+            <span><strong>Temporary chat</strong><small>This chat is not saved</small></span>
           </button>
           <button className="chat-history-close" onClick={() => setHistoryOpen(false)}>
             <PanelLeftClose size={15}/>Close history
@@ -475,25 +479,36 @@ function HomeView() {
         </aside>
         {historyOpen && <button className="chat-history-scrim" aria-label="Close conversation history" onClick={() => setHistoryOpen(false)}/>}
         <section className="chat-main">
+        <div className="chat-top">
         <header className="chat-header">
           <button className="history-toggle" onClick={() => setHistoryOpen(true)} aria-label="Open conversation history">
             <PanelLeftOpen size={17}/>
           </button>
-          <div className="agent-avatar small"><WizardLogo/></div>
           <div className="chat-header-copy">
-            <span className="eyebrow">Your private memory agent</span>
-            <h1>Ask Docmancer</h1>
-            <p><span>{temporary ? "Temporary chat" : activeConversation ? "Current conversation" : "New conversation"}</span>{activeConversation || temporary ? activeTitle : "What do your agents know?"}</p>
+            <h1>{activeConversation || temporary ? activeTitle : "Ask Docmancer"}</h1>
           </div>
+          <button className="secondary-btn chat-customize" onClick={() => setModal("agent")} aria-label="Customise Docmancer">
+            <Sparkles size={14}/><span>Customise</span>
+          </button>
           {(messages.length > 0 || activeConversation || temporary) && <button className="secondary-btn chat-reset" onClick={() => newChat()}><Plus size={14}/>New chat</button>}
         </header>
+        {showConnectionBanner && <div className="connection-banner">
+          <span className="connection-banner-icon"><Command size={15}/></span>
+          <div><strong>{connectionStatus}</strong><span>Connect your coding agents so they can use the same memory.</span></div>
+          <button className="secondary-btn" onClick={() => setModal("setup")} aria-label={connectionAction}><span>{connectionAction}</span><ArrowRight size={14}/></button>
+        </div>}
+        </div>
         <div ref={chatThreadRef} className={messages.length ? "chat-thread" : "chat-thread empty"}>
           {!messages.length && <div className="chat-welcome">
             <div className="chat-welcome-mark"><WizardLogo/></div>
-            <h2>What do your agents know?</h2>
+            <h2>Ask what your agents already know</h2>
             <p>Ask across their memory, instructions, decisions, and project notes, or request one complete-file memory update for approval. Docmancer keeps the source evidence attached.</p>
             <div className="chat-suggestions">{suggestions.map((suggestion) =>
-              <button key={suggestion} onClick={() => void askQuestion(suggestion)}><Sparkles size={14}/><span>{suggestion}</span><ArrowRight size={14}/></button>
+              <button key={suggestion.prompt} className={suggestion.kind.toLowerCase()} onClick={() => void askQuestion(suggestion.prompt)}>
+                {suggestion.kind === "Ask" ? <Sparkles size={14}/> : <FileText size={14}/>}
+                <span className="suggestion-copy"><small>{suggestion.kind}</small><span>{suggestion.prompt}</span></span>
+                <ArrowRight size={14}/>
+              </button>
             )}</div>
           </div>}
           {messages.map((turn) => <div className={`chat-turn ${turn.role}`} key={turn.id}>
@@ -531,7 +546,7 @@ function HomeView() {
             rows={2}
           />
           <div className="chat-composer-footer">
-            <span><ShieldCheck size={13}/>{temporary ? "Temporary, not saved" : "Conversation saved locally"}</span>
+            <span><ShieldCheck size={13}/>{temporary ? "Temporary chat, not saved" : "Conversation saved locally"}</span>
             <button className="chat-send" aria-label="Send message" disabled={busy === "ask" || !question.trim()}>
               {busy === "ask" ? <LoaderCircle className="spin" size={17}/> : <ArrowRight size={17}/>}
             </button>
@@ -542,33 +557,40 @@ function HomeView() {
       </article>
 
       <aside className="home-rail">
-      <article className="feature-card agent-card">
-        <div className="rail-card-heading"><div className="feature-icon plum"><Sparkles size={18}/></div><div><span className="eyebrow">Your agent</span><h2>Docmancer</h2></div></div>
-        <p>Set its instructions, answer style, and model.</p>
-        <button className="agent-customize-btn" onClick={() => setModal("agent")}>Customise Docmancer <ArrowRight size={14}/></button>
-      </article>
-      <article className="feature-card connect-card">
-        <div className="rail-card-heading"><div className="feature-icon mint"><Command size={18}/></div><div><span className="eyebrow">Agent connections</span><h2>Share the same memory</h2></div></div>
-        <div className="connection-summary">
-          <span><strong>{installed.length}</strong> installed</span>
-          <span className={attentionCount ? "attention" : "ready"}>{connectionStatus}</span>
+      <section className={`home-cloud-card${cloud.configured ? " connected" : ""}${cloudUnavailable ? " unavailable" : ""}`} aria-busy={!cloudLoaded}>
+        {!cloudLoaded ? <div className="home-cloud-loading" aria-label="Loading Docmancer Cloud status"><span/><span/><span/></div> : <>
+        <div className="cloud-card-intro">
+          <span className="cloud-mark"><Cloud size={18}/></span>
+          <div>
+            <span className="eyebrow">{cloudUnavailable ? "Cloud status unavailable" : cloud.configured ? "Docmancer Cloud connected" : "Optional Docmancer Cloud"}</span>
+            <h2>{cloud.configured ? "Your memory goes beyond this machine" : "Take your memory beyond this machine"}</h2>
+            <p>{cloudUnavailable ? "Open Cloud settings to check this device." : cloud.configured ? "Personal Sync is connected. Manage encrypted continuity and Team from one place." : "The complete local product stays free. Paid plans add encrypted continuity and coordination."}</p>
+          </div>
         </div>
-        <button className="primary-btn wide" onClick={() => setModal("setup")}>{connectionAction} <ArrowRight size={15}/></button>
-      </article>
-      <article className="feature-card canonical-card">
-        <div className="rail-card-heading"><div className="feature-icon blue"><BrainCircuit size={18}/></div><div><span className="eyebrow">Canonical files</span><h2>Shared Memory</h2></div></div>
-        <p>See how machine and project memory are arranged, then inspect how each agent accesses it.</p>
-        <Link className="primary-btn wide" href="/memory/">Open Shared Memory <ArrowRight size={15}/></Link>
-      </article>
-      <section className="home-cloud-card">
-        <div><span className="eyebrow">Optional Docmancer Cloud</span><h2>Carry shared memory beyond this machine</h2><p>Local memory stays free. Pay for encrypted continuity and coordination.</p></div>
-        <a href="/settings/?section=cloud"><Cloud size={16}/><span><strong>Personal Sync</strong><small>History, devices, and recovery</small></span><ArrowRight size={14}/></a>
-        <a href="/settings/?section=cloud"><ShieldCheck size={16}/><span><strong>Team</strong><small>Approved shared memory</small></span><ArrowRight size={14}/></a>
+        <div className="cloud-benefits">
+          <div><Cloud size={16}/><span><strong>Personal Sync</strong><small>History, devices, and recovery</small></span></div>
+          <div><ShieldCheck size={16}/><span><strong>Team</strong><small>Approved shared context</small></span></div>
+        </div>
+        <a className="cloud-cta" href="/settings/?section=cloud">{cloud.configured ? "Manage Cloud" : cloudUnavailable ? "Open Cloud settings" : "Explore Docmancer Cloud"}<ArrowRight size={15}/></a>
+        </>}
       </section>
       </aside>
     </section>
     {modal === "agent" && <Modal title="Customise Docmancer" subtitle="This is the one agent humans interact with in the web UI." close={() => setModal("")}><AgentEditor onSaved={() => { setModal(""); void load(); }}/></Modal>}
     {modal === "setup" && <Modal title="Connect Docmancer" subtitle="Index local memory, install skills, and optionally add recall hooks." close={() => setModal("")}><SetupFlow initial={setup} onComplete={() => { setModal(""); void load(); }}/></Modal>}
+    {conversationToDelete && <Modal title="Delete this conversation?" subtitle="This cannot be undone." close={() => { if (!busy) setConversationToDelete(null); }}>
+      <div className="delete-conversation-modal">
+        <div className="delete-conversation-summary">
+          <span><Trash2 size={16}/></span>
+          <div><small>Conversation</small><strong>{String(conversationToDelete.title ?? "Untitled conversation")}</strong></div>
+        </div>
+        <p>All messages in this conversation will be removed from this device. Shared Memory will not be changed.</p>
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={() => setConversationToDelete(null)} disabled={Boolean(busy)}>Cancel</button>
+          <button type="button" className="danger-btn" onClick={() => void deleteConversation(String(conversationToDelete.id))} disabled={Boolean(busy)}>{busy === "delete" ? "Deleting…" : "Delete permanently"}</button>
+        </div>
+      </div>
+    </Modal>}
   </div>;
 }
 

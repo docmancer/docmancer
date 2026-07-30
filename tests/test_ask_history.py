@@ -38,6 +38,39 @@ def test_ask_history_persists_messages_and_metadata(tmp_path) -> None:
     assert detail["messages"][1]["evidence"][0]["title"] == "Architecture"
 
 
+def test_failed_legacy_action_recovers_last_explicit_machine_request(tmp_path) -> None:
+    store = AskHistoryStore(
+        tmp_path / "ask.sqlite3",
+        project_id="project-1",
+        project_label="Project",
+    )
+    conversation = store.create_conversation()
+    _, first_answer = store.begin_exchange(
+        conversation["id"],
+        "Remove TokenTape and pet projects from Shared Memory globally.",
+    )
+    store.complete_answer(
+        conversation["id"],
+        first_answer,
+        "The action target was refused.",
+        metadata={"action_kind": "unavailable", "action_request": None},
+    )
+    _, second_answer = store.begin_exchange(conversation["id"], "remove them now")
+    store.complete_answer(
+        conversation["id"],
+        second_answer,
+        "The action target was refused again.",
+        metadata={"action_kind": "unavailable", "action_request": None},
+    )
+
+    context = store.pending_action_context(conversation["id"])
+
+    assert context["clarification_request"] == (
+        "Remove TokenTape and pet projects from Shared Memory globally."
+    )
+    assert context["clarification_count"] == 1
+
+
 def test_ask_history_is_project_scoped_and_deletion_cascades(tmp_path) -> None:
     path = tmp_path / "ask.sqlite3"
     first = AskHistoryStore(path, project_id="project-1", project_label="One")

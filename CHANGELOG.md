@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 
 - **Shared Memory modal layout.** The add-memory dialog now keeps its explanatory subtitle clear of the divider.
+- **Temporary Ask status is truthful.** A completed temporary chat now confirms that its answer was not saved, instead of showing the saved-conversation message.
+- **Workbench interaction polish.** Cloud actions no longer touch, opening a Shared Memory file gives immediate feedback, the Ask composer no longer stacks competing borders and shadows, and the conversation-deletion confirmation clearly names what is removed and what remains unchanged.
 
 ## [0.9.4] - 2026-07-29
 ### Added

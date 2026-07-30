@@ -12,9 +12,11 @@ from pydantic import BaseModel, Field
 
 from docmancer.harness.secrets import redact_secrets
 from docmancer.memory.laptop import (
+    CANONICAL_EXCLUSIONS_PATH,
     CANONICAL_SECTION_PATHS,
     LaptopMemoryReconciler,
     laptop_memory_root,
+    validate_canonical_exclusions,
 )
 from docmancer.memory.tree.journal import DecisionJournal
 from docmancer.memory.tree.parser import parse_tree_file
@@ -40,7 +42,7 @@ _MUTATION_RE = re.compile(
     re.IGNORECASE,
 )
 _MACHINE_RE = re.compile(
-    r"\b(machine[- ]wide|global|all projects|every project|across projects|"
+    r"\b(machine[- ]wide|global(?:ly)?|all projects|every project|across projects|"
     r"my preference|i prefer|about me|my profile|my career)\b",
     re.IGNORECASE,
 )
@@ -48,6 +50,10 @@ _PROJECT_RE = re.compile(
     r"\b(this project|this repo|this repository|current project|current repo|"
     r"project decision|project workflow|release workflow|deployment decision)\b",
     re.IGNORECASE,
+)
+_CANONICAL_FORGET_RE = re.compile(
+    r"\b(?:delete|remove|forget|trash)\b.*\b(?:shared|canonical|generated|machine|global)",
+    re.IGNORECASE | re.DOTALL,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}", re.IGNORECASE)
 
@@ -86,6 +92,11 @@ def _scope_hint(task: str) -> str | None:
     if machine == project:
         return None
     return "machine" if machine else "project"
+
+
+def _canonical_forget_request(task: str, scope_hint: str | None) -> bool:
+    """Recognize a broad generated-memory removal, never a source-file delete."""
+    return scope_hint == "machine" and bool(_CANONICAL_FORGET_RE.search(task or ""))
 
 
 def _safe_markdown(text: str, *, label: str) -> str:
@@ -228,6 +239,22 @@ class MemoryActionEngine:
 
         candidates = self._candidates(task)
         hint = _scope_hint(task)
+        canonical_forget = _canonical_forget_request(task, hint)
+        exclusion = None
+        if canonical_forget:
+            exclusion = next(
+                (
+                    row
+                    for row in self._entries()
+                    if row["scope"] == "machine"
+                    and row["path"] == CANONICAL_EXCLUSIONS_PATH
+                ),
+                None,
+            )
+            if exclusion is not None and all(
+                row["address"] != exclusion["address"] for row in candidates
+            ):
+                candidates.append(exclusion)
         exact_scopes = {
             str(row["scope"])
             for row in candidates
@@ -273,11 +300,18 @@ class MemoryActionEngine:
             ),
             "rules": [
                 "Return exactly one action or one clarification.",
+                "scope_hint is authoritative when present; never ask the user to repeat that scope.",
                 "Use only a supplied target_address for existing files.",
                 "Generated sections permit pin only.",
                 "For create, edit, or pin, markdown is the complete proposed body or complete pinned zone.",
                 "Move and duplicate stay within one scope.",
                 "Never interpret yes or approval as an action.",
+                (
+                    "A broad request to remove topics or projects from generated machine-wide "
+                    f"Shared Memory without touching source files must create or edit "
+                    f"{CANONICAL_EXCLUSIONS_PATH}. Use headings '## Evidence path contains' "
+                    "and '## Text contains', with one literal case-insensitive substring per bullet."
+                ),
             ],
             "allowed_project_folders": PROJECT_FOLDERS,
             "allowed_machine_folders": MACHINE_FOLDERS,
@@ -294,10 +328,30 @@ class MemoryActionEngine:
             ],
             "trash": self._trash_candidates(),
             "recent_conversation": list(history or [])[-6:],
+            "canonical_exclusion_target": (
+                {
+                    "scope": "machine",
+                    "path": CANONICAL_EXCLUSIONS_PATH,
+                    "address": exclusion["address"] if exclusion is not None else None,
+                    "required_operation": "edit" if exclusion is not None else "create",
+                }
+                if canonical_forget
+                else None
+            ),
         }
         try:
             draft = planner.parse(
-                [{"role": "system", "content": json.dumps(prompt, ensure_ascii=False)}],
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Plan exactly one safe Shared Memory file action from the supplied "
+                            "request and constraints. Do not answer the request as a question. "
+                            "Do not ask for information the request or scope_hint already supplies."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                ],
                 MemoryActionDraft,
                 temperature=0.0,
                 max_tokens=4096,
@@ -321,6 +375,15 @@ class MemoryActionEngine:
                 provider=provider,
                 model=model,
             ).model_dump()
+        if canonical_forget:
+            draft.scope = "machine"
+            draft.path = CANONICAL_EXCLUSIONS_PATH
+            if exclusion is None:
+                draft.operation = "create"
+                draft.target_address = None
+            else:
+                draft.operation = "edit"
+                draft.target_address = str(exclusion["address"])
         try:
             proposal = self._validate_draft(draft, safe_candidates)
         except ValueError as exc:
@@ -363,6 +426,8 @@ class MemoryActionEngine:
                 raise ValueError("create needs an unambiguous scope")
             path = _allowed_path(scope, path)
             after = _safe_markdown(str(draft.markdown or ""), label="proposed memory")
+            if path == CANONICAL_EXCLUSIONS_PATH:
+                validate_canonical_exclusions(after)
             if (self._store(scope).root / path).exists():
                 raise ValueError("the proposed create path already exists")
         elif operation == "restore":
@@ -378,12 +443,14 @@ class MemoryActionEngine:
             path = str(target["path"])
             after = str(target["markdown"])
         else:
+            requested_path = path
             target = by_address.get(address)
             if target is None:
                 raise ValueError("the action target is not one of the allowed current files")
             scope = str(target["scope"])
             before = str(target["markdown"])
-            path = str(target["path"])
+            current_path = str(target["path"])
+            path = current_path
             expected_hash = str(target["content_hash"])
             generated = str(target.get("generated_section") or "")
             if generated and operation != "pin":
@@ -397,8 +464,10 @@ class MemoryActionEngine:
             elif operation == "edit":
                 before = _safe_markdown(before, label="existing memory")
                 after = _safe_markdown(str(draft.markdown or ""), label="proposed memory")
+                if current_path == CANONICAL_EXCLUSIONS_PATH:
+                    validate_canonical_exclusions(after)
             elif operation in {"move", "duplicate"}:
-                path = _allowed_path(scope, path)
+                path = _allowed_path(scope, requested_path)
 
         before_path = (
             None if operation in {"create", "restore"}
@@ -451,6 +520,14 @@ class MemoryActionEngine:
         expected_hash = str(proposal.get("expected_hash") or "")
         path = str(proposal.get("path") or "")
 
+        def finish(result: dict[str, Any]) -> dict[str, Any]:
+            if scope == "machine" and path == CANONICAL_EXCLUSIONS_PATH:
+                result["canonical_reconcile"] = self._reconciler().reconcile(
+                    use_provider=False,
+                    force=True,
+                )
+            return result
+
         if operation == "pin":
             return self._reconciler().set_pinned(
                 str(proposal["section"]),
@@ -471,7 +548,7 @@ class MemoryActionEngine:
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {"address": entry.address, "path": path, "content_hash": entry.content_hash}
+            return finish({"address": entry.address, "path": path, "content_hash": entry.content_hash})
         if operation == "edit":
             entry = store.edit(
                 address,
@@ -480,7 +557,7 @@ class MemoryActionEngine:
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {"address": entry.address, "path": path, "content_hash": entry.content_hash}
+            return finish({"address": entry.address, "path": path, "content_hash": entry.content_hash})
         if operation == "move":
             entry = store.move(
                 address,

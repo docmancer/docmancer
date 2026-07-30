@@ -24,6 +24,8 @@ Docmancer combines automatically reconciled laptop-wide Shared Memory, curated p
 
 Read-only Ask reads the latest committed index and calls the configured answer provider by default when one is ready. It does not scan files or reconcile Shared Memory. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `docmancer ask "<the task>" --fresh` only when the task must wait for newly changed agent files.
 
+A reply to one action clarification continues the original request. Do not treat it as a new read-only question. Never interpret `yes` or `ok` as approval to execute a stored proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` to filter generated Shared Memory; they never edit the underlying repository or agent-owned source memory.
+
 ## Shared Memory scaffold
 
 `docmancer memory canonical` shows the laptop-wide memory shared by every agent on this machine. Its files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project memory belongs under `decisions/`, `constraints/`, `workflows/`, and `lessons/`. Choose the narrowest conventional folder instead of inventing a new top-level category.

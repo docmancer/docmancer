@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://docmancer.dev/docs/getting-started
+    about: Installation, agent integrations, retrieval profiles, and troubleshooting.
+  - name: Troubleshooting guide
+    url: https://docmancer.dev/docs/troubleshooting
+    about: Check this before filing a bug, especially for install and interpreter problems.
+  - name: Report a security vulnerability
+    url: https://github.com/docmancer/docmancer/security/advisories/new
+    about: Please report security issues privately rather than as a public issue.

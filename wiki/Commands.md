@@ -5,7 +5,7 @@ The current command surface is organised by outcome. Bare `docmancer` shows the 
 ## Normal workflow
 
 ```bash
-pipx install docmancer
+pipx install docmancer --python python3.13
 docmancer setup
 cd /path/to/project
 docmancer web
@@ -40,6 +40,10 @@ Read-only Ask is retrieval first and generation second. The provider receives th
 Explicit memory-management language routes to the action planner. It supports one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` action per request. The provider drafts the intended complete-file result in one structured call, while Docmancer supplies and validates paths, hashes, scope, diffs, destructive status, and execution. The CLI confirmation defaults to No. `--apply` conflicts with `--read-only` and `--no-answer`.
 
 Project creates are limited to `decisions/`, `constraints/`, `workflows/`, and `lessons/`. Machine-wide creates are limited to `profile/`, `principles/`, `projects/`, and `shared/`. Ambiguous scope or target produces a clarification instead of a proposal. Cross-scope moves and duplicates are refused. Generated canonical sections accept pin proposals only.
+
+A reply to an action clarification continues the original mutation request. Docmancer permits one clarification round, then refuses another clarification instead of looping. Typing `yes`, `ok`, or another confirmation in chat does not apply a pending action.
+
+For a broad machine-wide forget request, Docmancer proposes `shared/canonical-exclusions.md`. Its literal path and text filters remove matching evidence from generated Shared Memory during reconciliation. They never edit source repositories, agent instructions, or agent-owned memory files.
 
 ## Curated Shared Memory
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 
 from starlette.testclient import TestClient
 
 from docmancer.web.app import create_app
+from docmancer.web.ask_history import AskHistoryStore
 from docmancer.web.security import MAX_REQUEST_BYTES
 
 
@@ -14,6 +16,7 @@ class FakeRuntime:
 
     def __init__(self) -> None:
         self.added: list[tuple[str, str]] = []
+        self.ask_calls: list[dict] = []
         self.capture = {"codex": True, "claude-code": False}
         self.agent = {
             "name": "Docmancer",
@@ -290,6 +293,7 @@ class FakeRuntime:
         on_delta=None,
         **_kwargs,
     ) -> dict:
+        self.ask_calls.append({"task": task, **_kwargs})
         evidence = {"title": "Railway release", "source_path": "/memory/release.md", "authority": "advisory"}
         curated = {"title": "Release", "address": "docmancer://memory/one", "authority": "project"}
         result = {
@@ -325,6 +329,40 @@ class FakeRuntime:
                 "provider": None,
                 "model": None,
             }
+        elif _kwargs.get("action_enabled") and (
+            task.startswith("Remove ") or _kwargs.get("pending_action_request")
+        ):
+            if not _kwargs.get("pending_action_request"):
+                result["answer"] = {
+                    "text": "Should this affect machine-wide or project memory?",
+                    "provider": "test",
+                    "model": "test",
+                }
+                result["action_kind"] = "clarification"
+                result["action_request"] = task
+                result["action_clarification_count"] = 1
+            else:
+                result["answer"] = {
+                    "text": "I prepared one exclusion proposal.",
+                    "provider": "test",
+                    "model": "test",
+                }
+                result["action_kind"] = "proposal"
+                result["action"] = {
+                    "operation": "create",
+                    "scope": "machine",
+                    "target": "shared/canonical-exclusions.md",
+                    "path": "shared/canonical-exclusions.md",
+                    "before_markdown": "",
+                    "after_markdown": (
+                        "# Canonical memory exclusions\n\n"
+                        "## Evidence path contains\n\n- token_tape\n"
+                    ),
+                    "diff": "+- token_tape\n",
+                    "rationale": "Withhold TokenTape from generated Shared Memory.",
+                    "destructive": False,
+                    "status": "pending",
+                }
         return result
 
     async def execute_memory_action(self, proposal: dict, *, actor_surface: str) -> dict:
@@ -839,6 +877,131 @@ def test_temporary_ask_does_not_create_conversation_history(tmp_path: Path) -> N
         assert mutation.json().get("action") is None
         assert "Start a saved conversation" in mutation.json()["answer"]["text"]
         assert client.get("/api/v1/ask/conversations").json()["items"] == []
+
+
+def test_action_clarification_continues_into_one_proposal_without_q_and_a_loop(
+    tmp_path: Path,
+) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        first = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "Remove TokenTape from Shared Memory",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        second = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "Only machine-wide Shared Memory, never source files",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+
+        assert first.status_code == 200
+        assert first.json()["action_kind"] == "clarification"
+        assert second.status_code == 200
+        assert second.json()["action"]["path"] == "shared/canonical-exclusions.md"
+        assert runtime.ask_calls[-1]["pending_action_request"] == (
+            "Remove TokenTape from Shared Memory"
+        )
+
+
+def test_referential_retry_recovers_original_request_after_legacy_refusal(
+    tmp_path: Path,
+) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        resolved_project = Path(runtime.project_path).expanduser().resolve()
+        history = AskHistoryStore(
+            tmp_path / "ask.sqlite3",
+            project_id=hashlib.sha256(str(resolved_project).encode()).hexdigest()[:16],
+            project_label=resolved_project.name,
+        )
+        _, answer_id = history.begin_exchange(
+            conversation_id,
+            "Remove TokenTape and pet projects from Shared Memory globally.",
+        )
+        history.complete_answer(
+            conversation_id,
+            answer_id,
+            "The action target was refused.",
+            metadata={"action_kind": "unavailable", "action_request": None},
+        )
+
+        response = client.post(
+            "/api/v1/ask",
+            json={"task": "remove them now", "conversation_id": conversation_id},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"]["path"] == "shared/canonical-exclusions.md"
+        assert runtime.ask_calls[-1]["pending_action_request"] == (
+            "Remove TokenTape and pet projects from Shared Memory globally."
+        )
+
+
+def test_chat_confirmation_never_applies_a_pending_action_or_calls_provider(
+    tmp_path: Path,
+) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        proposed = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "Update the release decision.",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        ).json()["action"]
+        calls_before = len(runtime.ask_calls)
+        confirmation = client.post(
+            "/api/v1/ask",
+            json={"task": "ok", "conversation_id": conversation_id},
+            headers=headers,
+        )
+
+        assert confirmation.status_code == 200
+        assert "Use Apply" in confirmation.json()["answer"]["text"]
+        assert len(runtime.ask_calls) == calls_before
+        assert not hasattr(runtime, "executed_action")
+        assert client.get(
+            f"/api/v1/ask/conversations/{conversation_id}",
+        ).json()["messages"][-3]["action"]["id"] == proposed["id"]
 
 
 def test_saved_ask_action_is_applied_from_server_side_proposal(tmp_path: Path) -> None:

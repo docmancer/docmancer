@@ -5,10 +5,44 @@ build-backend = "hatchling.build"
 [project]
 name = "docmancer"
 dynamic = ["version"]
-description = "Compress local documentation context for coding agents."
+description = "Local-first memory for AI coding agents: find what Claude Code, Codex, and Cursor already know, then share it with every agent."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
+keywords = [
+    "ai",
+    "ai-agents",
+    "coding-agents",
+    "agent-memory",
+    "ai-memory",
+    "memory",
+    "claude-code",
+    "codex",
+    "cursor",
+    "mcp",
+    "llm",
+    "rag",
+    "retrieval",
+    "context-engineering",
+    "local-first",
+    "cli",
+    "documentation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.2.1",
@@ -53,6 +87,13 @@ dev = [
 embeddings-voyage = ["voyageai>=0.2.0"]
 embeddings-openai = ["openai>=1.0.0"]
 embeddings-cohere = ["cohere>=5.0.0"]
+
+[project.urls]
+Homepage = "https://docmancer.dev"
+Documentation = "https://docmancer.dev/docs/getting-started"
+Repository = "https://github.com/docmancer/docmancer"
+Changelog = "https://github.com/docmancer/docmancer/blob/main/CHANGELOG.md"
+Issues = "https://github.com/docmancer/docmancer/issues"
 
 [project.scripts]
 "docmancer" = "docmancer.cli.__main__:cli"

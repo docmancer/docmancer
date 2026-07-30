@@ -46,6 +46,10 @@ Explicit mutation requests use the shared memory-action service. It retrieves bo
 
 Apply rechecks the captured content hash and refuses stale edits instead of rebasing. Successful mutations invalidate Shared Memory caches immediately and queue a rebuild of the disposable Library index. Applied actions remain in the append-only mutation journal even if their Ask conversation is later deleted.
 
+Action clarification is conversation state, not ordinary Ask prose. The saved assistant turn retains the original mutation request and clarification count, so the next user reply continues the same planning request. One repeated clarification is refused instead of starting a question loop. Confirmation-only chat messages never execute a pending action.
+
+Generated canonical sections still derive from read-only agent evidence. A broad machine-wide forget request creates or edits `shared/canonical-exclusions.md`, whose literal case-insensitive path and text rules filter evidence before section selection. Applying that control file triggers an immediate deterministic reconciliation. Source repositories and agent-owned memory files remain unchanged.
+
 Docs retrieval remains a separate user-facing surface even though it shares parts of the local indexing engine.
 
 The deterministic CLI and packaged localhost workbench are the supported local surfaces. The former Textual TUI was removed, and the Electron desktop application is shelved. Neither a new TUI nor Electron work is part of the workbench release gates.

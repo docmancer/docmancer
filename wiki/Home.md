@@ -12,7 +12,7 @@ It discovers existing memory without rewriting the source files, keeps provenanc
 ## Normal workflow
 
 ```bash
-pipx install docmancer
+pipx install docmancer --python python3.13
 docmancer setup
 cd /path/to/your-project
 docmancer web
