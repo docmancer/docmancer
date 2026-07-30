@@ -56,7 +56,9 @@ The canonical memory keeps the main things that should follow you between agents
 └── lessons/
 ```
 
-Setup, explicit memory sync, and supported lifecycle capture reconcile changed evidence. Ask and web startup only read the latest committed index, so the browser shell appears immediately and memory loading continues in the background. If a configured AI provider is ready, Docmancer can merge and compress redacted evidence during reconciliation. If no provider is ready, or the provider fails, deterministic local rules produce the same stable files without blocking memory.
+Setup, explicit memory sync, and supported lifecycle capture reconcile changed evidence. Read-only Ask and web startup read the latest committed index. They do not scan files, rebuild embeddings, reconcile Shared Memory, or make maintenance-provider calls on the request path. The browser shell therefore appears immediately and queues changed-source maintenance in the background. An explicit request to remember, edit, move, duplicate, delete, or restore memory is different: Ask uses one structured provider call to prepare one complete-file proposal, then waits for approval.
+
+When a generation provider is configured, reconciliation may send redacted evidence to it for synthesis. Deterministic local rendering remains the fallback when no provider is ready or a request fails.
 
 `web` opens a loopback-only app for the current project. Its main pages each have one purpose:
 
@@ -73,11 +75,23 @@ Claude Desktop requires a manual skill upload. Other supported integrations can 
 docmancer ask "Why did we choose Railway?"
 ```
 
-Docmancer reads the current index and returns a bounded result with relevant project policy, curated memory, supporting agent evidence, and citations. When a generation provider is configured, Ask calls it by default to turn that evidence into grounded prose. Use `--no-answer` for evidence only, or `--fresh` when the question must wait for changed agent files to be indexed first.
+Docmancer reads the current index and returns a bounded result with mandatory policy, Shared Memory, supporting agent evidence, and stable citations. When a generation provider is configured, Ask calls it by default after retrieval to turn that evidence into grounded prose. The provider never chooses what enters the evidence bundle. Use `--no-answer` for evidence only, or `--fresh` when the question must first wait for changed agent files to be indexed.
 
 ```bash
 docmancer ask "What changed in our release process?" --no-answer
 ```
+
+Ask can also prepare one complete-file Shared Memory action:
+
+```bash
+docmancer ask "Remember that production releases require a smoke test"
+docmancer ask "Update decisions/release.md to require two reviewers" --apply
+docmancer ask "Forget the old Railway decision" --read-only
+```
+
+In an interactive terminal, Docmancer prints the complete proposal and diff, then asks once with No as the default. `--apply` is required for non-interactive execution. `--read-only` disables action planning, and `--json` returns `action` and `result` without applying unless it is combined with `--apply`. Typing “yes” in a later message never authorises a stored proposal.
+
+The same approval flow appears as an action card in saved web conversations. Temporary chats remain read-only. The proposal is stored locally, every existing-file action is hash guarded, and the browser submits only Apply or Cancel. If the file changed after planning, Docmancer reports a conflict and leaves it untouched.
 
 ## Choose the retrieval profile
 
@@ -91,11 +105,13 @@ It uses SQLite FTS5, sqlite-vec, and the bundled Model2Vec model. For sustained 
 
 ```bash
 pipx install "docmancer[embeddings-heavy]"
-docmancer qdrant start
+docmancer qdrant up
 docmancer setup --profile scale
 ```
 
 The scale profile uses Qdrant, FastEmbed dense embeddings, sparse SPLADE retrieval, lexical search, and reciprocal-rank fusion. It also keeps extracted content in SQLite instead of creating two inspectable files per source. Qdrant helps with vector filtering, concurrent writes, and operational headroom. It does not fix poor source coverage, unstable retrieval units, or weak evaluation, which are handled separately by versioned sources, stable token-aware units, and retrieval benchmarks.
+
+Both profiles implement the same memory semantics and public relevance contract. Switching profiles changes storage, embeddings, sparse retrieval, and operational capacity. It does not change authority, lifecycle, provenance, conflict handling, or what counts as Shared Memory.
 
 ## Browse Shared Memory
 
@@ -113,6 +129,16 @@ docmancer agent install claude-code --hooks
 ```
 
 Installed skills teach agents when to ask Docmancer for prior decisions and how to write deliberate project memory when you explicitly request it. Recall hooks provide a bounded view of the shared laptop memory and relevant project evidence automatically. Supported lifecycle hooks capture durable session conclusions and reconcile them without creating a per-item approval queue.
+
+MCP is an alternative transport over the same local services:
+
+```bash
+pipx install "docmancer[mcp]"
+docmancer mcp install codex
+docmancer mcp doctor
+```
+
+The MCP server exposes memory recall, canonical-memory reads, guarded writes, delivery inspection, decision history, and separate documentation search. It does not create a second memory store.
 
 ## Keep a decision deliberately
 
@@ -144,7 +170,9 @@ Import copies Markdown into the project inbox. Docmancer never rewrites or moves
 | --- | --- |
 | `docmancer setup` | Discover agent memory and connect supported coding agents. |
 | `docmancer web` | Open the local human interface for the current project. |
-| `docmancer ask "..."` | Recall curated memory and supporting agent evidence. |
+| `docmancer ask "..."` | Recall evidence, answer questions, or prepare one approved Shared Memory action. |
+| `docmancer ask "..." --apply` | Apply one validated action without a confirmation prompt. |
+| `docmancer ask "..." --read-only` | Force question answering without memory-action planning. |
 | `docmancer common` | Show knowledge recorded independently by several agents. |
 | `docmancer delivery` | Show installed integrations, recall state, and recent use. |
 | `docmancer timeline` | Show how curated memory changed. |
@@ -155,6 +183,9 @@ Import copies Markdown into the project inbox. Docmancer never rewrites or moves
 | `docmancer import ./notes` | Copy arbitrary Markdown into the project inbox. |
 | `docmancer status` | Show local memory, source, security, integration, and Cloud health. |
 | `docmancer doctor` | Diagnose installation and configuration problems. |
+| `docmancer providers list` | Inspect optional generation and embedding providers. |
+| `docmancer docs query "..."` | Search the separate technical-documentation index. |
+| `docmancer qdrant status` | Inspect the optional scale-profile vector service. |
 | `docmancer cloud sync` | Sync optional client-encrypted revisions. |
 
 Run `docmancer --help` or `docmancer <command> --help` for exact arguments.
@@ -169,6 +200,25 @@ docmancer docs query "How do I parametrize a fixture?"
 ```
 
 Use `ask` for your decisions, preferences, rules, and agent evidence. Use `docs query` for libraries, APIs, and vendor documentation.
+
+## Optional AI generation and distillation
+
+Local indexing, retrieval, Shared Memory files, and deterministic reconciliation do not require an AI provider. Configure one when you want grounded prose from Ask or provider-assisted synthesis:
+
+```bash
+docmancer providers key openrouter
+docmancer providers set openrouter --default --model <model-id>
+docmancer providers test openrouter
+```
+
+The legacy `context refresh` compatibility surface can build a revisioned generated artifact. Provider-backed builds group independent topics into bounded structured requests, run those batches concurrently, cache unchanged topics, preserve conflicts, and fall back to deterministic rendering per failed batch. The default operator target is eight seconds, although provider latency and corpus size can still make a build slower:
+
+```bash
+docmancer context refresh --dry-run
+docmancer context refresh --provider openrouter --model <model-id>
+```
+
+Shared Memory is the primary product surface. Generated Context revisions remain available for existing workflows, comparison, rollback, and adoption into curated memory.
 
 ## Local privacy and optional Cloud
 

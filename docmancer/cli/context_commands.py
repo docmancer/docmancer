@@ -25,13 +25,13 @@ def _emit(value) -> None:
     "context",
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Build, inspect, deliver, and recover consolidated local Context.",
+    short_help="Manage legacy revisioned Context artifacts.",
 )
 def context_group() -> None:
-    """Manage the deterministic, revisioned Context artifact."""
+    """Compatibility surface for generated Context revisions. Shared Memory is the primary product surface."""
 
 
-@context_group.command("status", cls=DocmancerCommand)
+@context_group.command("status", cls=DocmancerCommand, short_help="Show the latest legacy Context revision.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--json", "as_json", is_flag=True)
 def context_status(project_path: Path | None, as_json: bool) -> None:
@@ -59,7 +59,7 @@ def context_status(project_path: Path | None, as_json: bool) -> None:
     click.echo(f"Freshness: {len(stale)} stale cluster(s)")
 
 
-@context_group.command("show", cls=DocmancerCommand)
+@context_group.command("show", cls=DocmancerCommand, short_help="Read one legacy Context revision.")
 @click.argument("revision_id", required=False)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--json", "as_json", is_flag=True)
@@ -76,7 +76,7 @@ def context_show(revision_id: str | None, project_path: Path | None, as_json: bo
         click.echo()
 
 
-@context_group.command("refresh", cls=DocmancerCommand)
+@context_group.command("refresh", cls=DocmancerCommand, short_help="Build a deterministic or provider-assisted Context revision.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--provider", type=click.Choice(("none", *provider_ids(capability="llm"))), default="none", show_default=True)
 @click.option("--model", default=None)
@@ -133,6 +133,12 @@ def context_refresh(
         click.echo(f"  estimated cost: ~${result['estimated_cost_usd']:.4f} (planning estimate)")
     else:
         click.echo(f"  provider calls: {result.get('provider_calls', 0)}")
+        if result.get("elapsed_seconds") is not None:
+            target_state = "met" if result.get("target_met") else "missed"
+            click.echo(
+                f"  distillation latency: {float(result['elapsed_seconds']):.2f}s "
+                f"({target_state} {float(result.get('target_seconds') or 0):.2f}s target)"
+            )
         if result.get("cost_usd") is not None:
             click.echo(f"  cost: ${float(result['cost_usd']):.6f}")
 
@@ -166,7 +172,7 @@ def context_refresh(
             click.echo(f"  conflicts preserved: {len(holdbacks)}")
 
 
-@context_group.command("diff", cls=DocmancerCommand)
+@context_group.command("diff", cls=DocmancerCommand, short_help="Compare two Context revisions.")
 @click.argument("left")
 @click.argument("right", required=False)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
@@ -193,7 +199,7 @@ def context_diff(left: str, right: str | None, project_path: Path | None) -> Non
     _emit(value)
 
 
-@context_group.command("rollback", cls=DocmancerCommand)
+@context_group.command("rollback", cls=DocmancerCommand, short_help="Append a revision that reinstates an older Context.")
 @click.argument("revision_id")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--yes", is_flag=True)
@@ -204,14 +210,14 @@ def context_rollback(revision_id: str, project_path: Path | None, yes: bool) -> 
     click.echo(f"Appended revision {value['revision_id']} reinstating {value['reinstates']}.")
 
 
-@context_group.command("excluded", cls=DocmancerCommand)
+@context_group.command("excluded", cls=DocmancerCommand, short_help="List evidence excluded from the latest Context revision.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 def context_excluded(project_path: Path | None) -> None:
     latest = _engine(project_path).latest()
     _emit((latest or {}).get("excluded") or [])
 
 
-@context_group.command("adopt", cls=DocmancerCommand)
+@context_group.command("adopt", cls=DocmancerCommand, short_help="Adopt one generated topic into curated project memory.")
 @click.argument("cluster_id")
 @click.option("--into", "destination", default=None)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
@@ -227,7 +233,7 @@ def context_adopt(
     _emit(_engine(project_path).adopt(cluster_id, destination=destination))
 
 
-@context_group.command("retire", cls=DocmancerCommand)
+@context_group.command("retire", cls=DocmancerCommand, short_help="Retire a generated topic and prevent recreation.")
 @click.argument("cluster_id")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--yes", is_flag=True)
@@ -237,7 +243,7 @@ def context_retire(cluster_id: str, project_path: Path | None, yes: bool) -> Non
     _emit(_engine(project_path).retire(cluster_id))
 
 
-@context_group.command("projection", cls=DocmancerCommand)
+@context_group.command("projection", cls=DocmancerCommand, short_help="Inspect a bounded compatibility projection for one agent.")
 @click.option("--agent", required=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 @click.option("--token-budget", type=click.IntRange(100, 100_000), default=None)
@@ -259,12 +265,12 @@ def context_projection(
     if as_json:
         _emit(value)
     elif not value.get("available"):
-        click.echo("No Context projection is available.")
+        click.echo("No compatibility Context projection is available.")
     else:
         click.echo(Path(value["baseline"]["path"]).read_text(encoding="utf-8"))
 
 
-@context_group.command("delivery", cls=DocmancerCommand)
+@context_group.command("delivery", cls=DocmancerCommand, short_help="Show compatibility Context delivery state.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False))
 def context_delivery(project_path: Path | None) -> None:
     from docmancer.memory.delivery import delivery_matrix, inspect_hook_status

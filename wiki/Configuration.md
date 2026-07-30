@@ -11,7 +11,7 @@ A fresh install uses a fully local retrieval stack:
 - `retrieval.profile: local`, selecting the zero-daemon stack.
 - `retrieval.default_mode: hybrid`, combining lexical and dense retrieval and degrading to lexical when vector retrieval is unavailable.
 
-The rebuildable memory index uses its own database under `~/.docmancer/memory.db` with co-located graph tables and a vector file. The automatically reconciled laptop-wide memory lives under `~/.docmancer/tree/`, with reconciliation manifests and revisions under `~/.docmancer/state/laptop-memory/`. Durable personal records use `~/.docmancer/memories/`, canonical record revisions use `~/.docmancer/memories/.revisions/`, tombstones use `~/.docmancer/memory-tombstones.json`, and team records use `<repo>/.docmancer/memory/`. Reconciliation uses the configured generation provider when it is ready, then falls back to deterministic local rules. The docs index uses the configured `index.db_path`.
+The rebuildable memory index uses `~/.docmancer/memory.db`, with graph and retrieval metadata alongside its indexed evidence. The automatically reconciled laptop-wide Shared Memory lives under `~/.docmancer/tree/`, with reconciliation manifests and revisions under `~/.docmancer/state/laptop-memory/`. Project Shared Memory lives under `<project>/.docmancer/tree/`. Older record packs, revisions, tombstones, and team records remain available for compatibility. Reconciliation uses the configured generation provider when it is ready, then falls back to deterministic local rules. The docs index uses the configured `index.db_path`.
 
 ## Common environment variables
 
@@ -81,23 +81,13 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 | `embeddings.model` | `minishlab/potion-base-8M` | Dense model id. |
 | `embeddings.dimensions` | `256` | Dense vector dimensions. Must match the model. |
 | `embeddings.batch_size` | `64` | Provider batch size for `embed(texts)`. |
-| `embeddings.cache` | `~/.docmancer/embeddings-cache/` | Disk cache for embedded chunks. |
+| `embeddings.cache` | `~/.docmancer/embeddings-cache/` | Content-addressed cache root. New writes use one SQLite cache; older per-vector files remain readable. |
 
 ### Retrieval
 
 | Key | Default | What it controls |
 |-----|---------|------------------|
 | `retrieval.default_mode` | `hybrid` | `lexical`, `dense`, `sparse`, or `hybrid`. |
-
-### AI Context distillation
-
-| Key | Default | What it controls |
-|-----|---------|------------------|
-| `distillation.max_concurrency` | `16` | Maximum provider batches in flight at once. |
-| `distillation.topics_per_request` | `16` | Independent topics combined into one structured provider call. |
-| `distillation.max_input_tokens` | `24000` | Maximum estimated evidence tokens in one provider batch. |
-| `distillation.target_seconds` | `8` | Wall-clock target recorded in each build manifest. Provider latency can still exceed it. |
-| `distillation.model` | unset | Optional lower-latency model used only for distillation. |
 | `retrieval.fusion.method` | `rrf` | `rrf` or `weighted_rrf`. |
 | `retrieval.fusion.rrf_k` | `60` | RRF rank-discount constant. |
 | `retrieval.fusion.weights` | `{}` | Per-source weights for `weighted_rrf`. |
@@ -115,8 +105,12 @@ Do not put real keys in `docmancer.yaml`. Store generation credentials from the 
 | `distillation.max_concurrency` | `16` | Maximum concurrent provider batches. |
 | `distillation.topics_per_request` | `16` | Independent topics synthesized in one provider request. |
 | `distillation.max_input_tokens` | `24000` | Approximate input ceiling per provider batch. |
+| `distillation.automatic_job_budget_usd` | `0.25` | Maximum estimated provider spend for one automatic job. |
+| `distillation.automatic_daily_budget_usd` | `1.00` | Maximum estimated automatic provider spend per day. |
 | `distillation.target_seconds` | `8` | Operator latency target reported with build status. |
-| `distillation.model` | unset | Optional Context-specific generation model. |
+| `distillation.model` | unset | Optional lower-latency model used for generated Context distillation. |
+
+Provider-backed generated Context groups independent topics into structured batches, runs up to `max_concurrency` batches in parallel, reuses per-topic caches, and falls back to deterministic rendering for failed batches. The target is an operator goal, not a provider service-level guarantee.
 
 ### Discovery
 
@@ -154,7 +148,7 @@ The default stack needs no provider keys. These settings are for explicit opt-in
 
 | Use case | Variables or config |
 |----------|---------------------|
-| Grounded answers and AI Context | Choose a provider and model in Settings or with `docmancer providers set`, then store a key with `docmancer providers key`. |
+| Grounded answers and generated Context | Choose a provider and model in Settings or with `docmancer providers set`, then store a key with `docmancer providers key`. |
 | Cloud embeddings | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VOYAGE_API_KEY`, or `COHERE_API_KEY`, depending on `embeddings.provider`. |
 | FTS5-only operation | `DOCMANCER_AUTO_VECTORS=0`; the hidden one-release ingest alias also retains `--no-vectors`. |
 | FastEmbed cache override | `DOCMANCER_FASTEMBED_CACHE_DIR`. |
@@ -164,7 +158,7 @@ The supported shortcut configures the complete heavy stack:
 
 ```bash
 pipx install "docmancer[embeddings-heavy]"
-docmancer qdrant start
+docmancer qdrant up
 docmancer setup --profile scale
 ```
 
@@ -190,6 +184,6 @@ Qdrant is the scale path, not an accuracy shortcut. It improves filtered vector 
 ## Notes
 
 - Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
-- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Ask and web startup do not scan agent files or rewrite indexes. Use `docmancer memory sync`, a supported capture hook, or `docmancer ask --fresh` when a refresh is required.
+- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Ask and web startup do not synchronously scan agent files, rewrite indexes, reconcile Shared Memory, or call maintenance providers. Use setup, supported lifecycle capture, explicit canonical refresh, the web background job, or `docmancer ask --fresh` when maintenance is required.
 - If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.
 - Provider model catalogs are cached locally. Providers with discovery endpoints refresh their generation-capable models in the background; maintained catalogs and custom model IDs remain available when live discovery is unavailable.

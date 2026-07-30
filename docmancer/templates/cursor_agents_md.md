@@ -2,13 +2,13 @@
 
 # docmancer
 
-Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Use Docs only for third-party libraries, APIs, and vendor references.
+Docmancer maintains laptop-wide Shared Memory, project memory, and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Ask uses the configured answer provider by default when one is ready; use `--no-answer` for evidence only. Use Docs only for third-party libraries, APIs, and vendor references.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
 **All commands below use `docmancer` as shorthand for the full executable path above.**
 
-Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `delivery`, and `timeline` to inspect recurring cross-agent memory, delivery proof, and canonical changes. When the user explicitly asks to remember or manage durable context, use `write`, `edit`, or `move` with current content hashes. Use `docmancer docs ...` for documentation.
+Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `delivery`, and `timeline` to inspect recurring cross-agent memory, delivery proof, and canonical changes. When the user explicitly asks to remember or manage durable context, use Ask to prepare one complete-file proposal and apply it only after explicit authorisation. Direct `write`, `edit`, or `move` commands remain available and existing files require current content hashes. Use `docmancer docs ...` for documentation.
 
 ## Workflow
 
@@ -21,6 +21,7 @@ Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `
 ## Core Commands
 
 - `docmancer ask "what decisions apply?" --agent cursor`
+- `docmancer ask "remember that releases require a smoke test" --agent cursor`
 - `docmancer common`
 - `docmancer delivery`
 - `docmancer timeline`
@@ -46,6 +47,6 @@ Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `
 
 ## Common Mistakes
 
-- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
-- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
+- Use `docmancer docs add` for both local documentation and URLs.
+- Use root `docmancer import` only for Markdown intended for memory curation.
 - Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.

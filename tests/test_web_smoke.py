@@ -16,6 +16,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import docmancer.web as web_package
+from docmancer.web.api import LOCAL_API_VERSION
 from docmancer.web.app import create_app
 
 STATIC_DIR = Path(web_package.__file__).parent / "static"
@@ -82,7 +83,8 @@ def test_packaged_bundle_boots_and_serves_the_real_dashboard(tmp_path: Path) -> 
 
 def test_hashed_static_asset_from_manifest_is_served(tmp_path: Path) -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert manifest.get("local_api_version") == 8
+
+    assert manifest.get("local_api_version") == LOCAL_API_VERSION
     files = manifest.get("files", {})
     asset = next(
         (name for name in files if name.endswith((".js", ".css", ".svg", ".woff2", ".png"))),
@@ -111,4 +113,5 @@ def test_live_api_answers_after_authentication(tmp_path: Path) -> None:
 
         capabilities = client.get("/api/v1/capabilities")
         assert capabilities.status_code == 200
-        assert capabilities.json()["api_version"] == 8
+        assert capabilities.json()["api_version"] == LOCAL_API_VERSION
+        assert "memory-actions" in capabilities.json()["capabilities"]["ask"]

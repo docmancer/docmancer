@@ -151,12 +151,17 @@ export function SharedMemoryWorkbench() {
 
   const inspectAgent = async (agent: JsonMap) => {
     const id = String(agent.agent ?? agent.id ?? "");
-    setProjection({ loading: true, agent: id, label: agent.label ?? id });
+    const selection = { ...agent, agent: id, label: agent.label ?? id };
+    if (agent.integration_mode !== "managed-projection" || !agent.projection_path) {
+      setProjection({ ...selection, available: false });
+      return;
+    }
+    setProjection({ ...selection, loading: true });
     try {
       const result = await apiGet(`/api/v1/agents/${encodeURIComponent(id)}/projection`);
-      setProjection({ ...result, agent: id, label: agent.label ?? id });
+      setProjection({ ...selection, ...result });
     } catch (reason) {
-      setProjection({ agent: id, label: agent.label ?? id, error: messageOf(reason) });
+      setProjection({ ...selection, error: messageOf(reason) });
     }
   };
 
@@ -224,7 +229,7 @@ export function SharedMemoryWorkbench() {
       </section>
 
       <aside className="agent-reach-panel">
-        <header><span className="eyebrow">Available to agents</span><h2>Who can use it</h2><p>Inspect the exact bounded projection for each connected coding agent.</p></header>
+        <header><span className="eyebrow">Available to agents</span><h2>Who can use it</h2><p>See whether each agent uses automatic recall, an installed skill, or a managed projection.</p></header>
         {agentLoading ? <AgentSkeleton/> : delivery.length ? <div className="agent-reach-list">{delivery.map((agent, index) => {
           const connected = agent.integration_state === "connected";
           return <button key={String(agent.agent ?? agent.id ?? index)} onClick={() => void inspectAgent(agent)}>
@@ -328,8 +333,38 @@ function AddMemory({ close, saved }: { close: () => void; saved: () => void }) {
 
 function ProjectionModal({ value, close }: { value: JsonMap; close: () => void }) {
   const projection = (value.projection && typeof value.projection === "object" ? value.projection : {}) as JsonMap;
-  return <Modal title={`${String(value.label ?? value.agent)} memory preview`} subtitle="The bounded text this agent receives, not a copy of every file." close={close}>
-    {value.loading ? <AgentSkeleton/> : value.error ? <Notice kind="error">{String(value.error)}</Notice> : value.available === false ? <div className="projection-empty"><Radio size={20}/><h3>No projection has been built yet</h3><p>The agent can still query shared memory through the Docmancer skill. Start a new session after setup to record delivery.</p></div> : <div className="projection-preview">
+  const connected = value.integration_state === "connected";
+  const automaticRecall = Boolean(value.recall_hook) || value.integration_mode === "hook";
+  const managedProjection = value.integration_mode === "managed-projection";
+  const lastDelivery = value.last_successful_recall
+    ? new Date(String(value.last_successful_recall)).toLocaleString()
+    : "Not observed yet";
+  const emptyTitle = automaticRecall
+    ? "Automatic recall is active"
+    : connected
+      ? "Docmancer skill is installed"
+      : managedProjection
+        ? "Managed projection is unavailable"
+        : "Memory delivery is not connected";
+  const emptyDescription = automaticRecall
+    ? `${String(value.label ?? value.agent)} receives a bounded, task-relevant memory bundle when a session starts or a prompt needs it. It does not use one fixed projection file.`
+    : connected
+      ? `${String(value.label ?? value.agent)} can query Shared Memory on demand through the installed Docmancer skill. It does not use one fixed projection file.`
+      : managedProjection
+        ? "Docmancer expected a managed projection file, but it could not be previewed."
+        : "Run setup to connect this coding agent to Shared Memory.";
+  return <Modal title={`${String(value.label ?? value.agent)} memory delivery`} subtitle="How this agent receives Shared Memory." close={close}>
+    {value.loading ? <AgentSkeleton/> : value.error ? <Notice kind="error">{String(value.error)}</Notice> : value.available === false ? <div className="projection-empty">
+      <span className={`projection-delivery-icon ${connected ? "connected" : ""}`}>{connected ? <Check size={16}/> : <Radio size={16}/>}</span>
+      <span className="eyebrow">Delivery mode</span>
+      <h3>{emptyTitle}</h3>
+      <p>{emptyDescription}</p>
+      {connected && <div className="projection-delivery-facts">
+        <span><small>Integration</small><strong>Connected</strong></span>
+        <span><small>Last delivery</small><strong>{lastDelivery}</strong></span>
+      </div>}
+    </div> : <div className="projection-preview">
+      <span className="eyebrow">Current managed projection</span>
       <div className="projection-metrics"><span><strong>{Number(projection.token_estimate ?? 0).toLocaleString()}</strong>estimated tokens</span><span><strong>{Number(projection.token_budget ?? 0).toLocaleString()}</strong>token budget</span></div>
       <pre>{String(value.rendered ?? "")}</pre>
     </div>}

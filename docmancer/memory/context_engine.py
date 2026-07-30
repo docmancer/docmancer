@@ -1473,6 +1473,9 @@ class ContextEngine:
             "cache_hits": cache_hits,
             "provider_calls": manifest["cost_estimate"]["provider_calls"],
             "cost_usd": manifest["cost_estimate"]["provider_cost_usd"],
+            "elapsed_seconds": manifest["cost_estimate"]["elapsed_seconds"],
+            "target_seconds": manifest["cost_estimate"]["target_seconds"],
+            "target_met": manifest["cost_estimate"]["target_met"],
             "stale_cluster_ids": stale_cluster_ids,
         }
 

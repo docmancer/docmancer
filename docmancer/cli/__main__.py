@@ -84,14 +84,14 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.option("--config", "config_path", default=None, hidden=True, help="Path to docmancer.yaml.")
 @click.pass_context
 def cli(ctx, config_path: str | None):
-    """Index and recall the memory your coding agents already wrote, locally. Docs retrieval runs on the same engine."""
+    """Share and recall the memory your coding agents already wrote, with separate docs retrieval. Everything runs locally unless you choose a provider or Cloud."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
 
-@click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the local browser application.")
+@click.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Open the loopback-only Shared Memory workbench.")
 @click.option("--port", type=click.IntRange(0, 65535), default=0, show_default="automatic")
 @click.option("--no-open", is_flag=True, help="Start the server without opening a browser.")
 @click.option(
@@ -110,7 +110,7 @@ def web_cmd(
     project_path: str | None,
     config_path: str | None,
 ) -> None:
-    """Open the full local Docmancer interface on a loopback-only server."""
+    """Serve the latest committed local state immediately, then refresh changed sources in the background."""
     if config_path is None and ctx.parent and ctx.parent.obj:
         config_path = ctx.parent.obj.get("config_path")
     from docmancer.memory.tree.project import ensure_project
@@ -129,9 +129,9 @@ def web_cmd(
     )
 
 
-@click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add, search, and manage documentation.")
+@click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Manage the separate technical-documentation index.")
 def docs_group() -> None:
-    """Manage the secondary local documentation retrieval index."""
+    """Add, search, refresh, and remove library, API, and vendor documentation without mixing it into memory."""
 
 
 docs_group.add_command(add_cmd, "add")
@@ -145,7 +145,10 @@ docs_group.add_command(doctor_cmd, "doctor")
 
 
 agent_group.add_command(install_cmd, "install")
-agent_group.add_command(remove_cmd, "remove")
+agent_remove_command = copy(remove_cmd)
+agent_remove_command.name = "remove"
+agent_remove_command.short_help = "Remove Docmancer recall or capture hooks from an agent."
+agent_group.add_command(agent_remove_command, "remove")
 
 
 def _add_hidden_root_command(command: click.Command, name: str) -> None:
@@ -167,11 +170,11 @@ cli.add_command(cloud_group, "cloud")
 cli.add_command(context_group, "context")
 brief_command = copy(memory_group.commands["digest"])
 brief_command.name = "brief"
-brief_command.short_help = "Create a focused brief from local agent memory."
+brief_command.short_help = "Generate a provider-backed brief from selected memory evidence."
 cli.add_command(brief_command, "brief")
 review_command = copy(memory_group.commands["review"])
 review_command.name = "review"
-review_command.short_help = "Review conflicts, duplicates, orphans, staleness, and proposals."
+review_command.short_help = "Review legacy record proposals and memory-index findings."
 cli.add_command(review_command, "review")
 cli.add_command(web_cmd, "web")
 cli.add_command(import_command, "import")

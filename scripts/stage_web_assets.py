@@ -10,6 +10,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from docmancer.web.api import LOCAL_API_VERSION
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = ROOT / "web" / "out"
@@ -39,7 +41,7 @@ def stage(source: Path, destination: Path) -> dict[str, object]:
         files = sorted(path for path in staged.rglob("*") if path.is_file())
         manifest: dict[str, object] = {
             "format": 1,
-            "local_api_version": 8,
+            "local_api_version": LOCAL_API_VERSION,
             "built_at": datetime.now(timezone.utc).isoformat(),
             "files": {
                 path.relative_to(staged).as_posix(): sha256(path)

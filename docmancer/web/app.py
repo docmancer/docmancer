@@ -202,6 +202,11 @@ def create_app(
         Route("/api/v1/harvest", api.harvest, methods=["POST"]),
         Route("/api/v1/curate", api.curate, methods=["POST"]),
         Route("/api/v1/ask", api.ask, methods=["POST"]),
+        Route(
+            "/api/v1/ask/actions/{action_id:str}",
+            api.ask_action,
+            methods=["POST"],
+        ),
         Route("/api/v1/ask/conversations", api.ask_conversations, methods=["GET", "POST"]),
         Route(
             "/api/v1/ask/conversations/{conversation_id:str}",

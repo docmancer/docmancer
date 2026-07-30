@@ -40,6 +40,7 @@ CANONICAL_SECTION_PATHS = {
     "active-projects": "projects/active.md",
     "canonical-memory": "README.md",
 }
+CANONICAL_EXCLUSIONS_PATH = "shared/canonical-exclusions.md"
 _PROFILE_PATH_MARKERS = (
     "/about/",
     "agent instructions",
@@ -163,6 +164,40 @@ def _normalise(text: str) -> str:
     return " ".join((text or "").casefold().split())
 
 
+def parse_canonical_exclusions(markdown: str) -> dict[str, tuple[str, ...]]:
+    """Parse the one curated control file that withholds canonical evidence."""
+    sections: dict[str, list[str]] = {
+        "evidence_path_contains": [],
+        "text_contains": [],
+    }
+    current: str | None = None
+    for raw_line in str(markdown or "").splitlines():
+        line = raw_line.strip()
+        heading = line.casefold()
+        if heading == "## evidence path contains":
+            current = "evidence_path_contains"
+            continue
+        if heading == "## text contains":
+            current = "text_contains"
+            continue
+        if not current or not line.startswith(("- ", "* ")):
+            continue
+        value = line[2:].strip().strip("`'\"").casefold()
+        if len(value) >= 3 and value not in sections[current]:
+            sections[current].append(value)
+    return {key: tuple(values) for key, values in sections.items()}
+
+
+def validate_canonical_exclusions(markdown: str) -> dict[str, tuple[str, ...]]:
+    rules = parse_canonical_exclusions(markdown)
+    if not any(rules.values()):
+        raise ValueError(
+            "canonical exclusions need at least one bullet under "
+            "'## Evidence path contains' or '## Text contains'"
+        )
+    return rules
+
+
 def _source(atom: AtomicMemoryEntry) -> str:
     path = str(atom.source_path or "").strip()
     if path:
@@ -274,8 +309,43 @@ class LaptopMemoryReconciler:
         except (OSError, json.JSONDecodeError):
             return {}
 
+    def _exclusion_rules(self) -> dict[str, tuple[str, ...]]:
+        path = self.tree_root / CANONICAL_EXCLUSIONS_PATH
+        entry = parse_tree_file(path) if path.is_file() else None
+        return (
+            parse_canonical_exclusions(entry.body)
+            if entry is not None
+            else {"evidence_path_contains": (), "text_contains": ()}
+        )
+
+    @staticmethod
+    def _excluded(
+        atom: AtomicMemoryEntry,
+        rules: dict[str, tuple[str, ...]],
+    ) -> bool:
+        evidence_path = " ".join(
+            (
+                str(atom.source_path or ""),
+                str(atom.project_path or ""),
+                str(atom.source_title or ""),
+            )
+        ).casefold()
+        text = " ".join((str(atom.text or ""), str(atom.source_title or ""))).casefold()
+        return any(
+            pattern in evidence_path
+            for pattern in rules.get("evidence_path_contains", ())
+        ) or any(
+            pattern in text
+            for pattern in rules.get("text_contains", ())
+        )
+
     def _sections(self) -> list[CanonicalSection]:
-        atoms = _dedupe(atom for atom in self.agent.indexed_atoms() if _eligible(atom))
+        rules = self._exclusion_rules()
+        atoms = _dedupe(
+            atom
+            for atom in self.agent.indexed_atoms()
+            if _eligible(atom) and not self._excluded(atom, rules)
+        )
         profile = []
         preferences = []
         principles = []
@@ -593,6 +663,7 @@ class LaptopMemoryReconciler:
             {
                 "schema_version": LAPTOP_MEMORY_SCHEMA_VERSION,
                 "evidence": evidence,
+                "canonical_exclusions": self._exclusion_rules(),
                 "provider": provider_fingerprint,
                 # Editing the self-description text alone changes no evidence, so
                 # without this every existing machine would keep the stale body.

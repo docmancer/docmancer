@@ -62,6 +62,49 @@ def test_codex_is_connected_without_requiring_a_delivery_receipt(tmp_path: Path)
     assert codex["last_successful_recall"] is None
     assert codex["action_kind"] == "automatic"
     assert codex["recall_setup_required"] is True
+    assert codex["integration_mode"] == "skill-or-cli"
+    assert codex["projection_path"] is None
+
+
+def test_codex_delivery_mode_and_projection_path_are_preserved(tmp_path: Path) -> None:
+    skill = tmp_path / ".codex" / "skills" / "docmancer" / "SKILL.md"
+    memory_skill = tmp_path / ".codex" / "skills" / "docmancer-memory" / "SKILL.md"
+    instructions = tmp_path / ".codex" / "AGENTS.md"
+    for path in (skill, memory_skill):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Docmancer\n", encoding="utf-8")
+    instructions.write_text(_managed_block(), encoding="utf-8")
+
+    codex = next(
+        row for row in inspect_integrations(
+            detected_targets=["codex"],
+            hook_rows=[],
+            delivery_rows=[{
+                "agent": "codex",
+                "integration_mode": "managed-projection",
+                "projection_path": "/tmp/codex-projection.md",
+            }],
+            home=tmp_path,
+        )
+        if row["id"] == "codex"
+    )
+
+    assert codex["integration_mode"] == "managed-projection"
+    assert codex["projection_path"] == "/tmp/codex-projection.md"
+
+
+def test_shared_memory_agent_modal_distinguishes_delivery_from_projection() -> None:
+    component = (
+        Path(__file__).resolve().parents[1]
+        / "web"
+        / "components"
+        / "shared-memory-workbench.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert 'agent.integration_mode !== "managed-projection"' in component
+    assert "Automatic recall is active" in component
+    assert "Docmancer skill is installed" in component
+    assert "No projection has been built yet" not in component
 
 
 def test_connected_codex_with_recall_but_no_capture_needs_automatic_memory_setup(tmp_path: Path) -> None:

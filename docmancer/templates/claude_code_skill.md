@@ -49,7 +49,7 @@ docmancer doctor
 
 ## Common Mistakes
 
-- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
-- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
+- Use `docmancer docs add` for both local documentation and URLs.
+- Use root `docmancer import` only for Markdown intended for memory curation.
 - Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.
 - Do not assume docs are indexed. Always verify with `docmancer docs list` before querying.

@@ -292,7 +292,7 @@ class FakeRuntime:
     ) -> dict:
         evidence = {"title": "Railway release", "source_path": "/memory/release.md", "authority": "advisory"}
         curated = {"title": "Release", "address": "docmancer://memory/one", "authority": "project"}
-        return {
+        result = {
             "answer": "Use Railway. [1]",
             "no_answer": False,
             "items": [curated, evidence],
@@ -303,6 +303,33 @@ class FakeRuntime:
             "task": task,
             "agent": agent,
         }
+        if _kwargs.get("action_enabled") and task.startswith("Update "):
+            result["answer"] = {"text": "I prepared one edit proposal.", "provider": "test", "model": "test"}
+            result["action"] = {
+                "operation": "edit",
+                "scope": "project",
+                "target": "docmancer://memory/one",
+                "address": "docmancer://memory/one",
+                "path": "decisions/release.md",
+                "expected_hash": "hash-1",
+                "before_markdown": "# Release\n",
+                "after_markdown": "# Release\n\nRun smoke tests.\n",
+                "diff": "+Run smoke tests.\n",
+                "rationale": "Add smoke tests.",
+                "destructive": False,
+                "status": "pending",
+            }
+        elif _kwargs.get("mutation_disabled_reason") and task.startswith("Remember "):
+            result["answer"] = {
+                "text": _kwargs["mutation_disabled_reason"],
+                "provider": None,
+                "model": None,
+            }
+        return result
+
+    async def execute_memory_action(self, proposal: dict, *, actor_surface: str) -> dict:
+        self.executed_action = {"proposal": proposal, "actor_surface": actor_surface}
+        return {"address": proposal["address"], "content_hash": "hash-2"}
 
     async def resolve_memory_conflict(self, identifier: str, resolution: str, *, winner: str | None = None) -> dict:
         return {"relation_id": identifier, "resolution": resolution, "winner": winner}
@@ -803,7 +830,162 @@ def test_temporary_ask_does_not_create_conversation_history(tmp_path: Path) -> N
         )
         assert answer.status_code == 200
         assert answer.json()["temporary"] is True
+        mutation = client.post(
+            "/api/v1/ask",
+            json={"task": "Remember this release decision", "temporary": True},
+            headers=headers,
+        )
+        assert mutation.status_code == 200
+        assert mutation.json().get("action") is None
+        assert "Start a saved conversation" in mutation.json()["answer"]["text"]
         assert client.get("/api/v1/ask/conversations").json()["items"] == []
+
+
+def test_saved_ask_action_is_applied_from_server_side_proposal(tmp_path: Path) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        answer = client.post(
+            "/api/v1/ask",
+            json={
+                "task": "Update the release decision.",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        assert answer.status_code == 200
+        action = answer.json()["action"]
+        assert action["status"] == "pending"
+
+        applied = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={"decision": "apply"},
+            headers=headers,
+        )
+        assert applied.status_code == 200
+        assert applied.json()["action"]["status"] == "applied"
+        assert runtime.executed_action["proposal"]["after_markdown"] == "# Release\n\nRun smoke tests.\n"
+
+        conversation = client.get(
+            f"/api/v1/ask/conversations/{conversation_id}",
+        ).json()
+        assert conversation["messages"][-1]["action"]["status"] == "applied"
+
+
+def test_ask_action_rejects_browser_supplied_executable_fields(tmp_path: Path) -> None:
+    client, app, runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        action = client.post(
+            "/api/v1/ask",
+            json={"task": "Update the release decision.", "conversation_id": conversation_id},
+            headers=headers,
+        ).json()["action"]
+        rejected = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={
+                "decision": "apply",
+                "after_markdown": "# Browser content must be rejected\n",
+            },
+            headers=headers,
+        )
+
+        assert rejected.status_code == 400
+        assert not hasattr(runtime, "executed_action")
+        assert client.get(
+            f"/api/v1/ask/conversations/{conversation_id}",
+        ).json()["messages"][-1]["action"]["status"] == "pending"
+
+
+def test_ask_action_requires_csrf_and_can_be_cancelled(tmp_path: Path) -> None:
+    client, app, _runtime = app_client(tmp_path)
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        action = client.post(
+            "/api/v1/ask",
+            json={"task": "Update the release decision.", "conversation_id": conversation_id},
+            headers=headers,
+        ).json()["action"]
+        rejected = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={"decision": "cancel"},
+        )
+        assert rejected.status_code == 403
+        cancelled = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={"decision": "cancel"},
+            headers=headers,
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["action"]["status"] == "cancelled"
+
+
+def test_ask_action_stale_hash_returns_409_with_current_hash(tmp_path: Path) -> None:
+    from docmancer.memory.tree.errors import StaleWriteError
+
+    client, app, runtime = app_client(tmp_path)
+
+    async def stale_action(_proposal, *, actor_surface):
+        assert actor_surface == "web-ask"
+        raise StaleWriteError(
+            "docmancer://memory/release",
+            "expected-hash",
+            "current-hash",
+        )
+
+    runtime.execute_memory_action = stale_action
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        action = client.post(
+            "/api/v1/ask",
+            json={"task": "Update the release decision.", "conversation_id": conversation_id},
+            headers=headers,
+        ).json()["action"]
+        conflict = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={"decision": "apply"},
+            headers=headers,
+        )
+
+        assert conflict.status_code == 409
+        assert conflict.json()["error"]["current_hash"] == "current-hash"
+        assert conflict.json()["action"]["status"] == "conflict"
 
 
 def test_streamed_ask_finishes_and_saves_without_an_open_event_stream(tmp_path: Path) -> None:

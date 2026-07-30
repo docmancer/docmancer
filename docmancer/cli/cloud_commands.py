@@ -371,7 +371,7 @@ def device() -> None:
     pass
 
 
-@device.command(cls=DocmancerCommand, hidden=True)
+@device.command(cls=DocmancerCommand, hidden=True, short_help="Approve a pending device after verifying its fingerprint.")
 @click.argument("device_id")
 @click.option("--fingerprint", required=True, help="Fingerprint confirmed out of band.")
 def approve(device_id: str, fingerprint: str) -> None:
@@ -414,7 +414,7 @@ def _approve_device(device_id: str, fingerprint: str) -> None:
         client.close()
 
 
-@device.command(cls=DocmancerCommand)
+@device.command(cls=DocmancerCommand, short_help="Revoke a device's future Cloud access.")
 @click.argument("device_id")
 @click.option("--yes", is_flag=True)
 def revoke(device_id: str, yes: bool) -> None:
@@ -495,7 +495,7 @@ def recovery() -> None:
     pass
 
 
-@recovery.command("create", cls=DocmancerCommand)
+@recovery.command("create", cls=DocmancerCommand, short_help="Create and upload a recovery wrapper.")
 def recovery_create() -> None:
     _create_recovery()
 
@@ -524,7 +524,7 @@ def _create_recovery() -> None:
     click.echo("Run `docmancer cloud recovery verify` before enrolling another device.")
 
 
-@recovery.command("verify", cls=DocmancerCommand)
+@recovery.command("verify", cls=DocmancerCommand, short_help="Verify a recovery key against the stored wrapper.")
 @click.option("--key", prompt=True, hide_input=True)
 def recovery_verify(key: str) -> None:
     _verify_recovery(key)

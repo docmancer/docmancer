@@ -14,15 +14,15 @@ Docmancer keeps three kinds of knowledge distinct because they have different le
 
 This material is attributable evidence, not automatically trusted truth. Docmancer retains the contributing agent, project, source, and update time, and excludes generated integration copies from recurrence analysis.
 
-## Curated memory and Context
+## Shared Memory and generated Context
 
-Curated memory is ordinary Markdown under `.docmancer/tree`. It is created deliberately, retains provenance, and uses stable addresses and content hashes.
+Project Shared Memory is ordinary Markdown under `<project>/.docmancer/tree`. The automatically reconciled laptop-wide tree is under `~/.docmancer/tree`. Both retain provenance and stable addresses. Guarded existing-file mutations use content hashes.
 
 Context is a separate revisioned output. It consolidates useful evidence into readable topics and can be built with a configured generation provider or through deterministic local clustering. Generated Context does not feed back into agent evidence or appear as curated memory.
 
 ## Documentation
 
-Documentation stays in a separate Library corpus. Connected agents can search it through the Docmancer skill or `docmancer docs query`, but it is not automatically injected into personal Context.
+Documentation stays in a separate Library corpus. Connected agents can search it through the Docmancer skill or `docmancer docs query`, but it is not automatically injected into Shared Memory or generated Context.
 
 | Source | Command |
 | --- | --- |

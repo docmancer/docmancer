@@ -1,106 +1,87 @@
 ---
 name: docmancer
-description: Search and query local documentation knowledge bases using docmancer CLI. Use when the user asks about third-party library docs, API references, vendor documentation, version-specific API behavior, GitBook or Mintlify public docs, offline or local doc search, or needs to ground agent responses in up-to-date external documentation.
-version: 0.4.6
+description: Recall and update source-attributed local agent memory, or search a separate local technical-documentation index.
+version: 0.9.4
 author: docmancer
 tags:
-  - documentation
+  - agent-memory
   - rag
   - local-first
-  - knowledge-base
+  - documentation
   - sqlite
 install: pipx install docmancer --python python3.13
 ---
 
 # docmancer
 
-Docmancer compresses documentation context so coding agents spend tokens on code, not on rereading raw docs. It ingests local files, fetches public docs, indexes everything locally with SQLite FTS5, and returns compact context packs with source attribution. The core retrieval path needs no API keys, vector database, hosted query API, or background daemon.
+Docmancer discovers memory, instructions, rules, and eligible session evidence written by local coding agents. It reconciles durable machine-wide knowledge into Shared Memory, keeps deliberate project memory as Markdown, and returns bounded cited evidence through the CLI or MCP. Technical documentation remains a separate Library corpus.
 
-**MIT open source.** The CLI runs locally and is intended for source-grounded documentation lookup.
-
-## When to Use
-
-- User asks about a third-party library, SDK, or API and you need accurate documentation.
-- User references docs from a public site, GitHub repository, or local files.
-- You need to verify version-specific API behavior or exact method signatures.
-- User asks you to search or query previously indexed documentation.
+The default profile uses SQLite FTS5, sqlite-vec, and bundled Model2Vec embeddings without API keys or a daemon. The optional scale profile uses FastEmbed, sparse retrieval, and Qdrant without changing memory authority or provenance semantics.
 
 ## Workflow
 
-1. **Check indexed docs:** `docmancer docs list`
-2. **Query existing docs:** `docmancer docs query "<question>"`
-3. **Index local docs if needed:** `docmancer docs add <path>`
-4. **Fetch URL docs if needed:** `docmancer docs add <url>`
-5. **Use the returned context** to ground your response with source-attributed sections.
+1. Run `docmancer ask "<the task>"` when prior decisions, instructions, conventions, or preferences may matter.
+2. Follow stable citations with `docmancer read <address>` when the full file or current content hash is needed.
+3. When the user explicitly asks to manage durable memory, use `docmancer ask` to prepare one complete-file proposal. Apply it only with the user's confirmation or explicit `--apply`.
+4. Keep memory and technical-documentation results separate.
+5. Use `docmancer docs list` and `docmancer docs query` for libraries, APIs, and vendor documentation.
 
-## Core Commands
+Read-only Ask reads the latest committed local index. A configured generation provider is called by default after retrieval to produce grounded prose. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `--fresh` when the question must first wait for changed agent sources to be indexed.
 
-### Ingest Local Documentation
+## Memory commands
 
 ```bash
+docmancer setup
+docmancer web
+docmancer ask "what deployment decisions apply?"
+docmancer ask "how did this policy change?" --history
+docmancer ask "return evidence only" --no-answer
+docmancer ask "remember that production releases require a smoke test"
+docmancer ask "update decisions/deployment.md to require two reviewers" --apply
+docmancer common
+docmancer delivery
+docmancer timeline
+docmancer memory canonical
+docmancer read docmancer://memory/<id>
+docmancer write "# Decision\n\nDeploy on Railway." --path decisions/deployment.md --scope project
+docmancer edit docmancer://memory/<id> - --expected-hash <hash>
+docmancer move docmancer://memory/<id> decisions/hosting.md --expected-hash <hash>
+docmancer import ./notes
+docmancer status --check
+```
+
+Existing-file mutations require the current content hash. Conversational Ask proposals affect exactly one complete file and never apply because the user merely types “yes”. Imported and harvested sources remain read-only. Never trash, restore, connect Cloud, change capture installation, or publish Team memory without explicit user authorization.
+
+## Documentation commands
+
+```bash
+docmancer docs list
 docmancer docs add ./docs
-```
-
-Use `ingest` for local files and directories.
-
-| Flag | Purpose |
-|------|---------|
-| `--include <glob>` | Include only matching relative paths |
-| `--exclude <glob>` | Exclude matching relative paths |
-| `--format <format>` | Restrict to formats such as `md`, `txt`, `pdf`, `docx`, `rtf`, or `html` |
-| `--recursive / --no-recursive` | Recurse through directories |
-| `--skip-known` | Skip files whose content hash is already indexed |
-| `--recreate` | Drop and rebuild the index |
-
-### Add URL Documentation
-
-```bash
 docmancer docs add https://docs.example.com
+docmancer docs query "how to authenticate"
+docmancer docs query "how to authenticate" --expand
+docmancer docs query "how to authenticate" --expand page
+docmancer docs query "how to authenticate" --format json
+docmancer docs query "how to authenticate" --allow-degraded
+docmancer docs sync
+docmancer docs remove <source>
+docmancer docs download <url> --output <dir>
+docmancer doctor
 ```
 
-Use `add` for documentation URLs and GitHub repositories.
+Use `docs add` for local files, directories, documentation URLs, and GitHub repositories. Use root `import` only for Markdown intended for memory curation.
 
-| Flag | Purpose |
-|------|---------|
-| `--provider <auto\|gitbook\|mintlify\|web\|github>` | Force a specific provider |
-| `--strategy <strategy>` | Force discovery strategy |
-| `--max-pages <n>` | Cap pages fetched |
-| `--browser` | Playwright fallback for JS-heavy sites |
-| `--recreate` | Drop and rebuild the index |
-
-### Query Documentation
+## Optional providers and scale profile
 
 ```bash
-docmancer docs query "<question>"
+docmancer providers list
+docmancer providers key <provider>
+docmancer providers set <provider> --default --model <model-id>
+docmancer providers test <provider>
+
+pipx install "docmancer[embeddings-heavy]"
+docmancer qdrant up
+docmancer setup --profile scale
 ```
 
-Returns a compact markdown context pack with source attribution and token savings. This is the primary command agents should call.
-
-| Flag | Purpose |
-|------|---------|
-| `--budget <n>` | Max estimated output tokens |
-| `--limit <n>` | Max sections to return |
-| `--expand` | Include adjacent sections around matches |
-| `--expand page` | Include full page content within budget |
-| `--format <markdown\|json>` | Output format |
-
-### Manage Sources
-
-| Command | Purpose |
-|---------|---------|
-| `docmancer docs list` | Show indexed documentation sources |
-| `docmancer docs list --all` | Show every stored page or file |
-| `docmancer docs list` | Show index stats, format counts, and extract locations |
-| `docmancer docs remove <source>` | Remove a source or docset root |
-| `docmancer docs remove --all` | Clear the entire index |
-| `docmancer docs sync [source]` | Re-fetch and re-index all sources, or one specific source |
-| `docmancer status --check` | Check config, loader availability, index health, and agent skill installs |
-| `docmancer setup` | Create project-local `docmancer.yaml` |
-| `docmancer docs add <url> --output <dir>` | Download docs to markdown files without indexing |
-
-## Common Mistakes
-
-- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
-- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
-- Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.
-- Do not assume docs are indexed. Always verify with `docmancer docs list` before querying.
+Local retrieval does not require a generation provider or Qdrant.

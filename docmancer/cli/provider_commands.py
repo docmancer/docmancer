@@ -69,13 +69,13 @@ def _atomic_update(path: Path, transform) -> None:
     "providers",
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Configure generation and embedding providers.",
+    short_help="Configure optional AI generation and embedding providers.",
 )
 def providers_group() -> None:
-    """Manage provider preferences and OS-keyring credentials."""
+    """Manage optional provider defaults and OS-keyring credentials. Local retrieval does not require a generation provider."""
 
 
-@providers_group.command("list", cls=DocmancerCommand)
+@providers_group.command("list", cls=DocmancerCommand, short_help="Show provider capabilities, credentials, models, and readiness.")
 @click.option("--json", "as_json", is_flag=True)
 @click.pass_context
 def providers_list(ctx: click.Context, as_json: bool) -> None:
@@ -95,7 +95,7 @@ def providers_list(ctx: click.Context, as_json: bool) -> None:
         )
 
 
-@providers_group.command("set", cls=DocmancerCommand)
+@providers_group.command("set", cls=DocmancerCommand, short_help="Choose a provider default, model, or compatible base URL.")
 @click.argument("provider_id", type=click.Choice(provider_ids()))
 @click.option("--model", default=None)
 @click.option("--base-url", default=None)
@@ -128,7 +128,7 @@ def providers_set(
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
-@providers_group.command("key", cls=DocmancerCommand)
+@providers_group.command("key", cls=DocmancerCommand, short_help="Store one provider credential in the OS keyring.")
 @click.argument("provider_id", type=click.Choice(provider_ids()))
 @click.option("--stdin", "read_stdin", is_flag=True, help="Read the key from standard input.")
 def providers_key(provider_id: str, read_stdin: bool) -> None:
@@ -161,7 +161,7 @@ def providers_key(provider_id: str, read_stdin: bool) -> None:
     click.echo(f"Stored {spec.label} key in the OS keyring.")
 
 
-@providers_group.command("test", cls=DocmancerCommand)
+@providers_group.command("test", cls=DocmancerCommand, short_help="Run a minimal generation-provider readiness check.")
 @click.argument("provider_id", type=click.Choice(provider_ids(capability="llm")))
 @click.pass_context
 def providers_test(ctx: click.Context, provider_id: str) -> None:
@@ -177,7 +177,7 @@ def providers_test(ctx: click.Context, provider_id: str) -> None:
     click.echo(f"{get_provider(provider_id).label} is ready.")
 
 
-@providers_group.command("remove", cls=DocmancerCommand)
+@providers_group.command("remove", cls=DocmancerCommand, short_help="Remove one stored provider credential.")
 @click.argument("provider_id", type=click.Choice(provider_ids()))
 def providers_remove(provider_id: str) -> None:
     ProviderKeyStore().delete(provider_id)

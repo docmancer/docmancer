@@ -188,6 +188,8 @@ def inspect_integrations(
                 "bundle_hash": delivery.get("bundle_hash"),
                 "delivered_item_count": delivery.get("item_count"),
                 "delivered_revision_id": delivery.get("revision_id"),
+                "integration_mode": delivery.get("integration_mode") or "skill-or-cli",
+                "projection_path": delivery.get("projection_path"),
                 "manual_step": spec.get("manual_step") if integration_state in {"manual-step", "connected", "partial"} else None,
                 "action_kind": action_kind,
                 "manual_actions": manual_actions,

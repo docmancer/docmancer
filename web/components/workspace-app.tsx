@@ -2,7 +2,7 @@
 
 import {
   ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, ChevronRight, CircleHelp,
-  Cloud, Command, Copy, History, Library, LoaderCircle, Moon,
+  Cloud, Command, Copy, FileText, History, Library, LoaderCircle, Moon,
   PanelLeftClose, PanelLeftOpen, Plus, Settings, ShieldCheck,
   Sparkles, Sun, Trash2, X,
 } from "lucide-react";
@@ -27,6 +27,7 @@ type ChatTurn = {
   role: "user" | "assistant";
   content: string;
   evidence?: JsonMap[];
+  action?: JsonMap;
   pending?: boolean;
 };
 
@@ -352,6 +353,7 @@ function HomeView() {
         ...turn,
         content: turn.content || answerContent(result),
         evidence: rows(result.evidence ?? result.items ?? result.relevant_evidence),
+        action: objectAt(result, "action"),
         pending: false,
       } : turn));
       if (!temporary) await refreshConversations();
@@ -366,6 +368,31 @@ function HomeView() {
   const ask = (event: FormEvent) => {
     event.preventDefault();
     void askQuestion(question);
+  };
+  const decideAction = async (turnId: string, action: JsonMap, decision: "apply" | "cancel") => {
+    const actionId = String(action.id ?? "");
+    if (!actionId || busy) return;
+    setBusy(`action:${actionId}`); setError("");
+    try {
+      const response = await apiMutation(
+        `/api/v1/ask/actions/${encodeURIComponent(actionId)}`,
+        { decision },
+      );
+      const resolved = objectAt(response, "action");
+      setMessages((current) => current.map((turn) =>
+        turn.id === turnId ? { ...turn, action: resolved } : turn
+      ));
+    } catch (reason) {
+      setError(messageOf(reason));
+      if (activeConversation) {
+        const conversation = await apiGet(
+          `/api/v1/ask/conversations/${encodeURIComponent(activeConversation)}`,
+        ).catch(() => null);
+        if (conversation) setMessages(conversationTurns(conversation));
+      }
+    } finally {
+      setBusy("");
+    }
   };
 
   const integrations = rows(setup.items);
@@ -407,7 +434,7 @@ function HomeView() {
   const suggestions = [
     "What decisions have my agents made about this project?",
     "What working preferences recur across my agents?",
-    "What do my agents know about deployment?",
+    "Remember that production releases require a smoke test",
   ];
 
   return <div className="page home-page">
@@ -464,7 +491,7 @@ function HomeView() {
           {!messages.length && <div className="chat-welcome">
             <div className="chat-welcome-mark"><WizardLogo/></div>
             <h2>What do your agents know?</h2>
-            <p>Ask across their memory, instructions, decisions, and project notes. Docmancer keeps the source evidence attached.</p>
+            <p>Ask across their memory, instructions, decisions, and project notes, or request one complete-file memory update for approval. Docmancer keeps the source evidence attached.</p>
             <div className="chat-suggestions">{suggestions.map((suggestion) =>
               <button key={suggestion} onClick={() => void askQuestion(suggestion)}><Sparkles size={14}/><span>{suggestion}</span><ArrowRight size={14}/></button>
             )}</div>
@@ -478,6 +505,14 @@ function HomeView() {
                   : <span className="chat-thinking"><i/><i/><i/> Reading your local memory</span>
                 : <p>{turn.content}</p>}
               {turn.evidence && turn.evidence.length > 0 && <ChatSources evidence={turn.evidence}/>}
+              {turn.role === "assistant" && turn.action && Object.keys(turn.action).length > 0 && <MemoryActionCard
+                action={turn.action}
+                busy={busy === `action:${String(turn.action.id ?? "")}`}
+                decide={(decision) => void decideAction(turn.id, turn.action ?? {}, decision)}
+                replan={() => void askQuestion(
+                  `Update Shared Memory again for ${String((turn.action as JsonMap).path ?? (turn.action as JsonMap).target ?? "this file")} using its current contents.`
+                )}
+              />}
             </div>
           </div>)}
         </div>
@@ -492,7 +527,7 @@ function HomeView() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Ask about a decision, preference, project, or past session..."
+            placeholder="Ask a question or request a Shared Memory update..."
             rows={2}
           />
           <div className="chat-composer-footer">
@@ -502,7 +537,7 @@ function HomeView() {
             </button>
           </div>
         </form>
-        <small className="chat-footnote">Enter to send, Shift + Enter for a new line. Answers retain source attribution.</small>
+        <small className="chat-footnote">Enter to send, Shift + Enter for a new line. Memory changes require the action card. Typing yes never applies them.</small>
         </section>
       </article>
 
@@ -522,7 +557,7 @@ function HomeView() {
       </article>
       <article className="feature-card canonical-card">
         <div className="rail-card-heading"><div className="feature-icon blue"><BrainCircuit size={18}/></div><div><span className="eyebrow">Canonical files</span><h2>Shared Memory</h2></div></div>
-        <p>See how machine and project memory are arranged, then preview what each agent receives.</p>
+        <p>See how machine and project memory are arranged, then inspect how each agent accesses it.</p>
         <Link className="primary-btn wide" href="/memory/">Open Shared Memory <ArrowRight size={15}/></Link>
       </article>
       <section className="home-cloud-card">
@@ -539,7 +574,7 @@ function HomeView() {
 
 function SharedMemoryPage() {
   return <div className="page">
-    <PageHeading eyebrow="One local source of truth" title="Shared Memory" description="Inspect the canonical files on this machine, see how they are arranged, and preview exactly what each coding agent receives."/>
+    <PageHeading eyebrow="One local source of truth" title="Shared Memory" description="Inspect the canonical files on this machine, see how they are arranged, and check how each coding agent accesses them."/>
     <SharedMemoryWorkbench/>
   </div>;
 }
@@ -550,11 +585,12 @@ function HelpView() {
     ["Open shared memory", "docmancer web", "Inspect the canonical filesystem and agent delivery from the local workbench."],
     ["Write durable memory", 'docmancer write "# Release\\n\\nUse the release script." --path decisions/release.md', "Save a project decision into the standard scaffold."],
     ["Ask from a terminal", 'docmancer ask "What do my agents know about deployment?"', "Use the same memory from the CLI."],
+    ["Propose a memory update", 'docmancer ask "Remember that releases require a smoke test"', "Review one complete-file proposal, then approve it explicitly."],
   ];
   return <div className="page">
     <PageHeading eyebrow="A short guide" title="Use the web UI. Let agents use the CLI." description="Docmancer gives you a human place to understand memory, while coding agents use skills, hooks, CLI, and MCP behind the scenes."/>
     <div className="help-grid">
-      <section className="feature-card help-intro"><BrainCircuit size={25}/><h2>The basic loop</h2><ol><li>Connect your coding agents.</li><li>Index what they already know.</li><li>Inspect the canonical files in Shared Memory.</li><li>Keep working. Connected agents recall the relevant files automatically.</li></ol></section>
+      <section className="feature-card help-intro"><BrainCircuit size={25}/><h2>The basic loop</h2><ol><li>Connect your coding agents.</li><li>Index what they already know.</li><li>Ask questions or request one memory update.</li><li>Review and approve complete-file action cards.</li><li>Keep working. Connected agents recall the relevant files automatically.</li></ol></section>
       <section className="command-list">{commands.map(([title, command, note]) => <CommandRow key={command} title={title} command={command} note={note}/>)}</section>
     </div>
   </div>;
@@ -635,8 +671,48 @@ function conversationTurns(conversation: JsonMap): ChatTurn[] {
     role: message.role === "user" ? "user" : "assistant",
     content: String(message.content ?? ""),
     evidence: rows(message.evidence),
+    action: objectAt(message, "action"),
     pending: message.status === "pending",
   }));
+}
+
+function MemoryActionCard({ action, busy, decide, replan }: {
+  action: JsonMap;
+  busy: boolean;
+  decide: (decision: "apply" | "cancel") => void;
+  replan: () => void;
+}) {
+  const operation = String(action.operation ?? "edit");
+  const status = String(action.status ?? "pending");
+  const destructive = Boolean(action.destructive);
+  const target = String(action.path ?? action.target ?? action.section ?? "Shared Memory");
+  const source = String(action.address ?? action.target ?? "");
+  const restoreToken = String(action.restore_token ?? "");
+  const before = String(action.before_markdown ?? "");
+  const after = String(action.after_markdown ?? "");
+  const diff = String(action.diff ?? "");
+  return <section className={`memory-action-card${destructive ? " destructive" : ""}`} aria-label={`${operation} Shared Memory proposal`}>
+    <header>
+      <span className="memory-action-icon">{destructive ? <Trash2 size={15}/> : <FileText size={15}/>}</span>
+      <div><span className="eyebrow">{String(action.scope ?? "project")} memory</span><strong>{operation[0].toUpperCase() + operation.slice(1)} {target}</strong></div>
+      <span className={`memory-action-status ${status}`}>{status}</span>
+    </header>
+    <p>{String(action.rationale ?? "Review this complete-file change before applying it.")}</p>
+    {["move", "duplicate"].includes(operation) && <p className="memory-action-route"><strong>Source:</strong> {source}<br/><strong>Destination:</strong> {target}</p>}
+    {operation === "restore" && <p className="memory-action-route"><strong>Original destination:</strong> {target}<br/><strong>Restore token:</strong> {restoreToken}</p>}
+    {diff && <details open={status === "pending"}><summary>Complete change</summary><pre>{diff}</pre></details>}
+    {after && ["create", "edit", "pin"].includes(operation) && <details><summary>Proposed Markdown</summary><pre>{after}</pre></details>}
+    {before && operation === "trash" && <details><summary>Complete file to trash</summary><pre>{before}</pre></details>}
+    {status === "pending" && <footer>
+      <button className="secondary-btn" disabled={busy} onClick={() => decide("cancel")}>Cancel</button>
+      <button className={destructive ? "danger-btn" : "primary-btn"} disabled={busy} onClick={() => decide("apply")}>
+        {busy ? <LoaderCircle className="spin" size={14}/> : <Check size={14}/>}
+        Apply {operation}
+      </button>
+    </footer>}
+    {status === "conflict" && <footer><button className="primary-btn" onClick={replan}>Prepare a new proposal</button></footer>}
+    {status === "applied" && <small className="memory-action-result">Shared Memory updated locally.</small>}
+  </section>;
 }
 function sourceTitle(item: JsonMap, index: number): string {
   const title = String(item.title ?? "").trim();

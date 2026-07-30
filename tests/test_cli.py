@@ -56,7 +56,7 @@ PUBLIC_COMMAND_HELP_CASES = [
     (["web"], ["--project"]),
     (["ask"], ["--token-budget", "--history"]),
     (["common"], ["recurring"]),
-    (["delivery"], ["bundle"]),
+    (["delivery"], ["bounded-memory receipt"]),
     (["timeline"], ["--file-id", "--operation"]),
     (["import"], ["--dry-run"]),
     (["memory"], ["distill", "review", "share"]),
@@ -415,7 +415,7 @@ def test_doctor_runs(tmp_path):
     assert result.exit_code == 0
     assert "SQLite" in result.output
     assert "Local loaders" in result.output
-    assert "Curated Markdown tree" in result.output
+    assert "Project Shared Memory" in result.output
     assert "Instruction blocks" in result.output
     assert "Deprecated:" not in result.output
 

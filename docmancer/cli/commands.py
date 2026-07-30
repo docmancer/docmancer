@@ -1346,7 +1346,7 @@ def inspect_cmd(config_path: str | None):
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Check config, memory and docs indexes, providers, and skills.",
+    short_help="Check Shared Memory, indexes, providers, and integrations.",
     epilog=format_examples(
         "docmancer doctor",
         "docmancer doctor --config ./docmancer.yaml",
@@ -1354,11 +1354,11 @@ def inspect_cmd(config_path: str | None):
 )
 @click.option("--config", "config_path", default=None, help="Path to docmancer.yaml.")
 def doctor_cmd(config_path: str | None):
-    """Check environment, the curated tree, indexes, providers, and installed integrations."""
+    """Check the environment, Shared Memory trees, indexes, providers, and installed integrations."""
     config_path = _effective_config(config_path)
     config = _load_config(config_path)
     home = Path.home()
-    _emit_brand_header("docmancer doctor", "Check binary, config, curated tree, indexes, and installed integrations.")
+    _emit_brand_header("docmancer doctor", "Check binary, config, Shared Memory, indexes, and installed integrations.")
 
     # Binary resolution
     resolved_bin = shutil.which("docmancer")
@@ -1418,7 +1418,7 @@ def doctor_cmd(config_path: str | None):
         _emit_status_line(f"unavailable ({exc})", state="warn", indent=4)
 
     click.echo()
-    click.echo(_style("  Curated Markdown tree", fg="white", bold=True))
+    click.echo(_style("  Project Shared Memory", fg="white", bold=True))
     from docmancer.memory.tree.project import resolve_project_root
 
     tree_root = resolve_project_root() / ".docmancer" / "tree"
@@ -1446,7 +1446,7 @@ def doctor_cmd(config_path: str | None):
                     malformed.append(str(path.relative_to(tree_root)))
             indexed = TreeStore(tree_root).rebuild_index()
             _emit_status_line(
-                f"{len(markdown_files)} canonical file(s), {indexed} indexed, "
+                f"{len(markdown_files)} Shared Memory file(s), {indexed} indexed, "
                 f"{len(list(inbox_root.glob('*.md'))) if inbox_root.exists() else 0} inbox item(s)",
                 indent=4,
             )
@@ -2112,7 +2112,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
     home = Path.home()
 
     def refresh_projection() -> None:
-        """Best-effort delivery of already approved context after installation."""
+        """Best-effort delivery of current Shared Memory after installation."""
         if _INSTALL_QUIET:
             # Machine-wide setup installs integrations from whatever directory
             # the user happens to be in. It must not register that directory as
@@ -2134,7 +2134,7 @@ def install_cmd(agent: str, project: bool, hooks: bool, capture_hooks: bool, con
                 home=home,
             )
             if rows:
-                _emit_status_line(f"Refreshed approved context at {display_path(rows[0]['path'])}")
+                _emit_status_line(f"Refreshed Shared Memory projection at {display_path(rows[0]['path'])}")
         except Exception:  # noqa: BLE001 - a projection must not make skill installation fail
             return
     user_config_exists_before = _get_user_config_path().exists()
@@ -2553,7 +2553,7 @@ def _setup_index_memory(config, *, index_memory: bool, dry_run: bool) -> None:
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Index your agents' memory and install their skills.",
+    short_help="Build Shared Memory and connect detected coding agents.",
     epilog=format_examples(
         "docmancer setup",
         "docmancer setup --all",
@@ -2584,17 +2584,17 @@ def setup_cmd(
     dry_run: bool,
     config_path: str | None,
 ):
-    """Create the local index, index your agents' memory, and connect agents.
+    """Build local Shared Memory, index existing agent evidence, and connect detected agents.
 
     This bootstraps `docmancer.yaml`, initializes the local SQLite index,
-    indexes the memory your coding agents already wrote on this machine, and
-    installs one or more agent skill/instruction files. Use `--agent` to pick
-    explicit targets such as `codex`, `claude-code`, or `github-copilot`.
+    indexes the memory your coding agents already wrote on this machine,
+    reconciles the laptop-wide tree, and installs agent skills, managed
+    instructions, and supported hooks. Use `--agent` to pick explicit targets.
     """
     from docmancer.harness.setup_plan import build_setup_confirmation, normalize_setup_targets
 
     setup_started = monotonic()
-    _emit_brand_header("docmancer setup", "Index local memory and connect every coding agent detected on this machine.")
+    _emit_brand_header("docmancer setup", "Build local Shared Memory and connect every coding agent detected on this machine.")
 
     selected = [agent.lower() for agent in agents]
     if install_all:

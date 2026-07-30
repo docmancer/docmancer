@@ -9,10 +9,10 @@ docmancer cloud devices
 docmancer cloud disconnect
 ```
 
-`docmancer cloud sync` is encrypted Cloud push and pull. It is separate from local index maintenance. Use lifecycle capture, `docmancer memory sync`, the web app's non-blocking background refresh, or `docmancer ask --fresh` to update local agent sources. `reindex` remains an advanced recovery command for disposable curated-tree retrieval state.
+`docmancer cloud sync` is encrypted Cloud push and pull. It is separate from local index maintenance. Setup, lifecycle capture, the web app's non-blocking background refresh, explicit canonical refresh, and `docmancer ask --fresh` update local state. `reindex` remains an advanced recovery command for disposable curated-tree retrieval state.
 
 The client encrypts and signs revisions before transport. The hosted API receives opaque encrypted envelopes and routing metadata, not plaintext memory, local paths, private keys, workspace keys, or recovery keys. The hosted service cannot connect back to `docmancer web` or request local filesystem actions.
 
 Device approval, revocation, recovery, deletion, and Team publication remain explicit safety boundaries. Revoking a device blocks future synchronization but cannot erase plaintext or keys that device already possessed.
 
-When Cloud is unavailable, local ask, read, write, import, capture, MCP, docs, and the workbench continue to operate.
+When Cloud is unavailable, local Ask, Shared Memory, read, write, import, capture, MCP, docs, and the workbench continue to operate.

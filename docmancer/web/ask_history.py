@@ -82,6 +82,27 @@ class AskHistoryStore:
                 );
                 CREATE INDEX IF NOT EXISTS ask_messages_conversation_created_idx
                     ON ask_messages(conversation_id, created_at, message_id);
+
+                CREATE TABLE IF NOT EXISTS ask_actions (
+                    action_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL
+                        REFERENCES ask_conversations(conversation_id) ON DELETE CASCADE,
+                    message_id TEXT NOT NULL
+                        REFERENCES ask_messages(message_id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    proposal_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS ask_actions_message_idx
+                    ON ask_actions(message_id);
+                CREATE INDEX IF NOT EXISTS ask_actions_target_status_idx
+                    ON ask_actions(conversation_id, target, status);
                 """
             )
 
@@ -154,7 +175,81 @@ class AskHistoryStore:
                     """,
                     (identifier,),
                 ).fetchall()
-                result["messages"] = [self._message(message) for message in messages]
+                actions = connection.execute(
+                    """
+                    SELECT * FROM ask_actions
+                    WHERE conversation_id=?
+                    ORDER BY rowid
+                    """,
+                    (identifier,),
+                ).fetchall()
+                by_message = {
+                    str(action["message_id"]): self._action(action)
+                    for action in actions
+                }
+                result["messages"] = [
+                    {
+                        **self._message(message),
+                        "action": by_message.get(str(message["message_id"])),
+                    }
+                    for message in messages
+                ]
+        return result
+
+    def recent_messages(self, conversation_id: str, *, limit: int = 6) -> list[dict[str, str]]:
+        identifier = self._validate_id(conversation_id)
+        bounded = max(1, min(int(limit), 20))
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT role, content FROM ask_messages
+                WHERE conversation_id=? AND status='complete'
+                ORDER BY rowid DESC
+                LIMIT ?
+                """,
+                (identifier, bounded),
+            ).fetchall()
+        return [
+            {"role": str(row["role"]), "content": str(row["content"])}
+            for row in reversed(rows)
+        ]
+
+    def pending_action_context(self, conversation_id: str) -> dict[str, Any]:
+        """Return the unfinished action thread, if the last action turn needs input."""
+        identifier = self._validate_id(conversation_id)
+        with self._connect() as connection:
+            pending = connection.execute(
+                """
+                SELECT * FROM ask_actions
+                WHERE conversation_id=? AND status='pending'
+                ORDER BY rowid DESC
+                LIMIT 1
+                """,
+                (identifier,),
+            ).fetchone()
+            assistant = connection.execute(
+                """
+                SELECT metadata_json FROM ask_messages
+                WHERE conversation_id=? AND role='assistant' AND status='complete'
+                ORDER BY rowid DESC
+                LIMIT 1
+                """,
+                (identifier,),
+            ).fetchone()
+        result: dict[str, Any] = {
+            "pending_action": self._action(pending) if pending is not None else None,
+            "clarification_request": None,
+            "clarification_count": 0,
+        }
+        if assistant is None:
+            return result
+        try:
+            metadata = json.loads(str(assistant["metadata_json"] or "{}"))
+        except json.JSONDecodeError:
+            return result
+        if metadata.get("action_kind") == "clarification":
+            result["clarification_request"] = str(metadata.get("action_request") or "").strip() or None
+            result["clarification_count"] = int(metadata.get("action_clarification_count") or 1)
         return result
 
     def begin_exchange(self, conversation_id: str, task: str) -> tuple[str, str]:
@@ -257,6 +352,114 @@ class AskHistoryStore:
                 (stamp, _title(content), identifier, self.project_id),
             )
 
+    def save_action(
+        self,
+        conversation_id: str,
+        message_id: str,
+        proposal: dict[str, Any],
+    ) -> dict[str, Any]:
+        from docmancer.memory.actions import new_action_id
+
+        identifier = self._validate_id(conversation_id)
+        action_id = str(proposal.get("id") or new_action_id())
+        self._validate_id(action_id)
+        target = str(proposal.get("address") or proposal.get("restore_token") or proposal.get("path") or "")
+        stamp = _now()
+        payload = {**proposal, "id": action_id, "status": "pending", "created_at": stamp}
+        with self._connect() as connection:
+            message = connection.execute(
+                """
+                SELECT message_id FROM ask_messages
+                WHERE message_id=? AND conversation_id=? AND role='assistant'
+                """,
+                (message_id, identifier),
+            ).fetchone()
+            if message is None:
+                raise KeyError("assistant message not found")
+            connection.execute(
+                """
+                UPDATE ask_actions
+                SET status='superseded', resolved_at=?
+                WHERE conversation_id=? AND target=? AND status='pending'
+                """,
+                (stamp, identifier, target),
+            )
+            connection.execute(
+                """
+                INSERT INTO ask_actions(
+                    action_id, conversation_id, message_id, project_id,
+                    operation, scope, target, status, proposal_json,
+                    result_json, created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    action_id,
+                    identifier,
+                    message_id,
+                    self.project_id,
+                    str(proposal["operation"]),
+                    str(proposal["scope"]),
+                    target,
+                    "pending",
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    "{}",
+                    stamp,
+                ),
+            )
+        return payload
+
+    def get_action(self, action_id: str) -> dict[str, Any] | None:
+        identifier = self._validate_id(action_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM ask_actions
+                WHERE action_id=? AND project_id=?
+                """,
+                (identifier, self.project_id),
+            ).fetchone()
+        return self._action(row) if row is not None else None
+
+    def resolve_action(
+        self,
+        action_id: str,
+        *,
+        status: str,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from docmancer.memory.actions import ACTION_STATUSES
+
+        if status not in ACTION_STATUSES or status == "pending":
+            raise ValueError("action status is invalid")
+        identifier = self._validate_id(action_id)
+        stamp = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE ask_actions
+                SET status=?, result_json=?, resolved_at=?
+                WHERE action_id=? AND project_id=? AND status='pending'
+                """,
+                (
+                    status,
+                    json.dumps(result or {}, ensure_ascii=False, sort_keys=True),
+                    stamp,
+                    identifier,
+                    self.project_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                existing = connection.execute(
+                    "SELECT status FROM ask_actions WHERE action_id=? AND project_id=?",
+                    (identifier, self.project_id),
+                ).fetchone()
+                if existing is None:
+                    raise KeyError("memory action not found")
+                raise ValueError(f"memory action is already {existing['status']}")
+        action = self.get_action(identifier)
+        assert action is not None
+        return action
+
     def delete_conversation(self, conversation_id: str) -> bool:
         identifier = self._validate_id(conversation_id)
         with self._connect() as connection:
@@ -303,6 +506,28 @@ class AskHistoryStore:
             "metadata": metadata,
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+        }
+
+    @staticmethod
+    def _action(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            proposal = json.loads(str(row["proposal_json"] or "{}"))
+        except json.JSONDecodeError:
+            proposal = {}
+        try:
+            result = json.loads(str(row["result_json"] or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        return {
+            **proposal,
+            "id": str(row["action_id"]),
+            "operation": str(row["operation"]),
+            "scope": str(row["scope"]),
+            "target": str(row["target"]),
+            "status": str(row["status"]),
+            "result": result,
+            "created_at": str(row["created_at"]),
+            "resolved_at": row["resolved_at"],
         }
 
 

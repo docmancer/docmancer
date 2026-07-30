@@ -21,7 +21,7 @@ def _service():
     return MemoryService(MemoryAgent())
 
 
-@click.command("ask", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Recall curated memory and supporting agent evidence.")
+@click.command("ask", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Answer from Shared Memory and cited agent evidence.")
 @click.argument("task")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, help="Scope evidence recall to this project. Default is global recall across every indexed project.")
 @click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None, help="Restrict to one memory scope. Use project to scope evidence to the current project.")
@@ -43,7 +43,7 @@ def _service():
 @click.option(
     "--answer/--no-answer",
     default=None,
-    help="Generate a grounded answer when a provider is configured, or return evidence only.",
+    help="Use the configured provider for a grounded answer (default when ready), or return evidence only.",
 )
 @click.option(
     "--mode",
@@ -53,6 +53,8 @@ def _service():
 )
 @click.option("--cite/--no-cite", default=True, show_default=True, help="Show inline citation markers in the answer.")
 @click.option("--stream/--no-stream", default=True, show_default=True, help="Stream answer text on an interactive terminal.")
+@click.option("--apply", "apply_action", is_flag=True, help="Apply one validated memory action without prompting.")
+@click.option("--read-only", is_flag=True, help="Never propose or apply Shared Memory changes.")
 @click.option(
     "--agent",
     "agent_name",
@@ -76,16 +78,38 @@ def ask_cmd(
     mode: str,
     cite: bool,
     stream: bool,
+    apply_action: bool,
+    read_only: bool,
     agent_name: str,
     as_json: bool,
 ) -> None:
-    """Answer a task with one local bundle of policy, memory, and evidence."""
+    """Retrieve one bounded local evidence bundle, then ask the configured provider to answer from it when available."""
     from docmancer.memory.ask import ask
+    from docmancer.memory.actions import MemoryActionEngine, is_mutation_request
+
+    if apply_action and read_only:
+        raise click.UsageError("--apply cannot be combined with --read-only")
+    if apply_action and answer is False:
+        raise click.UsageError("--apply cannot be combined with --no-answer")
+
+    mutation_request = bool(
+        is_mutation_request(task)
+        and not read_only
+        and answer is not False
+    )
+    action_result = None
+    if mutation_request:
+        from docmancer.memory import MemoryAgent
+
+        action_result = MemoryActionEngine(
+            project_path or Path.cwd(),
+            memory_agent=MemoryAgent(),
+        ).plan(task)
 
     # --no-cite strips citation markers, which cannot be retracted once they
     # have streamed to the terminal. Buffer instead of streaming a copy the
     # caller asked not to see.
-    should_stream = stream and cite and not as_json and sys.stdout.isatty()
+    should_stream = stream and cite and not as_json and sys.stdout.isatty() and not mutation_request
     streamed = False
 
     def on_delta(delta: str) -> None:
@@ -104,22 +128,60 @@ def ask_cmd(
         agent_name=agent_name,
         surface="cli",
         integration_mode="direct",
-        answer=answer,
+        answer=False if mutation_request else answer,
         answer_mode=mode,
         on_delta=on_delta if should_stream else None,
     )
     if not debug:
         result.pop("debug_evidence", None)
+    proposal = action_result.get("proposal") if isinstance(action_result, dict) else None
+    if isinstance(action_result, dict):
+        result["action_kind"] = action_result.get("kind")
+        result["action_message"] = action_result.get("message")
+    if isinstance(proposal, dict):
+        result["action"] = proposal
+        should_apply = apply_action
+        if not as_json and not apply_action and sys.stdin.isatty() and sys.stdout.isatty():
+            click.echo(str(action_result.get("message") or "Review the proposed Shared Memory action."))
+            click.echo()
+            click.echo(str(proposal.get("diff") or "(No textual diff)"))
+            click.echo()
+            should_apply = click.confirm(
+                f"Apply {proposal['operation']} to {proposal.get('path') or proposal.get('target')}?",
+                default=False,
+            )
+        if should_apply:
+            action_engine = MemoryActionEngine(project_path or Path.cwd())
+            result["result"] = action_engine.execute(
+                proposal,
+                actor_surface="cli-ask",
+            )
+            result["action"]["status"] = "applied"
+    elif apply_action:
+        raise click.ClickException(
+            str((action_result or {}).get("message") or "No valid memory action was proposed.")
+        )
     if as_json:
         click.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
         return
+
+    if mutation_request and not isinstance(proposal, dict):
+        click.echo(str((action_result or {}).get("message") or "No memory action was proposed."), err=True)
+    elif isinstance(proposal, dict) and not result.get("result") and not sys.stdin.isatty():
+        click.echo(str(action_result.get("message") or "A memory action was proposed."))
+        click.echo(str(proposal.get("diff") or "(No textual diff)"))
+        click.echo("Shared Memory was not changed. Re-run with --apply to execute this proposal.")
+        click.echo()
+    if result.get("result"):
+        click.echo(f"Applied {proposal['operation']} to Shared Memory.")
+        click.echo()
 
     answer_result = result.get("answer")
     if answer_result:
         global _GENERATIVE_NOTICE_SHOWN
         if not _GENERATIVE_NOTICE_SHOWN:
             click.echo(
-                f"Generated with {answer_result.get('provider')} using retrieved local evidence.",
+                f"Grounded answer generated with {answer_result.get('provider')} from the retrieved local evidence.",
                 err=True,
             )
             _GENERATIVE_NOTICE_SHOWN = True
@@ -147,7 +209,7 @@ def ask_cmd(
 
     sections = (
         ("Mandatory policies", result["mandatory_policies"]),
-        ("Curated memory", result["curated_memory"]),
+        ("Shared Memory", result["curated_memory"]),
         ("Supporting evidence", result["relevant_evidence"]),
     )
     found = False
@@ -222,11 +284,11 @@ def common_cmd(project_path: Path | None, as_json: bool) -> None:
     click.echo("Recurring memory is derived evidence, not consensus or truth.")
 
 
-@click.command("delivery", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show how context reaches each agent.")
+@click.command("delivery", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show how Shared Memory reaches each agent.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
 @click.option("--json", "as_json", is_flag=True)
 def delivery_cmd(project_path: Path | None, as_json: bool) -> None:
-    """Show integration mode and the latest observed bundle receipt per agent."""
+    """Show installed delivery mechanisms and the latest observed bounded-memory receipt per agent."""
     from docmancer.memory.delivery import delivery_matrix, inspect_hook_status
     from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
     from docmancer.memory.tree.project import resolve_project_root
@@ -258,7 +320,7 @@ def delivery_cmd(project_path: Path | None, as_json: bool) -> None:
             )
 
 
-@click.command("timeline", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show canonical memory decisions and file changes.")
+@click.command("timeline", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show curated-memory file changes and revision lineage.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
 @click.option("--file-id", default=None, help="Limit the timeline to one stable memory file ID.")
 @click.option("--operation", type=click.Choice(["create", "edit", "move", "duplicate", "trash", "restore"]), default=None)
@@ -299,7 +361,7 @@ def timeline_cmd(
         click.echo()
 
 
-@click.command("status", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show health, coverage, reviews, security, and cloud state.")
+@click.command("status", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show memory, delivery, security, retrieval, and Cloud health.")
 @click.option("--check", is_flag=True, help="Exit non-zero when the local setup needs attention.")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
@@ -362,12 +424,13 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
     if as_json:
         click.echo(json.dumps(value, indent=2, sort_keys=True, default=str))
     else:
-        click.echo(f"Memory atoms: {value['memory'].get('atoms', 0)} from {value['sources']} source file(s)")
-        click.echo(f"Context packs: {value['packs']} with {value['active_records']} active record(s)")
-        click.echo(f"Pending reviews: {value['pending_reviews']}")
+        click.echo(f"Indexed evidence: {value['memory'].get('atoms', 0)} memory atom(s) from {value['sources']} source file(s)")
+        click.echo(f"Project Shared Memory: {value['tree']['entries']} file(s), {value['tree']['inbox']} inbox item(s)")
+        click.echo(f"Legacy record layer: {value['packs']} pack(s), {value['active_records']} active record(s)")
+        click.echo(f"Pending legacy reviews: {value['pending_reviews']}")
         click.echo(f"Security findings: {value['security_findings']}")
-        click.echo(f"Agent projections: {len(value['agent_delivery'])}")
-        click.echo(f"Curated tree: {value['tree']['entries']} file(s), {value['tree']['inbox']} inbox item(s)")
+        click.echo(f"Agent memory projections: {len(value['agent_delivery'])}")
+        click.echo(f"Retrieval: {value['tree']['default_retrieval']} ({value['tree']['heavy_retrieval']})")
         click.echo(f"Cloud: {'connected' if value['cloud_enabled'] else 'local only'}")
         if observed_drift:
             click.echo(f"Instruction blocks: {len(observed_drift)} were stale")
@@ -388,10 +451,10 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         raise click.ClickException("status checks found issues; inspect `docmancer status --json`")
 
 
-@click.group("agent", cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, invoke_without_command=True, short_help="Install and refresh agent integrations.")
+@click.group("agent", cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, invoke_without_command=True, short_help="Install and inspect coding-agent integrations.")
 @click.pass_context
 def agent_group(ctx: click.Context) -> None:
-    """Manage hook integrations and disposable approved-context projections."""
+    """Manage skills, recall and capture hooks, and disposable Shared Memory projections."""
     if ctx.invoked_subcommand is not None:
         return
     from docmancer.memory.projections import PROJECTION_TARGETS, projection_path
@@ -401,8 +464,8 @@ def agent_group(ctx: click.Context) -> None:
         click.echo(f"{name}: {'installed' if path.exists() else 'not installed'}")
 
 
-@agent_group.command("refresh", cls=DocmancerCommand, short_help="Refresh approved context in installed agents.")
-@click.option("--agent", "agents", multiple=True, help="Refresh only this agent; repeatable.")
+@agent_group.command("refresh", cls=DocmancerCommand, short_help="Refresh disposable Shared Memory projections.")
+@click.option("--agent", "agents", multiple=True, help="Refresh only this agent's projection; repeatable.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
 def agent_refresh(agents: tuple[str, ...], project_path: Path | None) -> None:
     from docmancer.memory.projections import PROJECTION_TARGETS, refresh_projections
@@ -418,7 +481,7 @@ def agent_refresh(agents: tuple[str, ...], project_path: Path | None) -> None:
         installed_only=not bool(agents),
     )
     if not rows:
-        click.echo("No active context or installed projection targets were found.")
+        click.echo("No Shared Memory files or installed projection targets were found.")
         return
     for row in rows:
         click.echo(f"{row['agent']}: {row['action']} {row['path']}")

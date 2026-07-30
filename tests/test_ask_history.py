@@ -61,3 +61,77 @@ def test_ask_history_rejects_untrusted_identifiers(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="invalid"):
         store.get_conversation("../../outside")
+
+
+def test_ask_history_persists_and_supersedes_actions(tmp_path) -> None:
+    path = tmp_path / "ask.sqlite3"
+    store = AskHistoryStore(path, project_id="project-1", project_label="Project")
+    conversation = store.create_conversation()
+    _, first_message = store.begin_exchange(conversation["id"], "Update the release memory")
+    store.complete_answer(conversation["id"], first_message, "First proposal")
+    first = store.save_action(
+        conversation["id"],
+        first_message,
+        {
+            "operation": "edit",
+            "scope": "project",
+            "address": "docmancer://memory/release",
+            "target": "docmancer://memory/release",
+            "path": "decisions/release.md",
+            "status": "pending",
+            "before_markdown": "old",
+            "after_markdown": "first",
+            "diff": "first diff",
+        },
+    )
+
+    _, second_message = store.begin_exchange(conversation["id"], "Revise that update")
+    store.complete_answer(conversation["id"], second_message, "Second proposal")
+    second = store.save_action(
+        conversation["id"],
+        second_message,
+        {
+            "operation": "edit",
+            "scope": "project",
+            "address": "docmancer://memory/release",
+            "target": "docmancer://memory/release",
+            "path": "decisions/release.md",
+            "status": "pending",
+            "before_markdown": "old",
+            "after_markdown": "second",
+            "diff": "second diff",
+        },
+    )
+
+    assert store.get_action(first["id"])["status"] == "superseded"
+    assert store.get_action(second["id"])["status"] == "pending"
+    detail = store.get_conversation(conversation["id"])
+    assert detail["messages"][1]["action"]["status"] == "superseded"
+    assert detail["messages"][3]["action"]["after_markdown"] == "second"
+
+
+def test_deleting_conversation_removes_unapplied_action_records(tmp_path) -> None:
+    path = tmp_path / "ask.sqlite3"
+    store = AskHistoryStore(path, project_id="project-1", project_label="Project")
+    conversation = store.create_conversation()
+    _, message_id = store.begin_exchange(conversation["id"], "Forget this decision")
+    store.complete_answer(conversation["id"], message_id, "Trash proposal")
+    store.save_action(
+        conversation["id"],
+        message_id,
+        {
+            "operation": "trash",
+            "scope": "project",
+            "address": "docmancer://memory/release",
+            "target": "docmancer://memory/release",
+            "path": "decisions/release.md",
+            "status": "pending",
+            "before_markdown": "old",
+            "after_markdown": "",
+            "diff": "trash diff",
+        },
+    )
+
+    assert store.delete_conversation(conversation["id"]) is True
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT count(*) FROM ask_actions").fetchone()[0] == 0

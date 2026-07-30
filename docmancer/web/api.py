@@ -20,13 +20,13 @@ from docmancer.runtime import LocalRuntime
 from docmancer.web.ask_history import AskHistoryStore
 
 
-LOCAL_API_VERSION = 8
+LOCAL_API_VERSION = 9
 
 CAPABILITIES = {
     "tree": ["list", "read", "create", "edit", "move", "duplicate", "trash", "restore", "reindex"],
     "inbox": ["list", "import", "curate"],
     "editors": ["list", "open-markdown"],
-    "ask": ["context", "conversation-history", "temporary-chat"],
+    "ask": ["context", "conversation-history", "temporary-chat", "memory-actions"],
     "common": ["recurring-memory"],
     "delivery": ["agent-matrix", "bundle-receipts"],
     "timeline": ["file-mutations", "diffs"],
@@ -105,6 +105,9 @@ def answer_metadata(result: dict[str, Any]) -> dict[str, Any]:
         "evidence": evidence,
         "verification": answer_details.get("verification"),
         "refused": answer_details.get("refused"),
+        "action_kind": result.get("action_kind"),
+        "action_request": result.get("action_request"),
+        "action_clarification_count": result.get("action_clarification_count"),
     }
 
 
@@ -379,7 +382,20 @@ class LocalApi:
             if conversation_id and temporary:
                 raise ValueError("temporary chats cannot have a saved conversation id")
             exchange: tuple[str, str] | None = None
+            conversation_history: list[dict[str, str]] = []
+            action_context: dict[str, Any] = {}
             if conversation_id:
+                conversation_history, action_context = await asyncio.gather(
+                    asyncio.to_thread(
+                        self.ask_history.recent_messages,
+                        conversation_id,
+                        limit=6,
+                    ),
+                    asyncio.to_thread(
+                        self.ask_history.pending_action_context,
+                        conversation_id,
+                    ),
+                )
                 exchange = await asyncio.to_thread(
                     self.ask_history.begin_exchange,
                     conversation_id,
@@ -388,12 +404,62 @@ class LocalApi:
 
             async def run_ask(on_delta=None):
                 try:
-                    result = await self.runtime.ask_tree(
-                        task,
-                        **ask_kwargs,
-                        on_delta=on_delta,
-                    )
+                    pending_action = action_context.get("pending_action")
+                    confirmation_only = task.strip().casefold().rstrip(".!") in {
+                        "yes",
+                        "y",
+                        "ok",
+                        "okay",
+                        "apply",
+                        "apply it",
+                        "go ahead",
+                        "do it",
+                    }
+                    if isinstance(pending_action, dict) and confirmation_only:
+                        result = {
+                            "answer": {
+                                "text": (
+                                    "That proposal is still pending. Use Apply on its action card "
+                                    "to authorise it, or Cancel to discard it. Typing a confirmation "
+                                    "in chat never changes Shared Memory."
+                                ),
+                                "provider": None,
+                                "model": None,
+                            },
+                            "no_answer": False,
+                            "items": [],
+                            "mandatory_policies": [],
+                            "curated_memory": [],
+                            "relevant_evidence": [],
+                            "token_estimate": 0,
+                            "index_revision": None,
+                            "refresh": {"requested": False},
+                        }
+                    else:
+                        result = await self.runtime.ask_tree(
+                            task,
+                            **ask_kwargs,
+                            on_delta=on_delta,
+                            action_enabled=bool(conversation_id and not temporary),
+                            conversation_history=conversation_history,
+                            pending_action_request=action_context.get("clarification_request"),
+                            action_clarification_count=int(action_context.get("clarification_count") or 0),
+                            mutation_disabled_reason=(
+                                "Start a saved conversation before asking Docmancer to change Shared Memory. "
+                                "Temporary chats remain read-only."
+                                if temporary
+                                else None
+                            ),
+                        )
                     if exchange is not None:
+                        proposal = result.get("action")
+                        if isinstance(proposal, dict):
+                            result["action"] = await asyncio.to_thread(
+                                self.ask_history.save_action,
+                                conversation_id,
+                                exchange[1],
+                                proposal,
+                            )
                         await asyncio.to_thread(
                             self.ask_history.complete_answer,
                             conversation_id,
@@ -439,6 +505,75 @@ class LocalApi:
                     status_code=202,
                 )
             return JSONResponse(jsonable(await run_ask()))
+        except Exception as exc:  # noqa: BLE001
+            return error_response(exc)
+
+    async def ask_action(self, request: Request) -> JSONResponse:
+        try:
+            action_id = str(request.path_params["action_id"])
+            body = await request_json(request)
+            if set(body) != {"decision"}:
+                raise ValueError("memory action requests accept only decision")
+            decision = required_text(body, "decision")
+            if decision not in {"apply", "cancel"}:
+                raise ValueError("decision must be apply or cancel")
+            action = await asyncio.to_thread(self.ask_history.get_action, action_id)
+            if action is None:
+                raise KeyError("memory action not found")
+            if action.get("status") != "pending":
+                raise ValueError(f"memory action is already {action.get('status')}")
+            if decision == "cancel":
+                resolved = await asyncio.to_thread(
+                    self.ask_history.resolve_action,
+                    action_id,
+                    status="cancelled",
+                )
+                return JSONResponse(jsonable({"action": resolved}))
+            try:
+                result = await self.runtime.execute_memory_action(
+                    action,
+                    actor_surface="web-ask",
+                )
+            except Exception as exc:
+                from docmancer.memory.tree.errors import (
+                    AlreadyExistsError,
+                    StaleWriteError,
+                )
+
+                status = "conflict" if isinstance(exc, (StaleWriteError, AlreadyExistsError)) else "failed"
+                resolved = await asyncio.to_thread(
+                    self.ask_history.resolve_action,
+                    action_id,
+                    status=status,
+                    result={"error": str(exc)},
+                )
+                if status == "conflict":
+                    current_hash = (
+                        getattr(exc, "actual_hash", None)
+                        if isinstance(exc, StaleWriteError)
+                        else None
+                    )
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "ACTION_CONFLICT",
+                                "message": str(exc),
+                                "retry_safe": True,
+                                "current_hash": current_hash,
+                                "next_action": "Re-read Shared Memory and prepare a new proposal.",
+                            },
+                            "action": jsonable(resolved),
+                        },
+                        status_code=409,
+                    )
+                return error_response(exc)
+            resolved = await asyncio.to_thread(
+                self.ask_history.resolve_action,
+                action_id,
+                status="applied",
+                result=result,
+            )
+            return JSONResponse(jsonable({"action": resolved, "result": result}))
         except Exception as exc:  # noqa: BLE001
             return error_response(exc)
 

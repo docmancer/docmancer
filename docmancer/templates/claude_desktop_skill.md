@@ -5,7 +5,7 @@ description: Search local documentation context packs with docmancer CLI. Use wh
 
 # docmancer
 
-Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Use `docmancer ask`, `read`, `write`, `edit`, and `move` for prior decisions and durable memory. Use `docmancer docs ...` for third-party documentation.
+Docmancer maintains laptop-wide Shared Memory, project memory, and a separate documentation index. Use `docmancer ask`, `read`, `write`, `edit`, and `move` for prior decisions and durable memory. Ask uses the configured answer provider by default when one is ready; explicit mutation requests prepare one complete-file proposal for approval. Use `--read-only` to disable proposals and `--no-answer` for evidence only. Use `docmancer docs ...` for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -15,7 +15,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 1. Run `docmancer ask "task"` when prior decisions or conventions may matter.
 2. Use `docmancer common`, `delivery`, or `timeline` for recurring memory, delivery proof, or canonical change history.
-3. Use `docmancer read <address>` before changing canonical memory, and write only when the user explicitly asks.
+3. When the user explicitly asks to manage memory, use Ask to prepare one complete-file proposal. Apply it only after explicit authorisation.
 4. Run `docmancer docs list` to see indexed docs.
 5. Run `docmancer docs query "question"` when relevant docs are present.
 6. If docs are missing and the user approves the source, use `docmancer docs add <path-or-url>`.
@@ -41,6 +41,6 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Common Mistakes
 
-- Do not use `docmancer docs add` for new local files. Use `docmancer docs add <path>`.
-- Do not use `docmancer docs add` for URLs. Use `docmancer docs add <url>`.
+- Use `docmancer docs add` for both local documentation and URLs.
+- Use root `docmancer import` only for Markdown intended for memory curation.
 - Do not run `docmancer docs query` before checking indexed sources with `docmancer docs list`.

@@ -1,6 +1,6 @@
 # docmancer
 
-Docmancer maintains one automatically reconciled laptop-wide memory, project memory, and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Use `docmancer docs ...` only for third-party documentation.
+Docmancer maintains laptop-wide Shared Memory, project memory, and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Ask uses the configured answer provider by default when one is ready; explicit mutation requests prepare one complete-file proposal for approval. Use `--read-only` to disable proposals and `--no-answer` for evidence only. Use `docmancer docs ...` only for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -12,7 +12,7 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 
 1. Run `docmancer ask "task" --agent github-copilot` when prior decisions may matter.
 2. Use `docmancer common`, `delivery`, or `timeline` for recurring memory, delivery proof, or canonical change history.
-3. Use `docmancer read <address>` before changing canonical memory, and write only when the user asks.
+3. When the user asks to manage memory, use Ask to prepare one complete-file proposal. Apply it only after explicit authorisation.
 4. Run `docmancer docs list` to see indexed docs.
 5. Run `docmancer docs query "question"` when relevant docs are present.
 6. Keep memory and Docs results separate.
@@ -22,6 +22,7 @@ Use docmancer when the user asks about library docs, API references, vendor docs
 ```bash
 docmancer setup  # previews all detected integrations and asks before changing them
 docmancer ask "what decisions apply?" --agent github-copilot
+docmancer ask "remember that releases require a smoke test" --agent github-copilot
 docmancer common
 docmancer delivery
 docmancer timeline

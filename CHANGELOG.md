@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - Unreleased
+### Added
+
+- **Approved Shared Memory actions from Ask.** A memory request can now produce one complete, hash-guarded file proposal in the CLI or a saved web conversation. The proposal shows the full change and can only be applied through an explicit approval action. Non-interactive CLI use requires `--apply`, temporary chats stay read-only, and a later "yes" message cannot apply an earlier proposal.
+- **Action history for saved conversations.** The local Ask history records pending, applied, cancelled, and conflict outcomes so the workbench can safely resolve each proposal once.
+
+### Changed
+
+- **Clearer agent-delivery status.** Shared Memory now distinguishes automatic recall, on-demand installed skills, and managed projections instead of implying every connected agent receives one fixed projection file.
+- **More precise public command guidance.** CLI help, installed skills, README, and wiki material now describe current Shared Memory, MCP, retrieval-profile, provider, and Qdrant command behavior consistently.
+
+### Fixed
+
+- **Shared Memory modal layout.** The add-memory dialog now keeps its explanatory subtitle clear of the divider.
+
 ## [0.9.4] - 2026-07-29
 ### Added
 

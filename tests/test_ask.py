@@ -1,9 +1,19 @@
 import json
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
 from docmancer.memory.tree.store import TreeStore
+
+
+def _empty_ask_result():
+    return {
+        "mandatory_policies": [],
+        "curated_memory": [],
+        "relevant_evidence": [],
+        "refresh": {"requested": False},
+    }
 
 
 def _plant_agent_memory(home, project_path):
@@ -301,3 +311,98 @@ def test_ask_calls_answer_provider_without_refreshing_sources(tmp_path, monkeypa
 
     assert result["refresh"]["requested"] is False
     assert result["answer"]["text"] == "Production deploys use Railway [1]."
+
+
+def test_ask_read_only_bypasses_action_planning(tmp_path):
+    with patch("docmancer.memory.actions.MemoryActionEngine.plan") as plan, \
+         patch("docmancer.memory.ask.ask", return_value=_empty_ask_result()):
+        result = CliRunner().invoke(
+            cli,
+            ["ask", "Remember this project decision", "--read-only", "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    plan.assert_not_called()
+    assert "action" not in json.loads(result.output)
+
+
+def test_ask_apply_executes_validated_action_without_prompt(tmp_path):
+    proposal = {
+        "operation": "create",
+        "scope": "project",
+        "target": "decisions/release.md",
+        "path": "decisions/release.md",
+        "status": "pending",
+        "diff": "--- /dev/null\n+++ decisions/release.md\n+# Release\n",
+        "after_markdown": "# Release\n",
+    }
+    engine = MagicMock()
+    engine.plan.return_value = {
+        "kind": "proposal",
+        "message": "Review this proposal.",
+        "proposal": proposal,
+    }
+    engine.execute.return_value = {
+        "address": "docmancer://memory/release",
+        "content_hash": "hash",
+    }
+
+    with patch("docmancer.memory.actions.MemoryActionEngine", return_value=engine), \
+         patch("docmancer.memory.ask.ask", return_value=_empty_ask_result()) as recall:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "ask",
+                "Remember this project release decision",
+                "--project",
+                str(tmp_path),
+                "--apply",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["action"]["status"] == "applied"
+    assert payload["result"]["content_hash"] == "hash"
+    engine.execute.assert_called_once()
+    assert recall.call_args.kwargs["answer"] is False
+    assert recall.call_args.kwargs["on_delta"] is None
+
+
+def test_ask_json_proposes_but_never_applies_without_apply():
+    proposal = {
+        "operation": "edit",
+        "scope": "project",
+        "target": "docmancer://memory/release",
+        "path": "decisions/release.md",
+        "status": "pending",
+        "diff": "diff",
+    }
+    engine = MagicMock()
+    engine.plan.return_value = {
+        "kind": "proposal",
+        "message": "Review this proposal.",
+        "proposal": proposal,
+    }
+    with patch("docmancer.memory.actions.MemoryActionEngine", return_value=engine), \
+         patch("docmancer.memory.ask.ask", return_value=_empty_ask_result()):
+        result = CliRunner().invoke(
+            cli,
+            ["ask", "Update the release decision", "--json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["action"]["status"] == "pending"
+    engine.execute.assert_not_called()
+
+
+def test_ask_apply_rejects_read_only_and_no_answer():
+    runner = CliRunner()
+    read_only = runner.invoke(cli, ["ask", "Remember this", "--apply", "--read-only"])
+    no_answer = runner.invoke(cli, ["ask", "Remember this", "--apply", "--no-answer"])
+
+    assert read_only.exit_code == 2
+    assert "--apply cannot be combined with --read-only" in read_only.output
+    assert no_answer.exit_code == 2
+    assert "--apply cannot be combined with --no-answer" in no_answer.output

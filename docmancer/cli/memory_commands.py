@@ -229,7 +229,7 @@ def _agent(include=(), exclude=()):
     cls=DocmancerGroup,
     context_settings=HELP_CONTEXT_SETTINGS,
     invoke_without_command=True,
-    short_help="Inspect, distil, review, and share canonical context.",
+    short_help="Use advanced and compatibility memory operations.",
     epilog=format_examples(
         "docmancer memory",
         "docmancer memory distill --into personal-defaults",
@@ -240,11 +240,10 @@ def _agent(include=(), exclude=()):
 )
 @click.pass_context
 def memory_group(ctx: click.Context):
-    """Manage approved context packs above the local source-attributed memory corpus.
+    """Advanced access to indexed evidence, legacy record packs, canonical reconciliation, and diagnostics.
 
-    Canonical records remain independently editable and revisioned. Distillation
-    proposes software-reconciled pack changes, review controls activation, and
-    sharing creates team proposals instead of writing unreviewed team context.
+    Normal work uses ask, Shared Memory files, and the root read/write commands.
+    The pack and record commands remain available for compatibility and review.
     """
     if os.environ.get("DOCMANCER_NO_RECURSE") == "1":
         click.echo("docmancer memory commands are disabled inside docmancer subprocesses.", err=True)
@@ -253,10 +252,10 @@ def memory_group(ctx: click.Context):
         service = _memory_service()
         rows = service.list_context(project_path=Path.cwd())
         if not rows:
-            click.echo("No context packs found. Run `docmancer sync`.")
+            click.echo("No legacy context packs found. Normal Shared Memory is available through `docmancer web` and `docmancer ask`.")
             return
         for row in rows:
-            click.echo(f"{row['pack_id']}: {row['records']} active, {row['pending']} pending review")
+            click.echo(f"{row['pack_id']}: {row['records']} active legacy record(s), {row['pending']} pending review")
 
 
 def _memory_service():
@@ -1005,7 +1004,7 @@ def memory_team() -> None:
     """Move reviewable team memory through Git without staging or committing."""
 
 
-@memory_team.command("import", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@memory_team.command("import", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import reviewable team memory from Git.")
 @click.option("--from-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
 def memory_team_import(project: Path) -> None:
     import json as _json
@@ -1017,7 +1016,7 @@ def memory_team_import(project: Path) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
-@memory_team.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS)
+@memory_team.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export reviewable team memory without staging it.")
 @click.option("--to-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option("--dry-run", is_flag=True, help="Preview files without writing them.")
 @click.option("--yes", is_flag=True, help="Confirm writing reviewable Markdown files.")
@@ -2711,7 +2710,7 @@ def _context_json(value) -> None:
     click.echo(json.dumps(asdict(value) if is_dataclass(value) else value, indent=2, ensure_ascii=False, default=default))
 
 
-@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show a context pack or memory record.")
+@memory_group.command("show", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Show a legacy context pack or memory record.")
 @click.argument("identifier", required=False, metavar="PACK_OR_ID")
 @click.option("--relations", "include_relations", is_flag=True, help="Include graph relationships for a record.")
 @click.option("--history", "include_history", is_flag=True, help="Include revision history.")
@@ -2758,7 +2757,7 @@ def canonical_show(identifier: str | None, include_relations: bool, include_hist
         click.echo(f"\n{len(value['history'])} revision(s)")
 
 
-@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add approved personal context or propose team context.")
+@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add an approved legacy record or propose a team record.")
 @click.argument("text")
 @click.option("--into", "pack_id", default="personal-defaults", show_default=True, help="Destination context pack.")
 @click.option("--scope", "legacy_scope", type=click.Choice(["global", "project", "team"]), default=None, hidden=True)
@@ -2791,10 +2790,10 @@ def canonical_add(text: str, pack_id: str, legacy_scope: str | None, project_pat
     if result["proposal"]:
         click.echo(f"Created team review proposal {result['proposal'].proposal_id}.")
     else:
-        click.echo(f"Added approved context {result['record'].record_id} to {result['pack'].pack_id}.")
+        click.echo(f"Added approved legacy record {result['record'].record_id} to {result['pack'].pack_id}.")
 
 
-@memory_group.command("edit", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Edit canonical context.")
+@memory_group.command("edit", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Edit a legacy canonical record.")
 @click.argument("identifier", metavar="ID")
 @click.argument("text", required=False)
 def canonical_edit(identifier: str, text: str | None) -> None:
@@ -2817,7 +2816,7 @@ def canonical_edit(identifier: str, text: str | None) -> None:
         click.echo(f"Updated {result['record'].record_id} and activated its new revision.")
 
 
-@memory_group.command("remove", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Remove context with a durable tombstone.")
+@memory_group.command("remove", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Remove a legacy record with a durable tombstone.")
 @click.argument("identifier", metavar="ID")
 @click.option("--yes", is_flag=True)
 def canonical_remove(identifier: str, yes: bool) -> None:
@@ -2961,7 +2960,7 @@ def canonical_unpin(section: str, text: str) -> None:
     click.echo(f"Removed {result['removed']} pinned line(s) from {result['section']}.")
 
 
-@memory_group.command("distill", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose a reconciled context-pack patch.")
+@memory_group.command("distill", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose a reconciled legacy-pack patch.")
 @click.option("--into", "pack_id", default="personal-defaults", show_default=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
 @click.option(
@@ -2989,7 +2988,7 @@ def canonical_distill(pack_id: str, project_path: Path | None, limit: int, as_js
     click.echo(f"Review with: docmancer memory review {proposal.proposal_id}")
 
 
-@memory_group.command("review", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Review context proposals and unresolved evidence.")
+@memory_group.command("review", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Review legacy-pack proposals and unresolved evidence.")
 @click.argument("proposal_id", required=False, metavar="PROPOSAL")
 @click.option("--approve", is_flag=True)
 @click.option("--reject", is_flag=True)
@@ -3128,7 +3127,7 @@ def canonical_review(
     click.echo(f"Proposal {result['proposal'].proposal_id} is {result['proposal'].state}.")
 
 
-@memory_group.command("share", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose approved personal context for the team.")
+@memory_group.command("share", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose approved legacy records for the team.")
 @click.argument("pack_id", metavar="PACK")
 @click.option("--into", "target_pack_id", default="team-standards", show_default=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
@@ -3143,7 +3142,7 @@ def canonical_share(pack_id: str, target_pack_id: str, project_path: Path | None
         click.echo(f"Created encrypted team promotion proposal {proposal.proposal_id}.")
 
 
-@memory_group.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export approved context as Markdown.")
+@memory_group.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export approved legacy packs as Markdown.")
 @click.argument("pack_id", required=False, metavar="PACK")
 @click.option("--output", type=click.Path(path_type=Path), default=None)
 def canonical_export(pack_id: str | None, output: Path | None) -> None:

@@ -2476,9 +2476,32 @@ class LocalRuntime:
         answer: bool | None = None,
         mode: str = "normal",
         on_delta=None,
+        action_enabled: bool = False,
+        conversation_history: list[dict[str, str]] | None = None,
+        pending_action_request: str | None = None,
+        action_clarification_count: int = 0,
+        mutation_disabled_reason: str | None = None,
     ) -> dict:
         from docmancer.memory.ask import ask
+        from docmancer.memory.actions import MemoryActionEngine, is_mutation_request
 
+        continued_request = str(pending_action_request or "").strip()
+        action_task = (
+            f"{continued_request}\n\nUser clarification: {task}"
+            if continued_request
+            else task
+        )
+        mutation_request = bool(is_mutation_request(task) or continued_request)
+        action_result = None
+        if mutation_request and action_enabled:
+            action_result = await asyncio.to_thread(
+                MemoryActionEngine(
+                    self.project_path,
+                    memory_agent=self._require_memory(),
+                ).plan,
+                action_task,
+                history=conversation_history,
+            )
         bundle = await asyncio.to_thread(
             ask,
             task,
@@ -2487,16 +2510,16 @@ class LocalRuntime:
             agent_name=agent,
             surface="web",
             integration_mode="workbench-preview",
-            answer=answer,
+            answer=False if mutation_request else answer,
             answer_mode=mode,
-            on_delta=on_delta,
+            on_delta=None if mutation_request else on_delta,
         )
         items = [
             *bundle["mandatory_policies"],
             *bundle["curated_memory"],
             *bundle["relevant_evidence"],
         ]
-        return {
+        result = {
             "answer": bundle.get("answer"),
             "no_answer": not bool(items),
             "items": items,
@@ -2509,6 +2532,65 @@ class LocalRuntime:
             "answer_unavailable": bundle.get("answer_unavailable"),
             "timings": {},
         }
+        if mutation_request:
+            if mutation_disabled_reason:
+                result["answer"] = {
+                    "text": mutation_disabled_reason,
+                    "provider": None,
+                    "model": None,
+                }
+            elif action_result is not None:
+                if (
+                    action_result.get("kind") == "clarification"
+                    and action_clarification_count >= 1
+                ):
+                    action_result = {
+                        **action_result,
+                        "kind": "unavailable",
+                        "message": (
+                            "I could not turn the clarification into one safe file proposal. "
+                            "Shared Memory is unchanged. Restate the request with one exact target, "
+                            "or use the explicit memory editor."
+                        ),
+                    }
+                result["answer"] = {
+                    "text": str(action_result.get("message") or ""),
+                    "provider": action_result.get("provider"),
+                    "model": action_result.get("model"),
+                }
+                result["action"] = action_result.get("proposal")
+                result["action_kind"] = action_result.get("kind")
+                result["action_request"] = (
+                    continued_request or task
+                    if action_result.get("kind") == "clarification"
+                    else None
+                )
+                result["action_clarification_count"] = (
+                    action_clarification_count + 1
+                    if action_result.get("kind") == "clarification"
+                    else 0
+                )
+        return result
+
+    async def execute_memory_action(
+        self,
+        proposal: dict[str, Any],
+        *,
+        actor_surface: str,
+    ) -> dict:
+        from docmancer.memory.actions import MemoryActionEngine
+
+        result = await asyncio.to_thread(
+            MemoryActionEngine(
+                self.project_path,
+                memory_agent=self._require_memory(),
+            ).execute,
+            proposal,
+            actor_surface=actor_surface,
+        )
+        self._invalidate_shared_memory_cache()
+        self._schedule_library_rebuild()
+        return result
 
     async def get_docs_source(self, source_root: str) -> dict | None:
         if source_root in self._docs_document_cache:

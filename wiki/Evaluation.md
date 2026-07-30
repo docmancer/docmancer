@@ -8,7 +8,7 @@ Every applicable invariant is reported independently as pass or fail. The requir
 
 ## Public retrieval benchmarks
 
-Public benchmark reports must identify the corpus and revision, query split, local model, vector store, fusion strategy, hardware, warm or cold cache state, latency distribution, memory use, and any provider cost. Local Model2Vec plus sqlite-vec and any opt-in BYOK configuration are reported separately. One-time ingestion and curation cost is also separate from per-query retrieval cost.
+Public benchmark reports must identify the corpus and revision, query split, retrieval profile, embedding and sparse models, vector store, fusion strategy, hardware, warm or cold cache state, latency distribution, memory use, and any provider cost. Local Model2Vec plus sqlite-vec, the complete FastEmbed plus Qdrant scale profile, and any opt-in BYOK configuration are reported separately. One-time ingestion and curation cost is also separate from per-query retrieval cost.
 
 LoCoMo and LongMemEval-S are preparation tracks, not internal release thresholds. Their conversational-memory assumptions do not perfectly match a source-attributed coding-agent tree, so reports must state excluded tasks, mapping decisions, unavailable labels, and any adaptation code. Real Docmancer questions may supplement public data, but they cannot replace a reproducible public configuration or be presented as calibrated accuracy.
 
@@ -26,7 +26,7 @@ The LoCoMo configurations have different honest scoring boundaries. Strict-turn 
 
 The strict-turn session-location diagnostic ranks each session by its best-matching turn and reaches 90.41% Recall@5. Direct whole-session embedding reaches 83.35%. This seven-point gap supports scoring parent units such as files and sessions by their strongest matching chunk instead of relying on one whole-document embedding.
 
-These are retrieval-only numbers. No answer generator or judge model was used. The checked-in result JSON omits dataset question and answer text but retains case IDs, categories, ranks, retrieved identifiers, exclusions, losses, dataset hashes, configuration, machine profile, and timings. Paid BYOK and the complete heavy-stack run remain not run.
+These are retrieval-only numbers. No answer generator or judge model was used. The checked-in result JSON omits dataset question and answer text but retains case IDs, categories, ranks, retrieved identifiers, exclusions, losses, dataset hashes, configuration, machine profile, and timings. Paid BYOK and the complete scale-profile run remain not run.
 
 Reproduce from the repository root:
 

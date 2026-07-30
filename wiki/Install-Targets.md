@@ -2,7 +2,7 @@
 
 `docmancer setup` detects coding agents and prepares one machine-wide plan. Before writing anything, it lists memory indexing, laptop-wide canonical reconciliation, every skill and managed-instruction installation, automatic recall and capture hooks, and manual follow-up. It also warns that a configured AI provider may receive redacted evidence for synthesis. Once confirmed, it installs or updates every detected integration, enables automatic capture for supported agents, and creates `~/.docmancer/tree`. Detection means the application or its storage directory exists. Connection means Docmancer verified its expected skill and managed instructions after installation. The same confirmed setup is available in the local web UI. Use `docmancer agent install <agent>` for an explicit target.
 
-Memory discovery is independent from installation. `setup` discovers supported agent memory and rules even when Docmancer has not installed a skill into that agent. Lifecycle capture and `memory sync` maintain the index. Web schedules maintenance after it is already serving, while Ask refreshes only with `--fresh`.
+Memory discovery is independent from installation. `setup` discovers supported agent memory and rules even when Docmancer has not installed a skill into that agent. Lifecycle capture and explicit maintenance update the index. Web schedules maintenance after it is already serving, while Ask refreshes only with `--fresh`.
 
 ## Skill locations
 
@@ -25,7 +25,7 @@ Bare `docmancer setup` includes automatic task-relevant recall and lifecycle cap
 
 Codex, Codex App, and Codex Desktop share one integration family because they use the same skills, `AGENTS.md`, and hooks. Claude Desktop remains a manual action: Docmancer generates the package, then the user uploads it through Claude Desktop.
 
-Agents without hook support receive Context through a managed projection. The advanced `docmancer agent refresh` command refreshes only that delivery layer. Projections are disposable outputs and are never indexed as evidence.
+Agents without hook support receive Shared Memory through a managed projection. The advanced `docmancer agent refresh` command refreshes only that delivery layer. Projections are disposable outputs and are never indexed as evidence.
 
 The lower-level `docmancer agent install` command still accepts `--capture-hooks` when you manage one Claude Code or Codex integration directly. The all-encompassing setup path includes capture automatically after its warning and confirmation. Remove integrations with `docmancer agent remove <agent> --hooks` or remove only capture with `--capture-hooks`.
 
@@ -33,7 +33,8 @@ The lower-level `docmancer agent install` command still accepts `--capture-hooks
 
 Installed skills use the simplified public surface:
 
-- `docmancer ask` recalls mandatory policy, curated memory, and relevant supporting evidence.
+- `docmancer ask` recalls mandatory policy, Shared Memory, and relevant supporting evidence, then uses the configured answer provider by default when one is ready.
+- `docmancer ask --no-answer` returns evidence only, while `--fresh` explicitly waits for changed sources.
 - `docmancer ask --history` includes superseded and expired evidence when change over time matters.
 - `docmancer write`, `read`, `edit`, and `move` manage durable Markdown memory.
 - `docmancer import <path>` copies arbitrary Markdown into the project inbox when explicitly requested.

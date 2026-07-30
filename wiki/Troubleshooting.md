@@ -7,7 +7,7 @@ docmancer status --check
 docmancer doctor
 ```
 
-These commands report source health, integration state, Context revisions, provider readiness, masked security findings, and optional Cloud status.
+These commands report Shared Memory, indexed evidence, retrieval state, integrations, legacy Context revisions, provider readiness, masked security findings, and optional Cloud status.
 
 ## The wrong executable is running
 
@@ -60,7 +60,40 @@ Use `--history` if the answer may have been superseded:
 docmancer ask "How did our deployment policy change?" --history
 ```
 
-## Context does not exist yet
+If you expected prose but received only evidence, inspect the provider and either configure it or request evidence explicitly:
+
+```bash
+docmancer providers list
+docmancer ask "What decisions apply?" --no-answer
+```
+
+## Ask did not prepare a memory action
+
+Conversational editing requires a configured generation provider and a saved web conversation. Temporary chats are read-only. In the CLI, check that `--read-only` or `--no-answer` was not supplied:
+
+```bash
+docmancer providers list
+docmancer ask "Remember that releases require a smoke test"
+```
+
+Docmancer asks for clarification when the scope or target is ambiguous. It also refuses AI rewriting when the complete file exceeds 16,000 characters or secret redaction would alter the request or file. Use `docmancer read`, `write`, `edit`, `move`, `trash`, or `restore` for an explicit manual operation in those cases.
+
+## A memory action reports a conflict
+
+The target changed after the proposal was prepared. Docmancer leaves it unchanged instead of silently rebasing. In the web action card choose Prepare a new proposal, or rerun the original CLI request so planning uses the latest complete file and content hash.
+
+## Shared Memory has not been built
+
+Run setup or explicitly rebuild the laptop-wide canonical sections:
+
+```bash
+docmancer setup
+docmancer memory canonical --refresh
+```
+
+Ask and web startup deliberately do not perform canonical reconciliation.
+
+## A legacy Context revision does not exist
 
 If no memory is indexed, run `docmancer setup`. If memory exists, preview a build:
 
@@ -68,16 +101,16 @@ If no memory is indexed, run `docmancer setup`. If memory exists, preview a buil
 docmancer context refresh --dry-run
 ```
 
-The local web app shows how many sources and clusters will be processed before anything is written.
+Generated Context is a compatibility surface. Shared Memory and Ask work without it.
 
-## AI Context is unavailable
+## Provider-assisted generation is unavailable
 
 Choose a provider and model in Settings, then store and test the provider credential. The CLI equivalent is:
 
 ```bash
 docmancer providers list
 docmancer providers key <provider>
-docmancer providers set <provider> --model <model-id>
+docmancer providers set <provider> --default --model <model-id>
 docmancer providers test <provider>
 ```
 
@@ -91,26 +124,26 @@ docmancer context refresh --provider none
 
 ## A Context build fails
 
-The previous Context revision remains current if a provider fails or a background job is interrupted. Check provider readiness, then retry. Use `docmancer context status`, `show`, and `diff` to inspect current state.
+The previous Context revision remains current if a provider fails or a build is interrupted. Independent topic batches run concurrently and a failed batch falls back to deterministic rendering. Check provider readiness, then retry. Use `docmancer context status`, `show`, and `diff` to inspect current state.
 
-## Context differs between agents
+## Shared Memory differs between agents
 
 Inspect installation, automatic recall, and recent successful use as separate signals:
 
 ```bash
 docmancer delivery
-docmancer context delivery
 docmancer agent refresh
 ```
 
-An installed skill can be connected even when no recall receipt exists yet. Some agents require a restart or trust prompt before new instructions take effect.
+An installed skill can be connected even when no recall receipt exists yet. Some agents require a restart or trust prompt before new instructions take effect. Use `docmancer context delivery` only for older generated-Context workflows.
 
 ## A deleted curated file returned
 
 Read its history and verify the original source:
 
 ```bash
-docmancer read <address> --history
+docmancer read <address>
+docmancer timeline --file-id <stable-file-id>
 docmancer cloud sync
 ```
 
@@ -136,8 +169,8 @@ Use `--provider`, `--strategy`, or `--max-pages` when automatic discovery choose
 
 ## Cloud is unavailable
 
-Local Ask, Context, Library, integrations, capture, and docs continue to work. Reconnect with `docmancer cloud connect` when needed. Cloud adds encrypted continuity and coordination, not local recall quality.
+Local Ask, Shared Memory, legacy Context, Library, integrations, capture, and docs continue to work. Reconnect with `docmancer cloud connect` when needed. Cloud adds encrypted continuity and coordination, not local recall quality.
 
 ## An old command is no longer recognised
 
-The 0.8 aliases were removed in 0.9. Use `ask` for recall, `web` for the human interface, `context refresh` for consolidated Context, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for advanced operations.
+The 0.8 aliases were removed in 0.9. Use `ask` for recall, `web` for the human interface, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for advanced operations. `context refresh` remains available only for generated-Context compatibility.

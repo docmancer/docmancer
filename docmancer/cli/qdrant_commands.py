@@ -19,7 +19,7 @@ def _manager():
     return QdrantManager()
 
 
-@click.group(name="qdrant", help="Manage the local docmancer-owned Qdrant process.", hidden=True)
+@click.group(name="qdrant", help="Manage the optional Docmancer-owned Qdrant process used by the scale retrieval profile.", hidden=True)
 def qdrant_group() -> None:
     pass
 
@@ -68,7 +68,7 @@ def qdrant_down_cmd() -> None:
 @qdrant_group.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Emit raw JSON status.")
 def qdrant_status_cmd(as_json: bool) -> None:
-    """Report qdrant reachability, ownership, port, and version."""
+    """Report Qdrant reachability, ownership, port, and version."""
     mgr = _manager()
     st = mgr.status()
     if as_json:
