@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.6] - Unreleased
+## [0.9.6] - 2026-07-30
 ### Fixed
 
 - **Large first-time Personal Sync uploads.** Tree-head updates now use one SQLite transaction rather than opening the sync database once per memory file, so an initial device sync can queue a large Shared Memory tree reliably.
