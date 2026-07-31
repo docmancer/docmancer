@@ -555,7 +555,7 @@ class LaptopMemoryReconciler:
                 "canonical store.",
                 "",
                 "Project-local `.docmancer/` directories inside individual repositories hold",
-                "project-scoped and team memory. Those are separate from this machine-wide",
+                "project-scoped memory. Those are separate from this machine-wide",
                 "canonical tree.",
                 "",
                 "## How to read and change it",

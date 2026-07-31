@@ -231,7 +231,14 @@ class MemoryAgent:
             progress("redact", f"Redacting and extracting {len(entries):,} source file(s)")
             cleaned_entries = [self.privacy.clean(e) for e in entries]
             atoms = self._atoms_from_entries_cached(cleaned_entries, recreate=recreate, merge=False)
-            records = self.records.records(project_paths=self._project_paths(cleaned_entries))
+            project_paths = self._project_paths(cleaned_entries)
+            migrated = self.records.migrate_legacy_team_records(project_paths=project_paths)
+            if migrated:
+                logger.info(
+                    "Migrated %d record(s) from the removed team scope to project or personal scope.",
+                    migrated,
+                )
+            records = self.records.records(project_paths=project_paths)
             atoms.extend(record.to_atom() for record in records)
             imported = self.graph.imported_atoms()
             if imported:
@@ -289,7 +296,7 @@ class MemoryAgent:
                         title=f"{record.origin.title()} memory",
                         content=content,
                         path=record.source_path,
-                        extra={"kind": "team-memory" if record.scope_kind == "team" else "docmancer-memory"},
+                        extra={"kind": "docmancer-memory"},
                     )
                 )
             self._write_source_snapshot([*cleaned_entries, *record_entries], atoms)
@@ -309,6 +316,8 @@ class MemoryAgent:
         if not rows or not Path(self.db_path).is_file():
             return True
 
+        # "team-memory" is retained so snapshots written before the team
+        # scope was removed keep being ignored rather than forcing a resync.
         ignored_kinds = {"docmancer-memory", "team-memory"}
         indexed = {
             (
@@ -750,11 +759,11 @@ class MemoryAgent:
                 meta = chunk.metadata or {}
                 kind = str(meta.get("scope_kind") or str(meta.get("scope", "")).split(":", 1)[0])
                 raw = meta.get("project_path")
-                if kind in {"project", "team"} and raw:
+                if kind == "project" and raw:
                     try:
                         memory_project = Path(str(raw)).expanduser().resolve()
                         if project == memory_project or memory_project in project.parents:
-                            return 0 if kind == "project" else 1
+                            return 0
                     except OSError:
                         pass
                     return 9
@@ -778,7 +787,7 @@ class MemoryAgent:
                     continue
                 if scope and row["scope_kind"] != scope:
                     continue
-                if project_path and row["scope_kind"] in {"project", "team"}:
+                if project_path and row["scope_kind"] == "project":
                     try:
                         memory_project = Path(str(row.get("project_path") or "")).expanduser().resolve()
                         project = Path(project_path).expanduser().resolve()
@@ -1405,7 +1414,7 @@ class MemoryAgent:
         if filters.project_path:
             if document.scope_kind == "global":
                 return True
-            if document.scope_kind not in {"project", "team"}:
+            if document.scope_kind != "project":
                 return False
             raw_project = document.scope.split(":", 1)[1] if ":" in document.scope else ""
             if not raw_project:
@@ -1564,13 +1573,7 @@ class MemoryAgent:
         promoted_from: str | None = None,
         sync_index: bool = True,
     ) -> tuple[MemoryRecord, bool]:
-        if scope_kind == "team":
-            project = Path(project_path or Path.cwd()).expanduser().resolve()
-            if not (project / ".git").exists():
-                raise ValueError("team memory requires an existing Git repository root")
-            project_path = project
-            self._extra_project_paths.add(str(project))
-        elif scope_kind == "project":
+        if scope_kind == "project":
             project_path = Path(project_path or Path.cwd()).expanduser().resolve()
             self._extra_project_paths.add(str(project_path))
         existing = self.records.find_equivalent(
@@ -1842,20 +1845,6 @@ class MemoryAgent:
         except Exception as exc:  # noqa: BLE001 - optional sync cannot break local indexing
             logger.debug("cloud graph projection queueing skipped: %s", exc)
             return 0
-
-    def promote(self, identifier: str, *, project_path: str | Path | None = None) -> tuple[MemoryRecord, bool]:
-        atom = self.find_atom(identifier)
-        if atom is None:
-            raise ValueError("memory id is missing or ambiguous")
-        return self.add_record(
-            atom.text,
-            scope_kind="team",
-            project_path=project_path or Path.cwd(),
-            memory_type=atom.type,
-            tags=atom.tags,
-            origin="promoted",
-            promoted_from=atom.record_id or atom.atom_id,
-        )
 
     def memory_paths(self) -> list[Path]:
         db = Path(self.db_path)

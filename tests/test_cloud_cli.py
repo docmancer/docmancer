@@ -193,13 +193,6 @@ def test_cloud_devices_lists_fingerprints_and_revokes_one_device(tmp_path, monke
     assert '"state": "revoked"' in revoked.output
 
 
-def test_team_subcommands_are_registered():
-    result = CliRunner().invoke(cli, ["memory", "team", "--help"])
-    assert result.exit_code == 0
-    assert "import" in result.output
-    assert "export" in result.output
-
-
 def test_device_login_preserves_server_key_version(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
     from docmancer.cloud import connect as connect_module

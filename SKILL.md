@@ -1,12 +1,20 @@
 ---
 name: docmancer
-description: Recall and update source-attributed local agent memory, or search a separate local technical-documentation index.
-version: 0.9.4
+description: Work from the same local memory as every other coding agent on this machine. Recall prior decisions, preferences, instructions, and project conventions that Claude Code, Codex, Cursor, and other agents wrote here, with cited sources, fully local. Also searches a separate local technical-documentation index.
+version: 0.9.5
 author: docmancer
+license: MIT
+homepage: https://docmancer.dev
+repository: https://github.com/docmancer/docmancer
 tags:
   - agent-memory
-  - rag
   - local-first
+  - claude-code
+  - codex
+  - cursor
+  - mcp
+  - shared-memory
+  - rag
   - documentation
   - sqlite
 install: pipx install docmancer --python python3.13
@@ -14,9 +22,17 @@ install: pipx install docmancer --python python3.13
 
 # docmancer
 
-Docmancer discovers memory, instructions, rules, and eligible session evidence written by local coding agents. It reconciles durable machine-wide knowledge into Shared Memory, keeps deliberate project memory as Markdown, and returns bounded cited evidence through the CLI or MCP. Technical documentation remains a separate Library corpus.
+Work from the same local memory as every other coding agent on this machine, instead of making the user explain the project again. Claude Code, Codex, Cursor, Gemini, and other coding agents write memory, instructions, and rules all over the machine, each locked in its own silo. Docmancer discovers that evidence, reconciles the durable parts into one human-readable Shared Memory tree, and gives every agent grounded, cited recall over it: automatically through recall hooks (Claude Code and Codex), on demand through this skill and the CLI, and through MCP tools for everything else. The core memory path runs locally. Network access happens only when the user explicitly fetches online documentation, uses an external model, checks a package registry, or enables Cloud.
 
-The default profile uses SQLite FTS5, sqlite-vec, and bundled Model2Vec embeddings without API keys or a daemon. The optional scale profile uses FastEmbed, sparse retrieval, and Qdrant without changing memory authority or provenance semantics.
+## Quick start
+
+```bash
+pipx install docmancer --python python3.13
+docmancer setup                              # discovers agents, indexes their memory, installs skills and hooks
+docmancer ask "why did we pick Railway?"     # grounded answer with citations from what your agents wrote
+```
+
+The default profile uses SQLite FTS5, sqlite-vec, and bundled Model2Vec embeddings: no API keys, no daemon, no model download, offline at runtime. The optional scale profile uses FastEmbed, sparse retrieval, and Qdrant without changing memory authority or provenance semantics. Technical documentation remains a separate Library corpus, searched with `docmancer docs`.
 
 ## Workflow
 

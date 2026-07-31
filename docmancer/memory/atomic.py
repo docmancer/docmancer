@@ -212,7 +212,7 @@ def extract_atoms(entry: "MemoryEntry") -> list[AtomicMemoryEntry]:
         kind = str(entry.extra.get("kind", "agent-memory"))
         scope_prefix, _, scope_value = (entry.scope or "").partition(":")
         scope_prefix = scope_prefix or "unknown"
-        project_path = scope_value if scope_prefix in {"project", "team"} and scope_value else None
+        project_path = scope_value if scope_prefix == "project" and scope_value else None
         tags = [entry.harness, kind, scope_prefix, memory_type]
         atoms.append(
             AtomicMemoryEntry(

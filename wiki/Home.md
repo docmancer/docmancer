@@ -1,13 +1,20 @@
 # Docmancer
 
-Coding agents already remember decisions, preferences, project rules, and past mistakes. The problem is that each agent keeps a different slice in a different place.
+Docmancer gives every coding agent on your machine one local memory, so you stop re-explaining your project to each of them.
 
-Docmancer is organised around two questions:
+Coding agents already remember decisions, preferences, project rules, and past mistakes. The problem is that each agent keeps a different slice in a different place, so nothing you taught one of them ever reaches the others.
 
-1. **What do my coding agents already know?**
-2. **How do I carry the useful parts to every agent?**
+Docmancer is organised around four problems, in this order. The first two are what the free local product solves:
 
-It discovers existing memory without rewriting the source files, keeps provenance attached, and arranges durable knowledge in a predictable Markdown scaffold. Connected agents can then recall the relevant files through installed skills, hooks, the CLI, or local MCP.
+1. **I re-explain my project to every coding agent. How do I get them all working from the same context?**
+2. **What do my coding agents already know about me and my working style?**
+
+The remaining two are what the paid tiers exist for:
+
+3. **All my memory and context lives on one machine. How do I get it onto my other machines?** Personal Sync is open in early access.
+4. **My agents have deep context about the features I am building. How do I share that with the other engineers, PMs, and designers on my team?** This is Team Sync, which is not available yet.
+
+Docmancer discovers existing memory without rewriting the source files, keeps provenance attached, and arranges durable knowledge in a predictable Markdown scaffold. Connected agents can then recall the relevant files through installed skills, hooks, the CLI, or local MCP.
 
 ## Normal workflow
 
@@ -37,6 +44,6 @@ The CLI remains the stable interface for agents and automation. `docmancer ask` 
 
 The web app binds to `127.0.0.1`. Local files, credentials, and indexes stay on the machine. Existing-file mutations require a current content hash and deletion is recoverable. Setup shows the provider privacy boundary before enabling provider-assisted reconciliation. Read-only Ask sends only its retrieved, redacted evidence bundle after retrieval. Mutation Ask additionally sends bounded candidate addresses and full safe candidate files so the provider can draft one structured proposal. Temporary chats cannot prepare actions, and the browser can submit only Apply or Cancel for a server-stored proposal.
 
-The complete local product is free. Paid Personal Sync and Team add encrypted continuity, recovery, and coordination without improving or gating local recall.
+The complete local product is free. Paid Personal Sync adds encrypted continuity, managed revision history, and recovery across the machines you approve, without improving or gating local recall. Team Sync is not available yet.
 
 See [Commands](Commands.md), [Architecture](Architecture.md), [Configuration](Configuration.md), [Supported Sources](Supported-Sources.md), [Install Targets](Install-Targets.md), [Cloud Sync](Cloud-Sync.md), [Evaluation policy](Evaluation.md), and [Troubleshooting](Troubleshooting.md).

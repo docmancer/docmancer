@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;600&family=Inter:wght@400;500&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1280px;height:640px;overflow:hidden}
+  body{background:#faf8f5;font-family:'Inter',sans-serif;color:#1a1614;position:relative}
+  .wash{position:absolute;inset:0;background:
+    radial-gradient(1000px 560px at 90% -14%, rgba(178,85,57,0.10), transparent 62%)}
+  .edge{position:absolute;top:0;left:0;right:0;height:8px;background:#b25539}
+  .frame{position:relative;height:100%;padding:66px 84px 66px;display:flex;flex-direction:column;justify-content:space-between}
+  .head{display:flex;align-items:center;gap:14px}
+  .head img{height:50px;image-rendering:pixelated}
+  .wm{font-family:'Newsreader',Georgia,serif;font-size:40px;font-weight:500;letter-spacing:-0.02em}
+  h1{font-family:'Newsreader',Georgia,serif;font-size:78px;line-height:1.04;font-weight:500;
+    letter-spacing:-0.022em;max-width:17ch}
+  .sub{margin-top:24px;font-size:27px;line-height:1.4;color:#5c4f44;letter-spacing:-0.005em}
+  .foot{display:flex;align-items:baseline}
+  .cmd{font-family:'Fira Code',monospace;font-size:22px;color:#5c4f44}
+  .cmd .p{color:#b25539;font-weight:500;margin-right:10px}
+  .site{margin-left:auto;font-family:'Newsreader',Georgia,serif;font-size:27px;color:#1a1614}
+</style></head><body>
+<div class="wash"></div><div class="edge"></div>
+<div class="frame">
+  <div class="head"><img src="wizard-logo.png" alt=""><span class="wm">docmancer</span></div>
+  <div>
+    <h1>Find what your coding agents already know.</h1>
+    <p class="sub">One local memory, shared across Claude&nbsp;Code, Codex, Cursor, and Gemini.</p>
+  </div>
+  <div class="foot">
+    <span class="cmd"><span class="p">$</span>pipx install docmancer --python python3.13</span>
+    <span class="site">docmancer.dev</span>
+  </div>
+</div>
+</body></html>

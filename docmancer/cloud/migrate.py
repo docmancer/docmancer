@@ -11,7 +11,7 @@ def migrate_records(*, root: str | Path, project_paths=None) -> dict[str, int]:
     counts = {"records": 0, "revisions_added": 0, "files_updated": 0}
     for record in store.records(project_paths=project_paths):
         counts["records"] += 1
-        assigned_project_id = record.scope_kind in {"project", "team"} and not record.project_id
+        assigned_project_id = record.scope_kind == "project" and not record.project_id
         if assigned_project_id:
             record.project_id = store.cloud.ensure_project(record.project_path)
             record.revision_id = ""

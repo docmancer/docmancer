@@ -1,10 +1,11 @@
 """Durable, user-owned memory records and local tombstones.
 
-Personal records live under ``~/.docmancer/memories``. Team records live in
-``<repo>/.docmancer/memory`` so they can be reviewed and versioned with code.
-Each record is one Markdown file with YAML frontmatter and maps to one memory
-atom. Tombstones contain identifiers and hashes only, never deleted
-memory text.
+Records live under ``~/.docmancer/memories``. Releases before the team scope
+was removed also wrote to ``<repo>/.docmancer/memory`` and to
+``<home>/context/team-memory``; both are still read so existing records
+survive, and neither is ever written to again. Each record is one Markdown
+file with YAML frontmatter and maps to one memory atom. Tombstones contain
+identifiers and hashes only, never deleted memory text.
 """
 from __future__ import annotations
 
@@ -28,9 +29,16 @@ _FRONTMATTER = re.compile(
     r"\A---\s*\n(?P<meta>.*?)\n---\s*\n?(?P<body>[\s\S]*)\Z",
     re.DOTALL,
 )
-_VALID_SCOPES = {"global", "project", "team"}
-_VALID_AUDIENCES = {"personal", "team"}
+_VALID_SCOPES = {"global", "project"}
+_VALID_AUDIENCES = {"personal"}
 _VALID_APPLICABILITY = {"global", "project"}
+
+# Records written before the team scope was removed from the OSS package are
+# downgraded on read rather than rejected. A team record was always a project
+# record with a shared audience, so "project" and "personal" preserve its
+# content and its applicability without keeping the paid vocabulary.
+_LEGACY_SCOPE_DOWNGRADE = {"team": "project"}
+_LEGACY_AUDIENCE_DOWNGRADE = {"team": "personal"}
 
 
 def _now() -> str:
@@ -90,6 +98,11 @@ class MemoryRecord:
     pack_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.downgraded_from_team = False
+        self.revision_repaired = False
+        if self.scope_kind in _LEGACY_SCOPE_DOWNGRADE:
+            self.scope_kind = _LEGACY_SCOPE_DOWNGRADE[self.scope_kind]
+            self.downgraded_from_team = True
         if self.scope_kind not in _VALID_SCOPES:
             raise ValueError(f"invalid memory scope: {self.scope_kind}")
         tag_values = {str(tag) for tag in self.tags}
@@ -104,21 +117,30 @@ class MemoryRecord:
         tagged_packs = sorted(
             tag.split(":", 1)[1] for tag in tag_values if tag.startswith("pack:")
         )
-        self.audience_kind = self.audience_kind or tagged_audience or (
-            "team" if self.scope_kind == "team" else "personal"
-        )
+        self.audience_kind = self.audience_kind or tagged_audience or "personal"
         self.applicability_kind = self.applicability_kind or tagged_applicability or (
-            "project" if self.scope_kind in {"project", "team"} else "global"
+            "project" if self.scope_kind == "project" else "global"
         )
+        if self.audience_kind in _LEGACY_AUDIENCE_DOWNGRADE:
+            self.audience_kind = _LEGACY_AUDIENCE_DOWNGRADE[self.audience_kind]
+            self.downgraded_from_team = True
         if self.audience_kind not in _VALID_AUDIENCES:
             raise ValueError(f"invalid memory audience: {self.audience_kind}")
         if self.applicability_kind not in _VALID_APPLICABILITY:
             raise ValueError(f"invalid memory applicability: {self.applicability_kind}")
+        # Drop any legacy audience or applicability tags; the canonical values
+        # are re-added below, so a downgraded record does not keep an
+        # "audience:team" tag that contradicts its own field.
+        self.tags = [
+            tag
+            for tag in self.tags
+            if not str(tag).startswith(("audience:", "applicability:"))
+        ]
         self.text = " ".join((self.text or "").split()).strip()
         if not self.text:
             raise ValueError("memory text cannot be empty")
         self.project_path = _clean_path(self.project_path)
-        if self.scope_kind in {"project", "team"} and not self.project_path:
+        if self.scope_kind == "project" and not self.project_path:
             raise ValueError(f"{self.scope_kind} memory requires a project path")
         self.pack_ids = sorted({str(value).strip() for value in [*self.pack_ids, *tagged_packs] if str(value).strip()})
         self.tags = sorted(
@@ -132,8 +154,43 @@ class MemoryRecord:
         self.parent_revision_ids = [str(value) for value in self.parent_revision_ids if str(value)]
         if self.scope_kind == "global":
             self.project_id = None
+        if self.downgraded_from_team and self.revision_id:
+            # The revision id covers scope_kind and tags, both of which change
+            # when a team-era record is downgraded, so the stored id no longer
+            # matches its own payload and every later call to
+            # to_revision_payload() would raise. Treat the downgrade as a new
+            # revision descending from the team-era one, which keeps the
+            # lineage intact and yields a valid identity. Deterministic, so
+            # reading the same file twice produces the same revision.
+            #
+            # Deliberately scoped to the downgrade. A revision mismatch on any
+            # other record is the signal reconcile_direct_edits() uses to
+            # detect a hand-edited Markdown file, and repairing that here
+            # would silently swallow the user's edit.
+            self.revision_repaired = True
+            self.parent_revision_ids = [self.revision_id]
+            self.revision_id = ""
         if not self.revision_id:
             self.revision_id = self.to_revision_payload()["revision_id"]
+
+    def _canonical_revision_id(self) -> str:
+        """The revision id this record's current payload would produce."""
+        from docmancer.cloud.serialize import build_record_payload
+
+        return build_record_payload(
+            record_id=self.record_id,
+            text=self.text,
+            memory_type=self.type,
+            tags=self.tags,
+            origin_kind=self.origin,
+            origin_harness=self.harness,
+            scope_kind=self.scope_kind,
+            project_id=self.project_id,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            parent_revision_ids=self.parent_revision_ids,
+            deleted=self.deleted,
+        )["revision_id"]
 
     @property
     def scope(self) -> str:
@@ -151,7 +208,7 @@ class MemoryRecord:
             text=self.text,
             type=self.type or classify_memory(self.text),
             harness=self.harness,
-            kind="team-memory" if self.scope_kind == "team" else "docmancer-memory",
+            kind="docmancer-memory",
             scope=self.scope,
             source_path=source,
             source_title=f"{self.origin.title()} memory",
@@ -233,10 +290,16 @@ class MemoryRecordStore:
         cleaned = " ".join(redact_secrets(text or "").split()).strip()
         if not cleaned:
             raise ValueError("memory text cannot be empty")
+        # Normalise legacy values here as well as in MemoryRecord, so callers
+        # that still pass a team scope get the same project identity and
+        # project path as any other project record.
+        scope_kind = _LEGACY_SCOPE_DOWNGRADE.get(scope_kind, scope_kind)
+        if audience_kind:
+            audience_kind = _LEGACY_AUDIENCE_DOWNGRADE.get(audience_kind, audience_kind)
         project = _clean_path(project_path)
-        if scope_kind in {"project", "team"} and not project:
+        if scope_kind == "project" and not project:
             project = _clean_path(Path.cwd())
-        project_id = self.cloud.ensure_project(project) if scope_kind in {"project", "team"} and project else None
+        project_id = self.cloud.ensure_project(project) if scope_kind == "project" and project else None
         record = MemoryRecord(
             record_id=record_id or uuid.uuid4().hex,
             text=cleaned,
@@ -261,12 +324,15 @@ class MemoryRecordStore:
         return record
 
     def _record_path(self, record: MemoryRecord) -> Path:
-        directory = self.personal_dir
-        if record.audience_kind == "team" and record.applicability_kind == "global":
-            directory = self.root / "context" / "team-memory"
-        elif record.scope_kind == "team":
-            directory = Path(record.project_path or Path.cwd()) / ".docmancer" / "memory"
-        return directory / f"{_slug(record.text)}-{record.record_id[:8]}.md"
+        # New records always land in the personal store. A record that already
+        # exists on disk keeps its location, so a file a user committed to
+        # their own repository under a previous release is never silently
+        # relocated out of it. See migrate_legacy_team_records.
+        if record.source_path:
+            existing = Path(record.source_path)
+            if existing.is_file():
+                return existing
+        return self.personal_dir / f"{_slug(record.text)}-{record.record_id[:8]}.md"
 
     def _write_record(self, path: Path, record: MemoryRecord) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,14 +362,17 @@ class MemoryRecordStore:
         paths: list[Path] = []
         if self.personal_dir.is_dir():
             paths.extend(sorted(self.personal_dir.glob("*.md")))
-        team_global_dir = self.root / "context" / "team-memory"
-        if team_global_dir.is_dir():
-            paths.extend(sorted(team_global_dir.glob("*.md")))
+        # Legacy directories written by releases that still had a team scope.
+        # They are read so existing records survive the removal, but nothing
+        # new is ever written to them.
+        legacy_global_dir = self.root / "context" / "team-memory"
+        if legacy_global_dir.is_dir():
+            paths.extend(sorted(legacy_global_dir.glob("*.md")))
         roots = {_clean_path(path) for path in (project_paths or []) if path}
         for root in sorted(path for path in roots if path):
-            team_dir = Path(root) / ".docmancer" / "memory"
-            if team_dir.is_dir():
-                paths.extend(sorted(team_dir.glob("*.md")))
+            legacy_dir = Path(root) / ".docmancer" / "memory"
+            if legacy_dir.is_dir():
+                paths.extend(sorted(legacy_dir.glob("*.md")))
         out: list[MemoryRecord] = []
         seen: set[str] = set()
         for path in paths:
@@ -313,6 +382,25 @@ class MemoryRecordStore:
             seen.add(record.record_id)
             out.append(record)
         return out
+
+    def migrate_legacy_team_records(self, *, project_paths: list[str | Path] | None = None) -> int:
+        """Rewrite records that predate the team-scope removal.
+
+        Records are downgraded on read by ``MemoryRecord.__post_init__``. This
+        persists that downgrade so the file on disk stops claiming a scope the
+        package no longer has. Files stay where they are and no record is
+        dropped, because their content is the user's, not a paid feature.
+        """
+        migrated = 0
+        for record in self.records(project_paths=project_paths):
+            stale = getattr(record, "downgraded_from_team", False) or getattr(record, "revision_repaired", False)
+            if not stale:
+                continue
+            path = Path(record.source_path) if record.source_path else self._record_path(record)
+            record.source_path = str(path)
+            self._write_record(path, record)
+            migrated += 1
+        return migrated
 
     def find_record(self, identifier: str, *, project_paths: list[str | Path] | None = None) -> MemoryRecord | None:
         matches = [r for r in self.records(project_paths=project_paths) if r.record_id.startswith(identifier)]
@@ -429,7 +517,7 @@ class MemoryRecordStore:
         from docmancer.cloud.serialize import validate_record_payload
 
         value = validate_record_payload(payload)
-        if value["scope_kind"] in {"project", "team"} and project_path is None:
+        if value["scope_kind"] == "project" and project_path is None:
             raise ValueError(
                 f"{value['scope_kind']} memory requires a linked local project path"
             )

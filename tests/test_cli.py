@@ -72,7 +72,7 @@ PUBLIC_COMMAND_HELP_CASES = [
 def test_cli_help():
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0
-    assert "recall the memory your coding agents already wrote" in result.output
+    assert "one local memory" in result.output
     assert "docs" in result.output
     assert "setup" in result.output
     assert "ask" in result.output

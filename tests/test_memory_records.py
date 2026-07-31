@@ -181,55 +181,6 @@ def test_add_rejects_equivalent_memory_in_the_same_scope(tmp_path, monkeypatch):
     assert len(list((tmp_path / "state" / "memories").glob("*.md"))) == 1
 
 
-def test_team_memory_is_reviewable_and_promotion_never_stages(tmp_path, monkeypatch):
-    _memory_env(tmp_path, monkeypatch)
-    project = tmp_path / "repo"
-    (project / ".git").mkdir(parents=True)
-
-    from docmancer.memory import MemoryAgent
-
-    agent = MemoryAgent()
-    personal, _ = agent.add_record("All schema changes need a rollback note.", scope_kind="project", project_path=project)
-    promoted, indexed = agent.promote(personal.record_id, project_path=project)
-
-    path = Path(promoted.source_path)
-    assert indexed is True
-    assert path.parent == project / ".docmancer" / "memory"
-    assert promoted.scope_kind == "team"
-    assert promoted.promoted_from == personal.record_id
-    assert "rollback note" in path.read_text()
-    assert not (project / ".git" / "index").exists()
-
-
-def test_team_add_creates_review_proposal(tmp_path, monkeypatch):
-    _memory_env(tmp_path, monkeypatch)
-    project = tmp_path / "repo"
-    (project / ".git").mkdir(parents=True)
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "memory",
-            "add",
-            "Every schema change needs a rollback note.",
-            "--scope",
-            "team",
-            "--project",
-            str(project),
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "Created team review proposal" in result.output
-    assert not (project / ".docmancer" / "memory").exists()
-
-    pending = CliRunner().invoke(cli, ["memory", "review", "--json"])
-    assert pending.exit_code == 0, pending.output
-    proposals = json.loads(pending.output)
-    assert len(proposals) == 1
-    assert proposals[0]["pack_id"].startswith("team-project:")
-
-
 def test_capture_supported_events_are_redacted_deduplicated_and_project_scoped(tmp_path, monkeypatch):
     _memory_env(tmp_path, monkeypatch)
     project = tmp_path / "repo"
@@ -447,3 +398,94 @@ def test_memory_eval_assigns_unique_ids_when_explicit_and_generated_ids_overlap(
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
     assert report["hit_at_3"] == 1.0
+
+
+def _write_legacy_team_file(root: Path, *, revision_id: str) -> Path:
+    """A record exactly as a pre-0.9.7 release wrote it, including its revision."""
+    directory = root / "context" / "team-memory"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "legacy-standard-aaaa1111.md"
+    path.write_text(
+        "---\n"
+        "record_id: aaaa1111bbbb2222\n"
+        "type: fact\n"
+        "tags:\n"
+        "- audience:team\n"
+        "- applicability:global\n"
+        "origin: promoted\n"
+        "scope_kind: global\n"
+        "project_path: null\n"
+        "created_at: '2026-01-01T00:00:00+00:00'\n"
+        "updated_at: '2026-01-01T00:00:00+00:00'\n"
+        "harness: docmancer\n"
+        f"source_path: {path}\n"
+        "schema_version: 2\n"
+        "audience_kind: team\n"
+        "applicability_kind: global\n"
+        f"revision_id: {revision_id}\n"
+        "---\n\n"
+        "Always ship blue green deploys for production.\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_legacy_team_record_downgrades_and_stays_canonically_serializable(tmp_path):
+    """A team-era record must survive removal and still produce a valid payload.
+
+    Regression test: the first cut of the downgrade kept the team-era
+    revision_id, which covers scope_kind and tags. The rewritten record then
+    failed to_revision_payload() with a revision mismatch, which would have
+    broken sync for every migrated record.
+    """
+    from docmancer.memory.records import MemoryRecordStore
+
+    stale_revision = "deadbeefdeadbeefdeadbeefdeadbeef"
+    path = _write_legacy_team_file(tmp_path, revision_id=stale_revision)
+    store = MemoryRecordStore(tmp_path)
+
+    record = next(r for r in store.records() if r.record_id == "aaaa1111bbbb2222")
+    assert record.scope_kind == "global"
+    assert record.audience_kind == "personal"
+    assert record.downgraded_from_team is True
+    # Valid on read, before anything is persisted.
+    record.to_revision_payload()
+    # The team-era revision is kept as lineage rather than discarded.
+    assert record.parent_revision_ids == [stale_revision]
+    assert record.revision_id != stale_revision
+
+    assert store.migrate_legacy_team_records() == 1
+    migrated = next(r for r in store.records() if r.record_id == "aaaa1111bbbb2222")
+    migrated.to_revision_payload()
+    assert migrated.downgraded_from_team is False
+    assert migrated.revision_repaired is False
+    assert migrated.revision_id == record.revision_id
+    assert "audience:team" not in migrated.tags
+
+    # Idempotent, in place, and the user's text is untouched.
+    assert store.migrate_legacy_team_records() == 0
+    assert path.is_file()
+    assert "blue green deploys" in path.read_text(encoding="utf-8")
+
+
+def test_stale_revision_outside_the_downgrade_still_signals_a_direct_edit(tmp_path):
+    """Revision repair must not swallow hand-edited Markdown.
+
+    reconcile_direct_edits() detects a direct edit by catching the revision
+    mismatch from to_revision_payload(). Only a team downgrade may repair
+    itself; every other mismatch must still raise.
+    """
+    from docmancer.memory.records import MemoryRecord
+
+    record = MemoryRecord(
+        "cccc3333dddd4444",
+        "Prefer trunk based development.",
+        scope_kind="global",
+        audience_kind="personal",
+        applicability_kind="global",
+        revision_id="deadbeefdeadbeefdeadbeefdeadbeef",
+    )
+    assert record.downgraded_from_team is False
+    assert record.revision_repaired is False
+    with pytest.raises(ValueError, match="revision_id does not match"):
+        record.to_revision_payload()

@@ -3,7 +3,7 @@
   "owner": {
     "name": "Docmancer"
   },
-  "description": "Local-first memory plugins for coding agents.",
+  "description": "One local memory that every coding agent you use starts from.",
   "plugins": [
     {
       "name": "docmancer",

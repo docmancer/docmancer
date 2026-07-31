@@ -5,7 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "docmancer"
 dynamic = ["version"]
-description = "Local-first memory for AI coding agents: find what Claude Code, Codex, and Cursor already know, then share it with every agent."
+# Canonical tagline. Keep byte-identical with README.md, wiki/Home.md,
+# website/apps/web/app/layout.tsx metadata.description, and app/llms.txt/route.ts.
+description = "Docmancer gives every coding agent on your machine one local memory, so you stop re-explaining your project to each of them."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"

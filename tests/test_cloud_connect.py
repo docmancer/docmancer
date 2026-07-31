@@ -15,14 +15,41 @@ from docmancer.cloud.connect import (
     ConnectError,
     ConnectTimeout,
     await_authorization,
+    enqueue_project,
     finish_connect,
     start_connect,
 )
+from docmancer.cloud.crypto import random_key
 from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
+from docmancer.cloud.outbox import CloudState
+from docmancer.memory.atomic import AtomicMemoryEntry
+from docmancer.memory.graph import MemoryGraphStore
 
 ACCOUNT_ID = "00000000-0000-4000-8000-000000000001"
 WORKSPACE_ID = "00000000-0000-4000-8000-000000000002"
 DEVICE_ID = "00000000-0000-4000-8000-000000000003"
+
+
+def _harvested_atom(text: str) -> AtomicMemoryEntry:
+    content_hash = __import__("hashlib").sha256(text.encode()).hexdigest()
+    return AtomicMemoryEntry(
+        atom_id="existing-agent-memory",
+        text=text,
+        type="decision",
+        harness="codex",
+        kind="agent-memory",
+        scope="project:test",
+        scope_kind="project",
+        project_id="project-test",
+        project_path="/tmp/project-test",
+        source_path="/tmp/project-test/MEMORY.md",
+        source_title="Codex memory",
+        line_start=1,
+        line_end=1,
+        source_hash=content_hash,
+        content_hash=content_hash,
+        origin="harvested",
+    )
 
 
 class FakeClient:
@@ -89,6 +116,32 @@ def test_start_connect_surfaces_the_user_code(flow):
     assert session.verification_uri == "https://docmancer.dev/auth/device"
     assert stages[0][0] == "device_code"
     assert stages[0][1]["user_code"] == "ABCD-1234"
+
+
+def test_first_connect_queues_preexisting_harvested_graph_memory(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id=ACCOUNT_ID,
+        workspace_id=WORKSPACE_ID,
+        device_id=DEVICE_ID,
+        base_url="https://cloud.invalid",
+    )
+    config.set_workspace(WORKSPACE_ID, key_version=1)
+    keys = KeyStore(MemorySecretBackend())
+    keys.ensure_device_keys(ACCOUNT_ID)
+    keys.set_workspace_key(ACCOUNT_ID, WORKSPACE_ID, random_key(), key_version=1)
+    MemoryGraphStore(tmp_path / "memory.db").rebuild(
+        [_harvested_atom("Keep the release checklist in the repository.")]
+    )
+
+    enqueue_project(tmp_path, keys, project)
+
+    pending = CloudState(config.paths.sync_state).pending()
+    assert [item["kind"] for item in pending] == ["atom_revision"]
+    assert "release checklist" not in __import__("json").dumps(pending)
 
 
 def test_await_authorization_returns_the_token_after_pending(flow):

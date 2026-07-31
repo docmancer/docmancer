@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from docmancer.cloud.config import CloudConfig
-from docmancer.cloud.lifecycle import enqueue_revision_if_enabled
 from docmancer.cloud.serialize import build_tree_payload
 from docmancer.harness.secrets import detect_secrets
 from docmancer.memory.tree.parser import parse_tree_file
@@ -159,11 +158,6 @@ def generate_team_file(
         return result
     if approval_enabled and not approved:
         raise ValueError("whole-file approval is required before Team publication")
-    content = content.replace(
-        "publication_state: approved",
-        "publication_state: published",
-        1,
-    )
     _atomic_write(destination, content.encode("utf-8"))
     prior_revision = None
     state_path = destination.with_suffix(".state.json")
@@ -186,14 +180,13 @@ def generate_team_file(
             "status": "active",
             "sources": sorted(set(source_refs)),
             "generated": True,
-            "publication_state": "published",
+            "publication_state": "approved",
             "exclusion_count": len(exclusions),
             "approver_id": approver_id,
         },
         updated_at=generated_at,
         parent_revision_ids=[prior_revision] if prior_revision else [],
     )
-    queued = enqueue_revision_if_enabled(payload, root=root or project / ".docmancer", keystore=keystore)
     _atomic_write(
         state_path,
         (
@@ -201,7 +194,7 @@ def generate_team_file(
                 {
                     "revision_id": payload["revision_id"],
                     "file_id": file_id,
-                    "publication_state": "published",
+                    "publication_state": "approved",
                 },
                 indent=2,
             )
@@ -210,10 +203,10 @@ def generate_team_file(
     )
     result.update(
         applied=True,
-        published=bool(queued),
-        publication_state="published",
+        published=False,
+        publication_state="approved",
         revision_id=payload["revision_id"],
-        queued=bool(queued),
+        queued=False,
     )
     return result
 
@@ -227,79 +220,13 @@ def transition_team_file(
     root: str | Path | None = None,
     keystore=None,
 ) -> dict:
-    """Create an encrypted whole-file revision for a publication outcome."""
+    """Reject hosted publication transitions until Team Sync is available."""
     if outcome not in TEAM_FILE_OUTCOMES:
         raise ValueError(f"unsupported Team-file outcome: {outcome}")
-    project = Path(project_path).expanduser().resolve()
-    destination = project / ".docmancer" / "team-generated" / f"{domain}.md"
-    state_path = destination.with_suffix(".state.json")
-    if not destination.is_file() or not state_path.is_file():
-        raise ValueError("generate and approve the Team file before changing its publication state")
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    prior_revision = str(state.get("revision_id") or "")
-    file_id = str(state.get("file_id") or "")
-    if not prior_revision or not file_id:
-        raise ValueError("Team-file state is incomplete")
+    raise ValueError(
+        "Team publication is not available yet; the approved file remains local"
+    )
 
-    content = destination.read_text(encoding="utf-8")
-    content, replacements = re.subn(
-        r"(?m)^publication_state:\s*.*$",
-        f"publication_state: {outcome}",
-        content,
-        count=1,
-    )
-    if replacements != 1:
-        raise ValueError("Team file is missing publication_state metadata")
-    updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    project_id = CloudConfig(root).ensure_project(project)
-    source_refs = sorted(set(re.findall(r"\bsrc_[a-f0-9]{20}\b", content)))
-    payload = build_tree_payload(
-        object_kind="team_file",
-        file_id=file_id,
-        project_id=project_id,
-        relative_path=f"team/{domain}.md",
-        markdown=content,
-        metadata={
-            "title": f"Team {domain.replace('-', ' ').title()}",
-            "scope": "project",
-            "authority": "mandatory",
-            "status": "active" if outcome in {"published", "restored"} else "archived",
-            "sources": source_refs,
-            "generated": True,
-            "publication_state": outcome,
-            "approver_id": approver_id,
-        },
-        updated_at=updated_at,
-        parent_revision_ids=[prior_revision],
-    )
-    queued = enqueue_revision_if_enabled(
-        payload,
-        root=root or project / ".docmancer",
-        keystore=keystore,
-    )
-    _atomic_write(destination, content.encode("utf-8"))
-    _atomic_write(
-        state_path,
-        (
-            json.dumps(
-                {
-                    "revision_id": payload["revision_id"],
-                    "file_id": file_id,
-                    "publication_state": outcome,
-                },
-                indent=2,
-            )
-            + "\n"
-        ).encode(),
-    )
-    return {
-        "destination": str(destination),
-        "file_id": file_id,
-        "revision_id": payload["revision_id"],
-        "parent_revision_id": prior_revision,
-        "publication_state": outcome,
-        "queued": bool(queued),
-    }
 
 
 __all__ = ["TEAM_FILE_OUTCOMES", "generate_team_file", "transition_team_file"]

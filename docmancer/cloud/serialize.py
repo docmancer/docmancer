@@ -102,10 +102,10 @@ def validate_record_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(f"invalid record payload fields; missing={missing}, extra={extra}")
     if int(payload["schema_version"]) != PAYLOAD_SCHEMA_VERSION:
         raise ValueError("unsupported record payload schema_version")
-    if payload["scope_kind"] not in {"global", "project", "team"}:
+    if payload["scope_kind"] not in {"global", "project"}:
         raise ValueError("invalid record payload scope_kind")
-    if payload["scope_kind"] in {"project", "team"} and not payload["project_id"]:
-        raise ValueError("project and team record payloads require project_id")
+    if payload["scope_kind"] == "project" and not payload["project_id"]:
+        raise ValueError("project record payloads require project_id")
     if payload["scope_kind"] == "global" and payload["project_id"] is not None:
         raise ValueError("global record payloads cannot carry project_id")
     if not isinstance(payload["parent_revision_ids"], list):

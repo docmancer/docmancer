@@ -24,7 +24,7 @@ def _service():
 @click.command("ask", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Answer from Shared Memory and cited agent evidence.")
 @click.argument("task")
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, help="Scope evidence recall to this project. Default is global recall across every indexed project.")
-@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None, help="Restrict to one memory scope. Use project to scope evidence to the current project.")
+@click.option("--scope", type=click.Choice(["global", "project"]), default=None, help="Restrict to one memory scope. Use project to scope evidence to the current project.")
 @click.option("--limit", type=click.IntRange(1, 100), default=12, show_default=True)
 @click.option("--token-budget", type=click.IntRange(100, 100_000), default=4000, show_default=True)
 @click.option("--history", "include_history", is_flag=True, help="Include superseded and expired indexed evidence.")

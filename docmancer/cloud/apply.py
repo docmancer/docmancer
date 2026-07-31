@@ -36,7 +36,7 @@ def apply_payload(
     sync_state = state or CloudState(config.paths.sync_state)
     record_store = store or MemoryRecordStore(root)
     project_path = None
-    if payload["scope_kind"] in {"project", "team"}:
+    if payload["scope_kind"] == "project":
         project_path = config.path_for_project(payload["project_id"])
         if project_path is None:
             sync_state.add_conflict(
@@ -122,8 +122,8 @@ def resolve_conflict(conflict_id: int, strategy: str, *, root: str | Path, text:
         raise ValueError("unresolved conflict not found")
     row = rows[0]
     remote = row["payload"]
-    project_path = config.path_for_project(remote.get("project_id")) if remote["scope_kind"] in {"project", "team"} else None
-    if remote["scope_kind"] in {"project", "team"} and project_path is None:
+    project_path = config.path_for_project(remote.get("project_id")) if remote["scope_kind"] == "project" else None
+    if remote["scope_kind"] == "project" and project_path is None:
         raise ValueError(
             f"project {remote.get('project_id') or '<missing>'} is not linked to an existing local path; "
             "run `docmancer cloud link PATH --project-id PROJECT_ID` first"

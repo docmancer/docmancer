@@ -23,7 +23,7 @@ MAX_STDIN_BYTES = 1_000_000
 def _default_tree_root() -> Path:
     # Resolved lazily (not at import time) so the CLI always uses the
     # directory it was actually invoked from. Uses ".docmancer/tree", a
-    # sibling of the existing production team-record directory
+    # sibling of the legacy project record directory
     # ("<project>/.docmancer/memory", see docmancer.memory.records) --
     # never that directory itself, and the same convention the MCP tree
     # tools (docmancer/mcp/tree_tools.py) use for project scope, so a

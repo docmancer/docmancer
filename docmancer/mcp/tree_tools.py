@@ -14,9 +14,10 @@ root can never collide with the ``.md`` record files the legacy
 ``MemoryRecordStore``/``docmancer_memory_add`` path already writes:
 
 - ``project_path`` given (project scope): ``<project_path>/.docmancer/tree``.
-  This sits next to (not inside) the existing team record directory
-  ``<project_path>/.docmancer/memory`` used by ``memory_promote`` --
-  same parent, different leaf, so nothing already written there is at risk.
+  This sits next to (not inside) the legacy record directory
+  ``<project_path>/.docmancer/memory``, written by releases that still had a
+  team scope. Same parent, different leaf, so nothing already written there
+  is at risk.
 - ``project_path`` omitted (global scope): ``<DOCMANCER_HOME>/tree``, where
   ``DOCMANCER_HOME`` follows the exact same env-var/default convention as
   ``docmancer.memory.records.MemoryRecordStore`` (``DOCMANCER_HOME`` or

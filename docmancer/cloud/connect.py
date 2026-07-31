@@ -556,10 +556,18 @@ def _persist(
     return outcome
 
 
-def enqueue_project(root: Path, keys: KeyStore, project_path: Path) -> None:
-    """Queue the project's existing revisions for the first encrypted push."""
+def enqueue_project(
+    root: Path,
+    keys: KeyStore,
+    project_path: Path,
+    *,
+    db_path: str | Path | None = None,
+) -> None:
+    """Queue existing durable and reconciled memory for the first encrypted push."""
     from docmancer.cloud.lifecycle import enqueue_revisions_if_enabled
     from docmancer.cloud.migrate import migrate_records
+    from docmancer.cloud.serialize import build_graph_payload
+    from docmancer.memory.graph import MemoryGraphStore
     from docmancer.memory.records import MemoryRecordStore
 
     migrate_records(root=root, project_paths=[project_path])
@@ -570,6 +578,16 @@ def enqueue_project(root: Path, keys: KeyStore, project_path: Path) -> None:
         for revision in store.revisions(record.record_id)
     )
     enqueue_revisions_if_enabled(revisions, root=root, keystore=keys)
+
+    # Existing harvested memory already lives in the graph projection when a
+    # user enables Cloud. Connecting must queue that corpus too: otherwise the
+    # documented connect-then-sync path transfers authored records and mapped
+    # tree files but silently leaves pre-existing agent memory on this device.
+    graph = MemoryGraphStore(db_path or root / "memory.db")
+    graph_payloads = (
+        build_graph_payload(**item) for item in graph.cloud_objects()
+    )
+    enqueue_revisions_if_enabled(graph_payloads, root=root, keystore=keys)
 
 
 __all__ = [

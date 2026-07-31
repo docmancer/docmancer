@@ -704,8 +704,6 @@ class LocalApi:
             result = await self.runtime.remove_context(identifier)
         elif action in {"approve", "reject"}:
             result = await self.runtime.review_context(identifier, action, text=body.get("text"))
-        elif action == "share":
-            result = await self.runtime.share_context(identifier)
         elif action == "distill":
             result = await self.runtime.distill_context(identifier)
         else:

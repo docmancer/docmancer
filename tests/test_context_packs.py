@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from docmancer.cloud.apply import apply_payload
 from docmancer.memory import MemoryAgent
 from docmancer.memory.atomic import AtomicMemoryEntry
@@ -23,30 +25,46 @@ def _service(tmp_path: Path, monkeypatch) -> MemoryService:
 def test_legacy_scopes_map_to_separate_audience_and_applicability() -> None:
     assert (MemoryRecord("one", "Global").audience_kind, MemoryRecord("two", "Global").applicability_kind) == ("personal", "global")
     project = MemoryRecord("three", "Project", scope_kind="project", project_path="/tmp/project")
-    team = MemoryRecord("four", "Team", scope_kind="team", project_path="/tmp/project")
     assert (project.audience_kind, project.applicability_kind) == ("personal", "project")
-    assert (team.audience_kind, team.applicability_kind) == ("team", "project")
+
+
+def test_legacy_team_records_downgrade_to_project_and_personal() -> None:
+    """Records written before the team scope was removed still load."""
+    team = MemoryRecord("four", "Team", scope_kind="team", project_path="/tmp/project")
+    assert team.scope_kind == "project"
+    assert (team.audience_kind, team.applicability_kind) == ("personal", "project")
+    assert team.downgraded_from_team is True
+
     standard = MemoryRecord("five", "Standard", audience_kind="team", applicability_kind="global")
     assert standard.scope_kind == "global"
-    assert "audience:team" in standard.tags
+    assert standard.audience_kind == "personal"
+    assert standard.downgraded_from_team is True
+    # The contradictory legacy tag must not survive the downgrade.
+    assert "audience:team" not in standard.tags
+    assert "audience:personal" in standard.tags
+
+    untouched = MemoryRecord("six", "Plain", scope_kind="global")
+    assert untouched.downgraded_from_team is False
 
 
-def test_personal_context_activates_immediately_and_team_context_requires_review(tmp_path, monkeypatch) -> None:
+def test_team_scope_is_rejected_for_new_records(tmp_path, monkeypatch) -> None:
+    """The team scope is not reachable through the service surface."""
+    service = _service(tmp_path, monkeypatch)
+    with pytest.raises(ValueError):
+        service.reset_context("team")
+    assert not any(pack.audience_kind == "team" for pack in service.ensure_packs())
+
+
+def test_personal_context_activates_immediately(tmp_path, monkeypatch) -> None:
     service = _service(tmp_path, monkeypatch)
     personal = service.add_canonical("Always use TypeScript.", memory_type="preference")
     assert personal["proposal"] is None
     assert personal["record"].record_id in personal["pack"].record_ids
 
-    shared = service.share("personal-defaults")
-    assert shared is not None and shared.state == "pending"
-    approved = service.review(shared.proposal_id, "approve")
-    assert approved["proposal"].state == "approved"
-    assert approved["records"][0].audience_kind == "team"
-    assert Path(approved["records"][0].source_path).parent.name == "team-memory"
-
-    edited = service.edit_record(approved["records"][0].record_id, "Always use strict TypeScript.")
-    assert edited["updated"] is False
-    assert edited["proposal"].operations[0].action == "update"
+    edited = service.edit_record(personal["record"].record_id, "Always use strict TypeScript.")
+    assert edited["updated"] is True
+    assert edited["proposal"] is None
+    assert edited["record"].text == "Always use strict TypeScript."
 
 
 def test_distillation_is_provenance_complete_and_idempotent_after_approval(tmp_path, monkeypatch) -> None:
@@ -169,24 +187,14 @@ def test_rejected_limited_batch_is_skipped_when_distillation_continues(tmp_path,
     assert second.operations[0].text != rejected_text
 
 
-def test_reset_personal_is_immediate_and_team_reset_requires_review(tmp_path, monkeypatch) -> None:
+def test_reset_personal_is_immediate(tmp_path, monkeypatch) -> None:
     service = _service(tmp_path, monkeypatch)
     personal = service.add_canonical("Always use TypeScript.", memory_type="preference")["record"]
-    shared = service.share("personal-defaults")
-    team_record = service.review(shared.proposal_id, "approve")["records"][0]
 
     personal_reset = service.reset_context("personal")
     assert personal_reset["removed"] == 1
     assert service.pack("personal-defaults").record_ids == []
     assert service.agent.records.find_record(personal.record_id) is None
-
-    team_reset = service.reset_context("team")
-    assert team_reset["removed"] == 0
-    assert len(team_reset["proposals"]) == 1
-    assert service.agent.records.find_record(team_record.record_id) is not None
-    service.review(team_reset["proposals"][0].proposal_id, "approve")
-    assert service.pack("team-standards").record_ids == []
-    assert service.agent.records.find_record(team_record.record_id) is None
 
 
 def test_empty_pack_explains_how_to_activate_pending_context(tmp_path, monkeypatch) -> None:
@@ -341,22 +349,6 @@ def test_direct_personal_markdown_edit_becomes_active_revision(tmp_path, monkeyp
     assert updated.parent_revision_ids == [record.revision_id]
 
 
-def test_direct_team_markdown_edit_becomes_proposal_and_restores_approved_text(tmp_path, monkeypatch) -> None:
-    service = _service(tmp_path, monkeypatch)
-    personal = service.add_canonical("Use Vercel.")["record"]
-    shared = service.share("personal-defaults")
-    approved = service.review(shared.proposal_id, "approve")["records"][0]
-    path = Path(approved.source_path)
-    path.write_text(path.read_text().replace("Use Vercel.", "Use Netlify."), encoding="utf-8")
-
-    result = service.sync(project_path=tmp_path, local_only=True)
-    restored = service.agent.records.find_record(approved.record_id, project_paths=[tmp_path])
-    proposals = service.proposals(pack_id="team-standards")
-    assert result["direct_changes"]["team_proposals"] == 1
-    assert restored is not None and restored.text == "Use Vercel."
-    assert proposals[-1].operations[0].text == "Use Netlify."
-
-
 def test_direct_personal_markdown_delete_creates_tombstone(tmp_path, monkeypatch) -> None:
     service = _service(tmp_path, monkeypatch)
     record = service.add_canonical("Use Heroku.")["record"]
@@ -368,23 +360,7 @@ def test_direct_personal_markdown_delete_creates_tombstone(tmp_path, monkeypatch
     assert service.agent.records.revisions(record.record_id)[-1]["deleted"] is True
 
 
-def test_direct_team_markdown_delete_creates_proposal_and_restores_record(tmp_path, monkeypatch) -> None:
-    service = _service(tmp_path, monkeypatch)
-    service.add_canonical("Use Vercel.")
-    shared = service.share("personal-defaults")
-    approved = service.review(shared.proposal_id, "approve")["records"][0]
-    path = Path(approved.source_path)
-    path.unlink()
-
-    result = service.sync(project_path=tmp_path, local_only=True)
-    proposal = service.proposals(pack_id="team-standards")[-1]
-    assert result["direct_changes"]["team_proposals"] == 1
-    assert proposal.operations[0].action == "remove"
-    assert path.exists()
-    assert service.agent.records.find_record(approved.record_id, project_paths=[tmp_path]) is not None
-
-
-def test_full_distill_deliver_share_inherit_and_override_loop(tmp_path, monkeypatch) -> None:
+def test_full_distill_deliver_inherit_and_override_loop(tmp_path, monkeypatch) -> None:
     service = _service(tmp_path, monkeypatch)
     evidence_texts = [
         "Use Next.js for frontend applications.",
@@ -428,17 +404,12 @@ def test_full_distill_deliver_share_inherit_and_override_loop(tmp_path, monkeypa
     assert len(rendered) == 1
     assert all(value in next(iter(rendered)) for value in ("Next.js", "Vercel", "TypeScript", "Heroku", "Supabase"))
 
-    shared = service.share("personal-defaults")
-    assert shared is not None
-    team = service.review(shared.proposal_id, "approve")
-    assert len(team["records"]) == 5
-
     new_project = tmp_path / "new-project"
     new_project.mkdir()
     inherited = service.compile_context(project_path=new_project)
-    assert {record.text for record in team["records"]}.issubset({record.text for record in inherited})
+    assert {record.text for record in approved["records"]}.issubset({record.text for record in inherited})
 
-    heroku = next(record for record in team["records"] if "Heroku" in record.text)
+    heroku = next(record for record in approved["records"] if "Heroku" in record.text)
     project_pack = next(
         pack for pack in service.ensure_packs(project_path=new_project)
         if pack.audience_kind == "personal" and pack.applicability_kind == "project"

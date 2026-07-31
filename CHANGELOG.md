@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] - Unreleased
+### Removed
+
+- **The team memory scope and its commands.** Shared team memory is a hosted product concern rather than a local capability, so the OSS package no longer ships a purpose-built team path. `docmancer memory promote --team`, the `docmancer memory team` group with its `import` and `export` subcommands, `docmancer memory share`, and the `memory_promote` MCP tool are gone, along with the `team` value for `--scope` across the memory commands.
+- **The `team` scope and audience in the memory model.** Records now use only `global` and `project` scopes and a `personal` audience. The built-in `team-standards` and `team-project` context packs are no longer created.
+
+### Changed
+
+- **Context ranking is simpler.** With the team audience removed, pack ordering is project context first, then global context. Approved records that previously ranked above personal context by virtue of a team audience no longer do.
+- **Direct Markdown edits apply immediately.** Editing, removing, or resetting canonical memory no longer routes through a review proposal, because the audience that required review no longer exists. Distillation proposals and their review flow are unchanged.
+
+### Fixed
+
+- **Records written by earlier releases keep working.** A record carrying a `team` scope or audience is downgraded to `project` and `personal` when it is read, rewritten in place on the next sync, and logged once. Files stay where they are, including any committed under a repository's `.docmancer/memory`, and no record is dropped, because that content belongs to the user.
+- **First Personal Sync includes existing harvested memory.** Connecting a device now queues the existing graph projection as well as curated records, so the first encrypted upload does not silently omit agent memory already indexed on that machine.
+- **Local Team-file approval does not imply publication.** A complete-file approval remains local until the hosted Team lifecycle can enforce separate encryption domains, membership, and publication state end to end.
+
 ## [0.9.6] - 2026-07-30
 ### Fixed
 

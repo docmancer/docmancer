@@ -70,7 +70,7 @@ class ContextPack:
     def __post_init__(self) -> None:
         if not _PACK_ID.fullmatch(self.pack_id):
             raise ValueError("invalid context pack id")
-        if self.audience_kind not in {"personal", "team"}:
+        if self.audience_kind != "personal":
             raise ValueError("invalid context pack audience")
         if self.applicability_kind not in {"global", "project"}:
             raise ValueError("invalid context pack applicability")
@@ -220,14 +220,12 @@ class ContextPackStore:
         project = str(Path(project_path).expanduser().resolve()) if project_path else None
         definitions = [
             ("personal-defaults", "Personal defaults", "personal", "global", None, None),
-            ("team-standards", "Team standards", "team", "global", None, None),
         ]
         if project_id or project:
             suffix = _project_slug(project_id or project)
             definitions.extend(
                 [
                     (f"personal-project:{suffix}", "Current project", "personal", "project", project_id, project),
-                    (f"team-project:{suffix}", "Team project", "team", "project", project_id, project),
                 ]
             )
         output = []
@@ -386,7 +384,7 @@ def distill_operations(
         trust = {"manual": 5, "mcp": 5, "promoted": 4, "capture": 3, "imported": 2, "harvested": 1}
 
         def rank(atom: AtomicMemoryEntry) -> tuple:
-            specificity = int(atom.scope_kind in {"project", "team"})
+            specificity = int(atom.scope_kind == "project")
             if pack.applicability_kind == "global":
                 specificity = int(atom.scope_kind == "global")
             return (
@@ -410,7 +408,7 @@ def distill_operations(
         other = right if selected is left else left
         is_project_override = (
             pack.applicability_kind == "project"
-            and selected.scope_kind in {"project", "team"}
+            and selected.scope_kind == "project"
             and other.scope_kind == "global"
         )
         overridden_record = next(

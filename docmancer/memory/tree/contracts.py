@@ -53,9 +53,9 @@ Evidence link: docs/memory-harness/2026-07-22-release-a-evidence.md
   description files are excluded from ordinary search results). Every
   other value is descriptive metadata, not a behavior switch -- this
   keeps `type` from growing into a product ontology per guardrail 3.
-- `scope`: one of `global`, `project`. (`team` is expressed by which root
-  the file lives under, per the plan's four-layer separation -- there is
-  no boolean/tri-state duplicate of that fact in frontmatter.)
+- `scope`: one of `global`, `project`. Which root a file lives under is
+  the only place physical location is expressed -- there is no
+  boolean/tri-state duplicate of that fact in frontmatter.
 - `authority`: one of `advisory`, `mandatory`. `mandatory` items always
   survive Context Compiler selection regardless of query relevance or
   item/token budget (until mandatory content alone exceeds the budget,

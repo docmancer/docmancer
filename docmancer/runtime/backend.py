@@ -198,6 +198,8 @@ class LocalRuntime:
             docs.collection_stats(),
             asyncio.to_thread(memory.sources, live_preview=False),
         )
+        # "team-memory" stays recognised so records indexed before the team
+        # scope was removed are still classified as memory.
         memory_kinds = {"agent-memory", "docmancer-memory", "team-memory"}
         instruction_kinds = {"instructions", "rules"}
         memory_count = sum(1 for row in source_rows if str(row.get("type") or "") in memory_kinds)
@@ -244,8 +246,6 @@ class LocalRuntime:
         pack_order = {
             "personal-defaults": 0,
             "personal-project": 1,
-            "team-standards": 2,
-            "team-project": 3,
         }
         rows.sort(
             key=lambda row: next(
@@ -333,9 +333,6 @@ class LocalRuntime:
             pack_id=pack_id,
             project_path=self.project_path,
         )
-
-    async def share_context(self, pack_id: str = "personal-defaults"):
-        return await asyncio.to_thread(self._require_service().share, pack_id, project_path=self.project_path)
 
     async def edit_context(self, record_id: str, text: str):
         return await asyncio.to_thread(self._require_service().edit_record, record_id, text)
@@ -2838,7 +2835,12 @@ class LocalRuntime:
             outcome = finish_connect(session, result, on_event=emit)
             if outcome["state"] == "connected":
                 try:
-                    enqueue_project(root, keys, self.project_path)
+                    enqueue_project(
+                        root,
+                        keys,
+                        self.project_path,
+                        db_path=self._require_memory().db_path,
+                    )
                 except Exception as exc:  # noqa: BLE001 - the connection is valid even if queueing fails
                     outcome["queue_warning"] = (
                         f"Connected, but existing memory could not be queued: {exc}. Run sync to retry."

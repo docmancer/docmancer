@@ -15,18 +15,15 @@ by accident.
 
 ## scope_kind/audience_kind/applicability_kind -> tree scope/authority
 
-The frozen tree contract (``contracts.py``) already says explicitly that
-"team" is expressed by *which root* a file lives under, not by a value
-inside frontmatter (`scope` there is just ``{"global", "project"}``). That
-matches ``MemoryRecord.applicability_kind`` almost exactly, so the mapping
-used here is:
+The frozen tree contract (``contracts.py``) says `scope` is just
+``{"global", "project"}``. That matches ``MemoryRecord.applicability_kind``
+exactly, so the mapping used here is:
 
     tree `scope`     = record.applicability_kind   ("global" or "project" --
                         already the same two-value vocabulary as
                         contracts.VALID_SCOPES, no translation needed)
-    tree `authority`  = "mandatory" if record.audience_kind == "team"
-                        else "advisory"
-    which tree root   = chosen by the caller-supplied ``tree_store_factory``
+    tree `authority` = "advisory"
+    which tree root  = chosen by the caller-supplied ``tree_store_factory``
                         / ``tree_root_for_scope`` callable, keyed on
                         (record.scope_kind, record.project_path)
 
@@ -36,27 +33,20 @@ Rationale:
   means "does this apply everywhere or just to one project", which is
   exactly what tree `scope` means. Reusing it directly avoids inventing a
   second, possibly-inconsistent mapping.
-- ``audience_kind`` ("personal" vs "team") is the closest existing concept
-  to "was this reviewed/curated by more than one person, or is it one
-  person's working memory". Team-authored/team-scoped content is treated as
-  already curated, so it becomes `authority="mandatory"` in the new tree
-  (it always survives Context Compiler selection). Personal content stays
-  `authority="advisory"` (ordinary relevance-ranked content).
-- Physical "team-ness" (committed to a repo's ``.docmancer/memory`` versus a
-  user's personal store versus the cross-project team-memory directory)
-  is preserved by directing the migrated file into a different tree root,
-  never by adding a third scope value -- matching the frozen contract's own
-  design instead of working around it.
+- ``audience_kind`` is now always "personal". The team audience, which
+  previously mapped to `authority="mandatory"`, was removed from the OSS
+  package along with the team scope, so every migrated record is
+  `authority="advisory"` (ordinary relevance-ranked content). Records
+  written by an older release carrying a team scope or audience are
+  downgraded to project/personal when they are read, so they arrive here
+  already normalised.
 
-This gives the following concrete table (derived, not exhaustive -- any
-future audience/applicability combination falls out of the same two rules):
+This gives the following concrete table:
 
 | scope_kind | audience_kind | applicability_kind | tree scope | tree authority |
 |------------|----------------|---------------------|------------|-----------------|
 | global     | personal       | global              | global     | advisory        |
-| global     | team           | global              | global     | mandatory       |
 | project    | personal       | project             | project    | advisory        |
-| team       | team           | project             | project    | mandatory       |
 
 Source attribution (`source_path`), the original record id (as the new
 `memory_id`, unchanged), and the original `created_at`/`updated_at` are
@@ -109,7 +99,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
 def _tree_scope_and_authority(record: MemoryRecord) -> tuple[str, str]:
     """See module docstring for the full mapping table and rationale."""
     scope = record.applicability_kind if record.applicability_kind in VALID_SCOPES else "global"
-    authority = "mandatory" if record.audience_kind == "team" else "advisory"
+    authority = "advisory"
     return scope, authority
 
 
@@ -121,7 +111,7 @@ def inventory(
 ) -> dict:
     """A read-only report of what exists. Never writes anything.
 
-    Covers checklist items "inventory existing global/project/team records"
+    Covers checklist items "inventory existing global/project records"
     and "inventory revision lineage, tombstones, suppressions, project IDs,
     pack references, and cloud revision state" at the level this local
     client can see them (there is no live cloud connection here).

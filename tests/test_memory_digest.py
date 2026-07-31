@@ -162,7 +162,6 @@ def test_entry_in_project_scoping_excludes_nested_and_siblings(tmp_path):
     assert _entry_in_project(_Entry("global"), target) is True
     assert _entry_in_project(_Entry("global:"), target) is True
     assert _entry_in_project(_Entry(f"project:{target}"), target) is True
-    assert _entry_in_project(_Entry(f"team:{target}"), target) is True
     # Ancestor (parent workspace) context applies to the child project.
     assert _entry_in_project(_Entry(f"project:{ancestor}"), target) is True
     # A nested descendant project must NOT be swept into the digest.

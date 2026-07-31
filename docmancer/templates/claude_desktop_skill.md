@@ -1,6 +1,6 @@
 ---
 name: docmancer
-description: Search local documentation context packs with docmancer CLI. Use when the user asks about library docs, API references, vendor docs, version-specific behavior, offline docs, or wants to add docs before answering a technical question.
+description: Recall and update source-attributed local agent memory, or search the separate technical-documentation index.
 ---
 
 # docmancer

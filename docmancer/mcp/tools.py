@@ -219,8 +219,8 @@ def memory_add(
     service = MemoryService(MemoryAgent())
     project = Path(project_path).expanduser().resolve() if project_path else Path.cwd()
     pack_id = "personal-defaults"
-    if scope in {"project", "team"}:
-        prefix = "team-project:" if scope == "team" else "personal-project:"
+    if scope == "project":
+        prefix = "personal-project:"
         pack_id = next(pack.pack_id for pack in service.ensure_packs(project_path=project) if pack.pack_id.startswith(prefix))
     result = service.add_canonical(
         text, pack_id=pack_id, project_path=project, memory_type=memory_type, tags=tags or [], origin="mcp"
@@ -313,29 +313,6 @@ def memory_forget(identifier: str, *, confirm: bool = False) -> dict:
         "proposal_id": result["proposal"].proposal_id if result["proposal"] else None,
         "id": result["atom"].record_id or result["atom"].atom_id,
     }
-
-
-def memory_promote(identifier: str, *, project_path: str, confirm: bool = False) -> dict:
-    from pathlib import Path
-    from docmancer.memory import MemoryAgent
-
-    project = Path(project_path).expanduser().resolve()
-    agent = MemoryAgent()
-    atom = agent.find_atom(identifier)
-    if atom is None:
-        return {"error": "memory id is missing or ambiguous"}
-    if not confirm:
-        return {
-            "requires_confirmation": True,
-            "id": atom.record_id or atom.atom_id,
-            "text": _truncate(atom.text, 500),
-            "destination": str(project / ".docmancer" / "memory"),
-        }
-    try:
-        record, indexed = agent.promote(identifier, project_path=project)
-    except ValueError as exc:
-        return {"error": str(exc)}
-    return {"promoted": True, "record_id": record.record_id, "source_path": record.source_path, "indexed": indexed}
 
 
 def cloud_status() -> dict:

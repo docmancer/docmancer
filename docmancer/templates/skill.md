@@ -1,6 +1,6 @@
 ---
 name: docmancer
-description: Recall and update source-attributed local agent memory, or search the separate technical-documentation index.
+description: Recall and update source-attributed local agent memory shared with every other coding agent on this machine, or search the separate technical-documentation index.
 ---
 
 # docmancer

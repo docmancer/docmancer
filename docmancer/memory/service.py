@@ -167,7 +167,6 @@ class MemoryService:
         records = self.agent.records.records(project_paths=self.agent._project_paths())
         by_id = {record.record_id: record for record in records}
         personal_revisions = 0
-        team_proposals = 0
         tombstones = 0
 
         for record in records:
@@ -176,31 +175,6 @@ class MemoryService:
                 continue
             except ValueError:
                 pass
-            history = self.agent.records.revisions(record.record_id)
-            latest = history[-1] if history else None
-            if record.audience_kind == "team" and latest and not latest.get("deleted"):
-                pack_id = record.pack_ids[0] if record.pack_ids else "team-standards"
-                proposal = self.packs.create_proposal(
-                    pack_id,
-                    [PackOperation(
-                        action="update",
-                        text=record.text,
-                        memory_type=record.type,
-                        record_id=record.record_id,
-                        source_paths=[record.source_path],
-                        confidence=1.0,
-                        reason="A direct team Markdown edit requires review.",
-                    )],
-                )
-                self._enqueue_graph_payload(proposal_pack_payload(proposal))
-                approved = self._record_from_revision(
-                    latest,
-                    source_path=record.source_path,
-                    project_path=record.project_path,
-                )
-                self.agent.records._write_record(Path(record.source_path), approved)
-                team_proposals += 1
-                continue
             previous = record.revision_id
             record.parent_revision_ids = [previous] if previous else []
             record.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -223,22 +197,6 @@ class MemoryService:
                     remaining = [value for value in remaining if value != record_id]
                     continue
                 record = self._record_from_revision(latest, project_path=pack.project_path)
-                if pack.audience_kind == "team":
-                    proposal = self.packs.create_proposal(
-                        pack.pack_id,
-                        [PackOperation(
-                            action="remove",
-                            record_id=record_id,
-                            confidence=1.0,
-                            reason="A direct team Markdown deletion requires review.",
-                        )],
-                    )
-                    self._enqueue_graph_payload(proposal_pack_payload(proposal))
-                    restore_path = self.agent.records._record_path(record)
-                    record.source_path = str(restore_path)
-                    self.agent.records._write_record(restore_path, record)
-                    team_proposals += 1
-                    continue
                 atom = record.to_atom()
                 self.agent.records.add_tombstone(atom)
                 payload = self.agent.records.append_tombstone_revision(record)
@@ -251,7 +209,6 @@ class MemoryService:
                 self._enqueue_graph_payload(pack.graph_payload())
         return {
             "personal_revisions": personal_revisions,
-            "team_proposals": team_proposals,
             "tombstones": tombstones,
         }
 
@@ -361,7 +318,7 @@ class MemoryService:
         tags: list[str] | None = None,
         origin: str = "manual",
     ) -> dict:
-        """Add personal context immediately or propose any team change."""
+        """Add personal context immediately."""
         pack = self.pack(pack_id, project_path=project_path)
         if pack is None:
             raise ValueError("context pack is missing or ambiguous")
@@ -372,10 +329,6 @@ class MemoryService:
             confidence=1.0,
             reason="Added explicitly by the user.",
         )
-        if pack.audience_kind == "team":
-            proposal = self.packs.create_proposal(pack.pack_id, [operation])
-            self._enqueue_graph_payload(proposal_pack_payload(proposal))
-            return {"record": None, "proposal": proposal, "pack": pack}
         scope_kind = "global" if pack.applicability_kind == "global" else "project"
         equivalent = self.agent.records.find_equivalent(
             text,
@@ -487,7 +440,7 @@ class MemoryService:
         if proposal.evidence_fingerprint and proposal.covers_all_evidence:
             pack.evidence_fingerprint = proposal.evidence_fingerprint
         reset_proposal = bool(proposal.operations) and all(
-            operation.action == "remove" and operation.reason.startswith("Reset team context")
+            operation.action == "remove" and operation.reason.startswith("Reset context")
             for operation in proposal.operations
         )
         if reset_proposal and pack.evidence_fingerprint:
@@ -506,9 +459,7 @@ class MemoryService:
                     for record in current
                 ):
                     continue
-                scope_kind = "global" if pack.applicability_kind == "global" else (
-                    "team" if pack.audience_kind == "team" else "project"
-                )
+                scope_kind = "global" if pack.applicability_kind == "global" else "project"
                 evidence_atom_id = (
                     operation.recommended_atom_id
                     or (operation.source_atom_ids[0] if operation.source_atom_ids else None)
@@ -525,7 +476,7 @@ class MemoryService:
                         *[f"source-atom:{value}" for value in operation.source_atom_ids],
                         *([f"overrides:{operation.overrides_record_id}"] if operation.overrides_record_id else []),
                     ],
-                    origin="promoted" if pack.audience_kind == "team" else "manual",
+                    origin="manual",
                     promoted_from=evidence_atom_id,
                     audience_kind=pack.audience_kind,
                     applicability_kind=pack.applicability_kind,
@@ -583,9 +534,9 @@ class MemoryService:
         *,
         project_path: str | Path | None = None,
     ) -> dict:
-        """Reset visible personal context now or propose removal of team context."""
-        if audience_kind not in {"personal", "team"}:
-            raise ValueError("context audience must be personal or team")
+        """Reset visible personal context."""
+        if audience_kind != "personal":
+            raise ValueError("context audience must be personal")
         targets = [
             pack
             for pack in self.ensure_packs(project_path=project_path)
@@ -596,23 +547,6 @@ class MemoryService:
         proposals: list[PackProposal] = []
         removed = 0
         rejected = 0
-
-        if audience_kind == "team":
-            for pack in targets:
-                operations = [
-                    PackOperation(
-                        action="remove",
-                        record_id=record_id,
-                        reason="Reset team context after explicit user confirmation.",
-                    )
-                    for record_id in pack.record_ids
-                    if record_id in by_id
-                ]
-                if operations:
-                    proposal = self.packs.create_proposal(pack.pack_id, operations)
-                    proposals.append(proposal)
-                    self._enqueue_graph_payload(proposal_pack_payload(proposal))
-            return {"removed": 0, "proposals": proposals, "rejected_proposals": 0, "packs": targets}
 
         target_ids = {record_id for pack in targets for record_id in pack.record_ids}
         target_pack_ids = {pack.pack_id for pack in targets}
@@ -654,23 +588,6 @@ class MemoryService:
         record = self.agent.records.find_record(atom.record_id, project_paths=self.agent._project_paths())
         if record is None:
             raise ValueError("canonical memory record no longer exists")
-        if record.audience_kind == "team":
-            pack_id = record.pack_ids[0] if record.pack_ids else "team-standards"
-            proposal = self.packs.create_proposal(
-                pack_id,
-                [
-                    PackOperation(
-                        action="update",
-                        text=text,
-                        memory_type=record.type,
-                        record_id=record.record_id,
-                        confidence=1.0,
-                        reason="A team memory edit requires review.",
-                    )
-                ],
-            )
-            self._enqueue_graph_payload(proposal_pack_payload(proposal))
-            return {"proposal": proposal, "record": record, "updated": False}
         updated = self.agent.edit_record(identifier, text)
         return {"proposal": None, "record": updated, "updated": True}
 
@@ -678,16 +595,6 @@ class MemoryService:
         atom = self.agent.find_atom(identifier)
         if atom is None:
             raise ValueError("memory ID is missing or ambiguous")
-        if atom.record_id:
-            record = self.agent.records.find_record(atom.record_id, project_paths=self.agent._project_paths())
-            if record is not None and record.audience_kind == "team":
-                pack_id = record.pack_ids[0] if record.pack_ids else "team-standards"
-                proposal = self.packs.create_proposal(
-                    pack_id,
-                    [PackOperation(action="remove", record_id=record.record_id, reason="A team removal requires review.")],
-                )
-                self._enqueue_graph_payload(proposal_pack_payload(proposal))
-                return {"proposal": proposal, "removed": False, "atom": atom}
         removed = self.agent.forget(identifier)
         for pack in self.packs.packs():
             if removed.record_id and removed.record_id in pack.record_ids:
@@ -695,44 +602,6 @@ class MemoryService:
                 self.packs.save_pack(pack)
                 self._enqueue_graph_payload(pack.graph_payload())
         return {"proposal": None, "removed": True, "atom": removed}
-
-    def share(
-        self,
-        source_pack_id: str,
-        *,
-        target_pack_id: str = "team-standards",
-        project_path: str | Path | None = None,
-    ) -> PackProposal | None:
-        source = self.pack(source_pack_id, project_path=project_path)
-        target = self.pack(target_pack_id, project_path=project_path)
-        if source is None or target is None:
-            raise ValueError("source or destination context pack is missing")
-        if target.audience_kind != "team":
-            raise ValueError("shared context must target a team pack")
-        records = self.agent.records.records(project_paths=self.agent._project_paths())
-        by_id = {record.record_id: record for record in records}
-        target_text = [by_id[value].text for value in target.record_ids if value in by_id]
-        operations = []
-        for record_id in source.record_ids:
-            record = by_id.get(record_id)
-            if record is None or any(record.text.casefold() == value.casefold() for value in target_text):
-                continue
-            operations.append(
-                PackOperation(
-                    action="add",
-                    text=record.text,
-                    memory_type=record.type,
-                    record_id=record.record_id,
-                    source_paths=[record.source_path],
-                    confidence=1.0,
-                    reason=f"Proposed from {source.name} for team review.",
-                )
-            )
-        if not operations:
-            return None
-        proposal = self.packs.create_proposal(target.pack_id, operations)
-        self._enqueue_graph_payload(proposal_pack_payload(proposal))
-        return proposal
 
     def compile_context(
         self,
@@ -772,10 +641,8 @@ class MemoryService:
         by_id = {record.record_id: record for record in records}
         visible = [pack for pack in self.packs.packs() if self._pack_visible(pack, project_path) and pack.status == "active"]
         priority = {
-            ("team", "project"): 0,
-            ("personal", "project"): 1,
-            ("team", "global"): 2,
-            ("personal", "global"): 3,
+            ("personal", "project"): 0,
+            ("personal", "global"): 1,
         }
         visible.sort(key=lambda pack: priority[(pack.audience_kind, pack.applicability_kind)])
         record_priority = {
@@ -813,7 +680,7 @@ class MemoryService:
             # Query-aware selection: mandatory (always-eligible) records sort
             # first; audience/applicability priority (record_priority) stays
             # the dominant order so an agent observation can never outrank a
-            # user or team instruction by relevance alone; lexical overlap
+            # user instruction by relevance alone; lexical overlap
             # with the task query only re-ranks candidates within the same
             # priority tier, ahead of the token/item limit cutoff.
             candidate_ids.sort(

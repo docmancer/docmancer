@@ -40,11 +40,10 @@ def _seed_records(tmp_path: Path) -> tuple[MemoryRecordStore, Path]:
         scope_kind="project",
         project_path=project_dir,
     )
-    team_record = store.add(
+    store.add(
         "Ship blue/green deploys for production.",
-        scope_kind="team",
+        scope_kind="project",
         project_path=project_dir,
-        audience_kind="team",
         promoted_from=personal_global.record_id,
     )
     return store, project_dir
@@ -82,9 +81,8 @@ def test_inventory_is_read_only_and_reports_breakdowns(tmp_path: Path) -> None:
     assert before == after  # zero side effects
 
     assert report["total_records"] == 3
-    assert report["by_scope_kind"] == {"global": 1, "project": 1, "team": 1}
-    assert report["by_audience_kind"]["team"] == 1
-    assert report["by_audience_kind"]["personal"] == 2
+    assert report["by_scope_kind"] == {"global": 1, "project": 2}
+    assert report["by_audience_kind"]["personal"] == 3
     assert "project" in report["by_applicability_kind"]
     assert report["tombstone_count"] == 0
 
@@ -154,11 +152,11 @@ def test_plan_preserves_identity_and_timestamps_without_writing(tmp_path: Path) 
         assert item["text"] == original.text
 
     # audience/applicability semantics preserved via the documented mapping
-    team_item = next(
-        item for item in plan if original_records[item["record_id"]].scope_kind == "team"
+    project_item = next(
+        item for item in plan if original_records[item["record_id"]].scope_kind == "project"
     )
-    assert team_item["frontmatter"]["authority"] == "mandatory"
-    assert team_item["frontmatter"]["scope"] == "project"
+    assert project_item["frontmatter"]["authority"] == "advisory"
+    assert project_item["frontmatter"]["scope"] == "project"
 
     personal_global_item = next(
         item for item in plan if original_records[item["record_id"]].scope_kind == "global"

@@ -355,27 +355,17 @@ def test_team_generation_excludes_personal_and_secret_content(tmp_path: Path):
     assert "Railway" in rendered
     assert "private preference" not in rendered
     assert "/Users/person" not in rendered
-    assert "publication_state: published" in rendered
+    assert "publication_state: approved" in rendered
+    assert applied["published"] is False
+    assert applied["queued"] is False
 
-    blocked = transition_team_file(
-        project,
-        domain="standards",
-        outcome="blocked",
-        root=cloud_root,
-    )
-    assert blocked["publication_state"] == "blocked"
-    assert blocked["parent_revision_id"] == applied["revision_id"]
-    assert "publication_state: blocked" in Path(blocked["destination"]).read_text(encoding="utf-8")
-
-    restored = transition_team_file(
-        project,
-        domain="standards",
-        outcome="restored",
-        root=cloud_root,
-    )
-    assert restored["publication_state"] == "restored"
-    assert restored["parent_revision_id"] == blocked["revision_id"]
-    assert "publication_state: restored" in Path(restored["destination"]).read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="not available yet"):
+        transition_team_file(
+            project,
+            domain="standards",
+            outcome="blocked",
+            root=cloud_root,
+        )
 
     with pytest.raises(ValueError, match="unsupported"):
         transition_team_file(

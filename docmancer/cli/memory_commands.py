@@ -502,7 +502,7 @@ def audit(agent_filter, as_json, fail_on_findings, max_findings, include, exclud
 @click.argument("text")
 @click.option("--limit", default=None, type=int, help="Maximum entries to return.")
 @click.option("--project", "project_path", default=None, type=click.Path(path_type=Path), help="Prefer this project's memory and exclude unrelated projects.")
-@click.option("--scope", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None, help="Only return one memory scope.")
+@click.option("--scope", type=click.Choice(["global", "project"], case_sensitive=False), default=None, help="Only return one memory scope.")
 @click.option(
     "--mode",
     type=click.Choice(["lexical", "dense", "hybrid"], case_sensitive=False),
@@ -814,7 +814,7 @@ def memory_profile(limit: int, apply_changes: bool, yes: bool, as_json: bool):
 
 @memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Write a durable local memory.")
 @click.argument("text")
-@click.option("--scope", "scope_kind", type=click.Choice(["global", "project", "team"], case_sensitive=False), default="global", show_default=True)
+@click.option("--scope", "scope_kind", type=click.Choice(["global", "project"], case_sensitive=False), default="global", show_default=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path), default=None, help="Project or Git repository root.")
 @click.option("--type", "memory_type", type=click.Choice(["fact", "decision", "preference", "constraint", "workflow", "warning", "command", "status"], case_sensitive=False), default=None)
 @click.option("--tag", "tags", multiple=True, help="Tag the memory; repeatable.")
@@ -838,10 +838,6 @@ def memory_add(text: str, scope_kind: str, project_path: Path | None, memory_typ
     click.echo(f"  Stored  {display_path(record.source_path)}")
     if not indexed:
         emit_status_line("Saved durably; another sync is active. Run `docmancer memory sync` afterward.", state="warn")
-    if record.scope_kind == "team":
-        click.echo()
-        emit_status_line("The new team-memory file may be untracked, so plain `git diff` can be empty.", state="info")
-        click.echo("  Review  git status --short .docmancer/memory/")
 
 
 def _atom_dict(atom) -> dict:
@@ -869,7 +865,7 @@ def _atom_dict(atom) -> dict:
 
 
 @memory_group.command("list", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List inspectable memory atoms.")
-@click.option("--scope", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None)
+@click.option("--scope", type=click.Choice(["global", "project"], case_sensitive=False), default=None)
 @click.option("--type", "memory_type", default=None, help="Filter by atom type.")
 @click.option("--origin", default=None, help="Filter by origin, such as manual, capture, or harvested.")
 @click.option("--project", "project_path", type=click.Path(path_type=Path), default=None)
@@ -971,65 +967,6 @@ def memory_forget(identifier: str, dry_run: bool, yes: bool):
         click.confirm("Forget this memory?", abort=True)
     agent.forget(identifier)
     emit_status_line("Memory forgotten. Its content is absent from the tombstone.")
-
-
-@memory_group.command("promote", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Copy a reviewed memory into the Git team store.")
-@click.argument("identifier", metavar="ID")
-@click.option("--team", is_flag=True, required=True, help="Confirm the destination is team memory.")
-@click.option("--project", "project_path", type=click.Path(path_type=Path), default=None)
-@click.option("--dry-run", is_flag=True)
-def memory_promote(identifier: str, team: bool, project_path: Path | None, dry_run: bool):
-    agent = _agent()
-    atom = agent.find_atom(identifier)
-    if atom is None:
-        raise click.ClickException("memory ID is missing or ambiguous; copy a unique ID from `docmancer memory list`")
-    project = (project_path or Path.cwd()).expanduser().resolve()
-    emit_brand_header("docmancer memory promote", "Copy reviewed memory into the repository team store.")
-    click.echo(f"Team destination: {display_path(project / '.docmancer' / 'memory')}")
-    click.echo(atom.text)
-    if dry_run:
-        return
-    try:
-        record, indexed = agent.promote(identifier, project_path=project)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"Promoted {record.record_id[:12]} to {display_path(record.source_path)}")
-    click.echo("Review: git status --short .docmancer/memory/")
-    if not indexed:
-        click.echo("Saved durably; run `docmancer memory sync` after the active sync finishes.")
-
-
-@memory_group.group("team", cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import or export Git team memory.")
-def memory_team() -> None:
-    """Move reviewable team memory through Git without staging or committing."""
-
-
-@memory_team.command("import", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Import reviewable team memory from Git.")
-@click.option("--from-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
-def memory_team_import(project: Path) -> None:
-    import json as _json
-    from docmancer.cloud.team import import_from_git
-
-    try:
-        click.echo(_json.dumps(import_from_git(project), indent=2))
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
-@memory_team.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export reviewable team memory without staging it.")
-@click.option("--to-git", "project", type=click.Path(path_type=Path, file_okay=False), required=True)
-@click.option("--dry-run", is_flag=True, help="Preview files without writing them.")
-@click.option("--yes", is_flag=True, help="Confirm writing reviewable Markdown files.")
-def memory_team_export(project: Path, dry_run: bool, yes: bool) -> None:
-    import json as _json
-    from docmancer.cloud.team import export_to_git
-
-    if not dry_run and not yes:
-        click.confirm("Write team memory files without staging or committing them?", abort=True)
-    try:
-        click.echo(_json.dumps(export_to_git(project, dry_run=dry_run), indent=2))
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
 
 
 @memory_group.command("capture-hook", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, hidden=True)
@@ -1371,7 +1308,7 @@ def hook_context(agent: str, limit: int, max_chars: int, threshold: float, debug
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="List indexed sources with provenance.")
 @click.option("--agent", "agent_filter", default=None, help="Filter by agent/harness name.")
-@click.option("--scope", "scope_filter", type=click.Choice(["global", "project", "team"], case_sensitive=False), default=None, help="Filter by scope.")
+@click.option("--scope", "scope_filter", type=click.Choice(["global", "project"], case_sensitive=False), default=None, help="Filter by scope.")
 @click.option(
     "--type",
     "type_filter",
@@ -2139,7 +2076,7 @@ def _entry_in_project(entry, target) -> bool:
     prefix, _, value = scope.partition(":")
     if prefix == "global" or prefix == "":
         return True
-    if prefix not in {"project", "team"} or not value:
+    if prefix != "project" or not value:
         return False
     try:
         candidate = Path(value).expanduser().resolve()
@@ -2198,7 +2135,7 @@ def _estimate_digest_plan(payload: list[dict], *, input_budget: int, output_cap:
 
 @memory_group.command(cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Digest every memory source on this machine into one file.")
 @click.option("--since", default="7d", show_default=True, help="Only include source files changed in this ISO-8601 or relative window.")
-@click.option("--scope", "digest_scope", type=click.Choice(["machine", "project", "team"], case_sensitive=False), default="machine", show_default=True, help="machine reads every discovered source; project restricts to the current project plus global memory; team selects team scope.")
+@click.option("--scope", "digest_scope", type=click.Choice(["machine", "project"], case_sensitive=False), default="machine", show_default=True, help="machine reads every discovered source; project restricts to the current project plus global memory.")
 @click.option("--focus", default=None, help="Focus the brief on one question or domain.")
 @click.option("--format", "output_format", type=click.Choice(["md", "json", "okf"]), default="md", show_default=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None, help="Project root for --scope project (default: current directory).")
@@ -2258,8 +2195,6 @@ def digest(
     entries = [agent.privacy.clean(e) for e in agent.preview()]
     if digest_scope == "project":
         entries = [e for e in entries if _entry_in_project(e, project)]
-    elif digest_scope == "team":
-        entries = [e for e in entries if str(e.scope).casefold().startswith("team")]
     cutoff = _parse_recap_time(since)
     recent_entries = []
     for entry in entries:
@@ -2650,7 +2585,7 @@ def status():
 @click.option("--harness", default=None, help="Forget only memories from one harness.")
 @click.option("--since", default=None, help="Forget activity on or after this ISO or relative time.")
 @click.option("--before", default=None, help="Forget activity before this ISO or relative time.")
-@click.option("--scope", type=click.Choice(["global", "project", "team"]), default=None)
+@click.option("--scope", type=click.Choice(["global", "project"]), default=None)
 @click.option("--yes", "-y", "assume_yes", is_flag=True, help="Skip the confirmation prompt.")
 def clear(
     dry_run: bool,
@@ -2757,18 +2692,18 @@ def canonical_show(identifier: str | None, include_relations: bool, include_hist
         click.echo(f"\n{len(value['history'])} revision(s)")
 
 
-@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add an approved legacy record or propose a team record.")
+@memory_group.command("add", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Add an approved legacy record.")
 @click.argument("text")
 @click.option("--into", "pack_id", default="personal-defaults", show_default=True, help="Destination context pack.")
-@click.option("--scope", "legacy_scope", type=click.Choice(["global", "project", "team"]), default=None, hidden=True)
+@click.option("--scope", "legacy_scope", type=click.Choice(["global", "project"]), default=None, hidden=True)
 @click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
 @click.option("--type", "memory_type", type=click.Choice(["fact", "decision", "preference", "constraint", "workflow", "warning", "command"]), default=None)
 @click.option("--tag", "tags", multiple=True)
 def canonical_add(text: str, pack_id: str, legacy_scope: str | None, project_path: Path | None, memory_type: str | None, tags: tuple[str, ...]) -> None:
     service = _memory_service()
     project = project_path or Path.cwd()
-    if legacy_scope in {"project", "team"} and pack_id == "personal-defaults":
-        prefix = "team-project:" if legacy_scope == "team" else "personal-project:"
+    if legacy_scope == "project" and pack_id == "personal-defaults":
+        prefix = "personal-project:"
         service.ensure_packs(project_path=project)
         matching = [
             pack.pack_id
@@ -2787,10 +2722,7 @@ def canonical_add(text: str, pack_id: str, legacy_scope: str | None, project_pat
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    if result["proposal"]:
-        click.echo(f"Created team review proposal {result['proposal'].proposal_id}.")
-    else:
-        click.echo(f"Added approved legacy record {result['record'].record_id} to {result['pack'].pack_id}.")
+    click.echo(f"Added approved legacy record {result['record'].record_id} to {result['pack'].pack_id}.")
 
 
 @memory_group.command("edit", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Edit a legacy canonical record.")
@@ -2810,10 +2742,7 @@ def canonical_edit(identifier: str, text: str | None) -> None:
         result = service.edit_record(identifier, replacement)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    if result["proposal"]:
-        click.echo(f"Created team review proposal {result['proposal'].proposal_id}.")
-    else:
-        click.echo(f"Updated {result['record'].record_id} and activated its new revision.")
+    click.echo(f"Updated {result['record'].record_id} and activated its new revision.")
 
 
 @memory_group.command("remove", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Remove a legacy record with a durable tombstone.")
@@ -2826,10 +2755,7 @@ def canonical_remove(identifier: str, yes: bool) -> None:
         result = _memory_service().remove_record(identifier)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    if result["proposal"]:
-        click.echo(f"Created team removal proposal {result['proposal'].proposal_id}.")
-    else:
-        click.echo("Removed context and wrote a content-free tombstone.")
+    click.echo("Removed context and wrote a content-free tombstone.")
 
 
 def _reconciler():
@@ -3127,21 +3053,6 @@ def canonical_review(
     click.echo(f"Proposal {result['proposal'].proposal_id} is {result['proposal'].state}.")
 
 
-@memory_group.command("share", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Propose approved legacy records for the team.")
-@click.argument("pack_id", metavar="PACK")
-@click.option("--into", "target_pack_id", default="team-standards", show_default=True)
-@click.option("--project", "project_path", type=click.Path(path_type=Path, file_okay=False), default=None)
-def canonical_share(pack_id: str, target_pack_id: str, project_path: Path | None) -> None:
-    try:
-        proposal = _memory_service().share(pack_id, target_pack_id=target_pack_id, project_path=project_path or Path.cwd())
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if proposal is None:
-        click.echo("No new context needs team review.")
-    else:
-        click.echo(f"Created encrypted team promotion proposal {proposal.proposal_id}.")
-
-
 @memory_group.command("export", cls=DocmancerCommand, context_settings=HELP_CONTEXT_SETTINGS, short_help="Export approved legacy packs as Markdown.")
 @click.argument("pack_id", required=False, metavar="PACK")
 @click.option("--output", type=click.Path(path_type=Path), default=None)
@@ -3196,7 +3107,6 @@ DEPRECATED_MEMORY_COMMAND_REPLACEMENTS: dict[str, str] = {
     "list": "docmancer memory",
     "orphans": "docmancer memory review --orphans",
     "profile": "docmancer memory distill",
-    "promote": "docmancer memory share",
     "query": "docmancer ask",
     "recap": "docmancer memory show --history",
     "recent": "docmancer memory show --history",
@@ -3204,7 +3114,6 @@ DEPRECATED_MEMORY_COMMAND_REPLACEMENTS: dict[str, str] = {
     "sources": "docmancer status",
     "status": "docmancer status",
     "sync": "docmancer setup",
-    "team": "docmancer memory share",
 }
 
 for _old_name, _replacement in DEPRECATED_MEMORY_COMMAND_REPLACEMENTS.items():

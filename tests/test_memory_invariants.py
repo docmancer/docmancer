@@ -74,58 +74,6 @@ def test_invariant_mandatory_policy_retention(tmp_path, monkeypatch) -> None:
     assert policy.text in [record.text for record in bundle]
 
 
-def test_invariant_agent_observation_never_outranks_team_instruction(tmp_path, monkeypatch) -> None:
-    """An agent observation (personal, harvested) must never outrank a team instruction."""
-    service = _service(tmp_path, monkeypatch)
-    project = tmp_path / "project"
-    project.mkdir()
-
-    team_pack = next(
-        pack.pack_id
-        for pack in service.ensure_packs(project_path=project)
-        if pack.audience_kind == "team" and pack.applicability_kind == "project"
-    )
-    proposal = service.add_canonical(
-        "Always run migrations through the release pipeline.",
-        pack_id=team_pack,
-        project_path=project,
-    )["proposal"]
-    service.review(proposal.proposal_id, "approve")
-
-    personal_pack = next(
-        pack.pack_id
-        for pack in service.ensure_packs(project_path=project)
-        if pack.audience_kind == "personal" and pack.applicability_kind == "project"
-    )
-    service.agent.records.add(
-        "The migration pipeline release process is worth reviewing again.",
-        scope_kind="project",
-        project_path=project,
-        origin="harvested",
-        tags=[f"pack:{personal_pack}"],
-        audience_kind="personal",
-        applicability_kind="project",
-    )
-    for pack in service.ensure_packs(project_path=project):
-        if pack.pack_id == personal_pack:
-            record = next(
-                r for r in service.agent.records.records(project_paths=[project])
-                if r.origin == "harvested"
-            )
-            pack.revise([record.record_id])
-            service.packs.save_pack(pack)
-
-    bundle = service.compile_context(
-        project_path=project,
-        query="migration pipeline release process",
-    )
-    texts = [record.text for record in bundle]
-    assert "Always run migrations through the release pipeline." in texts
-    assert texts.index("Always run migrations through the release pipeline.") < texts.index(
-        "The migration pipeline release process is worth reviewing again."
-    )
-
-
 def test_invariant_item_limit_compliance(tmp_path, monkeypatch) -> None:
     """Selection must not exceed the requested item limit when mandatory items fit within it."""
     service = _service(tmp_path, monkeypatch)
@@ -180,33 +128,6 @@ def test_invariant_stale_memory_supersession(tmp_path, monkeypatch) -> None:
     bundle = [record.text for record in service.compile_context(project_path=project)]
     assert "Use Supabase for this project." in bundle
     assert "Use MongoDB for application data." not in bundle
-
-
-def test_invariant_personal_memory_excluded_from_team_pack_rendering(tmp_path, monkeypatch) -> None:
-    """Personal-audience memory must never appear inside a team-audience pack's rendered output.
-
-    This is the closest currently-implemented boundary to plan section 8.4's
-    generated Team-file sanitisation, which is not implemented yet
-    (checklist Release E.6). It must be re-verified against the real Team
-    generation pipeline once that ships.
-    """
-    from docmancer.memory.packs import render_pack
-
-    service = _service(tmp_path, monkeypatch)
-    project = tmp_path / "project"
-    project.mkdir()
-    service.ensure_packs(project_path=project)
-    service.add_canonical("My personal debugging notes for this project.", project_path=project)
-
-    team_pack = next(
-        pack for pack in service.packs.packs()
-        if pack.audience_kind == "team" and pack.applicability_kind == "project"
-    )
-    rendered = render_pack(
-        team_pack,
-        service.agent.records.records(project_paths=[project]),
-    )
-    assert "My personal debugging notes for this project." not in rendered
 
 
 def test_invariant_query_sensitive_compiler_selection(tmp_path, monkeypatch) -> None:

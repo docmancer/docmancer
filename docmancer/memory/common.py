@@ -30,7 +30,7 @@ def _normalized_scope(atom: AtomicMemoryEntry, project_path: str | Path | None) 
     kind = (atom.scope_kind or atom.scope.partition(":")[0] or "unknown").casefold()
     if kind == "global":
         return "global"
-    if kind not in {"project", "team"}:
+    if kind != "project":
         return kind
     raw = atom.project_path or atom.scope.partition(":")[2]
     if not raw:

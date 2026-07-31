@@ -84,7 +84,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.option("--config", "config_path", default=None, hidden=True, help="Path to docmancer.yaml.")
 @click.pass_context
 def cli(ctx, config_path: str | None):
-    """Share and recall the memory your coding agents already wrote, with separate docs retrieval. Everything runs locally unless you choose a provider or Cloud."""
+    """Give every coding agent on this machine one local memory, and recall what they already wrote, with separate docs retrieval. Everything runs locally unless you choose a provider or Cloud."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
