@@ -1,6 +1,6 @@
 {
   "name": "docmancer",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Local curated Markdown memory for coding agents.",
   "author": {
     "name": "Docmancer"

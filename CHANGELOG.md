@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.7] - Unreleased
+## [0.9.7] - 2026-07-31
 ### Removed
 
 - **The team memory scope and its commands.** Shared team memory is a hosted product concern rather than a local capability, so the OSS package no longer ships a purpose-built team path. `docmancer memory promote --team`, the `docmancer memory team` group with its `import` and `export` subcommands, `docmancer memory share`, and the `memory_promote` MCP tool are gone, along with the `team` value for `--scope` across the memory commands.
