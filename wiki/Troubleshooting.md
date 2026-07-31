@@ -90,7 +90,7 @@ The target changed after the proposal was prepared. Docmancer leaves it unchange
 
 ## Shared Memory has not been built
 
-Run setup or explicitly rebuild the laptop-wide canonical sections:
+Run setup or explicitly rebuild the machine-wide canonical sections:
 
 ```bash
 docmancer setup

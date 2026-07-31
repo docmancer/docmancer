@@ -38,7 +38,7 @@ The CLI remains the stable interface for agents and automation. `docmancer ask` 
 - Curated memory is deliberate Markdown that you or an authorised agent chose to keep.
 - Generated Context artifacts from older workflows remain separate from Shared Memory.
 - Documentation is searchable technical reference, not personal memory, and is never automatically injected into Shared Memory.
-- After the setup warning and confirmation, supported agents capture durable conclusions automatically and feed one laptop-wide canonical memory.
+- After the setup warning and confirmation, supported agents capture durable conclusions automatically and feed one machine-wide canonical memory.
 
 ## Safety boundary
 

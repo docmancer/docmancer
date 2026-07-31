@@ -1,6 +1,6 @@
 # docmancer
 
-Docmancer maintains laptop-wide Shared Memory, project memory, and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Ask uses the configured answer provider by default when one is ready; explicit mutation requests prepare one complete-file proposal for approval. One clarification continues the same action request, while `yes` or `ok` never executes a proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` and leave source repositories and agent-owned memory unchanged. Use `--read-only` to disable proposals and `--no-answer` for evidence only. Use `docmancer docs ...` only for third-party documentation.
+Docmancer maintains machine-wide Shared Memory, project memory, and a separate documentation index. Use `ask`, `read`, `write`, `edit`, and `move` for prior decisions and deliberate memory. Ask uses the configured answer provider by default when one is ready; explicit mutation requests prepare one complete-file proposal for approval. One clarification continues the same action request, while `yes` or `ok` never executes a proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` and leave source repositories and agent-owned memory unchanged. Use `--read-only` to disable proposals and `--no-answer` for evidence only. Use `docmancer docs ...` only for third-party documentation.
 
 Executable: `{{DOCS_KIT_CMD}}`
 

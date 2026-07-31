@@ -13,6 +13,48 @@ def test_cloud_commands_are_registered(tmp_path, monkeypatch):
     assert '"configured": false' in result.output
 
 
+def test_cloud_status_explains_the_next_step(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
+
+    result = CliRunner().invoke(cli, ["cloud", "status"])
+
+    assert result.exit_code == 0
+    assert "Personal Sync: not connected" in result.output
+    assert "docmancer cloud connect --create-recovery" in result.output
+    assert '"configured"' not in result.output
+
+
+def test_cloud_status_summarises_connected_state(monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    monkeypatch.setattr(
+        cloud_commands,
+        "cloud_status",
+        lambda: {
+            "configured": True,
+            "account_id": "account-1",
+            "workspace_id": "workspace-1",
+            "device_id": "device-1",
+            "continuous_audit": False,
+            "entitlement": "trial",
+            "recovery": {"configured": True, "verified": True},
+            "pending": 7650,
+            "conflicts": 0,
+            "cursor": None,
+        },
+    )
+
+    result = CliRunner().invoke(cli, ["cloud", "status"])
+
+    assert result.exit_code == 0
+    assert "Personal Sync: connected" in result.output
+    assert "Recovery: verified" in result.output
+    assert "Sync queue: 7,650 pending, 0 conflicts" in result.output
+    assert "Last sync cursor: none yet" in result.output
+    assert "Next: run `docmancer cloud sync`" in result.output
+    assert '"pending"' not in result.output
+
+
 def test_cloud_disable_does_not_remove_local_memory(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
     memory = tmp_path / "memories" / "keep.md"

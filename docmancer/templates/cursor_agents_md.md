@@ -2,7 +2,7 @@
 
 # docmancer
 
-Docmancer maintains laptop-wide Shared Memory, project memory, and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Ask uses the configured answer provider by default when one is ready; use `--no-answer` for evidence only. Use Docs only for third-party libraries, APIs, and vendor references.
+Docmancer maintains machine-wide Shared Memory, project memory, and a separate documentation index. Search memory before answering questions about prior decisions or conventions. Ask uses the configured answer provider by default when one is ready; use `--no-answer` for evidence only. Use Docs only for third-party libraries, APIs, and vendor references.
 
 Executable: `{{DOCS_KIT_CMD}}`
 

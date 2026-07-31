@@ -49,6 +49,47 @@ def cloud_status(root: str | Path | None = None) -> dict:
     }
 
 
+def _print_cloud_status(value: dict) -> None:
+    if not value.get("configured"):
+        click.echo("Personal Sync: not connected")
+        click.echo("Next: run `docmancer cloud connect --create-recovery` to connect this machine.")
+        return
+
+    recovery = value.get("recovery") if isinstance(value.get("recovery"), dict) else {}
+    if recovery.get("verified"):
+        recovery_label = "verified"
+    elif recovery.get("configured"):
+        recovery_label = "configured, verification required"
+    else:
+        recovery_label = "not configured"
+
+    pending = int(value.get("pending") or 0)
+    conflicts = int(value.get("conflicts") or 0)
+    cursor = value.get("cursor")
+    entitlement = str(value.get("entitlement") or "unknown").replace("_", " ").title()
+
+    click.echo("Personal Sync: connected")
+    click.echo(f"Account: {value.get('account_id') or 'unknown'}")
+    click.echo(f"Workspace: {value.get('workspace_id') or 'unknown'}")
+    click.echo(f"This device: {value.get('device_id') or 'unknown'}")
+    click.echo(f"Plan: {entitlement}")
+    click.echo(f"Recovery: {recovery_label}")
+    click.echo(f"Sync queue: {pending:,} pending, {conflicts:,} conflicts")
+    click.echo(f"Last sync cursor: {cursor or 'none yet'}")
+    click.echo(f"Continuous audit: {'on' if value.get('continuous_audit') else 'off'}")
+
+    if not recovery.get("verified"):
+        click.echo("Next: verify your recovery key with `docmancer cloud recovery verify`.")
+    elif pending:
+        click.echo("Next: run `docmancer cloud sync` to send the queued encrypted revisions.")
+    elif conflicts:
+        click.echo("Next: resolve the reported sync conflicts before relying on this machine's state.")
+    elif not cursor:
+        click.echo("Next: run `docmancer cloud sync` to complete the first encrypted sync.")
+    else:
+        click.echo("Status: setup is complete and the local sync queue is clear.")
+
+
 def _context() -> tuple[Path, CloudConfig, dict, KeyStore]:
     root = _root()
     config = CloudConfig(root)
@@ -98,8 +139,7 @@ def _resume_existing_connect(
 def cloud_group(ctx: click.Context) -> None:
     """Manage opt-in end-to-end encrypted sync. Local memory remains free and available."""
     if ctx.invoked_subcommand is None:
-        for key, item in cloud_status().items():
-            click.echo(f"{key}: {item if item is not None else '-'}")
+        _print_cloud_status(cloud_status())
 
 
 @cloud_group.command(cls=DocmancerCommand, short_help="Show local cloud state.", hidden=True)
@@ -109,8 +149,7 @@ def status(as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(value, indent=2, sort_keys=True))
         return
-    for key, item in value.items():
-        click.echo(f"{key}: {item if item is not None else '-'}")
+    _print_cloud_status(value)
 
 
 @cloud_group.command("connect", cls=DocmancerCommand, short_help="Connect encrypted cloud sync.")

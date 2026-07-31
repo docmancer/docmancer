@@ -2588,7 +2588,7 @@ def setup_cmd(
 
     This bootstraps `docmancer.yaml`, initializes the local SQLite index,
     indexes the memory your coding agents already wrote on this machine,
-    reconciles the laptop-wide tree, and installs agent skills, managed
+    reconciles the machine-wide tree, and installs agent skills, managed
     instructions, and supported hooks. Use `--agent` to pick explicit targets.
     """
     from docmancer.harness.setup_plan import build_setup_confirmation, normalize_setup_targets

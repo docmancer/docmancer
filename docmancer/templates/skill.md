@@ -5,7 +5,7 @@ description: Recall and update source-attributed local agent memory shared with 
 
 # docmancer
 
-Docmancer keeps three things distinct: automatically reconciled laptop-wide Shared Memory, deliberate project Markdown, and attributable evidence discovered from coding agents. Technical documentation lives in a separate index.
+Docmancer keeps three things distinct: automatically reconciled machine-wide Shared Memory, deliberate project Markdown, and attributable evidence discovered from coding agents. Technical documentation lives in a separate index.
 
 Executable: `{{DOCS_KIT_CMD}}`
 
@@ -55,9 +55,9 @@ docmancer status --json
 
 ## Shared Memory rules
 
-Laptop-wide files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project files belong under `overview.md`, `decisions/`, `constraints/`, `workflows/`, and `lessons/`.
+Machine-wide files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project files belong under `overview.md`, `decisions/`, `constraints/`, `workflows/`, and `lessons/`.
 
-Generated laptop-wide sections contain a pinned zone and a generated zone. Reconciliation replaces the generated zone. Use `docmancer memory canonical pin` for an explicit durable correction. Do not edit the generated zone.
+Generated machine-wide sections contain a pinned zone and a generated zone. Reconciliation replaces the generated zone. Use `docmancer memory canonical pin` for an explicit durable correction. Do not edit the generated zone.
 
 Conversational Ask proposals affect exactly one complete file and never apply because the user merely types “yes”. Never trash, restore, connect Cloud, change capture installation, or publish Team memory without explicit user authorization.
 

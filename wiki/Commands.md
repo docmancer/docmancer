@@ -12,7 +12,7 @@ docmancer web
 docmancer ask "What deployment decisions apply?"
 ```
 
-`setup` displays one machine-wide plan and privacy warning before it indexes existing agent memory, reconciles the laptop-wide Shared Memory tree, installs detected integrations, and enables supported recall and lifecycle hooks. Use `--profile local` for bundled Model2Vec plus sqlite-vec, or `--profile scale` for FastEmbed, sparse retrieval, and Qdrant.
+`setup` displays one machine-wide plan and privacy warning before it indexes existing agent memory, reconciles the machine-wide Shared Memory tree, installs detected integrations, and enables supported recall and lifecycle hooks. Use `--profile local` for bundled Model2Vec plus sqlite-vec, or `--profile scale` for FastEmbed, sparse retrieval, and Qdrant.
 
 `web` serves the latest committed local state immediately. It does not block startup on source scans, embeddings, canonical reconciliation, or providers. Changed-source maintenance is queued after the loopback server is available.
 
@@ -50,7 +50,7 @@ For a broad machine-wide forget request, Docmancer proposes `shared/canonical-ex
 | Command | What it does |
 | --- | --- |
 | `docmancer write <text> --path <relative.md> --scope project` | Creates or replaces a deliberate project-memory file at an explicit path. |
-| `docmancer read <address-or-path>` | Reads one file, stable address, body, hash, and provenance. Add `--global` for the laptop-wide tree. |
+| `docmancer read <address-or-path>` | Reads one file, stable address, body, hash, and provenance. Add `--global` for the machine-wide tree. |
 | `docmancer edit <address> <text-or-dash> --expected-hash <hash>` | Replaces a file body only when the caller has the current hash. |
 | `docmancer move <address> <new-path> --expected-hash <hash>` | Moves a file while preserving its stable identity. |
 | `docmancer duplicate <address> <new-path> --expected-hash <hash>` | Creates a copy with a new stable identity. |
@@ -60,9 +60,9 @@ For a broad machine-wide forget request, Docmancer proposes `shared/canonical-ex
 
 Existing-file writes are hash guarded. Imported and harvested source files remain read-only evidence.
 
-## Laptop-wide canonical memory
+## Machine-wide canonical memory
 
-The automatically reconciled laptop-wide files live under `~/.docmancer/tree`.
+The automatically reconciled machine-wide files live under `~/.docmancer/tree`.
 
 | Command | What it does |
 | --- | --- |

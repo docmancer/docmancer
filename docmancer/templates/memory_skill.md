@@ -10,7 +10,7 @@ allowed-tools:
 
 Executable: `{{DOCS_KIT_CMD}}`
 
-Docmancer combines automatically reconciled laptop-wide Shared Memory, curated project Markdown, and attributable evidence discovered from local coding agents.
+Docmancer combines automatically reconciled machine-wide Shared Memory, curated project Markdown, and attributable evidence discovered from local coding agents.
 
 ## Workflow
 
@@ -28,7 +28,7 @@ A reply to one action clarification continues the original request. Do not treat
 
 ## Shared Memory scaffold
 
-`docmancer memory canonical` shows the laptop-wide memory shared by every agent on this machine. Its files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project memory belongs under `decisions/`, `constraints/`, `workflows/`, and `lessons/`. Choose the narrowest conventional folder instead of inventing a new top-level category.
+`docmancer memory canonical` shows the machine-wide memory shared by every agent on this machine. Its files live under `profile/`, `principles/`, `projects/`, and `shared/`. Project memory belongs under `decisions/`, `constraints/`, `workflows/`, and `lessons/`. Choose the narrowest conventional folder instead of inventing a new top-level category.
 
 Read one generated section with `docmancer memory canonical show <section>`, or read its raw file with paths such as `docmancer read --global profile/preferences.md`. Note that `--global` is required, because `docmancer read` otherwise resolves against the current project's tree.
 

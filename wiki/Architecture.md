@@ -10,7 +10,7 @@ Deliberate project Markdown under `<project>/.docmancer/tree` remains the source
 
 A memory atom is one small, self-contained, source-attributed fact, decision, rule, preference, or workflow. Atoms are disposable retrieval units derived from agent-owned evidence and canonical files. They have stable identities that do not depend on line numbers, and long content is split losslessly rather than truncated. They are not a second writable source of truth.
 
-Markdown that a user explicitly imports for whole-file curation lives under `.docmancer/inbox`. Automatic session capture uses the inbox only as a transient spool, then indexes durable conclusions, reconciles the laptop memory, and removes the processed checkpoint. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
+Markdown that a user explicitly imports for whole-file curation lives under `.docmancer/inbox`. Automatic session capture uses the inbox only as a transient spool, then indexes durable conclusions, reconciles machine-wide memory, and removes the processed checkpoint. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
 ## Human outcomes
 
