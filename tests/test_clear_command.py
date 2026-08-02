@@ -79,6 +79,24 @@ def test_keep_config_preserves_the_yaml_but_clears_the_index(tmp_path, monkeypat
     assert not (docmancer_home / "tree").exists()
 
 
+def test_clear_preserves_cloud_identity_metadata_with_keyring_credentials(tmp_path, monkeypatch):
+    _home, docmancer_home = _isolate(tmp_path, monkeypatch)
+    cloud = docmancer_home / "cloud"
+    cloud.mkdir()
+    (cloud / "account.json").write_text(
+        '{"account_id":"account-1","device_id":"device-1","enabled":true}\n',
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(cli, ["clear", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert (cloud / "account.json").is_file()
+    assert not (docmancer_home / "memory.db").exists()
+    assert not (docmancer_home / "tree").exists()
+    assert "Cloud connection metadata" in result.output
+
+
 def test_keep_models_leaves_the_download_caches_alone(tmp_path, monkeypatch):
     home, docmancer_home = _isolate(tmp_path, monkeypatch)
 

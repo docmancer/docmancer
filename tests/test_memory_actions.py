@@ -37,6 +37,8 @@ def test_read_only_questions_do_not_enter_action_planning() -> None:
     assert is_mutation_request("How did the release workflow change?") is False
     assert is_mutation_request("Update the release process.") is True
     assert is_mutation_request("Could you update the release process?") is True
+    assert is_mutation_request("Streamline the file principles/working-style.md") is True
+    assert is_mutation_request("Simplify this project workflow") is True
     assert is_mutation_request("Undo the deletion.") is True
 
 
@@ -276,6 +278,125 @@ def test_generated_machine_section_can_only_be_pinned(tmp_path: Path) -> None:
     planned = engine.plan(f"Update {entry.address} with my preference.", client=good)
     applied = engine.execute(planned["proposal"], actor_surface="test")
     assert applied["pinned"] == "- Prefer pnpm over npm."
+
+
+def test_exact_large_generated_section_can_prepare_a_pinned_proposal(
+    tmp_path: Path,
+) -> None:
+    machine_store = TreeStore(tmp_path / "docmancer-test-home" / "tree")
+    entry = machine_store.write(
+        relative_path="principles/working-style.md",
+        text=render_zones(
+            pinned="",
+            generated="# Working style\n\n" + ("Use evidence and complete sentences.\n" * 500),
+            revision="rev-large",
+            section="working-principles",
+        ),
+        memory_type="working-principles",
+        scope="global",
+        expect="absent",
+    )
+    assert 16_000 < len(entry.body) < 24_000
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="pin",
+        scope="machine",
+        target_address=entry.address,
+        section="working-principles",
+        markdown="# Working style\n\nUse evidence and write complete sentences.",
+        rationale="Put the concise working style in the preserved pinned zone.",
+    ))
+    engine = MemoryActionEngine(tmp_path / "project")
+
+    result = engine.plan(
+        (
+            "Streamline the file principles/working-style.md from my shared memory"
+            "\n\nUser clarification: yes"
+        ),
+        client=planner,
+    )
+
+    assert result["kind"] == "proposal"
+    assert result["proposal"]["operation"] == "pin"
+    candidate = next(
+        row for row in planner.last_payload["candidates"]
+        if row["path"] == "principles/working-style.md"
+    )
+    assert len(candidate["markdown"]) > 16_000
+    assert "never replaces the generated evidence" in " ".join(
+        planner.last_payload["rules"]
+    )
+
+
+def test_generated_streamline_request_becomes_an_actionable_clarification(
+    tmp_path: Path,
+) -> None:
+    machine_store = TreeStore(tmp_path / "docmancer-test-home" / "tree")
+    entry = machine_store.write(
+        relative_path="principles/working-style.md",
+        text=render_zones(
+            pinned="",
+            generated="# Working style\n\nUse evidence.",
+            revision="rev-empty-pin",
+            section="working-principles",
+        ),
+        memory_type="working-principles",
+        scope="global",
+        expect="absent",
+    )
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="pin",
+        scope="machine",
+        target_address=entry.address,
+        section="working-principles",
+        markdown="",
+    ))
+
+    result = MemoryActionEngine(tmp_path / "project").plan(
+        "Streamline the file principles/working-style.md from my shared memory",
+        client=planner,
+    )
+
+    assert result["kind"] == "clarification"
+    assert "generated from source evidence" in result["message"]
+    assert "concise summary" in result["message"]
+    assert planner.calls == 0
+
+
+def test_empty_generated_pin_after_clarification_stays_actionable(
+    tmp_path: Path,
+) -> None:
+    machine_store = TreeStore(tmp_path / "docmancer-test-home" / "tree")
+    entry = machine_store.write(
+        relative_path="principles/working-style.md",
+        text=render_zones(
+            pinned="",
+            generated="# Working style\n\nUse evidence.",
+            revision="rev-empty-pin-follow-up",
+            section="working-principles",
+        ),
+        memory_type="working-principles",
+        scope="global",
+        expect="absent",
+    )
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation="pin",
+        scope="machine",
+        target_address=entry.address,
+        section="working-principles",
+        markdown="",
+    ))
+
+    result = MemoryActionEngine(tmp_path / "project").plan(
+        "Streamline principles/working-style.md\n\nUser clarification: yes",
+        client=planner,
+    )
+
+    assert result["kind"] == "clarification"
+    assert "concise summary" in result["message"]
+    assert planner.calls == 1
 
 
 def test_secret_and_oversized_requests_never_reach_provider(tmp_path: Path) -> None:

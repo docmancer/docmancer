@@ -1119,6 +1119,10 @@ class LocalApi:
             )
         return JSONResponse({"recovery_key": recovery_key})
 
+    async def cloud_recovery_key_create(self, request: Request) -> JSONResponse:
+        recovery_key, upload_error = await self.runtime.cloud_create_recovery()
+        return JSONResponse({"recovery_key": recovery_key, "upload_error": upload_error})
+
     async def cloud_connect_cancel(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(self.runtime.cloud_cancel_connect()))
 
@@ -1131,13 +1135,18 @@ class LocalApi:
 
     async def cloud_devices(self, request: Request) -> JSONResponse:
         status = await self.runtime.cloud_status()
-        if not status.get("configured"):
+        if not status.get("registered") and not status.get("configured"):
             return JSONResponse(cloud_unavailable("not_connected"))
         try:
             items = await self.runtime.cloud_devices()
         except Exception as exc:  # A read-only Cloud page must not break the local app.
             return JSONResponse(cloud_unavailable_from(exc))
-        return JSONResponse(jsonable({"available": True, "configured": True, "items": items}))
+        return JSONResponse(jsonable({
+            "available": True,
+            "configured": bool(status.get("configured")),
+            "registered": True,
+            "items": items,
+        }))
 
     async def cloud_device_approve(self, request: Request) -> JSONResponse:
         body = await request_json(request)

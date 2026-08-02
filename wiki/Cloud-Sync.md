@@ -14,7 +14,7 @@ docmancer cloud disconnect
 On the first machine, connect and take an initial sync:
 
 ```bash
-docmancer cloud connect --create-recovery
+docmancer cloud connect
 docmancer cloud sync
 ```
 

@@ -148,6 +148,9 @@ def create_app(
             "audit": "/settings/?section=safeguards",
             "maintenance": "/settings/?section=maintenance",
             "intelligence": "/memory/",
+            "sync": "/settings/?section=cloud",
+            "devices": "/settings/?section=cloud",
+            "team": "/settings/?section=cloud",
         }
         surface = request.url.path.strip("/")
         return RedirectResponse(url=destinations[surface], status_code=308)
@@ -173,7 +176,7 @@ def create_app(
             for surface in (
                 "ask", "agent-context", "context", "tree", "inbox", "sources",
                 "docs", "common", "delivery", "timeline", "audit",
-                "maintenance", "intelligence",
+                "maintenance", "intelligence", "sync", "devices", "team",
             )
             for path in (f"/{surface}", f"/{surface}/")
         ],
@@ -262,6 +265,7 @@ def create_app(
         Route("/api/v1/cloud/connect", api.cloud_connect, methods=["POST"]),
         Route("/api/v1/cloud/connect/cancel", api.cloud_connect_cancel, methods=["POST"]),
         Route("/api/v1/cloud/connect/recovery-key", api.cloud_recovery_key_once, methods=["POST"]),
+        Route("/api/v1/cloud/recovery-key/create", api.cloud_recovery_key_create, methods=["POST"]),
         Route("/api/v1/cloud/disconnect", api.cloud_disconnect, methods=["POST"]),
         Route("/api/v1/cloud/sync", api.cloud_sync, methods=["POST"]),
         Route("/api/v1/cloud/devices", api.cloud_devices, methods=["GET"]),

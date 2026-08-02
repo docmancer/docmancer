@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - Unreleased
+### Added
+
+- **Recovery-key controls in the local app.** Cloud settings can create or replace a recovery key, display it once, and optionally verify it. Failed hosted-wrapper uploads are reported clearly, so a newly displayed key is not mistaken for a key that can recover another machine.
+
+### Changed
+
+- **Cloud setup is one state-aware settings surface.** Pending devices, approved devices, local key availability, recovery, billing, device approval or revocation, Team status, and remote-data controls now remain visible in the relevant state. Retired `/sync`, `/devices`, and `/team` routes redirect to that surface.
+- **Recovery is created by default when a device connects.** Pending devices receive the key only after approval makes a workspace key available, and verification remains optional rather than a setup blocker.
+- **Generated Shared Memory rewrites are safer.** Ask recognises requests to streamline, simplify, or shorten a generated section and offers a concise preserved pinned note instead of replacing evidence that a refresh would overwrite.
+
+### Fixed
+
+- **A local reset preserves Cloud identity metadata.** `docmancer clear` now leaves the local Cloud connection metadata and OS-keyring credentials in place, preventing accidental duplicate pending-device registration. `docmancer cloud disconnect` remains the explicit way to remove that link.
+- **Cloud status explains pending registration.** The CLI now distinguishes a registered device awaiting approval from a disconnected machine and reports whether the local device identity and workspace key are available.
+- **The agent-connection warning is dismissible.** The home-page warning stays hidden until its underlying connection state changes.
+
 ## [0.9.8] - 2026-07-31
 ### Changed
 

@@ -29,9 +29,10 @@ ACTION_STATUSES = ("pending", "applied", "cancelled", "superseded", "conflict", 
 PROJECT_FOLDERS = ("decisions", "constraints", "workflows", "lessons")
 MACHINE_FOLDERS = ("profile", "principles", "projects", "shared")
 MAX_AI_FILE_CHARS = 16_000
+MAX_AI_EXACT_GENERATED_CHARS = 24_000
 
 _MUTATION_VERB = (
-    r"(?:remember|save|record|update|edit|change|rewrite|move|rename|duplicate|copy|"
+    r"(?:remember|save|record|update|edit|change|rewrite|streamline|simplify|shorten|move|rename|duplicate|copy|"
     r"delete|remove|forget|trash|restore|undelete|undo\s+(?:the\s+)?deletion)"
 )
 _MUTATION_RE = re.compile(
@@ -56,6 +57,7 @@ _CANONICAL_FORGET_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}", re.IGNORECASE)
+_GENERATED_REWRITE_RE = re.compile(r"\b(?:streamline|simplify|shorten)\b", re.IGNORECASE)
 
 
 class MemoryActionDraft(BaseModel):
@@ -265,11 +267,17 @@ class MemoryActionEngine:
         safe_candidates = []
         for row in candidates:
             body = str(row["markdown"])
-            if len(body) > MAX_AI_FILE_CHARS or redact_secrets(body) != body:
-                if str(row["address"]) in task or str(row["path"]) in task:
+            exact_target = str(row["address"]) in task or str(row["path"]) in task
+            size_limit = (
+                MAX_AI_EXACT_GENERATED_CHARS
+                if exact_target and row.get("generated_section")
+                else MAX_AI_FILE_CHARS
+            )
+            if len(body) > size_limit or redact_secrets(body) != body:
+                if exact_target:
                     reason = (
-                        f"The complete target file exceeds {MAX_AI_FILE_CHARS:,} characters."
-                        if len(body) > MAX_AI_FILE_CHARS
+                        f"The complete target file exceeds {size_limit:,} characters."
+                        if len(body) > size_limit
                         else "Secret redaction would change the complete target file."
                     )
                     return ActionPlanningResult(
@@ -278,6 +286,28 @@ class MemoryActionEngine:
                     ).model_dump()
                 continue
             safe_candidates.append(row)
+
+        generated_rewrite_target = next(
+            (
+                row for row in safe_candidates
+                if row.get("generated_section")
+                and (str(row["address"]) in task or str(row["path"]) in task)
+            ),
+            None,
+        )
+        if (
+            generated_rewrite_target is not None
+            and _GENERATED_REWRITE_RE.search(task)
+            and "User clarification:" not in task
+        ):
+            return ActionPlanningResult(
+                kind="clarification",
+                message=(
+                    f"{generated_rewrite_target['path']} is generated from source evidence, so "
+                    "replacing it directly would be overwritten on the next refresh. Should I "
+                    "prepare a concise summary in its preserved pinned section instead?"
+                ),
+            ).model_dump()
 
         try:
             planner = client or self._client()
@@ -302,7 +332,11 @@ class MemoryActionEngine:
                 "Return exactly one action or one clarification.",
                 "scope_hint is authoritative when present; never ask the user to repeat that scope.",
                 "Use only a supplied target_address for existing files.",
-                "Generated sections permit pin only.",
+                (
+                    "Generated sections permit pin only. A pin replaces the complete preserved "
+                    "pinned zone and never replaces the generated evidence below it. If a request "
+                    "asks to rewrite generated evidence, ask whether to add a concise pinned note instead."
+                ),
                 "For create, edit, or pin, markdown is the complete proposed body or complete pinned zone.",
                 "Move and duplicate stay within one scope.",
                 "Never interpret yes or approval as an action.",
@@ -375,6 +409,26 @@ class MemoryActionEngine:
                 provider=provider,
                 model=model,
             ).model_dump()
+        if draft.operation == "pin" and not str(draft.markdown or "").strip():
+            target = next(
+                (
+                    row for row in safe_candidates
+                    if row.get("generated_section")
+                    and str(row["address"]) == str(draft.target_address or "")
+                ),
+                None,
+            )
+            if target is not None:
+                return ActionPlanningResult(
+                    kind="clarification",
+                    message=(
+                        f"{target['path']} is generated from source evidence, so replacing it "
+                        "directly would be overwritten on the next refresh. Should I prepare a "
+                        "concise summary in its preserved pinned section instead?"
+                    ),
+                    provider=provider,
+                    model=model,
+                ).model_dump()
         if canonical_forget:
             draft.scope = "machine"
             draft.path = CANONICAL_EXCLUSIONS_PATH
@@ -606,6 +660,7 @@ __all__ = [
     "ACTION_OPERATIONS",
     "ACTION_STATUSES",
     "MAX_AI_FILE_CHARS",
+    "MAX_AI_EXACT_GENERATED_CHARS",
     "MemoryActionDraft",
     "MemoryActionEngine",
     "is_mutation_request",

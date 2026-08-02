@@ -502,6 +502,9 @@ def test_retired_workbench_routes_are_real_http_redirects(tmp_path: Path) -> Non
             "/sources/": "/library/?tab=evidence",
             "/intelligence/": "/memory/",
             "/context/": "/memory/",
+            "/sync/": "/settings/?section=cloud",
+            "/devices/": "/settings/?section=cloud",
+            "/team/": "/settings/?section=cloud",
         }
         for source, destination in expected.items():
             response = client.get(source, follow_redirects=False)

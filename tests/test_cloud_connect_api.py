@@ -26,6 +26,7 @@ class CloudRuntime:
         self.recovery = recovery
         self.cancelled = False
         self.disconnected = False
+        self.recovery_upload_error = ""
         self.stages: list[str] = []
 
     async def initialize(self) -> dict:
@@ -62,6 +63,9 @@ class CloudRuntime:
     async def cloud_disconnect(self) -> dict:
         self.disconnected = True
         return {"disconnected": True}
+
+    async def cloud_create_recovery(self) -> tuple[str, str]:
+        return "replacement-recovery-key", self.recovery_upload_error
 
 
 def api_client(tmp_path: Path, runtime: CloudRuntime):
@@ -182,3 +186,64 @@ def test_recovery_key_is_read_once_and_never_enters_the_job_record(tmp_path: Pat
 
     assert first.json()["recovery_key"] == "super-secret-recovery-key"
     assert second.status_code == 404, "the recovery key must not be readable twice"
+
+
+def test_lost_recovery_key_can_be_replaced_from_the_local_api(tmp_path: Path) -> None:
+    runtime = CloudRuntime()
+    client, app = api_client(tmp_path, runtime)
+    with client:
+        headers = authenticate(client, app)
+        response = client.post(
+            "/api/v1/cloud/recovery-key/create", json={}, headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "recovery_key": "replacement-recovery-key",
+        "upload_error": "",
+    }
+
+
+def test_recovery_key_replacement_reports_a_failed_hosted_upload(tmp_path: Path) -> None:
+    """A replacement key is worthless if the hosted wrapper still holds the old one."""
+    runtime = CloudRuntime()
+    runtime.recovery_upload_error = "Docmancer Cloud could not be reached"
+    client, app = api_client(tmp_path, runtime)
+    with client:
+        headers = authenticate(client, app)
+        response = client.post(
+            "/api/v1/cloud/recovery-key/create", json={}, headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["upload_error"] == "Docmancer Cloud could not be reached"
+
+
+def test_recovery_wrapper_upload_failure_is_returned_not_swallowed(tmp_path: Path) -> None:
+    """The local wrapper is written either way, so the caller must learn the upload failed."""
+    from docmancer.cloud.config import CloudConfig
+    from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
+    from docmancer.runtime.backend import LocalRuntime
+
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id="account-1",
+        workspace_id="workspace-1",
+        device_id="device-1",
+        base_url="https://cloud.invalid",
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.set_workspace_key("account-1", "workspace-1", b"w" * 32)
+
+    runtime = LocalRuntime.__new__(LocalRuntime)
+    runtime._cloud_client = lambda: (_ for _ in ()).throw(RuntimeError("cloud unreachable"))
+
+    recovery_key, upload_error = LocalRuntime._cloud_create_recovery(
+        runtime, tmp_path, keys, "workspace-1",
+    )
+
+    assert recovery_key
+    assert "cloud unreachable" in upload_error
+    # The wrapper is still cached locally so the key is usable on this machine.
+    assert (config.paths.root / "recovery-wrapper.json").is_file()

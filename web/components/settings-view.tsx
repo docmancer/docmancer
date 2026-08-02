@@ -1,13 +1,13 @@
 "use client";
 
 import {
-  ArrowRight, BrainCircuit, Check, ChevronDown, Cloud, Command, ExternalLink, KeyRound,
+  BrainCircuit, Check, ChevronDown, Cloud, Command, ExternalLink, KeyRound,
   LoaderCircle, RefreshCw, Search, ShieldCheck, SlidersHorizontal,
 } from "lucide-react";
-import { KeyboardEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { apiGet, apiJobMutation, apiMutation, type JsonMap } from "@/lib/api";
-import { CommandRow, Loading, messageOf, Notice, PageHeading, rows } from "./workspace-app";
-import { ConnectDialog } from "./cloud-connect";
+import { AgentGroup, CommandRow, Loading, messageOf, Notice, PageHeading, rows } from "./workspace-app";
+import { CloudSettings } from "./cloud-settings";
 import { WizardLogo } from "./wizard-logo";
 
 export function SettingsView() {
@@ -20,7 +20,7 @@ export function SettingsView() {
     ["agent", "Docmancer", "Behavior and answer style", BrainCircuit],
     ["model", "Model", "Provider, model, and credential", SlidersHorizontal],
     ["connections", "Agent connections", "Skills and recall hooks", Command],
-    ["cloud", "Cloud and billing", "Personal Sync and Team", Cloud],
+    ["cloud", "Cloud and billing", "Sync, devices, recovery, billing", Cloud],
     ["safeguards", "Privacy and safeguards", "Fixed local protections", ShieldCheck],
   ] as const;
   return <div className="page">
@@ -332,10 +332,6 @@ export function SetupFlow({ initial, onComplete }: { initial: JsonMap; onComplet
   </div>;
 }
 
-function AgentGroup({ title, note, children }: { title: string; note: string; children: ReactNode }) {
-  return <section className="agent-group"><header><div><strong>{title}</strong><p>{note}</p></div></header><div className="agent-choice-grid">{children}</div></section>;
-}
-
 function connectionLabel(item: JsonMap) {
   if (item.integration_state === "stale") return "Installed integration needs an update";
   if (item.integration_state === "partial") return "Partially installed, ready to repair";
@@ -352,137 +348,4 @@ function Safeguards() {
     ["Destructive actions are explicit", "Deletion, rollback, and publication require a deliberate confirmation."],
   ];
   return <div className="settings-form"><div className="settings-title"><div className="feature-icon mint"><ShieldCheck size={19}/></div><div><span className="eyebrow">Fixed protections</span><h2>Privacy and safeguards</h2><p>These protections are part of Docmancer&apos;s trust boundary and cannot be disabled from the agent prompt.</p></div></div><div className="safeguard-list">{safeguards.map(([title, note]) => <article key={title}><span><Check size={14}/></span><div><strong>{title}</strong><p>{note}</p></div></article>)}</div><div className="maintenance-card"><div><RefreshCw size={17}/><div><strong>Something looks stale?</strong><p>Rebuild the local index without changing your source files.</p></div></div><CommandRow title="Refresh local memory" command="docmancer memory sync" note="Re-index changed memory and instruction sources."/></div></div>;
-}
-
-function CloudSettings() {
-  const [status, setStatus] = useState<JsonMap>({});
-  const [devices, setDevices] = useState<JsonMap[]>([]);
-  const [team, setTeam] = useState<JsonMap>({});
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const load = async () => {
-    setLoading(true);
-    try {
-      const cloud = await apiGet("/api/v1/cloud");
-      setStatus(cloud);
-      if (cloud.configured) {
-        const [deviceData, teamData] = await Promise.all([apiGet("/api/v1/cloud/devices"), apiGet("/api/v1/cloud/team")]);
-        setDevices(rows(deviceData.items));
-        setTeam(teamData);
-      }
-    } catch (reason) { setError(messageOf(reason)); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { queueMicrotask(() => void load()); }, []);
-  const run = async (action: () => Promise<unknown>, message: string) => {
-    setBusy(true);
-    setError("");
-    try { await action(); setNotice(message); await load(); }
-    catch (reason) { setError(messageOf(reason)); }
-    finally { setBusy(false); }
-  };
-  const sync = () => run(() => apiJobMutation("/api/v1/cloud/sync", {}, () => undefined), "Sync complete.");
-  const approve = (device: JsonMap) => run(
-    () => apiMutation(`/api/v1/cloud/devices/${encodeURIComponent(String(device.device_id ?? device.id))}/approve`, {
-      fingerprint: String(device.fingerprint ?? ""),
-    }),
-    "Device approved.",
-  );
-  const revoke = (device: JsonMap) => run(
-    () => apiMutation(`/api/v1/cloud/devices/${encodeURIComponent(String(device.device_id ?? device.id))}/revoke`, {}),
-    "Device revoked.",
-  );
-  const invite = () => run(
-    () => apiMutation("/api/v1/cloud/team/invitations", { email: inviteEmail.trim(), role: "member" }),
-    `Invitation sent to ${inviteEmail.trim()}.`,
-  ).then(() => setInviteEmail(""));
-  const disconnect = () => run(() => apiMutation("/api/v1/cloud/disconnect", {}), "Cloud session cleared. Local memory was not changed.");
-
-  if (loading) return <Loading label="Loading Cloud status"/>;
-
-  if (!status.configured) return <div className="settings-form">
-    <div className="settings-title"><div className="feature-icon mint"><Cloud size={19}/></div><div><span className="eyebrow">Optional encrypted continuity</span><h2>Carry shared memory beyond this machine</h2><p>The complete local product stays free. Paid plans cover encrypted sync, recovery, and Team coordination.</p></div></div>
-    {error && <Notice kind="error">{error}</Notice>}
-    <div className="cloud-plan-grid">
-      <article><span className="eyebrow">Personal Sync</span><h3>Keep every approved device current</h3><p>Replicate encrypted revisions, recover after a reset, and keep managed history without uploading plaintext memory.</p></article>
-      <article><span className="eyebrow">Team</span><h3>Share one approved memory file</h3><p>Generate and review the complete file locally, then encrypt it before hosted coordination and delivery.</p></article>
-    </div>
-    <div className="form-actions">
-      <button className="primary-btn" onClick={() => setConnecting(true)}>Connect this device <ArrowRight size={14}/></button>
-      <a className="secondary-btn" href="https://docmancer.dev/pricing" target="_blank" rel="noreferrer">Compare plans <ExternalLink size={14}/></a>
-    </div>
-    <p className="muted">
-      Connecting is free and does not require a subscription. A plan is only needed before
-      encrypted revisions can be uploaded, and the local product is unaffected either way.
-    </p>
-    {connecting && <ConnectDialog close={() => setConnecting(false)} onConnected={() => void load()}/>}
-  </div>;
-
-  const members = rows(team.members);
-  const pending = devices.filter((device) => String(device.state ?? "") === "pending");
-  const canPush = status.entitlement === "active" || status.entitlement === "trial" || status.entitlement === "grace";
-  return <div className="settings-form">
-    <div className="settings-title"><div className="feature-icon mint"><Cloud size={19}/></div><div><span className="eyebrow">Encrypted Cloud connected</span><h2>Sync, devices, and Team</h2><p>Manage the local side of encrypted continuity. Billing and checkout remain on docmancer.dev.</p></div></div>
-    {error && <Notice kind="error">{error}</Notice>}
-    {notice && <Notice onClose={() => setNotice("")}>{notice}</Notice>}
-    {!canPush && <Notice kind="error">
-      This device is connected, but the subscription is not active, so encrypted revisions
-      cannot be uploaded yet. Local memory, recall, and every local command keep working.
-    </Notice>}
-
-    <div className="cloud-status-grid">
-      <article><strong>{String(status.plan ?? status.entitlement ?? "Connected")}</strong><span>Current plan</span></article>
-      <article><strong>{devices.length}</strong><span>Registered devices</span></article>
-      <article><strong>{members.length}</strong><span>Team members</span></article>
-      <article><strong>{String(status.pending ?? 0)}</strong><span>Queued for upload</span></article>
-    </div>
-    <div className="form-actions">
-      <button className="primary-btn" disabled={busy || !canPush} onClick={sync}>{busy && <LoaderCircle className="spin" size={14}/>}Sync now</button>
-      <a className="secondary-btn" href="https://docmancer.dev/account" target="_blank" rel="noreferrer">Account and billing <ExternalLink size={14}/></a>
-    </div>
-
-    <AgentGroup title="Devices" note="Approve a new device only after confirming its fingerprint out of band.">
-      {devices.length === 0 && <p className="muted">No devices are registered yet.</p>}
-      {devices.map((device) => {
-        const id = String(device.device_id ?? device.id ?? "");
-        const state = String(device.state ?? "pending");
-        return <article key={id} className="cloud-row">
-          <div>
-            <strong>{id === String(status.device_id ?? "") ? "This device" : id}</strong>
-            <small>{state} · {String(device.fingerprint ?? "no fingerprint")}</small>
-          </div>
-          <div className="cloud-row-actions">
-            {state === "pending" && <button className="secondary-btn" disabled={busy} onClick={() => approve(device)}>Approve</button>}
-            {state !== "revoked" && id !== String(status.device_id ?? "") && <button className="text-btn" disabled={busy} onClick={() => revoke(device)}>Revoke</button>}
-          </div>
-        </article>;
-      })}
-      {pending.length > 0 && <p className="muted">{pending.length} device(s) are waiting for approval.</p>}
-    </AgentGroup>
-
-    <AgentGroup title="Team" note="Members share one approved memory file. Review happens locally before anything is encrypted and sent.">
-      {members.length === 0 && <p className="muted">No team members yet.</p>}
-      {members.map((member) => <article key={String(member.email ?? member.member_id)} className="cloud-row">
-        <div><strong>{String(member.email ?? member.member_id ?? "member")}</strong><small>{String(member.role ?? "member")} · {String(member.state ?? "active")}</small></div>
-      </article>)}
-      <div className="form-actions">
-        <input
-          value={inviteEmail}
-          placeholder="teammate@example.com"
-          onChange={(event) => setInviteEmail(event.target.value)}
-        />
-        <button className="secondary-btn" disabled={busy || !inviteEmail.trim()} onClick={invite}>Invite member</button>
-      </div>
-      {rows(team.promotions).length > 0 && <p className="muted">{rows(team.promotions).length} proposal(s) are waiting for review.</p>}
-      {rows(team.conflicts).length > 0 && <p className="muted">{rows(team.conflicts).length} unresolved conflict(s).</p>}
-    </AgentGroup>
-
-    <AgentGroup title="Disconnect" note="Clears the local cloud session and stops encrypted transfer. Local memory is never deleted.">
-      <div className="form-actions"><button className="text-btn" disabled={busy} onClick={disconnect}>Disconnect this device</button></div>
-    </AgentGroup>
-  </div>;
 }

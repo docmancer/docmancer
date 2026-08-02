@@ -160,7 +160,7 @@ MCP exposes the same local memory and docs services as the CLI. `ask_memory` cor
 | `docmancer cloud sync` | Pushes and pulls client-encrypted revisions. |
 | `docmancer cloud devices` | Lists devices and supports explicit approval or revocation. |
 | `docmancer cloud recovery create` | Creates a recovery key and wrapper. |
-| `docmancer cloud recovery verify` | Prompts for and verifies a recovery key before another-device enrolment. |
+| `docmancer cloud recovery verify` | Confirms a stored recovery key still unwraps the workspace key. Optional; nothing requires it. |
 | `docmancer cloud export <destination>` | Exports local memory without contacting the server. |
 | `docmancer cloud disconnect` | Clears the Cloud session without changing local memory. |
 | `docmancer cloud delete-remote --confirm DELETE` | Schedules server-held ciphertext for deletion while preserving local memory. |

@@ -1953,7 +1953,8 @@ def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
     Removes (by default):
 
     \b
-    - the docmancer home ($DOCMANCER_HOME, else ~/.docmancer): config, the
+    - the non-Cloud contents of the docmancer home ($DOCMANCER_HOME, else
+      ~/.docmancer): config, the
       SQLite and sqlite-vec indexes, the memory tree, baselines, extracted
       docs, the embeddings cache, vendored models, managed Qdrant storage
     - ~/.cache/fastembed/ (FastEmbed ONNX model cache)
@@ -1963,18 +1964,22 @@ def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
     The managed Qdrant process is stopped first if it is running. Other tools'
     HuggingFace caches (non-Qdrant publishers) are left untouched.
 
-    Project-local .docmancer/ directories and cloud credentials held in the OS
-    keyring are NOT removed. Rebuild afterwards with: docmancer setup
+    Project-local .docmancer/ directories, Cloud connection metadata, and Cloud
+    credentials held in the OS keyring are NOT removed. Keeping the metadata
+    with the keyring identity prevents a local reset from registering a duplicate
+    pending device. Use ``docmancer cloud disconnect`` separately when wanted.
+    Rebuild afterwards with: docmancer setup
     """
     home = Path.home()
 
     docmancer_home = _resolved_docmancer_home()
     targets: list[Path] = []
 
+    preserved_cloud = docmancer_home / "cloud"
     if docmancer_home.exists():
-        if keep_config:
+        if keep_config or preserved_cloud.exists():
             for child in sorted(docmancer_home.iterdir()):
-                if child.name == "docmancer.yaml":
+                if child.name == "cloud" or (keep_config and child.name == "docmancer.yaml"):
                     continue
                 targets.append(child)
         else:
@@ -2010,7 +2015,10 @@ def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
     click.echo(f"  {'-' * 10}")
     click.echo(f"  {_format_size(total):>10}  total")
 
-    click.echo("\nNot removed: project-local .docmancer/ directories, cloud credentials in the OS keyring.")
+    click.echo(
+        "\nNot removed: project-local .docmancer/ directories, Cloud connection metadata, "
+        "or Cloud credentials in the OS keyring."
+    )
     if leftover:
         click.echo(f"Not removed: {display_path(leftover)} (not the active home; $DOCMANCER_HOME is set).")
 

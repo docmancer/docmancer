@@ -100,11 +100,20 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
         yet you will sign in with GitHub or Google first, and the code entry form appears
         straight after that.
       </p>
-      <label className="checkbox-row">
-        <input type="checkbox" checked={createRecovery} onChange={(event) => setCreateRecovery(event.target.checked)}/>
-        <span>Create a recovery key so this workspace can be restored after a reset. Shown once.</span>
+      <label className="recovery-choice">
+        <span className="recovery-choice-icon"><ShieldCheck size={18}/></span>
+        <span className="recovery-choice-copy">
+          <strong>Create a recovery key</strong>
+          <small>Restore this workspace after a reset. The key is shown once, so save it somewhere safe.</small>
+        </span>
+        <input
+          type="checkbox"
+          checked={createRecovery}
+          aria-label="Create a recovery key"
+          onChange={(event) => setCreateRecovery(event.target.checked)}
+        />
       </label>
-      <button className="text-btn" onClick={() => setAdvanced(!advanced)}>
+      <button className="text-btn advanced-toggle" onClick={() => setAdvanced(!advanced)}>
         {advanced ? "Hide" : "Show"} advanced options
       </button>
       {advanced && <label className="field">
@@ -154,7 +163,17 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
       <p><LoaderCircle className="spin" size={15}/> Authorized. Registering this device and preparing the workspace.</p>
     </div>}
 
-    {phase === "pending_approval" && <div className="connect-step">
+    {phase === "pending_approval" && recoveryKey && <div className="connect-step">
+      <div className="feature-icon mint"><ShieldCheck size={19}/></div>
+      <h3>Save this recovery key before approving the device</h3>
+      <p>
+        This device is registered, but an existing approved device still needs to confirm
+        its fingerprint before encrypted sync can start.
+      </p>
+      <RecoveryKeyPanel value={recoveryKey} onAcknowledge={() => setRecoveryKey("")}/>
+    </div>}
+
+    {phase === "pending_approval" && !recoveryKey && <div className="connect-step">
       <div className="feature-icon mint"><ShieldCheck size={19}/></div>
       <h3>This device is registered and waiting for approval</h3>
       <p>
@@ -170,6 +189,10 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
       <div className="feature-icon mint"><Check size={19}/></div>
       <h3>This device is connected</h3>
       {Boolean(outcome.queue_warning) && <Notice kind="error">{String(outcome.queue_warning)}</Notice>}
+      {Boolean(outcome.recovery_upload_error) && <Notice kind="error">
+        This recovery key was saved on this machine, but it could not be uploaded: {String(outcome.recovery_upload_error)}.
+        Until the upload succeeds, it will not work on a different machine. Retry from Settings once the service is reachable.
+      </Notice>}
       {recoveryKey
         ? <RecoveryKeyPanel value={recoveryKey} onAcknowledge={close}/>
         : <div className="form-actions"><button className="primary-btn" onClick={close}>Done</button></div>}
@@ -177,7 +200,7 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
   </Modal>;
 }
 
-function RecoveryKeyPanel({ value, onAcknowledge }: { value: string; onAcknowledge: () => void }) {
+export function RecoveryKeyPanel({ value, onAcknowledge }: { value: string; onAcknowledge: () => void }) {
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   return <div className="recovery-panel">

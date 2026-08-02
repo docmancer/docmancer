@@ -2846,7 +2846,17 @@ class LocalRuntime:
                         f"Connected, but existing memory could not be queued: {exc}. Run sync to retry."
                     )
             if create_recovery:
-                outcome["recovery_key"] = self._cloud_create_recovery(root, keys, outcome["workspace_id"])
+                try:
+                    recovery_key, upload_error = self._cloud_create_recovery(
+                        root, keys, outcome["workspace_id"]
+                    )
+                    outcome["recovery_key"] = recovery_key
+                    if upload_error:
+                        outcome["recovery_upload_error"] = upload_error
+                except ValueError as exc:
+                    if outcome.get("state") != "pending_approval":
+                        raise
+                    outcome["recovery_key_unavailable"] = str(exc)
             return outcome
 
         try:
@@ -2856,7 +2866,12 @@ class LocalRuntime:
         finally:
             self._cloud_connect_cancel = None
 
-    def _cloud_create_recovery(self, root: Path, keys, workspace_id: str) -> str:
+    def _cloud_create_recovery(self, root: Path, keys, workspace_id: str) -> tuple[str, str]:
+        """Return the new recovery key and an empty string, or the upload failure reason.
+
+        A replacement key is worthless if the hosted wrapper still holds the old one,
+        so the caller must be able to tell the user that the upload did not land.
+        """
         from docmancer.cloud.config import CloudConfig
         from docmancer.cloud.recovery import create_recovery
 
@@ -2873,11 +2888,30 @@ class LocalRuntime:
             client, _workspace = self._cloud_client()
             try:
                 client.upload_recovery_wrapper(workspace_id, wrapper)
+            except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+                return recovery_key, str(exc) or exc.__class__.__name__
             finally:
                 client.close()
-        except Exception:  # noqa: BLE001 - the wrapper is saved locally regardless
-            pass
-        return recovery_key
+        except Exception as exc:  # noqa: BLE001 - the wrapper is saved locally regardless
+            return recovery_key, str(exc) or exc.__class__.__name__
+        return recovery_key, ""
+
+    async def cloud_create_recovery(self) -> tuple[str, str]:
+        """Replace the local recovery wrapper and return its key exactly once.
+
+        Returns the key with an upload failure reason, which is empty on success.
+        """
+        from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.keystore import KeyStore
+
+        root = Path(self._require_memory().db_path).parent
+        config = CloudConfig(root)
+        workspace_id = str(config.account().get("workspace_id") or "")
+        if not workspace_id:
+            raise ValueError("connect a Cloud workspace before creating a recovery key")
+        return await asyncio.to_thread(
+            self._cloud_create_recovery, root, KeyStore(), workspace_id
+        )
 
     def cloud_cancel_connect(self) -> dict:
         cancel = getattr(self, "_cloud_connect_cancel", None)
@@ -2904,6 +2938,8 @@ class LocalRuntime:
     async def cloud_sync(self) -> dict:
         from docmancer.cloud.client import CloudClient
         from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.connect import enqueue_project
+        from docmancer.cloud.crypto import b64decode, unwrap_key
         from docmancer.cloud.keystore import KeyStore
         from docmancer.cloud.sync import sync_once
 
@@ -2921,6 +2957,50 @@ class LocalRuntime:
             signing_private_key=keys.get(account_id, "device-signing-private"),
         )
         try:
+            if not config.enabled():
+                workspace_id = str(account.get("workspace_id") or "")
+                device_id = str(account.get("device_id") or "")
+                rows = list(
+                    (await asyncio.to_thread(client.devices, workspace_id)).get("devices") or []
+                )
+                current = next(
+                    (
+                        row for row in rows
+                        if str(row.get("device_id") or row.get("id")) == device_id
+                    ),
+                    None,
+                )
+                if not current or str(current.get("state")) != "approved":
+                    raise ValueError(
+                        "this device is still pending approval; approve its fingerprint "
+                        "from an existing trusted device first"
+                    )
+                key_version = int(current.get("key_version") or 1)
+                wrapped = await asyncio.to_thread(
+                    client.key_wrapper, workspace_id, device_id, key_version
+                )
+                private_key = keys.get(account_id, "device-box-private")
+                if not private_key:
+                    raise ValueError("device box private key is unavailable")
+                workspace_key = unwrap_key(
+                    b64decode(str(wrapped["wrapped_key"])), private_key
+                )
+                keys.set_workspace_key(
+                    account_id, workspace_id, workspace_key, key_version=key_version
+                )
+                config.set_workspace(workspace_id, key_version=key_version)
+                config.save_account(enabled=True)
+                try:
+                    enqueue_project(
+                        root,
+                        keys,
+                        self.project_path,
+                        db_path=self._require_memory().db_path,
+                    )
+                except Exception:
+                    # Connection activation is complete even if existing memory
+                    # needs to be queued by a later sync.
+                    pass
             return await asyncio.to_thread(sync_once, client, root=root, keystore=keys)
         finally:
             await asyncio.to_thread(client.close)
@@ -3078,9 +3158,17 @@ class LocalRuntime:
         config = CloudConfig(root)
         account = config.account()
         path = config.paths.root / "recovery-wrapper.json"
-        if not path.is_file():
-            raise ValueError("recovery wrapper is not cached on this device; use the CLI to download and verify it")
-        workspace_key = await asyncio.to_thread(verify_recovery, key, json.loads(path.read_text(encoding="utf-8")), root=root)
+        if path.is_file():
+            wrapper = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            # The wrapper lives on the device that created it, so fall back to the stored
+            # copy. This mirrors _verify_recovery in docmancer/cli/cloud_commands.py.
+            client, workspace_id = await asyncio.to_thread(self._cloud_client)
+            try:
+                wrapper = await asyncio.to_thread(client.recovery_wrapper, workspace_id)
+            finally:
+                await asyncio.to_thread(client.close)
+        workspace_key = await asyncio.to_thread(verify_recovery, key, wrapper, root=root)
         workspace = config.workspace(str(account["workspace_id"]))
         key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
         await asyncio.to_thread(KeyStore().set_workspace_key, str(account["account_id"]), str(account["workspace_id"]), workspace_key, key_version)

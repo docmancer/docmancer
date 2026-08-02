@@ -82,6 +82,39 @@ def test_route_session_handshake_does_not_block_page_rendering():
     assert '!ready && !error ? <Loading label="Opening your local memory"/>' not in source
 
 
+def test_agent_setup_warning_can_be_dismissed_until_its_content_changes():
+    workspace = WEB_APP.parent / "components" / "workspace-app.tsx"
+    source = workspace.read_text(encoding="utf-8")
+
+    assert "CONNECTION_WARNING_DISMISS_KEY" in source
+    assert "connectionWarningSignature" in source
+    assert 'aria-label="Dismiss agent setup warning"' in source
+    assert "window.localStorage.setItem(CONNECTION_WARNING_DISMISS_KEY" in source
+
+
+def test_pending_cloud_connection_shows_one_time_recovery_key_before_approval():
+    component = WEB_APP.parent / "components" / "cloud-connect.tsx"
+    source = component.read_text(encoding="utf-8")
+
+    assert 'phase === "pending_approval" && recoveryKey' in source
+    assert "Save this recovery key before approving the device" in source
+    assert 'onAcknowledge={() => setRecoveryKey("")}' in source
+
+    cloud = (WEB_APP.parent / "components" / "cloud-settings.tsx").read_text(encoding="utf-8")
+    assert 'apiMutation("/api/v1/cloud/recovery-key/create", {})' in cloud
+    assert "Replace lost recovery key" in cloud
+
+
+def test_cloud_settings_offers_recovery_verification_and_states_it_is_optional():
+    cloud = (WEB_APP.parent / "components" / "cloud-settings.tsx").read_text(encoding="utf-8")
+
+    assert 'apiMutation("/api/v1/cloud/recovery/verify", { recovery_key: key.trim() })' in cloud
+    assert "Verify recovery key" in cloud
+    assert "nothing is blocked if you skip it" in cloud
+    # Team invitations cannot be accepted by the service, so no invite control is offered.
+    assert "/api/v1/cloud/team/invitations" not in cloud
+
+
 def test_library_owns_runtime_readiness_and_background_copy():
     library = WEB_APP.parent / "components" / "library-view.tsx"
     source = library.read_text(encoding="utf-8")
@@ -100,3 +133,13 @@ def test_shared_memory_uses_stale_while_revalidate_snapshots():
     assert 'apiGet("/api/v1/shared-memory").then' in source
     assert 'apiGet("/api/v1/delivery").then' in source
     assert "Promise.all" not in source
+
+
+def test_cloud_settings_sends_the_confirmation_the_revoke_route_requires():
+    """The local API rejects a revoke without a matching confirmation, so the UI must send one."""
+    cloud = (WEB_APP.parent / "components" / "cloud-settings.tsx").read_text(encoding="utf-8")
+
+    assert "/revoke`, { confirmation: id }" in cloud
+    # Approval wraps the workspace key, which a pending device does not hold.
+    assert 'state === "pending" && configured &&' in cloud
+    assert "upload_error" in cloud

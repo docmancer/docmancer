@@ -19,7 +19,7 @@ export type ViewKey =
   | "overview" | "context" | "library" | "settings" | "help"
   | "tree" | "ask" | "common" | "delivery" | "timeline" | "agent-context"
   | "inbox" | "memory" | "sources" | "intelligence" | "docs" | "audit"
-  | "maintenance" | "sync" | "devices" | "team";
+  | "maintenance";
 
 type CanonicalView = "home" | "memory" | "library" | "settings" | "help";
 type ChatTurn = {
@@ -37,10 +37,12 @@ const PRIMARY = [
   { key: "library", label: "Library", href: "/library/", icon: Library },
 ] as const;
 
+const CONNECTION_WARNING_DISMISS_KEY = "docmancer-dismissed-connection-warning";
+
 function canonical(view: ViewKey): CanonicalView {
   if (["context", "common", "delivery", "timeline", "intelligence", "memory", "tree", "inbox"].includes(view)) return "memory";
   if (["library", "sources", "docs"].includes(view)) return "library";
-  if (["settings", "audit", "maintenance", "sync", "devices", "team"].includes(view)) return "settings";
+  if (["settings", "audit", "maintenance"].includes(view)) return "settings";
   if (view === "help") return "help";
   return "home";
 }
@@ -223,6 +225,14 @@ function HomeView() {
   const [busy, setBusy] = useState("");
   const [modal, setModal] = useState<"agent" | "setup" | "">("");
   const [error, setError] = useState("");
+  const [dismissedConnectionWarning, setDismissedConnectionWarning] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(CONNECTION_WARNING_DISMISS_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<"top" | "bottom">("top");
   const chatTurnId = useRef(0);
@@ -435,6 +445,23 @@ function HomeView() {
           : manual.length
             ? `Finish ${String(manual[0].label)} setup`
             : "Manage connections";
+  const connectionWarningSignature = JSON.stringify(integrations.map((item) => [
+    item.id ?? item.key ?? item.label,
+    item.integration_state,
+    item.action_kind,
+    Boolean(item.recall_setup_required),
+    Boolean(item.detected),
+  ]));
+  const connectionWarningVisible = showConnectionBanner
+    && connectionWarningSignature !== dismissedConnectionWarning;
+  const dismissConnectionWarning = () => {
+    setDismissedConnectionWarning(connectionWarningSignature);
+    try {
+      window.localStorage.setItem(CONNECTION_WARNING_DISMISS_KEY, connectionWarningSignature);
+    } catch {
+      // The state update above still dismisses the warning for this session.
+    }
+  };
   const suggestions = [
     { kind: "Ask", prompt: "What decisions have my agents made about this project?" },
     { kind: "Ask", prompt: "What working preferences recur across my agents?" },
@@ -492,10 +519,11 @@ function HomeView() {
           </button>
           {(messages.length > 0 || activeConversation || temporary) && <button className="secondary-btn chat-reset" onClick={() => newChat()}><Plus size={14}/>New chat</button>}
         </header>
-        {showConnectionBanner && <div className="connection-banner">
+        {connectionWarningVisible && <div className="connection-banner">
           <span className="connection-banner-icon"><Command size={15}/></span>
           <div><strong>{connectionStatus}</strong><span>Connect your coding agents so they can use the same memory.</span></div>
           <button className="secondary-btn" onClick={() => setModal("setup")} aria-label={connectionAction}><span>{connectionAction}</span><ArrowRight size={14}/></button>
+          <button className="connection-banner-dismiss" onClick={dismissConnectionWarning} aria-label="Dismiss agent setup warning" title="Do not show this warning again"><X size={14}/></button>
         </div>}
         </div>
         <div ref={chatThreadRef} className={messages.length ? "chat-thread" : "chat-thread empty"}>
@@ -641,6 +669,10 @@ export function Notice({ kind = "success", onClose, children }: { kind?: "succes
 
 export function Loading({ label }: { label: string }) {
   return <div className="loading-state"><LoaderCircle className="spin" size={20}/><span>{label}</span></div>;
+}
+
+export function AgentGroup({ title, note, children }: { title: string; note: string; children: ReactNode }) {
+  return <section className="agent-group"><header><div><strong>{title}</strong><p>{note}</p></div></header><div className="agent-choice-grid">{children}</div></section>;
 }
 
 export function CommandRow({ title, command, note }: { title: string; command: string; note: string }) {

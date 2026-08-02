@@ -20,8 +20,42 @@ def test_cloud_status_explains_the_next_step(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert "Personal Sync: not connected" in result.output
-    assert "docmancer cloud connect --create-recovery" in result.output
+    assert "docmancer cloud connect" in result.output
     assert '"configured"' not in result.output
+
+
+def test_cloud_status_exposes_pending_registration_and_key_availability(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=False,
+        account_id="account-1",
+        workspace_id="workspace-1",
+        device_id="device-1",
+        base_url="https://cloud.invalid",
+    )
+    backend = MemorySecretBackend()
+    keys = KeyStore(backend)
+    keys.set_token("account-1", "token")
+    keys.ensure_device_keys("account-1")
+    keys.set_workspace_key("account-1", "workspace-1", b"w" * 32)
+    monkeypatch.setattr(cloud_commands, "KeyStore", lambda: keys)
+
+    value = cloud_commands.cloud_status(tmp_path)
+    result = CliRunner().invoke(cli, ["cloud", "status"])
+
+    assert value["registered"] is True
+    assert value["connection_state"] == "pending_approval"
+    assert value["local_keys"] == {
+        "device_identity_available": True,
+        "workspace_key_available": True,
+    }
+    assert result.exit_code == 0
+    assert "device registered, awaiting approval" in result.output
+    assert "Local key material: available" in result.output
+    assert "approve this device" in result.output
 
 
 def test_cloud_status_summarises_connected_state(monkeypatch):
