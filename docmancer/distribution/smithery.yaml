@@ -1,7 +1,7 @@
 name: docmancer
 displayName: Docmancer
 description: Local curated Markdown memory and documentation retrieval for coding agents.
-version: 0.9.9
+version: 0.9.10
 homepage: https://docmancer.dev/docs
 startCommand:
   type: stdio
