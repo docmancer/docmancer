@@ -108,6 +108,87 @@ def test_global_forget_request_prepares_a_valid_canonical_exclusion(tmp_path: Pa
     assert "without touching source files" in " ".join(payload["rules"])
 
 
+def test_natural_shared_memory_retirement_request_forces_canonical_exclusion(
+    tmp_path: Path,
+) -> None:
+    engine = MemoryActionEngine(tmp_path / "project")
+    existing = engine.machine_store.write(
+        relative_path=CANONICAL_EXCLUSIONS_PATH,
+        text=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- old-project\n\n"
+            "## Text contains\n"
+        ),
+        memory_type="constraint",
+        scope="global",
+        expect="absent",
+    )
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="proposal",
+        operation=None,
+        scope=None,
+        markdown=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- old-project\n"
+            "- token_tape\n\n"
+            "## Text contains\n\n"
+            "- Token Tape\n"
+            "- TokenTape\n"
+        ),
+        rationale="The project is no longer active.",
+    ))
+
+    result = engine.plan(
+        'Remove the project "token tape" from all my shared memory files '
+        "or de-prioritize it - I am not using it anymore",
+        client=planner,
+    )
+
+    assert result["kind"] == "proposal"
+    assert result["proposal"]["operation"] == "edit"
+    assert result["proposal"]["scope"] == "machine"
+    assert result["proposal"]["path"] == CANONICAL_EXCLUSIONS_PATH
+    assert result["proposal"]["address"] == existing.address
+    assert planner.last_payload["scope_hint"] == "machine"
+    assert planner.last_payload["canonical_exclusion_target"] == {
+        "scope": "machine",
+        "path": CANONICAL_EXCLUSIONS_PATH,
+        "address": existing.address,
+        "required_operation": "edit",
+    }
+
+
+def test_action_prompt_defines_shared_memory_and_varied_cleanup_language(
+    tmp_path: Path,
+) -> None:
+    planner = FakePlanner(MemoryActionDraft(
+        outcome="clarification",
+        message="Should this remain visible when directly relevant?",
+    ))
+
+    MemoryActionEngine(tmp_path / "project").plan(
+        "De-prioritize Token Tape in Shared Memory but keep it visible when relevant.",
+        client=planner,
+    )
+
+    reference = planner.last_payload["shared_memory_reference"]
+    assert "machine-wide canonical memory" in reference["definition"]
+    assert "all my shared memory files" in reference["terminology"]["same_product_surface"]
+    assert any(
+        "remove, forget, hide, exclude" in rule
+        for rule in reference["intent_precedence"]
+    )
+    assert any(
+        "or de-prioritize it" in example["request"].casefold()
+        for example in reference["examples"]
+    )
+    assert reference["canonical_exclusion_contract"]["required_path"] == (
+        CANONICAL_EXCLUSIONS_PATH
+    )
+
+
 def test_invalid_canonical_exclusion_is_refused(tmp_path: Path) -> None:
     planner = FakePlanner(MemoryActionDraft(
         outcome="proposal",

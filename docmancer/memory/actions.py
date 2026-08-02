@@ -33,7 +33,8 @@ MAX_AI_EXACT_GENERATED_CHARS = 24_000
 
 _MUTATION_VERB = (
     r"(?:remember|save|record|update|edit|change|rewrite|streamline|simplify|shorten|move|rename|duplicate|copy|"
-    r"delete|remove|forget|trash|restore|undelete|undo\s+(?:the\s+)?deletion)"
+    r"delete|remove|forget|trash|hide|exclude|suppress|ignore|retire|shelve|de[- ]?prioriti[sz]e|"
+    r"stop\s+(?:showing|surfacing|including|using)|restore|undelete|undo\s+(?:the\s+)?deletion)"
 )
 _MUTATION_RE = re.compile(
     rf"(?:^\s*(?:please\s+)?{_MUTATION_VERB}\b|"
@@ -44,6 +45,9 @@ _MUTATION_RE = re.compile(
 )
 _MACHINE_RE = re.compile(
     r"\b(machine[- ]wide|global(?:ly)?|all projects|every project|across projects|"
+    r"shared memor(?:y|ies)|canonical memor(?:y|ies)|master memor(?:y|ies)|"
+    r"laptop(?:[- ]wide)? memor(?:y|ies)|all (?:of )?my memor(?:y|ies)|"
+    r"all (?:of )?my shared memory files|every shared memory file|across (?:all )?my memor(?:y|ies)|"
     r"my preference|i prefer|about me|my profile|my career)\b",
     re.IGNORECASE,
 )
@@ -53,7 +57,9 @@ _PROJECT_RE = re.compile(
     re.IGNORECASE,
 )
 _CANONICAL_FORGET_RE = re.compile(
-    r"\b(?:delete|remove|forget|trash)\b.*\b(?:shared|canonical|generated|machine|global)",
+    r"\b(?:delete|remove|forget|trash|hide|exclude|suppress|ignore|retire|shelve|"
+    r"de[- ]?prioriti[sz]e|stop (?:showing|surfacing|including|using)|"
+    r"no longer (?:show|surface|include|use)|not (?:using|working on))\b",
     re.IGNORECASE | re.DOTALL,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}", re.IGNORECASE)
@@ -328,6 +334,157 @@ class MemoryActionEngine:
                 "Use scope_hint when present. If it is absent and the target does not uniquely "
                 "determine scope, return clarification asking machine-wide or current project."
             ),
+            "shared_memory_reference": {
+                "definition": (
+                    "Shared Memory is Docmancer's machine-wide canonical memory. It is the local "
+                    "cross-agent view assembled from attributable evidence, user-approved pinned "
+                    "notes, and durable machine-wide controls."
+                ),
+                "terminology": {
+                    "same_product_surface": [
+                        "Shared Memory",
+                        "shared memories",
+                        "canonical memory",
+                        "master memory",
+                        "laptop memory",
+                        "laptop-wide memory",
+                        "machine memory",
+                        "global memory",
+                        "all my memory files",
+                        "all my shared memory files",
+                        "memory shared by my agents",
+                        "memory available to every agent",
+                    ],
+                    "not_the_same_thing": [
+                        "A source repository or its code files",
+                        "Agent-owned source memory such as CLAUDE.md or MEMORY.md",
+                        "Project-scoped curated memory under the current project's .docmancer tree",
+                        "The separate technical-documentation index",
+                        "Chat history",
+                    ],
+                },
+                "storage_model": [
+                    (
+                        "Generated canonical files summarize source evidence. Their generated zones "
+                        "are rebuilt and must never be edited, replaced, or trashed directly."
+                    ),
+                    (
+                        "Pinned zones are preserved user-owned corrections or summaries. A pin action "
+                        "replaces one complete pinned zone, not generated evidence."
+                    ),
+                    (
+                        f"{CANONICAL_EXCLUSIONS_PATH} is the durable control file for removing topics, "
+                        "projects, paths, or text from generated machine-wide memory while leaving all "
+                        "source evidence untouched."
+                    ),
+                    (
+                        "Standalone curated machine or project files can be created, edited, moved, "
+                        "duplicated, trashed, or restored only when one exact file is identified."
+                    ),
+                ],
+                "intent_precedence": [
+                    (
+                        "An exact supplied docmancer:// address or exact candidate path identifies one "
+                        "existing file. Follow that target unless it is a generated canonical section."
+                    ),
+                    (
+                        "A request to remove a project, topic, company, product, person, preference, "
+                        "decision family, or source from Shared Memory is a canonical exclusion, not a "
+                        "request to delete repositories or agent-owned evidence."
+                    ),
+                    (
+                        "Words such as remove, forget, hide, exclude, suppress, ignore, retire, shelve, "
+                        "stop showing, stop surfacing, no longer include, and de-prioritize all express "
+                        "canonical-exclusion intent when their object is material in Shared Memory."
+                    ),
+                    (
+                        "Lifecycle explanations such as 'I am not using it anymore', 'we stopped working "
+                        "on it', 'this is inactive', or 'this is no longer relevant' strengthen an "
+                        "accompanying removal or exclusion request. They do not authorize source deletion."
+                    ),
+                    (
+                        "When the user offers alternatives such as 'remove it or de-prioritize it' and the "
+                        "context says the subject is inactive or unused, choose the supported canonical "
+                        "exclusion. Do not return a proposal without an operation."
+                    ),
+                    (
+                        "If the user asks only for lower ranking or lower priority while explicitly wanting "
+                        "the material to remain visible, return one clarification because Shared Memory has "
+                        "no persistent ranking-weight action."
+                    ),
+                    (
+                        "If scope is genuinely absent and neither an exact target nor Shared Memory wording "
+                        "resolves it, ask whether the change is machine-wide or project-only."
+                    ),
+                ],
+                "canonical_exclusion_contract": {
+                    "required_path": CANONICAL_EXCLUSIONS_PATH,
+                    "purpose": (
+                        "Filter matching evidence before generated canonical sections are reconciled. "
+                        "Never edit or delete the matching source files."
+                    ),
+                    "required_markdown_shape": (
+                        "Return the complete file with '# Canonical memory exclusions', then "
+                        "'## Evidence path contains' and '## Text contains'. Put one literal "
+                        "case-insensitive substring in each bullet. Preserve all existing exclusions."
+                    ),
+                    "selection_guidance": [
+                        "Use Evidence path contains for distinctive repository, directory, or filename fragments.",
+                        "Use Text contains for distinctive project, product, topic, or entity names.",
+                        "Include common spacing, punctuation, or casing variants only when one literal would miss them.",
+                        "Do not add broad terms that could suppress unrelated projects or evidence.",
+                    ],
+                },
+                "examples": [
+                    {
+                        "request": "Remove Token Tape from all my shared memory files.",
+                        "interpretation": "Canonical exclusion for Token Tape in machine-wide Shared Memory.",
+                    },
+                    {
+                        "request": "Remove the project Token Tape or de-prioritize it. I am not using it anymore.",
+                        "interpretation": "Choose canonical exclusion because removal is supported and inactivity resolves the alternative.",
+                    },
+                    {
+                        "request": "Stop surfacing the old pet marketplace project to any of my agents.",
+                        "interpretation": "Canonical exclusion because the request targets cross-agent generated memory.",
+                    },
+                    {
+                        "request": "Forget everything from repositories whose path contains /token_tape/.",
+                        "interpretation": "Add a narrow Evidence path contains exclusion. Do not touch those repositories.",
+                    },
+                    {
+                        "request": "Hide references to Mewline from canonical memory but keep the source notes.",
+                        "interpretation": "Add a narrow Text contains exclusion and preserve source notes.",
+                    },
+                    {
+                        "request": "This project is shelved and should no longer appear in laptop-wide memory.",
+                        "interpretation": "Canonical exclusion for the identified project.",
+                    },
+                    {
+                        "request": "De-prioritize Token Tape but keep it visible when directly relevant.",
+                        "interpretation": "Clarification required because persistent ranking weights are unsupported and exclusion would hide it.",
+                    },
+                    {
+                        "request": "Trash decisions/obsolete-launch.md from this project.",
+                        "interpretation": "Exact project-file trash, not a canonical exclusion.",
+                    },
+                    {
+                        "request": "Rewrite projects/active.md to remove Token Tape.",
+                        "interpretation": "Do not rewrite the generated section. Use canonical exclusion or ask about a pinned note.",
+                    },
+                    {
+                        "request": "Delete the Token Tape repository and its memory.",
+                        "interpretation": "Never delete the repository. Only a Shared Memory proposal is permitted here, and source deletion requires separate explicit handling outside this system.",
+                    },
+                ],
+                "output_requirements": [
+                    "Return exactly one proposal, one necessary clarification, or none.",
+                    "A proposal must always include exactly one supported operation.",
+                    "Never invent an address, path, operation, or restore token.",
+                    "Never convert a Shared Memory cleanup into source-file deletion.",
+                    "Never treat yes, ok, approval language, or lifecycle commentary by itself as authorization to apply an action.",
+                ],
+            },
             "rules": [
                 "Return exactly one action or one clarification.",
                 "scope_hint is authoritative when present; never ask the user to repeat that scope.",

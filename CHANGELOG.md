@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.10] - Unreleased
+### Fixed
+
+- **Natural-language Shared Memory retirement is now safe and explicit.** Ask recognises requests to hide, exclude, suppress, retire, shelve, or stop surfacing inactive material from Shared Memory. It prepares a narrow canonical-exclusions proposal instead of attempting to delete repositories, agent-owned source memory, or generated canonical sections.
+
 ## [0.9.9] - 2026-08-02
 ### Added
 
