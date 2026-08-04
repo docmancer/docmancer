@@ -2,12 +2,13 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "dev.docmancer/docmancer",
   "title": "Docmancer",
-  "description": "Local-only MCP server for a source-attributed curated Markdown memory tree and separate documentation retrieval.",
+  "description": "Local-only MCP server for source-attributed Markdown memory and documentation retrieval.",
   "version": "0.9.10",
   "websiteUrl": "https://docmancer.dev/docs",
   "repository": {
-    "url": "https://github.com/gaurangtorvekar/docmancer",
-    "source": "github"
+    "url": "https://github.com/docmancer/docmancer",
+    "source": "github",
+    "id": "1195507999"
   },
   "packages": [
     {
@@ -17,9 +18,15 @@
       "transport": {
         "type": "stdio"
       },
-      "runtimeArguments": [
-        "-m",
-        "docmancer.mcp.server"
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "serve"
+        }
       ]
     }
   ]

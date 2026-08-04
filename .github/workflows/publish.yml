@@ -49,6 +49,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify distribution manifests
+        run: python -m docmancer package-check --json
+
       - name: Run tests
         run: pytest tests/ -v
 
@@ -90,3 +93,54 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  publish-registry:
+    # Lists the release on the official MCP Registry. The registry verifies
+    # ownership against the published PyPI description, so this must run after
+    # publish-pypi, never beside it.
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    # Dedicated environment so MCP_PRIVATE_KEY is not a plain repo secret: that
+    # key can publish anything under dev.docmancer/*. Restrict the environment
+    # to v*.*.* tags.
+    environment: mcp-registry
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate docmancer/distribution/server.json
+
+      - name: Wait for PyPI metadata to propagate
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/docmancer/${VERSION}/json" >/dev/null; then
+              echo "PyPI is serving docmancer ${VERSION}"
+              exit 0
+            fi
+            echo "waiting for PyPI (${attempt}/30)"
+            sleep 10
+          done
+          echo "::error::PyPI did not surface docmancer ${VERSION} within 5 minutes"
+          exit 1
+
+      # DNS rather than HTTP proof: docmancer.dev redirects the apex to www and
+      # the registry's well-known fetcher refuses to follow redirects, so the
+      # HTTP method cannot reach the bare apex the dev.docmancer namespace needs.
+      - name: Publish to MCP Registry
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+        run: |
+          ./mcp-publisher login dns \
+            --domain docmancer.dev \
+            --algorithm ecdsap384 \
+            --private-key "$MCP_PRIVATE_KEY"
+          ./mcp-publisher publish docmancer/distribution/server.json

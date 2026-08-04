@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from docmancer.cloud.client import AuthenticationError, CloudClient, CloudError
+from docmancer.cloud.client import (
+    AuthenticationError,
+    CloudClient,
+    CloudError,
+    validate_cloud_base_url,
+)
 from docmancer.cloud.config import CloudConfig, default_cloud_base_url
 from docmancer.cloud.crypto import (
     b64decode,
@@ -72,6 +77,13 @@ def _canonical_uuid(value: Any, message: str) -> str:
         raise ConnectError(message) from exc
 
 
+def _cloud_base_url(value: str) -> str:
+    try:
+        return validate_cloud_base_url(value)
+    except ValueError as exc:
+        raise ConnectUsageError(str(exc)) from exc
+
+
 @dataclass
 class ConnectSession:
     """One in-flight device-code attempt against a single base URL."""
@@ -109,6 +121,7 @@ def resume_existing_connect(
 ) -> dict | None:
     """Return a terminal state when this device is already registered, else None."""
     emit = on_event or _noop
+    base_url = _cloud_base_url(base_url)
     account_id = str(account.get("account_id") or "")
     workspace_id = str(account.get("workspace_id") or "")
     device_id = str(account.get("device_id") or "")
@@ -187,7 +200,7 @@ def start_connect(
 ) -> ConnectSession:
     """Begin device-code login and return a session carrying the user code."""
     emit = on_event or _noop
-    resolved_base = (base_url or default_cloud_base_url()).rstrip("/")
+    resolved_base = _cloud_base_url(base_url or default_cloud_base_url())
     resolved_root = Path(root) if root is not None else memory_root()
     config = CloudConfig(resolved_root)
     account = config.account()
@@ -461,7 +474,7 @@ def connect_with_token(
     """Connect using a static development token instead of device-code login."""
     emit = on_event or _noop
     resolved_root = Path(root) if root is not None else memory_root()
-    resolved_base = base_url.rstrip("/")
+    resolved_base = _cloud_base_url(base_url)
     config = CloudConfig(resolved_root)
     account = config.account()
     keys = keys if keys is not None else KeyStore()

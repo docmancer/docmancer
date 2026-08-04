@@ -14,6 +14,7 @@ from docmancer.cloud.connect import (
     ConnectCancelled,
     ConnectError,
     ConnectTimeout,
+    ConnectUsageError,
     await_authorization,
     enqueue_project,
     finish_connect,
@@ -116,6 +117,15 @@ def test_start_connect_surfaces_the_user_code(flow):
     assert session.verification_uri == "https://docmancer.dev/auth/device"
     assert stages[0][0] == "device_code"
     assert stages[0][1]["user_code"] == "ABCD-1234"
+
+
+def test_start_connect_rejects_insecure_remote_cloud_url(flow):
+    root, keys = flow
+
+    with pytest.raises(ConnectUsageError, match="must use HTTPS"):
+        start_connect(
+            "http://api.example.test", root=root, project_path=root, keys=keys,
+        )
 
 
 def test_first_connect_queues_preexisting_harvested_graph_memory(tmp_path):

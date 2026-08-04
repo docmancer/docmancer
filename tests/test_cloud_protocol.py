@@ -665,6 +665,23 @@ def test_client_headers_and_typed_non_destructive_errors():
         CloudClient("https://cloud.invalid", token="token", device_id="dev_legacy")
 
 
+def test_cloud_client_requires_https_except_for_loopback():
+    device_id = "00000000-0000-4000-8000-000000000002"
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        CloudClient("http://api.example.test", token="token", device_id=device_id)
+
+    client = CloudClient("http://127.0.0.1:3001", token="token", device_id=device_id)
+    client.close()
+
+
+def test_cloud_client_rejects_credentials_query_and_fragment():
+    device_id = "00000000-0000-4000-8000-000000000002"
+    with pytest.raises(ValueError, match="without credentials"):
+        CloudClient("https://user:pass@api.example.test", token="token", device_id=device_id)
+    with pytest.raises(ValueError, match="query string or fragment"):
+        CloudClient("https://api.example.test?token=secret", token="token", device_id=device_id)
+
+
 def test_device_login_pending_response_is_typed_without_failure():
     client = CloudClient(
         "https://cloud.invalid", token="", device_id="00000000-0000-4000-8000-000000000002",

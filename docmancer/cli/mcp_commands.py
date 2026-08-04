@@ -1,9 +1,9 @@
 """``docmancer mcp`` command group: serve, doctor, install.
 
-The MCP server ships in the PyPI package (``docmancer-mcp`` console script) but
-the ``mcp`` SDK is an optional extra. ``serve`` and ``doctor`` degrade with a
-clear hint when it is absent; ``install`` only edits client config and needs no
-SDK.
+The MCP server ships in the PyPI package (``docmancer-mcp`` console script) and
+the ``mcp`` SDK is a core dependency, so ``serve`` works from a plain install.
+``doctor`` still checks for the SDK because a damaged environment is a real
+failure mode; ``install`` only edits client config and needs no SDK.
 """
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ _MCP_CLIENTS = ["codex", "claude-code", "claude-desktop"]
 def mcp_group():
     """Packaged stdio MCP server exposing local memory and docs search.
 
-    Search tools are local-only. Optional OpenRouter tools appear when
-    OPENROUTER_API_KEY is set and always run privacy filtering before any cloud
-    call. Install edits client config; it is explicit, never automatic.
+    Every tool is local-only. `ask_memory` can draft an answer through the
+    configured provider when asked to, and runs privacy filtering before any
+    cloud call. Install edits client config; it is explicit, never automatic.
     """
 
 
@@ -64,7 +64,7 @@ def doctor():
         click.echo("mcp SDK: installed")
     except ImportError:
         ok = False
-        click.echo("mcp SDK: NOT installed (pip install docmancer[mcp])")
+        click.echo("mcp SDK: NOT installed (damaged environment; reinstall docmancer)")
 
     resolved = shutil.which("docmancer-mcp")
     if resolved:

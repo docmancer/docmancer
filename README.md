@@ -1,3 +1,5 @@
+<!-- mcp-name: dev.docmancer/docmancer -->
+
 <div align="center">
 
 <img src="https://raw.githubusercontent.com/docmancer/docmancer/main/readme-assets/wizard-logo.png" alt="" width="72" />
@@ -119,7 +121,6 @@ Installed skills teach an agent when to ask Docmancer for prior decisions and ho
 MCP is an alternative transport over the same local services, not a second memory store:
 
 ```bash
-pipx install "docmancer[mcp]"
 docmancer mcp install codex
 docmancer mcp doctor
 ```

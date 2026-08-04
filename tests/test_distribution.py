@@ -7,7 +7,13 @@ import pytest
 from click.testing import CliRunner
 
 from docmancer.cli.__main__ import cli
-from docmancer.distribution import sync_distribution_versions, verify_distribution
+from docmancer.distribution import (
+    MCP_REGISTRY_PACKAGE_ARGUMENTS,
+    MCP_REGISTRY_REPOSITORY_URL,
+    MCP_REGISTRY_SCHEMA_URL,
+    sync_distribution_versions,
+    verify_distribution,
+)
 
 
 def test_distribution_artifacts_match_core_version():
@@ -39,6 +45,38 @@ def test_distribution_manifests_describe_privacy_and_docs():
     assert server["websiteUrl"] == "https://docmancer.dev/docs"
     assert "homepage: https://docmancer.dev/docs" in smithery
     assert "localOnly: true" in smithery
+
+
+def test_server_json_declares_registry_ownership_and_launch_contract():
+    server = json.loads(Path("docmancer/distribution/server.json").read_text(encoding="utf-8"))
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    # The MCP Registry verifies ownership by finding this exact token in the
+    # published PyPI description, which is rendered from README.md.
+    assert f"mcp-name: {server['name']}" in readme
+    assert server["$schema"] == MCP_REGISTRY_SCHEMA_URL
+    assert len(server["description"]) <= 100
+    assert server["repository"]["url"] == MCP_REGISTRY_REPOSITORY_URL
+
+    package = server["packages"][0]
+    assert "runtimeArguments" not in package
+    assert package["packageArguments"] == MCP_REGISTRY_PACKAGE_ARGUMENTS
+
+
+def test_package_verification_rejects_oversized_registry_description(tmp_path: Path):
+    source = Path("docmancer/distribution")
+    copied = tmp_path / "distribution"
+    shutil.copytree(source, copied)
+    server_path = copied / "server.json"
+    server = json.loads(server_path.read_text(encoding="utf-8"))
+    server["description"] = "x" * 101
+    server_path.write_text(json.dumps(server, indent=2) + "\n", encoding="utf-8")
+
+    with patch("docmancer.distribution.files", return_value=copied):
+        result = verify_distribution()
+
+    assert result["ok"] is False
+    assert any("1-100 characters" in error for error in result["errors"])
 
 
 def test_package_verification_rejects_malformed_hooks_json(tmp_path: Path):

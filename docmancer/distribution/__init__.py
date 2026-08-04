@@ -11,6 +11,15 @@ import yaml
 
 from docmancer import __version__
 
+# Contract with the official MCP Registry. `mcp-publisher publish` rejects a
+# manifest that drifts from any of these, so they are asserted locally instead.
+MCP_REGISTRY_SCHEMA_URL = "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+MCP_REGISTRY_REPOSITORY_URL = "https://github.com/docmancer/docmancer"
+MCP_REGISTRY_PACKAGE_ARGUMENTS = [
+    {"type": "positional", "value": "mcp"},
+    {"type": "positional", "value": "serve"},
+]
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -116,6 +125,20 @@ def verify_distribution() -> dict[str, Any]:
     package = (server.get("packages") or [{}])[0]
     if package.get("registryType") != "pypi" or package.get("identifier") != "docmancer":
         errors.append("MCP Registry package must reference PyPI docmancer")
+    if server.get("$schema") != MCP_REGISTRY_SCHEMA_URL:
+        errors.append(f"MCP Registry manifest must declare schema {MCP_REGISTRY_SCHEMA_URL}")
+    # The registry rejects a description over 100 characters at publish time.
+    if not 1 <= len(str(server.get("description") or "")) <= 100:
+        errors.append("MCP Registry description must be 1-100 characters")
+    repository = server.get("repository") or {}
+    if repository.get("url") != MCP_REGISTRY_REPOSITORY_URL or repository.get("source") != "github":
+        errors.append(f"MCP Registry manifest must point at {MCP_REGISTRY_REPOSITORY_URL} on github")
+    # Clients resolve `<runtime> docmancer mcp serve`; bare-string arguments are
+    # schema-invalid, so pin the exact argument objects the registry accepts.
+    if package.get("runtimeArguments") is not None:
+        errors.append("MCP Registry package must not declare runtimeArguments")
+    if package.get("packageArguments") != MCP_REGISTRY_PACKAGE_ARGUMENTS:
+        errors.append("MCP Registry package must launch docmancer via `mcp serve`")
     if (smithery or {}).get("startCommand", {}).get("command") != "docmancer-mcp":
         errors.append("Smithery must launch docmancer-mcp over stdio")
     if not str(server.get("websiteUrl") or "").startswith("https://"):
@@ -165,4 +188,10 @@ def verify_distribution() -> dict[str, Any]:
     return {"ok": not errors, "version": __version__, "versions": versions, "errors": errors}
 
 
-__all__ = ["sync_distribution_versions", "verify_distribution"]
+__all__ = [
+    "MCP_REGISTRY_PACKAGE_ARGUMENTS",
+    "MCP_REGISTRY_REPOSITORY_URL",
+    "MCP_REGISTRY_SCHEMA_URL",
+    "sync_distribution_versions",
+    "verify_distribution",
+]

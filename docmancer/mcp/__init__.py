@@ -2,11 +2,11 @@
 
 Ships with the PyPI package as the ``docmancer-mcp`` console script. Exposes
 local memory and docs search to MCP clients (Codex, Claude Code, Claude
-Desktop). Search tools are local-only; optional cloud tools are gated on
-``OPENROUTER_API_KEY`` and run privacy filtering before any cloud call.
+Desktop). Every tool is local-only; ``ask_memory`` can draft through the
+configured provider on request and runs privacy filtering before any cloud call.
 
-The ``mcp`` SDK is an optional extra (``docmancer[mcp]``); importing this
-package never imports the SDK, so the base install stays light.
+The ``mcp`` SDK is a core dependency, but importing this package never imports
+the SDK, so the base import stays light.
 """
 from __future__ import annotations
 

@@ -7,6 +7,7 @@ import re
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -40,12 +41,27 @@ class ProtocolTooOldError(ProtocolError):
     pass
 
 
+def validate_cloud_base_url(base_url: str) -> str:
+    value = base_url.strip().rstrip("/")
+    parsed = urlsplit(value)
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("cloud API URL must be an absolute URL without credentials")
+    scheme = parsed.scheme.lower()
+    loopback = parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+    if scheme != "https" and not (scheme == "http" and loopback):
+        raise ValueError("cloud API URL must use HTTPS except on localhost")
+    if parsed.query or parsed.fragment:
+        raise ValueError("cloud API URL must not include a query string or fragment")
+    return value
+
+
 class CloudClient:
     def __init__(
         self, base_url: str, *, token: str, device_id: str,
         signing_private_key: bytes | None = None, transport=None, timeout: float = 20.0,
     ) -> None:
         _server_uuid(device_id, "device_id")
+        resolved_base_url = validate_cloud_base_url(base_url)
         headers = {
             "X-Docmancer-Protocol": PROTOCOL_VERSION,
             "X-Docmancer-Client-Version": __version__,
@@ -55,7 +71,7 @@ class CloudClient:
         if token:
             headers["Authorization"] = f"Bearer {token}"
         self.http = httpx.Client(
-            base_url=base_url.rstrip("/"), transport=transport, timeout=timeout,
+            base_url=resolved_base_url, transport=transport, timeout=timeout,
             headers=headers,
         )
         self.signing_private_key = signing_private_key

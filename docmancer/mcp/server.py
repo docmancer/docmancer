@@ -1,8 +1,8 @@
 """FastMCP stdio server exposing docmancer's local memory and docs.
 
-The ``mcp`` SDK is imported lazily inside :func:`build_server`/:func:`main` so
-the package import stays light and ``docmancer-mcp`` fails with a clear hint
-when the optional extra is missing.
+The ``mcp`` SDK is a core dependency, but it is still imported lazily inside
+:func:`build_server`/:func:`main` so the package import stays light. The guard
+below therefore signals a damaged environment rather than a missing extra.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from . import tools
 from . import tree_tools
 
 _MISSING_MCP = (
-    "the MCP server requires the 'mcp' extra; install with "
-    "`pip install docmancer[mcp]` (or `pipx inject docmancer mcp`)."
+    "the MCP SDK is missing from this environment; docmancer depends on it, so "
+    "reinstall with `pip install --force-reinstall docmancer` (or `pipx reinstall docmancer`)."
 )
 _NO_RECURSE_MESSAGE = "docmancer MCP server is disabled inside docmancer subprocesses."
 

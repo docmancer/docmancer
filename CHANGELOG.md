@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.11] - Unreleased
+### Changed
+
+- **The MCP SDK is now a core dependency.** `pip install docmancer` gives a working `docmancer mcp serve` with no extra to remember. The `[mcp]` extra is retained as a no-op alias, so existing `pip install "docmancer[mcp]"` instructions keep resolving.
+
+### Fixed
+
+- **Cloud API endpoints are validated before connecting.** Remote Cloud URLs must use HTTPS, and URLs with embedded credentials, query strings, or fragments are rejected. Local loopback HTTP remains supported for development.
+- **The MCP Registry manifest is publishable.** `server.json` had a description over the registry's 100-character limit, pointed at the wrong GitHub organisation, and declared `runtimeArguments` in a bare-string form the schema rejects. It now carries a schema-valid `packageArguments` launch contract, the correct repository, and the `mcp-name` ownership marker the registry reads from the published PyPI description. `docmancer package-check` gained assertions for each of these so the manifest cannot drift back.
+
 ## [0.9.10] - 2026-08-02
 ### Fixed
 
