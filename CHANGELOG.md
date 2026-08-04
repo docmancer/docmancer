@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.12] - Unreleased
+## [0.9.12] - 2026-08-04
 ### Fixed
 
 - **MCP tools describe every input parameter.** FastMCP derives JSON Schema parameter descriptions from `Annotated` type metadata rather than function docstrings. All 20 packaged tools now publish descriptions for every parameter, including shared project paths, aliases, safety hashes, result limits, and recall options. A schema regression test prevents future tools or parameters from returning undocumented inputs.
