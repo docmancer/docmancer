@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.11] - Unreleased
+## [0.9.11] - 2026-08-04
 ### Changed
 
 - **The MCP SDK is now a core dependency.** `pip install docmancer` gives a working `docmancer mcp serve` with no extra to remember. The `[mcp]` extra is retained as a no-op alias, so existing `pip install "docmancer[mcp]"` instructions keep resolving.
