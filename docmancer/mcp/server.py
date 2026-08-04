@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field
 
 from . import tools
 from . import tree_tools
@@ -17,6 +20,77 @@ _MISSING_MCP = (
     "reinstall with `pip install --force-reinstall docmancer` (or `pipx reinstall docmancer`)."
 )
 _NO_RECURSE_MESSAGE = "docmancer MCP server is disabled inside docmancer subprocesses."
+
+# FastMCP builds its input schema from annotations, not function docstrings.
+# Keep reusable parameter semantics here so MCP clients receive the same
+# descriptions for each occurrence, and schema quality cannot silently regress.
+MemoryQuery = Annotated[
+    str,
+    Field(description="Natural-language terms to search for in the local memory or documentation index."),
+]
+OptionalMemoryQuery = Annotated[
+    str | None,
+    Field(description="Natural-language terms to search for. Required unless the text alias is supplied."),
+]
+ResultLimit = Annotated[int, Field(description="Maximum number of matching results to return. Defaults are tool-specific.")]
+IncludeHistory = Annotated[bool, Field(description="When true, include historical or superseded memory evidence in addition to active evidence.")]
+ExpandRelations = Annotated[bool, Field(description="When true, include related memory items alongside direct matches.")]
+RelativePath = Annotated[str | None, Field(description="Relative path for the memory file inside its selected memory tree. Required unless path is supplied.")]
+RequiredRelativePath = Annotated[str, Field(description="Relative path for the new memory file inside its selected memory tree.")]
+MemoryText = Annotated[
+    str | None,
+    Field(description="Markdown body to write or replace. Required unless content is supplied."),
+]
+CanonicalPinText = Annotated[
+    str | None,
+    Field(description="Complete durable line to add to the selected canonical section's pinned zone."),
+]
+CanonicalUnpinText = Annotated[
+    str | None,
+    Field(description="Case-insensitive substring identifying pinned lines to remove from the selected section."),
+]
+MemoryType = Annotated[str, Field(description="Memory classification stored in frontmatter. Defaults to fact.")]
+MemoryScope = Annotated[str, Field(description="Memory visibility scope. Use global for shared memory or project for project-scoped memory.")]
+Authority = Annotated[str, Field(description="Authority level stored in frontmatter. Defaults to advisory.")]
+ProjectId = Annotated[str | None, Field(description="Optional project identifier stored in the memory file frontmatter.")]
+ProjectPath = Annotated[str | None, Field(description="Optional project root that scopes the operation. Omit it when the server was started with a project pin.")]
+Sources = Annotated[list[str] | None, Field(description="Optional source references that support the memory content.")]
+Tags = Annotated[list[str] | None, Field(description="Optional labels used to classify and retrieve the memory content.")]
+MemoryStatus = Annotated[str, Field(description="Lifecycle status stored in frontmatter. Defaults to active.")]
+CurationOrigin = Annotated[str, Field(description="Origin label stored in frontmatter. Defaults to deliberate_write.")]
+Expect = Annotated[str | None, Field(description="Create/update guard. Use absent for create-only, or pass the current content hash for a guarded update.")]
+Address = Annotated[str | None, Field(description="Stable docmancer://memory address, relative path, or exact title of the memory file. Required unless an address alias is supplied.")]
+RequiredAddress = Annotated[str, Field(description="Stable docmancer://memory address, relative path, or exact title of the memory file.")]
+AddressAlias = Annotated[str | None, Field(description="Alias for address. Use the canonical address field when possible.")]
+MemoryIdAlias = Annotated[str | None, Field(description="Alias for address that accepts a stable memory identifier. Use address when possible.")]
+ExpectedHash = Annotated[str | None, Field(description="Current content_hash returned by a prior read. Required for guarded edits, moves, and deletes unless hash is supplied.")]
+RequiredExpectedHash = Annotated[str, Field(description="Current content_hash returned by a prior read. This prevents overwriting a newer revision.")]
+HashAlias = Annotated[str | None, Field(description="Alias for expected_hash. Use expected_hash when possible.")]
+PathAlias = Annotated[str | None, Field(description="Alias for relative_path. Use relative_path when possible.")]
+ContentAlias = Annotated[str | None, Field(description="Alias for text. Use text when possible.")]
+SearchTextAlias = Annotated[str | None, Field(description="Alias for query. Use query when possible.")]
+NewPathAlias = Annotated[str | None, Field(description="Alias for new_relative_path. Use new_relative_path when possible.")]
+CanonicalSection = Annotated[str | None, Field(description="Canonical section name: about, preferences, working-principles, or active-projects. Omit only where the tool documents a status response.")]
+RestoreToken = Annotated[str, Field(description="Restore token returned by trash_memory for the file to restore.")]
+AgentName = Annotated[str, Field(description="Target agent identifier used when building a context projection or recording an ask. Defaults are tool-specific.")]
+TokenBudget = Annotated[int | None, Field(description="Maximum token budget for the returned context bundle. Omit to use the tool default.")]
+TokenBudgetAlias = Annotated[
+    int | None,
+    Field(description="Alias for token_budget. Use token_budget when possible."),
+]
+RequiredTokenBudget = Annotated[int, Field(description="Maximum token budget for the returned context projection.")]
+TimelineFileId = Annotated[str | None, Field(description="Optional stable memory file identifier used to filter the timeline.")]
+TimelineOperation = Annotated[str | None, Field(description="Optional operation name used to filter the timeline, such as create, edit, move, trash, or restore.")]
+Answer = Annotated[bool, Field(description="When true, use the configured provider to generate a grounded cited answer from recalled memory.")]
+AskMode = Annotated[str, Field(description="Recall mode. Defaults to normal.")]
+MemoryTask = Annotated[
+    str | None,
+    Field(description="Natural-language task to recall relevant policy, memory, and evidence for. Required unless query is supplied."),
+]
+TaskQueryAlias = Annotated[
+    str | None,
+    Field(description="Alias for task. Use task when possible."),
+]
 
 
 def _argument_error(message: str, next_action: str) -> dict:
@@ -78,10 +152,10 @@ def build_server(project_path: str | Path | None = None):
 
     @server.tool(description="Search the local docmancer memory index (agent memory, instructions, rules). Local only.")
     def docmancer_memory_search(
-        query: str,
-        limit: int = 8,
-        include_history: bool = False,
-        expand_relations: bool = False,
+        query: MemoryQuery,
+        limit: ResultLimit = 8,
+        include_history: IncludeHistory = False,
+        expand_relations: ExpandRelations = False,
     ) -> list[dict]:
         return tools.memory_search(
             query,
@@ -91,7 +165,7 @@ def build_server(project_path: str | Path | None = None):
         )
 
     @server.tool(description="Search the local docmancer docs index. Local only.")
-    def docmancer_docs_search(query: str, limit: int = 8) -> list[dict]:
+    def docmancer_docs_search(query: MemoryQuery, limit: ResultLimit = 8) -> list[dict]:
         return tools.docs_search(query, limit=limit)
 
     @server.tool(description="Report docmancer memory index status (path, source/section counts). Local only.")
@@ -113,20 +187,20 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
     )
     def write_memory(
-        relative_path: str | None = None,
-        text: str | None = None,
-        memory_type: str = "fact",
-        scope: str = "global",
-        authority: str = "advisory",
-        project_id: str | None = None,
-        project_path: str | None = None,
-        sources: list[str] | None = None,
-        tags: list[str] | None = None,
-        status: str = "active",
-        curation_origin: str = "deliberate_write",
-        expect: str | None = "absent",
-        path: str | None = None,
-        content: str | None = None,
+        relative_path: RelativePath = None,
+        text: MemoryText = None,
+        memory_type: MemoryType = "fact",
+        scope: MemoryScope = "global",
+        authority: Authority = "advisory",
+        project_id: ProjectId = None,
+        project_path: ProjectPath = None,
+        sources: Sources = None,
+        tags: Tags = None,
+        status: MemoryStatus = "active",
+        curation_origin: CurationOrigin = "deliberate_write",
+        expect: Expect = "absent",
+        path: PathAlias = None,
+        content: ContentAlias = None,
     ) -> dict:
         relative_path, error = _pick_argument("relative_path", relative_path, path)
         if error:
@@ -161,10 +235,10 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
     def read_memory(
-        address: str | None = None,
-        project_path: str | None = None,
-        target: str | None = None,
-        memory_id: str | None = None,
+        address: Address = None,
+        project_path: ProjectPath = None,
+        target: AddressAlias = None,
+        memory_id: MemoryIdAlias = None,
     ) -> dict:
         address, error = _pick_argument("address", address, target, memory_id)
         if error:
@@ -184,13 +258,13 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
     )
     def edit_memory(
-        address: str | None = None,
-        text: str | None = None,
-        expected_hash: str | None = None,
-        project_path: str | None = None,
-        target: str | None = None,
-        content: str | None = None,
-        hash: str | None = None,
+        address: Address = None,
+        text: MemoryText = None,
+        expected_hash: ExpectedHash = None,
+        project_path: ProjectPath = None,
+        target: AddressAlias = None,
+        content: ContentAlias = None,
+        hash: HashAlias = None,
     ) -> dict:
         address, error = _pick_argument("address", address, target)
         if error:
@@ -216,7 +290,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def canonical_memory(section: str | None = None) -> dict:
+    def canonical_memory(section: CanonicalSection = None) -> dict:
         return tree_tools.canonical_memory(section=section)
 
     @server.tool(
@@ -229,7 +303,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def pin_memory(section: str | None = None, text: str | None = None) -> dict:
+    def pin_memory(section: CanonicalSection = None, text: CanonicalPinText = None) -> dict:
         section, error = _pick_argument("section", section, None)
         if error:
             return error
@@ -245,7 +319,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False),
     )
-    def unpin_memory(section: str | None = None, text: str | None = None) -> dict:
+    def unpin_memory(section: CanonicalSection = None, text: CanonicalUnpinText = None) -> dict:
         section, error = _pick_argument("section", section, None)
         if error:
             return error
@@ -264,13 +338,13 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False),
     )
     def move_memory(
-        address: str | None = None,
-        new_relative_path: str | None = None,
-        expected_hash: str | None = None,
-        project_path: str | None = None,
-        target: str | None = None,
-        new_path: str | None = None,
-        hash: str | None = None,
+        address: Address = None,
+        new_relative_path: RelativePath = None,
+        expected_hash: ExpectedHash = None,
+        project_path: ProjectPath = None,
+        target: AddressAlias = None,
+        new_path: NewPathAlias = None,
+        hash: HashAlias = None,
     ) -> dict:
         address, error = _pick_argument("address", address, target)
         if error:
@@ -293,10 +367,10 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
     )
     def duplicate_memory(
-        address: str,
-        new_relative_path: str,
-        expected_hash: str,
-        project_path: str | None = None,
+        address: RequiredAddress,
+        new_relative_path: RequiredRelativePath,
+        expected_hash: RequiredExpectedHash,
+        project_path: ProjectPath = None,
     ) -> dict:
         project_path, error = tree_project(project_path)
         if error:
@@ -309,7 +383,11 @@ def build_server(project_path: str | Path | None = None):
         description="DESTRUCTIVE BUT REVERSIBLE: move one tree-memory file to trash and return a restore token.",
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False),
     )
-    def trash_memory(address: str, expected_hash: str, project_path: str | None = None) -> dict:
+    def trash_memory(
+        address: RequiredAddress,
+        expected_hash: RequiredExpectedHash,
+        project_path: ProjectPath = None,
+    ) -> dict:
         project_path, error = tree_project(project_path)
         if error:
             return error
@@ -319,7 +397,7 @@ def build_server(project_path: str | Path | None = None):
         description="MUTATING: restore one tree-memory file from a prior trash restore token.",
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
     )
-    def restore_memory(restore_token: str, project_path: str | None = None) -> dict:
+    def restore_memory(restore_token: RestoreToken, project_path: ProjectPath = None) -> dict:
         project_path, error = tree_project(project_path)
         if error:
             return error
@@ -334,10 +412,10 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
     def search_memory(
-        query: str | None = None,
-        limit: int = 8,
-        project_path: str | None = None,
-        text: str | None = None,
+        query: OptionalMemoryQuery = None,
+        limit: ResultLimit = 8,
+        project_path: ProjectPath = None,
+        text: SearchTextAlias = None,
     ) -> list[dict] | dict:
         query, error = _pick_argument("query", query, text)
         if error:
@@ -355,7 +433,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def common_memory(project_path: str | None = None) -> list[dict] | dict:
+    def common_memory(project_path: ProjectPath = None) -> list[dict] | dict:
         project_path, error = tree_project(project_path)
         if error:
             return error
@@ -368,7 +446,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def context_delivery(project_path: str | None = None) -> list[dict] | dict:
+    def context_delivery(project_path: ProjectPath = None) -> list[dict] | dict:
         project_path, error = tree_project(project_path)
         if error:
             return error
@@ -382,7 +460,7 @@ def build_server(project_path: str | Path | None = None):
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
-    def context_status(project_path: str | None = None) -> dict:
+    def context_status(project_path: ProjectPath = None) -> dict:
         project_path, error = tree_project(project_path)
         if error:
             return error
@@ -396,9 +474,9 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
     def context_projection(
-        agent: str,
-        project_path: str | None = None,
-        token_budget: int = 2_000,
+        agent: AgentName,
+        project_path: ProjectPath = None,
+        token_budget: RequiredTokenBudget = 2_000,
     ) -> dict:
         project_path, error = tree_project(project_path)
         if error:
@@ -417,10 +495,10 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
     def decision_timeline(
-        project_path: str | None = None,
-        file_id: str | None = None,
-        operation: str | None = None,
-        limit: int = 100,
+        project_path: ProjectPath = None,
+        file_id: TimelineFileId = None,
+        operation: TimelineOperation = None,
+        limit: ResultLimit = 100,
     ) -> list[dict] | dict:
         project_path, error = tree_project(project_path)
         if error:
@@ -475,16 +553,16 @@ def build_server(project_path: str | Path | None = None):
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
     )
     def ask_memory_tool(
-        task: str | None = None,
-        project_path: str | None = None,
-        token_budget: int | None = None,
-        include_history: bool = False,
-        limit: int = 12,
-        query: str | None = None,
-        budget: int | None = None,
-        agent: str = "mcp-client",
-        answer: bool = False,
-        mode: str = "normal",
+        task: MemoryTask = None,
+        project_path: ProjectPath = None,
+        token_budget: TokenBudget = None,
+        include_history: IncludeHistory = False,
+        limit: ResultLimit = 12,
+        query: TaskQueryAlias = None,
+        budget: TokenBudgetAlias = None,
+        agent: AgentName = "mcp-client",
+        answer: Answer = False,
+        mode: AskMode = "normal",
     ) -> dict:
         return _ask_memory_impl(
             task,

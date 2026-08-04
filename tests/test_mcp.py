@@ -55,6 +55,23 @@ def test_build_server_registers_local_tools(monkeypatch):
     }
 
 
+def test_mcp_tool_schemas_describe_every_parameter():
+    """Keep the MCP schema useful to agents, not just Python callers."""
+    from docmancer.mcp.server import build_server
+    import asyncio
+
+    tools = asyncio.run(build_server().list_tools())
+    missing = {
+        tool.name: [
+            name
+            for name, schema in tool.inputSchema.get("properties", {}).items()
+            if not schema.get("description")
+        ]
+        for tool in tools
+    }
+    assert {name: parameters for name, parameters in missing.items() if parameters} == {}
+
+
 def test_provider_key_does_not_expand_compact_mcp_surface(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     from docmancer.mcp.server import build_server
