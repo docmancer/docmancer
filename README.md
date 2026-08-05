@@ -10,7 +10,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
 [![Downloads](https://img.shields.io/pypi/dm/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
-[![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-3776AB?style=flat-square)](https://pypi.org/project/docmancer/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square)](https://pypi.org/project/docmancer/)
 [![License: MIT](https://img.shields.io/github/license/docmancer/docmancer?style=flat-square)](https://github.com/docmancer/docmancer/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/docmancer/docmancer?style=flat-square&color=b25539)](https://github.com/docmancer/docmancer/stargazers)
 
@@ -36,9 +36,11 @@ Nothing leaves your machine unless you ask it to. There is no telemetry, no acco
 ## Install
 
 ```bash
-pipx install docmancer --python python3.13
+pipx install docmancer
 docmancer setup
 ```
+
+If you use uv, `uv tool install docmancer` installs it the same way.
 
 `setup` finds every supported coding agent, shows you one complete plan and privacy warning, and waits for your confirmation before it changes anything. Then it indexes what it found, builds your canonical memory, installs the agent skills, and turns on automatic recall where the agent supports it.
 
@@ -196,6 +198,8 @@ docmancer qdrant up
 docmancer setup --profile scale
 ```
 
+If you use uv, the first line becomes `uv tool install "docmancer[embeddings-heavy]"`.
+
 Scale uses Qdrant, FastEmbed dense embeddings, sparse SPLADE retrieval, and reciprocal-rank fusion. It helps with vector filtering, concurrent writes, and operational headroom. It will not fix poor source coverage or weak evaluation, and both profiles implement identical memory semantics: switching changes storage and capacity, never authority, provenance, or what counts as Shared Memory.
 
 ## Privacy
@@ -220,7 +224,7 @@ The hosted service receives ciphertext, and it cannot read your plaintext memory
 
 ## Requirements
 
-Docmancer supports Python 3.11, 3.12, and 3.13. The install command pins the interpreter because `pipx` otherwise picks the newest Python it can find, including 3.14, which this package does not support. If an install has already gone wrong, `docmancer doctor` will tell you why.
+Docmancer supports Python 3.11 and newer, including 3.14, so the install command does not need an interpreter pin. `pipx install docmancer` (or `uv tool install docmancer`) can use whichever recent Python your machine already provides. If an install has already gone wrong, `docmancer doctor` will tell you why.
 
 ## Contributing
 

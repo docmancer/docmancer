@@ -1369,7 +1369,7 @@ def doctor_cmd(config_path: str | None):
     if resolved_bin:
         _emit_status_line(f"docmancer binary: {display_path(resolved_bin)}")
     else:
-        _emit_status_line("docmancer not found on PATH (install with: pipx install docmancer --python python3.13)", state="warn")
+        _emit_status_line("docmancer not found on PATH (install with: pipx install docmancer)", state="warn")
 
     if is_module_invocation:
         _emit_status_line(f"running via: {current_exe} -m docmancer")

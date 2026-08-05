@@ -5,12 +5,14 @@ The current command surface is organised by outcome. Bare `docmancer` shows the 
 ## Normal workflow
 
 ```bash
-pipx install docmancer --python python3.13
+pipx install docmancer
 docmancer setup
 cd /path/to/project
 docmancer web
 docmancer ask "What deployment decisions apply?"
 ```
+
+If you use uv, `uv tool install docmancer` installs it the same way.
 
 `setup` displays one machine-wide plan and privacy warning before it indexes existing agent memory, reconciles the machine-wide Shared Memory tree, installs detected integrations, and enables supported recall and lifecycle hooks. Use `--profile local` for bundled Model2Vec plus sqlite-vec, or `--profile scale` for FastEmbed, sparse retrieval, and Qdrant.
 
@@ -131,6 +133,8 @@ docmancer qdrant up
 docmancer setup --profile scale
 ```
 
+If you use uv, the install line becomes `uv tool install "docmancer[embeddings-heavy]"`.
+
 | Command | What it does |
 | --- | --- |
 | `docmancer qdrant up` | Starts the Docmancer-owned local Qdrant process. |
@@ -149,7 +153,16 @@ Qdrant is optional capacity infrastructure. It changes vector storage, filtering
 | `docmancer mcp doctor` | Checks the SDK, executable, provider tools, and launch path. |
 | `docmancer mcp install <client>` | Writes or prints client configuration after confirmation. |
 
-MCP exposes the same local memory and docs services as the CLI. `ask_memory` corresponds to `ask`; `common_memory`, `context_delivery`, and `decision_timeline` expose outcome views; `docmancer_docs_search` remains separate documentation retrieval.
+MCP exposes the same local memory and docs services as the CLI. `ask_memory` corresponds to `ask`; `common_memory`, `context_delivery`, and `decision_timeline` expose outcome views; `search_docs` remains separate documentation retrieval.
+
+### Tool naming
+
+The 20 packaged tools follow two conventions, and nothing carries a `docmancer_` prefix:
+
+- **`<verb>_<noun>` performs an operation:** `write_memory`, `read_memory`, `edit_memory`, `move_memory`, `duplicate_memory`, `trash_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `ask_memory`, `search_memory`, `search_evidence`, `search_docs`.
+- **`<noun>_<noun>` returns a named report:** `canonical_memory`, `common_memory`, `context_status`, `context_delivery`, `context_projection`, `decision_timeline`, `evidence_status`.
+
+Three stores sit behind the search tools, and they are deliberately separate. `search_memory` covers the curated tree, meaning what you or an agent deliberately wrote. `search_evidence` covers the raw memory, instruction, and rule files harvested from other agents on this machine. `search_docs` covers library and vendor documentation added with `docmancer docs add`. Use `ask_memory` when you want curated memory, harvested evidence, and mandatory policy returned together in one bounded bundle.
 
 ## Cloud
 

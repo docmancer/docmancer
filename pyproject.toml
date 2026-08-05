@@ -10,7 +10,7 @@ dynamic = ["version"]
 description = "Docmancer gives every coding agent on your machine one local memory, so you stop re-explaining your project to each of them."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 keywords = [
     "ai",
     "ai-agents",
@@ -40,6 +40,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Documentation",
     "Topic :: Text Processing :: Indexing",

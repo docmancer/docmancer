@@ -19,11 +19,13 @@ Docmancer discovers existing memory without rewriting the source files, keeps pr
 ## Normal workflow
 
 ```bash
-pipx install docmancer --python python3.13
+pipx install docmancer
 docmancer setup
 cd /path/to/your-project
 docmancer web
 ```
+
+If you use uv, `uv tool install docmancer` installs it the same way.
 
 - **Home** is where you ask Docmancer questions, customise the Docmancer agent, and connect coding agents.
 - **Shared Memory** is where you browse every canonical file, inspect its arrangement, and preview what each agent receives.

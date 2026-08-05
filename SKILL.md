@@ -17,7 +17,7 @@ tags:
   - rag
   - documentation
   - sqlite
-install: pipx install docmancer --python python3.13
+install: pipx install docmancer
 ---
 
 # docmancer
@@ -27,10 +27,12 @@ Work from the same local memory as every other coding agent on this machine, ins
 ## Quick start
 
 ```bash
-pipx install docmancer --python python3.13
+pipx install docmancer
 docmancer setup                              # discovers agents, indexes their memory, installs skills and hooks
 docmancer ask "why did we pick Railway?"     # grounded answer with citations from what your agents wrote
 ```
+
+If you use uv, `uv tool install docmancer` installs it the same way.
 
 The default profile uses SQLite FTS5, sqlite-vec, and bundled Model2Vec embeddings: no API keys, no daemon, no model download, offline at runtime. The optional scale profile uses FastEmbed, sparse retrieval, and Qdrant without changing memory authority or provenance semantics. Technical documentation remains a separate Library corpus, searched with `docmancer docs`.
 
@@ -100,4 +102,4 @@ docmancer qdrant up
 docmancer setup --profile scale
 ```
 
-Local retrieval does not require a generation provider or Qdrant.
+If you use uv, the install line becomes `uv tool install "docmancer[embeddings-heavy]"`. Local retrieval does not require a generation provider or Qdrant.

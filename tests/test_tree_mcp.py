@@ -200,33 +200,47 @@ def test_read_memory_missing_address_returns_structured_error(tmp_path, monkeypa
     assert payload["next_action"]
 
 
-def test_documented_argument_aliases_are_normalised_strictly(tmp_path, monkeypatch):
+def test_canonical_argument_names_are_the_only_accepted_spelling(tmp_path, monkeypatch):
+    """Alias spellings were retired in favour of one honest schema.
+
+    Each tool previously accepted duplicate spellings (``path`` for
+    ``relative_path``, ``target`` for ``address``, ``query`` for ``task``),
+    which forced every genuinely required argument to be modelled as optional
+    so a runtime helper could reconcile them. Clients therefore saw nothing as
+    required. Now the canonical name is the only one, and a missing or unknown
+    argument fails at the protocol layer where a client can see it, instead of
+    returning an error payload the model has to parse.
+    """
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path / "home"))
+    from mcp.server.fastmcp.exceptions import ToolError
+
     from docmancer.mcp.server import build_server
 
     server = build_server()
     written = _tool_result_payload(asyncio.run(server.call_tool(
         "write_memory",
-        {"path": "decisions/alias.md", "content": "Use the alias-safe MCP schema."},
+        {"relative_path": "decisions/alias.md", "text": "Use the alias-free MCP schema."},
     )))
     assert written["address"].startswith("docmancer://memory/")
 
     read = _tool_result_payload(asyncio.run(server.call_tool(
-        "read_memory", {"target": written["address"]}
+        "read_memory", {"address": written["address"]}
     )))
-    assert "alias-safe" in read["body"]
+    assert "alias-free" in read["body"]
 
     context = _tool_result_payload(asyncio.run(server.call_tool(
-        "ask_memory", {"query": "alias-safe schema", "budget": 500}
+        "ask_memory", {"task": "alias-free schema", "token_budget": 500}
     )))
     assert context["curated_memory"]
 
-    conflict = _tool_result_payload(asyncio.run(server.call_tool(
-        "read_memory", {"address": written["address"], "target": "different"}
-    )))
-    assert conflict["error_type"] == "InvalidArgumentsError"
-    assert conflict["retry_safe"] is True
+    # The retired alias is now a schema violation, not a silently accepted spelling.
+    with pytest.raises(ToolError, match="relative_path"):
+        asyncio.run(server.call_tool(
+            "write_memory", {"path": "decisions/b.md", "content": "aliased"}
+        ))
+    with pytest.raises(ToolError, match="address"):
+        asyncio.run(server.call_tool("read_memory", {"target": written["address"]}))
 
 
 def test_project_scoped_write_uses_project_docmancer_tree_dir(tmp_path, monkeypatch):
@@ -265,7 +279,7 @@ def test_server_startup_project_pin_cannot_be_overridden(tmp_path, monkeypatch):
 
     server = build_server(project_path=pinned)
     written = _tool_result_payload(asyncio.run(server.call_tool(
-        "write_memory", {"path": "decision.md", "content": "Pinned project decision."}
+        "write_memory", {"relative_path": "decision.md", "text": "Pinned project decision."}
     )))
     assert (pinned / ".docmancer" / "tree" / "decision.md").is_file()
 

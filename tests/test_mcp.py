@@ -32,9 +32,9 @@ def test_build_server_registers_local_tools(monkeypatch):
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
     assert names == {
-        "docmancer_memory_search",
-        "docmancer_docs_search",
-        "docmancer_memory_status",
+        "search_evidence",
+        "search_docs",
+        "evidence_status",
         "write_memory",
         "read_memory",
         "edit_memory",
@@ -70,6 +70,108 @@ def test_mcp_tool_schemas_describe_every_parameter():
         for tool in tools
     }
     assert {name: parameters for name, parameters in missing.items() if parameters} == {}
+
+
+def _live_tools():
+    import asyncio
+
+    from docmancer.mcp.server import build_server
+
+    return asyncio.run(build_server().list_tools())
+
+
+def test_mcp_tool_descriptions_explain_every_parameter():
+    """A model reads the description far more reliably than the schema.
+
+    Every parameter a tool exposes must also be named in that tool's
+    description, so an agent can pick arguments without introspecting
+    ``inputSchema``. This is the guard against the single most common gap in
+    an MCP surface: parameters that exist but are never explained in prose.
+    """
+    unexplained = {}
+    for tool in _live_tools():
+        missing = [
+            name
+            for name in tool.inputSchema.get("properties", {})
+            if name not in (tool.description or "")
+        ]
+        if missing:
+            unexplained[tool.name] = missing
+    assert unexplained == {}
+
+
+def test_mcp_tools_declare_annotations_and_titles():
+    """Clients surface titles and gate on the behavioural hints."""
+    for tool in _live_tools():
+        annotations = tool.annotations
+        assert annotations is not None, f"{tool.name} has no annotations"
+        assert annotations.title, f"{tool.name} has no title"
+        for hint in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
+            assert getattr(annotations, hint) is not None, f"{tool.name} is missing {hint}"
+
+
+def test_mcp_tools_mark_genuinely_required_arguments_as_required():
+    """Required arguments must fail at the protocol layer, not in the payload.
+
+    Only the zero-argument reports and the tools whose every argument is a
+    genuine filter may declare nothing required.
+    """
+    no_required_expected = {
+        "evidence_status",
+        "canonical_memory",
+        "common_memory",
+        "context_delivery",
+        "context_status",
+        "decision_timeline",
+    }
+    for tool in _live_tools():
+        required = tool.inputSchema.get("required", [])
+        if tool.name in no_required_expected:
+            assert not required, f"{tool.name} unexpectedly requires {required}"
+        else:
+            assert required, f"{tool.name} declares no required arguments"
+
+
+def test_mcp_tool_names_follow_one_convention():
+    """Two families only: <verb>_<noun> actions and <noun>_<noun> reports."""
+    verbs = {"search", "read", "write", "edit", "move", "duplicate", "trash", "restore", "pin", "unpin", "ask"}
+    for tool in _live_tools():
+        assert not tool.name.startswith("docmancer_"), f"{tool.name} reintroduces a name prefix"
+        head, _, tail = tool.name.partition("_")
+        assert tail, f"{tool.name} is not a two-part name"
+        assert head.islower() and tail.islower(), f"{tool.name} is not lower_snake_case"
+        if head in verbs:
+            continue
+        assert head in {"evidence", "canonical", "common", "context", "decision"}, (
+            f"{tool.name} is neither a known action verb nor a known report noun"
+        )
+
+
+def test_mcp_tools_expose_no_alias_parameters():
+    """Alias spellings inflate every schema and blocked honest `required`."""
+    retired_aliases = {"target", "memory_id", "hash", "new_path", "content", "budget"}
+    for tool in _live_tools():
+        overlap = retired_aliases & set(tool.inputSchema.get("properties", {}))
+        assert not overlap, f"{tool.name} reintroduced alias parameters {sorted(overlap)}"
+
+
+def test_mcp_closed_value_parameters_declare_enums():
+    """Closed value sets belong in the schema, not only in prose."""
+    expected = {
+        ("write_memory", "scope"): {"global", "project"},
+        ("write_memory", "authority"): {"advisory", "mandatory"},
+        ("pin_memory", "section"): {"about", "preferences", "working-principles", "active-projects"},
+        ("unpin_memory", "section"): {"about", "preferences", "working-principles", "active-projects"},
+        ("ask_memory", "mode"): {"concise", "normal", "thorough"},
+    }
+    by_name = {tool.name: tool for tool in _live_tools()}
+    for (tool_name, parameter), values in expected.items():
+        schema = by_name[tool_name].inputSchema["properties"][parameter]
+        found = set(schema.get("enum") or [])
+        if not found:  # optional enums render as anyOf[{enum}, {null}]
+            for branch in schema.get("anyOf", []):
+                found |= set(branch.get("enum") or [])
+        assert found == values, f"{tool_name}.{parameter} enum is {found}, expected {values}"
 
 
 def test_provider_key_does_not_expand_compact_mcp_surface(monkeypatch):

@@ -162,6 +162,8 @@ docmancer qdrant up
 docmancer setup --profile scale
 ```
 
+If you use uv, the install line becomes `uv tool install "docmancer[embeddings-heavy]"`.
+
 Equivalent advanced Qdrant config:
 
 ```yaml

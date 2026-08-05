@@ -21,7 +21,7 @@ Remove an older user-site installation or put the intended pipx or virtual-envir
 
 ## Native Python imports fail
 
-Docmancer requires Python 3.11 through 3.13. On Apple Silicon, confirm the interpreter reports `arm64`. Recreate the environment with a native Homebrew Python if `pydantic_core` or another native wheel reports an architecture mismatch.
+Docmancer requires Python 3.11 or newer. On Apple Silicon, confirm the interpreter reports `arm64`. Recreate the environment with a native Homebrew Python if `pydantic_core` or another native wheel reports an architecture mismatch.
 
 ## Docmancer finds no agent memory
 
