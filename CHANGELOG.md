@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.13] - Unreleased
+## [0.9.13] - 2026-08-05
 ### Changed
 
 - **The Python upper bound was removed, so `requires-python` is now `>=3.11`.** The old `<3.14` cap meant a plain `pipx install docmancer` failed outright on any machine whose default `python3` was 3.14, because pip rejected every published version and reported no matching distribution. The cap was inherited caution rather than a real incompatibility: the full test suite passes on 3.14, and the optional `[embeddings-heavy]` path resolves and imports there too (fastembed, onnxruntime, and qdrant-client all publish 3.14 wheels). Installing no longer needs `--python python3.13`, and the CI matrix now runs 3.11, 3.12, 3.13, and 3.14 so the supported range is enforced rather than assumed.
