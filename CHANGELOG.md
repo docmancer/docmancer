@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.14] - Unreleased
+## [0.9.14] - 2026-08-05
 ### Added
 
 - **Personal Sync now has a complete first-machine to VPS journey.** `docmancer cloud connect` creates the first encrypted workspace, self-tests and displays a one-time version 2 recovery kit, queues the existing machine-wide Shared Memory tree, and starts the first encrypted transfer automatically. On a VPS or another machine, the same command shows a four-word pairing code. A connected machine can approve that code, after which rerunning connect on the new machine retrieves its wrapped workspace key and memory.
