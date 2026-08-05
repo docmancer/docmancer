@@ -2787,6 +2787,7 @@ class LocalRuntime:
         *,
         base_url: str | None = None,
         create_recovery: bool = False,
+        recovery_key: str | None = None,
         progress: Callable[[str, dict], None] | None = None,
     ) -> dict:
         """Drive device-code login end to end, reporting each stage as it happens."""
@@ -2796,6 +2797,7 @@ class LocalRuntime:
             await_authorization,
             enqueue_project,
             finish_connect,
+            pairing_phrase,
             resume_existing_connect,
             start_connect,
         )
@@ -2821,6 +2823,11 @@ class LocalRuntime:
                 on_event=emit,
             ) if base_url else None
             if resumed is not None:
+                resumed["pairing_phrase"] = pairing_phrase(str(resumed.get("fingerprint") or ""))
+                if resumed.get("state") == "pending_approval" and recovery_key:
+                    self._cloud_recover_pending(root, keys, resumed, recovery_key)
+                    resumed["state"] = "connected"
+                    resumed["recovered"] = True
                 return resumed
             session = start_connect(
                 base_url,
@@ -2833,6 +2840,11 @@ class LocalRuntime:
                 session, on_event=emit, should_cancel=cancel.is_set,
             )
             outcome = finish_connect(session, result, on_event=emit)
+            outcome["pairing_phrase"] = pairing_phrase(str(outcome.get("fingerprint") or ""))
+            if outcome.get("state") == "pending_approval" and recovery_key:
+                self._cloud_recover_pending(root, keys, outcome, recovery_key)
+                outcome["state"] = "connected"
+                outcome["recovered"] = True
             if outcome["state"] == "connected":
                 try:
                     enqueue_project(
@@ -2860,14 +2872,20 @@ class LocalRuntime:
             return outcome
 
         try:
-            return await asyncio.to_thread(run)
+            outcome = await asyncio.to_thread(run)
+            if outcome.get("state") == "connected":
+                try:
+                    outcome["initial_sync"] = await self.cloud_sync()
+                except Exception as exc:  # noqa: BLE001 - the durable queue remains safe
+                    outcome["sync_warning"] = str(exc) or exc.__class__.__name__
+            return outcome
         except ConnectCancelled:
             raise
         finally:
             self._cloud_connect_cancel = None
 
     def _cloud_create_recovery(self, root: Path, keys, workspace_id: str) -> tuple[str, str]:
-        """Return the new recovery key and an empty string, or the upload failure reason.
+        """Return the new recovery kit and an empty string, or the upload failure reason.
 
         A replacement key is worthless if the hosted wrapper still holds the old one,
         so the caller must be able to tell the user that the upload did not land.
@@ -2879,8 +2897,15 @@ class LocalRuntime:
         account = config.account()
         workspace_key = keys.workspace_key(str(account.get("account_id") or ""), workspace_id)
         if not workspace_key:
-            raise ValueError("a local workspace key is required to create a recovery key")
-        recovery_key, wrapper = create_recovery(workspace_id, workspace_key, root=root)
+            raise ValueError("a local workspace key is required to create a recovery kit")
+        workspace = config.workspace(workspace_id)
+        key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
+        recovery_key, wrapper = create_recovery(
+            workspace_id,
+            workspace_key,
+            root=root,
+            key_version=key_version,
+        )
         (config.paths.root / "recovery-wrapper.json").write_text(
             json.dumps(wrapper, indent=2) + "\n", encoding="utf-8",
         )
@@ -2896,6 +2921,55 @@ class LocalRuntime:
             return recovery_key, str(exc) or exc.__class__.__name__
         return recovery_key, ""
 
+    def _cloud_recover_pending(
+        self,
+        root: Path,
+        keys,
+        outcome: dict,
+        recovery_key: str,
+    ) -> None:
+        from docmancer.cloud.config import CloudConfig
+        from docmancer.cloud.crypto import b64encode, wrap_key
+        from docmancer.cloud.recovery import recovery_approval, verify_recovery
+
+        config = CloudConfig(root)
+        account = config.account()
+        account_id = str(account["account_id"])
+        workspace_id = str(outcome["workspace_id"])
+        device_id = str(outcome["device_id"])
+        client, _workspace = self._cloud_client()
+        try:
+            wrapper = client.recovery_wrapper(workspace_id)
+            if str(wrapper.get("workspace_id") or "") != workspace_id:
+                raise ValueError("this recovery kit belongs to a different workspace")
+            workspace_key = verify_recovery(recovery_key, wrapper, root=root)
+            key_version = int(wrapper.get("key_version") or 1)
+            sign_public = keys.get(account_id, "device-signing-public")
+            box_public = keys.get(account_id, "device-box-public")
+            if not sign_public or not box_public:
+                raise ValueError("this machine's device identity is incomplete")
+            wrapped_key = b64encode(wrap_key(workspace_key, box_public))
+            approval = recovery_approval(
+                recovery_key,
+                wrapper,
+                device_id=device_id,
+                sign_public_key=b64encode(sign_public),
+                box_public_key=b64encode(box_public),
+                wrapped_key=wrapped_key,
+                key_version=key_version,
+            )
+            client.recover_device(workspace_id, device_id, approval)
+            keys.set_workspace_key(
+                account_id,
+                workspace_id,
+                workspace_key,
+                key_version=key_version,
+            )
+            config.set_workspace(workspace_id, key_version=key_version)
+            config.save_account(enabled=True)
+        finally:
+            client.close()
+
     async def cloud_create_recovery(self) -> tuple[str, str]:
         """Replace the local recovery wrapper and return its key exactly once.
 
@@ -2908,7 +2982,7 @@ class LocalRuntime:
         config = CloudConfig(root)
         workspace_id = str(config.account().get("workspace_id") or "")
         if not workspace_id:
-            raise ValueError("connect a Cloud workspace before creating a recovery key")
+            raise ValueError("connect a Cloud workspace before creating a recovery kit")
         return await asyncio.to_thread(
             self._cloud_create_recovery, root, KeyStore(), workspace_id
         )
@@ -2972,8 +3046,8 @@ class LocalRuntime:
                 )
                 if not current or str(current.get("state")) != "approved":
                     raise ValueError(
-                        "this device is still pending approval; approve its fingerprint "
-                        "from an existing trusted device first"
+                        "this device is still pending approval; run `docmancer cloud connect` "
+                        "on a trusted machine and compare the pairing code"
                     )
                 key_version = int(current.get("key_version") or 1)
                 wrapped = await asyncio.to_thread(
@@ -3026,10 +3100,16 @@ class LocalRuntime:
         return client, str(account["workspace_id"])
 
     async def cloud_devices(self) -> list[dict]:
+        from docmancer.cloud.connect import pairing_phrase
+
         client, workspace_id = await asyncio.to_thread(self._cloud_client)
         try:
             value = await asyncio.to_thread(client.devices, workspace_id)
-            return list(value.get("devices") or [])
+            devices = list(value.get("devices") or [])
+            for device in devices:
+                fingerprint = str(device.get("fingerprint") or "")
+                device["pairing_phrase"] = pairing_phrase(fingerprint) if fingerprint else ""
+            return devices
         finally:
             await asyncio.to_thread(client.close)
 

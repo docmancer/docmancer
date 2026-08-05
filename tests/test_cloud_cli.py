@@ -55,7 +55,7 @@ def test_cloud_status_exposes_pending_registration_and_key_availability(tmp_path
     assert result.exit_code == 0
     assert "device registered, awaiting approval" in result.output
     assert "Local key material: available" in result.output
-    assert "approve this device" in result.output
+    assert "trusted machine" in result.output
 
 
 def test_cloud_status_summarises_connected_state(monkeypatch):
@@ -82,7 +82,7 @@ def test_cloud_status_summarises_connected_state(monkeypatch):
 
     assert result.exit_code == 0
     assert "Personal Sync: connected" in result.output
-    assert "Recovery: verified" in result.output
+    assert "Recovery: decrypt only" in result.output
     assert "Sync queue: 7,650 pending, 0 conflicts" in result.output
     assert "Last sync cursor: none yet" in result.output
     assert "Next: run `docmancer cloud sync`" in result.output
@@ -143,7 +143,7 @@ def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatc
     )
 
     assert result.exit_code == 0
-    assert "already connected" in result.output
+    assert "is connected" in result.output
     assert "Open " not in result.output
     assert config.account()["device_id"] == "00000000-0000-4000-8000-000000000003"
 
@@ -197,9 +197,78 @@ def test_cloud_connect_resumes_the_same_pending_device(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert "already pending approval" in result.output
-    assert "docmancer-existing" in result.output
+    assert "waiting for approval" in result.output
+    assert "dawn willow juniper reed" in result.output
     assert config.account()["device_id"] == device_id
+
+
+def test_cloud_connect_recovers_an_already_registered_pending_device(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+    from docmancer.cloud import connect as connect_module
+
+    account_id = "00000000-0000-4000-8000-000000000001"
+    workspace_id = "00000000-0000-4000-8000-000000000002"
+    device_id = "00000000-0000-4000-8000-000000000003"
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=False,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        device_id=device_id,
+        base_url="https://cloud.invalid",
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.set_token(account_id, "token")
+
+    class Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def devices(self, _workspace_id):
+            return {
+                "devices": [
+                    {
+                        "device_id": device_id,
+                        "state": "pending",
+                        "fingerprint": "docmancer-existing",
+                    }
+                ]
+            }
+
+        def close(self):
+            pass
+
+    recovered: list[tuple[str, bool]] = []
+    synced: list[bool] = []
+    monkeypatch.setattr(
+        cloud_commands,
+        "_context",
+        lambda: (tmp_path, config, config.account(), keys),
+    )
+    monkeypatch.setattr(connect_module, "CloudClient", Client)
+    monkeypatch.setattr(
+        cloud_commands,
+        "_verify_recovery",
+        lambda key, *, approve_pending=False: recovered.append((key, approve_pending)),
+    )
+    monkeypatch.setattr(cloud_commands, "_run_sync_command", lambda: synced.append(True))
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "cloud",
+            "connect",
+            "--base-url",
+            "https://cloud.invalid",
+            "--recovery-key",
+            "offline-kit",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert recovered == [("offline-kit", True)]
+    assert synced == [True]
+    assert "Recovery approved this machine" in result.output
 
 
 def test_cloud_devices_lists_fingerprints_and_revokes_one_device(tmp_path, monkeypatch):

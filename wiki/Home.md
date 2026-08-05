@@ -1,6 +1,6 @@
 # Docmancer
 
-Docmancer gives every coding agent on your machine one local memory, so you stop re-explaining your project to each of them.
+An AI-agent memory harness: shared memory for coding agents.
 
 Coding agents already remember decisions, preferences, project rules, and past mistakes. The problem is that each agent keeps a different slice in a different place, so nothing you taught one of them ever reaches the others.
 
@@ -11,7 +11,7 @@ Docmancer is organised around four problems, in this order. The first two are wh
 
 The remaining two are what the paid tiers exist for:
 
-3. **All my memory and context lives on one machine. How do I get it onto my other machines?** Personal Sync is open in early access.
+3. **All my memory and context lives on one machine. How do I get it onto my other machines?** Personal Sync carries it to a laptop, VPS, or another machine with one connection command and a four-word device approval.
 4. **My agents have deep context about the features I am building. How do I share that with the other engineers, PMs, and designers on my team?** This is Team Sync, which is not available yet.
 
 Docmancer discovers existing memory without rewriting the source files, keeps provenance attached, and arranges durable knowledge in a predictable Markdown scaffold. Connected agents can then recall the relevant files through installed skills, hooks, the CLI, or local MCP.
@@ -34,6 +34,14 @@ If you use uv, `uv tool install docmancer` installs it the same way.
 
 The CLI remains the stable interface for agents and automation. `docmancer ask` retrieves a bounded cited bundle and calls the configured answer provider by default when one is ready. An explicit memory-management request prepares one complete-file action for approval in the saved web conversation or terminal. `docmancer delivery` shows how agents receive Shared Memory, and direct commands such as `docmancer write` remain available for deliberate automation.
 
+## Personal Sync workflow
+
+Run `docmancer cloud connect` on the machine that already has your memory. Browser authorization creates the encrypted workspace, creates and checks the offline recovery kit, and starts the first upload automatically. Add a payment method on the account page to begin the 30-day trial.
+
+On a VPS or second machine, install Docmancer, run `docmancer setup`, and run `docmancer cloud connect` with the same account. Confirm its four-word pairing code by running the same command on an already connected machine, then run connect once more on the new machine to download memory. Use `docmancer cloud connect --recover` only when every connected machine is unavailable.
+
+After the trial, the selected subscription begins unless canceled. Failed renewal has a 7-day upload grace period, then a 30-day read-only pull and export window before hosted deletion. Local Docmancer remains free and fully usable throughout. See [Cloud Sync](Cloud-Sync.md) for the full security and lifecycle details.
+
 ## What remains separate
 
 - Agent-owned source files are evidence and remain read-only.
@@ -44,7 +52,7 @@ The CLI remains the stable interface for agents and automation. `docmancer ask` 
 
 ## Safety boundary
 
-The web app binds to `127.0.0.1`. Local files, credentials, and indexes stay on the machine. Existing-file mutations require a current content hash and deletion is recoverable. Setup shows the provider privacy boundary before enabling provider-assisted reconciliation. Read-only Ask sends only its retrieved, redacted evidence bundle after retrieval. Mutation Ask additionally sends bounded candidate addresses and full safe candidate files so the provider can draft one structured proposal. Temporary chats cannot prepare actions, and the browser can submit only Apply or Cancel for a server-stored proposal.
+The web app binds to `127.0.0.1`. Local files, credentials, and indexes stay on the machine. Existing-file mutations require a current content hash and deletion is recoverable. Setup shows the provider privacy boundary before enabling provider-assisted combination. Read-only Ask sends only its retrieved, redacted evidence bundle after retrieval. Mutation Ask additionally sends bounded candidate addresses and full safe candidate files so the provider can draft one structured proposal. Temporary chats cannot prepare actions, and the browser can submit only Apply or Cancel for a server-stored proposal.
 
 The complete local product is free. Paid Personal Sync adds encrypted continuity, managed revision history, and recovery across the machines you approve, without improving or gating local recall. Team Sync is not available yet.
 

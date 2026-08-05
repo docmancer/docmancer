@@ -14,9 +14,9 @@ docmancer ask "What deployment decisions apply?"
 
 If you use uv, `uv tool install docmancer` installs it the same way.
 
-`setup` displays one machine-wide plan and privacy warning before it indexes existing agent memory, reconciles the machine-wide Shared Memory tree, installs detected integrations, and enables supported recall and lifecycle hooks. Use `--profile local` for bundled Model2Vec plus sqlite-vec, or `--profile scale` for FastEmbed, sparse retrieval, and Qdrant.
+`setup` displays one machine-wide plan and privacy warning before it indexes existing agent memory, combines the machine-wide Shared Memory tree, installs detected integrations, and enables supported recall and lifecycle hooks. Use `--profile local` for bundled Model2Vec plus sqlite-vec, or `--profile scale` for FastEmbed, sparse retrieval, and Qdrant.
 
-`web` serves the latest committed local state immediately. It does not block startup on source scans, embeddings, canonical reconciliation, or providers. Changed-source maintenance is queued after the loopback server is available.
+`web` serves the latest committed local state immediately. It does not block startup on source scans, embeddings, canonical combination, or providers. Changed-source maintenance is queued after the loopback server is available.
 
 ## Primary memory commands
 
@@ -37,7 +37,7 @@ If you use uv, `uv tool install docmancer` installs it the same way.
 | `docmancer status` | Reports indexed evidence, project Shared Memory, security, retrieval, integrations, legacy reviews, and Cloud state. |
 | `docmancer status --check` | Exits non-zero when the local setup needs attention. |
 
-Read-only Ask is retrieval first and generation second. The provider receives the selected redacted bundle, not the entire source corpus. Normal Ask never performs reconciliation unless `--fresh` is explicit.
+Read-only Ask is retrieval first and generation second. The provider receives the selected redacted bundle, not the entire source corpus. Normal Ask never performs combination unless `--fresh` is explicit.
 
 Explicit memory-management language routes to the action planner. It supports one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` action per request. The provider drafts the intended complete-file result in one structured call, while Docmancer supplies and validates paths, hashes, scope, diffs, destructive status, and execution. The CLI confirmation defaults to No. `--apply` conflicts with `--read-only` and `--no-answer`.
 
@@ -45,7 +45,7 @@ Project creates are limited to `decisions/`, `constraints/`, `workflows/`, and `
 
 A reply to an action clarification continues the original mutation request. Docmancer permits one clarification round, then refuses another clarification instead of looping. Typing `yes`, `ok`, or another confirmation in chat does not apply a pending action.
 
-For a broad machine-wide forget request, Docmancer proposes `shared/canonical-exclusions.md`. Its literal path and text filters remove matching evidence from generated Shared Memory during reconciliation. They never edit source repositories, agent instructions, or agent-owned memory files.
+For a broad machine-wide forget request, Docmancer proposes `shared/canonical-exclusions.md`. Its literal path and text filters remove matching evidence from generated Shared Memory during combination. They never edit source repositories, agent instructions, or agent-owned memory files.
 
 ## Curated Shared Memory
 
@@ -64,18 +64,18 @@ Existing-file writes are hash guarded. Imported and harvested source files remai
 
 ## Machine-wide canonical memory
 
-The automatically reconciled machine-wide files live under `~/.docmancer/tree`.
+The automatically combined machine-wide files live under `~/.docmancer/tree`.
 
 | Command | What it does |
 | --- | --- |
-| `docmancer memory canonical` | Shows the latest reconciliation revision, provider or deterministic path, selected evidence, withheld evidence, and generated sections. |
+| `docmancer memory canonical` | Shows the latest combination revision, provider or deterministic path, selected evidence, withheld evidence, and generated sections. |
 | `docmancer memory canonical show <section>` | Prints pinned and generated zones separately. |
-| `docmancer memory canonical pin <section> <text>` | Adds a durable note that survives reconciliation. |
+| `docmancer memory canonical pin <section> <text>` | Adds a durable note that survives combination. |
 | `docmancer memory canonical unpin <section> <match>` | Removes matching pinned lines. |
-| `docmancer memory canonical --refresh` | Explicitly reconciles every section, using the configured provider when ready. |
-| `docmancer memory canonical --refresh --deterministic` | Reconciles without a provider. |
+| `docmancer memory canonical --refresh` | Explicitly combines every section, using the configured provider when ready. |
+| `docmancer memory canonical --refresh --deterministic` | Combines without a provider. |
 
-Ask and web startup do not run these reconciliation operations.
+Ask and web startup do not run these combination operations.
 
 ## Agent integrations
 
@@ -168,17 +168,17 @@ Three stores sit behind the search tools, and they are deliberately separate. `s
 
 | Command | What it does |
 | --- | --- |
-| `docmancer cloud connect` | Runs device-code login and enrols this device for encrypted sync. |
+| `docmancer cloud connect` | Connects a device, creates and checks the first-device recovery kit, and starts encrypted sync. On a trusted device it also offers to approve one pending machine by four-word code. Run it again on the approved machine to finish and pull memory. |
 | `docmancer cloud status` | Shows local account, workspace, device, and transfer state. |
 | `docmancer cloud sync` | Pushes and pulls client-encrypted revisions. |
 | `docmancer cloud devices` | Lists devices and supports explicit approval or revocation. |
-| `docmancer cloud recovery create` | Creates a recovery key and wrapper. |
-| `docmancer cloud recovery verify` | Confirms a stored recovery key still unwraps the workspace key. Optional; nothing requires it. |
+| `docmancer cloud recovery create` | Advanced command that replaces the current recovery kit with a self-tested version 2 kit. |
+| `docmancer cloud recovery verify` | Legacy diagnostic for checking an existing recovery kit. Normal kit creation already performs this cryptographic self-test. |
 | `docmancer cloud export <destination>` | Exports local memory without contacting the server. |
 | `docmancer cloud disconnect` | Clears the Cloud session without changing local memory. |
 | `docmancer cloud delete-remote --confirm DELETE` | Schedules server-held ciphertext for deletion while preserving local memory. |
 
-Cloud sync never substitutes for local source indexing or reconciliation.
+Cloud sync never substitutes for local source indexing or combination.
 
 ## Generated Context compatibility
 
@@ -203,7 +203,7 @@ Provider-backed refreshes report elapsed distillation time and whether they met 
 ## Advanced and recovery namespaces
 
 - `docmancer tree` exposes the lower-level curated Markdown store, compiler, curation, capture, reindex, and migration operations.
-- `docmancer memory` exposes canonical reconciliation plus legacy atom, graph, record-pack, proposal, evaluation, export, and diagnostic operations. Deprecated commands print their current replacement.
+- `docmancer memory` exposes canonical combination plus legacy atom, graph, record-pack, proposal, evaluation, export, and diagnostic operations. Deprecated commands print their current replacement.
 - `docmancer brief` generates a provider-backed point-in-time brief from selected evidence.
 - `docmancer review` is the root alias for legacy proposal and indexed-evidence review.
 - `docmancer reindex` rebuilds disposable curated-tree retrieval state from Markdown.

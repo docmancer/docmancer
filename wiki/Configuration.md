@@ -11,7 +11,7 @@ A fresh install uses a fully local retrieval stack:
 - `retrieval.profile: local`, selecting the zero-daemon stack.
 - `retrieval.default_mode: hybrid`, combining lexical and dense retrieval and degrading to lexical when vector retrieval is unavailable.
 
-The rebuildable memory index uses `~/.docmancer/memory.db`, with graph and retrieval metadata alongside its indexed evidence. The automatically reconciled machine-wide Shared Memory lives under `~/.docmancer/tree/`, with reconciliation manifests and revisions in Docmancer's internal state directory. Project Shared Memory lives under `<project>/.docmancer/tree/`. Older record packs, revisions, tombstones, and team records remain available for compatibility. Reconciliation uses the configured generation provider when it is ready, then falls back to deterministic local rules. The docs index uses the configured `index.db_path`.
+The rebuildable memory index uses `~/.docmancer/memory.db`, with graph and retrieval metadata alongside its indexed evidence. The automatically combined machine-wide Shared Memory lives under `~/.docmancer/tree/`, with combination manifests and revisions in Docmancer's internal state directory. Project Shared Memory lives under `<project>/.docmancer/tree/`. Older record packs, revisions, tombstones, and team records remain available for compatibility. Combination uses the configured generation provider when it is ready, then falls back to deterministic local rules. The docs index uses the configured `index.db_path`.
 
 ## Common environment variables
 
@@ -186,6 +186,6 @@ Qdrant is the scale path, not an accuracy shortcut. It improves filtered vector 
 ## Notes
 
 - Relative `index.db_path` and `index.extracted_dir` values are resolved relative to the location of `docmancer.yaml`.
-- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Ask and web startup do not synchronously scan agent files, rewrite indexes, reconcile Shared Memory, or call maintenance providers. Use setup, supported lifecycle capture, explicit canonical refresh, the web background job, or `docmancer ask --fresh` when maintenance is required.
+- `docmancer web`, `docmancer ask`, and write operations create the project-local `.docmancer` workspace when it is needed. Ask and web startup do not synchronously scan agent files, rewrite indexes, combine Shared Memory, or call maintenance providers. Use setup, supported lifecycle capture, explicit canonical refresh, the web background job, or `docmancer ask --fresh` when maintenance is required.
 - If a cloud embedding provider is configured without its key, ingest falls back to the lexical index and logs a concise warning.
 - Provider model catalogs are cached locally. Providers with discovery endpoints refresh their generation-capable models in the background; maintained catalogs and custom model IDs remain available when live discovery is unavailable.

@@ -41,7 +41,9 @@ class CloudRuntime:
     async def cloud_status(self) -> dict:
         return {"configured": self.configured}
 
-    async def cloud_connect(self, *, base_url, create_recovery, progress) -> dict:
+    async def cloud_connect(
+        self, *, base_url, create_recovery, recovery_key=None, progress
+    ) -> dict:
         progress("device_code", {"user_code": "ABCD-1234", "verification_uri": f"{base_url}/auth/device"})
         await asyncio.sleep(0)
         progress("authorized", {})

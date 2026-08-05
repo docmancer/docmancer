@@ -92,25 +92,24 @@ def test_agent_setup_warning_can_be_dismissed_until_its_content_changes():
     assert "window.localStorage.setItem(CONNECTION_WARNING_DISMISS_KEY" in source
 
 
-def test_pending_cloud_connection_shows_one_time_recovery_key_before_approval():
+def test_cloud_connection_uses_recovery_kit_and_readable_pairing_code():
     component = WEB_APP.parent / "components" / "cloud-connect.tsx"
     source = component.read_text(encoding="utf-8")
 
-    assert 'phase === "pending_approval" && recoveryKey' in source
-    assert "Save this recovery key before approving the device" in source
-    assert 'onAcknowledge={() => setRecoveryKey("")}' in source
+    assert 'recovery_key: recoveryInput.trim() || undefined' in source
+    assert "four-word code" in source
+    assert "Download recovery kit" in source
 
     cloud = (WEB_APP.parent / "components" / "cloud-settings.tsx").read_text(encoding="utf-8")
     assert 'apiMutation("/api/v1/cloud/recovery-key/create", {})' in cloud
-    assert "Replace lost recovery key" in cloud
+    assert "Replace lost recovery kit" in cloud
 
 
-def test_cloud_settings_offers_recovery_verification_and_states_it_is_optional():
+def test_cloud_settings_removes_the_redundant_recovery_verification_gate():
     cloud = (WEB_APP.parent / "components" / "cloud-settings.tsx").read_text(encoding="utf-8")
 
-    assert 'apiMutation("/api/v1/cloud/recovery/verify", { recovery_key: key.trim() })' in cloud
-    assert "Verify recovery key" in cloud
-    assert "nothing is blocked if you skip it" in cloud
+    assert '/api/v1/cloud/recovery/verify' not in cloud
+    assert "cryptographically checks the kit automatically" in cloud
     # Team invitations cannot be accepted by the service, so no invite control is offered.
     assert "/api/v1/cloud/team/invitations" not in cloud
 

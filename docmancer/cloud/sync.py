@@ -203,9 +203,12 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     if not workspace_key:
         raise ValueError("workspace key is unavailable on this device")
     state = CloudState(config.paths.sync_state)
-    from docmancer.cloud.tree_sync import queue_tree_changes
+    from docmancer.cloud.tree_sync import (
+        queue_machine_tree_changes,
+        queue_tree_changes,
+    )
 
-    tree_changes = {"changed": 0, "queued": 0}
+    tree_changes = queue_machine_tree_changes(root=root, keystore=keys)
     for project_id, row in config.workspaces().get("projects", {}).items():
         mapping = config.mapping_status(str(project_id))
         if mapping["state"] == "mapped":

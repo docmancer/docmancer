@@ -6,7 +6,7 @@
 
 # Docmancer
 
-**Docmancer gives every coding agent on your machine one local memory, so you stop re-explaining your project to each of them.**
+**An AI-agent memory harness: shared memory for coding agents.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
 [![Downloads](https://img.shields.io/pypi/dm/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
@@ -72,6 +72,29 @@ That is the whole first run. It takes about a minute, and `setup` does not modif
 **Edits that cannot clobber each other.** Changing or moving an existing memory file requires the content hash you last read, so one agent cannot silently overwrite a newer decision made by another.
 
 **Approval before anything is written.** When you ask Docmancer to remember or change something, it prepares one complete file proposal and shows you the diff. The default answer is no, and a later "yes" in conversation never applies a stored proposal.
+
+## Take the same memory to a VPS or another machine
+
+The complete product above is free on one machine. Optional paid Personal Sync adds encrypted transport, managed revision history, devices, and recovery when you work across a laptop, VPS, or other machines.
+
+On the machine that already has your memory, run:
+
+```bash
+docmancer cloud connect
+```
+
+Sign in through the browser. Docmancer creates and checks a recovery kit, shows it once for offline storage, and starts the first encrypted upload automatically. The account page then asks for a payment method to start the 30-day trial. There is no separate recovery verification or first-sync command.
+
+On the VPS or second machine, install Docmancer and run:
+
+```bash
+docmancer setup
+docmancer cloud connect
+```
+
+The new machine shows a four-word pairing code. Run `docmancer cloud connect` on an already connected machine, confirm the same four words, and approve it. Then run the command once more on the new machine. Docmancer downloads the machine-wide Shared Memory tree and any project trees mapped on that machine. If every connected machine is unavailable, use `docmancer cloud connect --recover` and enter the offline recovery kit.
+
+The selected monthly or yearly subscription begins automatically after the trial unless you cancel. A failed renewal has a fixed 7-day upload grace period, followed by a 30-day read-only pull and export window before hosted ciphertext is scheduled for deletion. Local memory and every local feature keep working in every billing state. See the [Personal Sync guide](https://docmancer.dev/docs/personal-sync) for the full journey.
 
 ## See what each agent actually receives
 
@@ -168,6 +191,7 @@ docmancer ask "Update decisions/release.md to require two reviewers" --apply
 | `docmancer docs query "..."` | Search the separate documentation Library. |
 | `docmancer status` | Show memory, source, security, integration, and Cloud health. |
 | `docmancer doctor` | Diagnose installation and configuration problems. |
+| `docmancer cloud connect` | Connect this machine, approve another machine by four-word code, and start encrypted sync. |
 
 Run `docmancer --help` or `docmancer <command> --help` for exact arguments, and see the [command reference](https://docmancer.dev/docs/cli-reference) for the full surface.
 
@@ -206,7 +230,7 @@ Scale uses Qdrant, FastEmbed dense embeddings, sparse SPLADE retrieval, and reci
 
 Your memory, credentials, indexes, and the local app stay on your machine, and Docmancer has no telemetry. It reaches the network only when you explicitly fetch online documentation, use an external model, check a package registry, or enable Cloud.
 
-Everything above is free and stays free. There are two problems the free single-machine product does not solve, and those are what the paid tiers exist for. The first is that your memory is built on one machine while you work on more than one, which optional paid Personal Sync answers by carrying the same canonical memory to every machine you approve, encrypted on the device before it leaves, with managed revision history and recovery. The second is that the context your agents accumulated about a feature is stranded on one machine where the rest of your team cannot reach it, which is the problem Team Sync is being designed to solve. Team Sync is not available yet.
+Everything above is free and stays free. There are two problems the free single-machine product does not solve, and those are what the paid tiers exist for. The first is that your memory is built on one machine while you work on more than one, which optional paid Personal Sync answers by carrying the same canonical memory to every machine you approve, encrypted on the device before it leaves, with managed revision history and recovery. Its normal setup is one `docmancer cloud connect` command on each machine, followed by a four-word approval on a machine you already trust. The second is that the context your agents accumulated about a feature is stranded on one machine where the rest of your team cannot reach it, which is the problem Team Sync is being designed to solve. Team Sync is not available yet.
 
 The hosted service receives ciphertext, and it cannot read your plaintext memory or run anything on your machine. The [security architecture](https://docmancer.dev/security) describes exactly what metadata remains visible rather than claiming the server knows nothing.
 

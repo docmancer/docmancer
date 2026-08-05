@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.14] - Unreleased
+### Added
+
+- **Personal Sync now has a complete first-machine to VPS journey.** `docmancer cloud connect` creates the first encrypted workspace, self-tests and displays a one-time version 2 recovery kit, queues the existing machine-wide Shared Memory tree, and starts the first encrypted transfer automatically. On a VPS or another machine, the same command shows a four-word pairing code. A connected machine can approve that code, after which rerunning connect on the new machine retrieves its wrapped workspace key and memory.
+- **Recovery can approve a replacement device without a surviving machine.** Version 2 recovery kits derive separate workspace-wrapping and device-approval signing keys. `docmancer cloud connect --recover` keeps the secret local, creates a five-minute approval bound to the exact pending device, and lets the service verify the public signature without receiving plaintext memory or the recovery secret.
+
+### Changed
+
+- **Cloud onboarding is simpler and secure by default.** First-device recovery self-testing and initial sync are automatic, four-word pairing replaces manual fingerprint comparison for the normal second-device path, and recovery commands remain advanced diagnostics rather than setup gates.
+- **Machine-wide Shared Memory now syncs independently of project paths.** A newly connected VPS receives `~/.docmancer/tree` even when its checkout paths differ. Project trees remain portable through their existing project mapping.
+- **Cloud status, local workbench screens, CLI help, installed skills, README, and wiki explain the same journey.** `cloud connect` is the normal onboarding command, while `cloud sync` is an explicit retry or later push and pull command.
+
+### Fixed
+
+- **The first encrypted upload has a bounded setup window.** The provisional workspace accepts the initial encrypted transfer before a paid entitlement is established, so browser authorization can complete the local setup without a separate billing race.
+
 ## [0.9.13] - 2026-08-05
 ### Changed
 

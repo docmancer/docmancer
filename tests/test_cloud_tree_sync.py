@@ -12,7 +12,13 @@ from docmancer.cloud.outbox import CloudState
 from docmancer.cloud.project_identity import derived_project_id, normalize_remote
 from docmancer.cloud.serialize import build_tree_payload, validate_tree_payload
 from docmancer.cloud.team_files import generate_team_file, transition_team_file
-from docmancer.cloud.tree_sync import apply_tree_payload, payload_for_file, queue_tree_changes
+from docmancer.cloud.tree_sync import (
+    MACHINE_TREE_ID,
+    apply_tree_payload,
+    payload_for_file,
+    queue_machine_tree_changes,
+    queue_tree_changes,
+)
 from docmancer.memory.tree.store import TreeStore
 
 
@@ -159,6 +165,25 @@ def test_first_tree_scan_records_all_heads_in_one_batch(tmp_path: Path, monkeypa
     project_id = config.project_id_for_path(project)
     assert project_id is not None
     assert len(CloudState(config.paths.sync_state).tree_heads(project_id)) == 12
+
+
+def test_machine_wide_tree_queues_and_applies_without_project_mapping(tmp_path: Path):
+    source = tmp_path / "source-device"
+    target = tmp_path / "target-device"
+    entry = TreeStore(source / "tree").write(
+        relative_path="shared/tooling.md",
+        text="# Tooling\n\nUse the same release checks on every machine.",
+        scope="global",
+        expect="absent",
+    )
+
+    assert queue_machine_tree_changes(root=source) == {"changed": 1, "queued": 0}
+    payload = payload_for_file(
+        entry.path, tree_root=source / "tree", project_id=MACHINE_TREE_ID
+    )
+    state = CloudState(CloudConfig(target).paths.sync_state)
+    assert apply_tree_payload(payload, root=target, state=state) == "applied"
+    assert "same release checks" in TreeStore(target / "tree").read(entry.address).body
 
 
 def test_ambiguous_checkout_is_preserved_as_mapping_conflict(tmp_path: Path):

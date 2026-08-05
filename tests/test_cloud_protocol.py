@@ -20,7 +20,12 @@ from docmancer.cloud.lifecycle import (
 )
 from docmancer.cloud.migrate import migrate_records
 from docmancer.cloud.outbox import CloudState
-from docmancer.cloud.recovery import create_recovery, verify_recovery
+from docmancer.cloud.recovery import (
+    _approval_message,
+    create_recovery,
+    recovery_approval,
+    verify_recovery,
+)
 from docmancer.cloud.serialize import build_graph_payload, build_record_payload, canonicalize, revision_id
 from docmancer.cloud.snapshot import build_snapshot, open_snapshot
 from docmancer.cloud.sync import (
@@ -622,13 +627,49 @@ def test_remote_lineage_apply_and_conflict(tmp_path):
 
 def test_recovery_and_snapshot_round_trip(tmp_path):
     workspace_key = random_key()
-    recovery_key, wrapper = create_recovery("ws", workspace_key, root=tmp_path)
+    recovery_key, wrapper = create_recovery(
+        "ws", workspace_key, root=tmp_path, key_version=3
+    )
+    assert wrapper["version"] == 2
+    assert wrapper["key_version"] == 3
     assert verify_recovery(recovery_key, wrapper, root=tmp_path) == workspace_key
     MemoryRecordStore(tmp_path).add("Snapshot me")
     snapshot = build_snapshot(root=tmp_path, workspace_id="ws", workspace_key=workspace_key, cursor="5")
     opened = open_snapshot(snapshot, workspace_key=workspace_key)
     assert opened["cursor"] == "5"
     assert opened["heads"][0]["text"] == "Snapshot me"
+
+
+def test_v2_recovery_signs_a_short_lived_device_approval(tmp_path):
+    from docmancer.cloud.crypto import b64decode, verify
+
+    recovery_key, wrapper = create_recovery(
+        "workspace", random_key(), root=tmp_path, key_version=2
+    )
+    approval = recovery_approval(
+        recovery_key,
+        wrapper,
+        device_id="device",
+        sign_public_key="sign-public",
+        box_public_key="box-public",
+        wrapped_key="wrapped",
+        key_version=2,
+    )
+    message = _approval_message(
+        workspace_id="workspace",
+        device_id="device",
+        sign_public_key="sign-public",
+        box_public_key="box-public",
+        wrapped_key="wrapped",
+        key_version=2,
+        nonce=approval["nonce"],
+        expires_at=approval["expires_at"],
+    )
+    verify(
+        message,
+        b64decode(approval["recovery_signature"]),
+        b64decode(wrapper["recovery_verify_key"]),
+    )
 
 
 def test_client_headers_and_typed_non_destructive_errors():

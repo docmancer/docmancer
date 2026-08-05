@@ -24,7 +24,6 @@ export function CloudSettings() {
   const [connecting, setConnecting] = useState(false);
   const [replacementRecoveryKey, setReplacementRecoveryKey] = useState("");
   const [recoveryUploadError, setRecoveryUploadError] = useState("");
-  const [verifying, setVerifying] = useState(false);
   const [revoking, setRevoking] = useState<JsonMap | null>(null);
 
   const load = async () => {
@@ -106,8 +105,8 @@ export function CloudSettings() {
       <a className="secondary-btn" href="https://docmancer.dev/pricing" target="_blank" rel="noreferrer">Compare plans <ExternalLink size={14}/></a>
     </div>
     <p className="muted">
-      Connecting is free and does not require a subscription. A plan is only needed before
-      encrypted revisions can be uploaded, and the local product is unaffected either way.
+      Checkout starts a 30-day Personal Sync trial and saves a payment method. The complete
+      local product stays free whether or not you continue after the trial.
     </p>
     {connecting && <ConnectDialog close={() => setConnecting(false)} onConnected={() => void load()}/>}
   </div>;
@@ -126,7 +125,7 @@ export function CloudSettings() {
 
     <AgentGroup title="Connection" note={configured
       ? "This device holds the workspace key and can encrypt and decrypt revisions."
-      : "This device is known to your account, but encrypted sync stays off until a trusted device approves its fingerprint."}>
+      : "This device is known to your account, but encrypted sync stays off until a trusted device confirms its four-word code."}>
       <div className="cloud-status-grid">
         <article><strong>{configured ? "Connected" : "Pending"}</strong><span>Connection state</span></article>
         <article><strong>{devices.length}</strong><span>Registered devices</span></article>
@@ -134,14 +133,15 @@ export function CloudSettings() {
         <article><strong>{localKeys.workspace_key_available ? "Present" : "Unavailable"}</strong><span>Local workspace key</span></article>
       </div>
       {!configured && <Notice kind="error">
-        Approve fingerprint {String(currentDevice?.fingerprint ?? "unavailable")} from an existing
-        trusted device. Secret key material is never displayed on this settings page.
+        On a trusted device, run <code>docmancer cloud connect</code> and confirm the code
+        <strong> {String(currentDevice?.pairing_phrase ?? "unavailable")}</strong>. You can also reconnect
+        here with your recovery kit if that machine is unavailable.
       </Notice>}
       <div className="form-actions">
         <button className="primary-btn" disabled={busy || (configured && !canPush)} onClick={configured
           ? sync
           : () => run(() => apiJobMutation("/api/v1/cloud/sync", {}, () => undefined), "Approval confirmed and first sync complete.")}>
-          {busy && <LoaderCircle className="spin" size={14}/>}{configured ? "Sync now" : "Check approval and sync"}
+          {busy && <LoaderCircle className="spin" size={14}/>}{configured ? "Retry sync" : "Check approval"}
         </button>
       </div>
     </AgentGroup>
@@ -160,15 +160,16 @@ export function CloudSettings() {
       </div>
     </AgentGroup>
 
-    <AgentGroup title="Devices" note="Approve a new device only after confirming its fingerprint out of band.">
+    <AgentGroup title="Devices" note="A four-word pairing code makes device approval easy to compare without exposing key material.">
       {devices.length === 0 && <p className="muted">No devices are registered yet.</p>}
       {devices.map((device) => {
         const id = String(device.device_id ?? device.id ?? "");
         const state = String(device.state ?? "pending");
         return <article key={id} className="cloud-row">
           <div>
-            <strong>{id === String(status.device_id ?? "") ? "This device" : id}</strong>
-            <small>{state} · {String(device.fingerprint ?? "no fingerprint")}</small>
+            <strong>{id === String(status.device_id ?? "") ? "This device" : `Machine ${devices.indexOf(device) + 1}`}</strong>
+            <small>{state}{state === "pending" ? ` · ${String(device.pairing_phrase ?? "code unavailable")}` : ""}</small>
+            <details><summary>Advanced identity</summary><small>{id} · {String(device.fingerprint ?? "no fingerprint")}</small></details>
           </div>
           <div className="cloud-row-actions">
             {/* Approval wraps the workspace key, so only a device that already holds one can do it. */}
@@ -183,35 +184,30 @@ export function CloudSettings() {
       </p>}
     </AgentGroup>
 
-    <AgentGroup title="Recovery" note="The recovery key restores the workspace key onto a machine. It is created and checked here, and never uploaded in usable form.">
+    <AgentGroup title="Recovery" note="The recovery kit restores the workspace key and can approve a replacement device. It is never uploaded in usable form.">
       <p className="muted">
-        Keep at least one approved device. A recovery key does not enrol a machine on its own,
-        so it cannot by itself get you back into hosted history if every approved device is lost.
+        Your first connection creates and cryptographically checks the kit automatically. Keep
+        the downloaded copy offline. Older version 1 keys can decrypt data but cannot approve a device.
       </p>
       <div className="cloud-status-grid">
         <article><strong>{recovery.configured ? "Stored" : "Not created"}</strong><span>Recovery wrapper</span></article>
-        <article><strong>{recovery.verified ? "Verified" : "Not verified"}</strong><span>Checked on this device</span></article>
+        <article><strong>{recovery.protection === "device_replacement" ? "Replacement ready" : recovery.verified ? "Decrypt only" : "Unavailable"}</strong><span>Recovery protection</span></article>
       </div>
-      <p className="muted">
-        Verification only confirms that the key you saved still unwraps this workspace. It is
-        optional, it is recorded on this machine alone, and nothing is blocked if you skip it.
-      </p>
       {replacementRecoveryKey && <div className="pending-recovery-panel">
-        <h3>{recovery.configured ? "Replacement recovery key" : "Recovery key"}</h3>
+        <h3>{recovery.configured ? "Replacement recovery kit" : "Recovery kit"}</h3>
         <p className="muted">Save it offline before continuing. It is shown once.</p>
         {recoveryUploadError
           ? <Notice kind="error">
-              This key was saved on this machine, but the hosted wrapper was not replaced: {recoveryUploadError}.
-              Keep your previous recovery key, because that is still the one another machine would be given.
-              Create the key again once the service is reachable.
+              This recovery kit was saved on this machine, but the hosted wrapper was not replaced: {recoveryUploadError}.
+              Keep your previous recovery kit, because its wrapper is still the active one for another machine.
+              Create the kit again once the service is reachable.
             </Notice>
           : null}
         <RecoveryKeyPanel value={replacementRecoveryKey} onAcknowledge={() => { setReplacementRecoveryKey(""); setRecoveryUploadError(""); }}/>
       </div>}
       <div className="form-actions">
-        <button className="secondary-btn" disabled={busy} onClick={() => setVerifying(true)}>Verify recovery key</button>
         {Boolean(localKeys.workspace_key_available) && !replacementRecoveryKey && <button className="secondary-btn" disabled={busy} onClick={createRecoveryKey}>
-          {recovery.configured ? "Replace lost recovery key" : "Create recovery key"}
+          {recovery.configured ? "Replace lost recovery kit" : "Create recovery kit"}
         </button>}
       </div>
     </AgentGroup>
@@ -250,10 +246,6 @@ export function CloudSettings() {
       onConfirm={() => void revoke(String(revoking.device_id ?? revoking.id ?? ""))}
     />}
 
-    {verifying && <VerifyRecoveryDialog
-      close={() => setVerifying(false)}
-      onVerified={() => { setVerifying(false); setNotice("Recovery key verified on this device."); void load(); }}
-    />}
   </div>;
 }
 
@@ -261,42 +253,15 @@ function RevokeDeviceDialog({ device, busy, close, onConfirm }: { device: JsonMa
   const id = String(device.device_id ?? device.id ?? "");
   return <Modal title="Revoke this device?" subtitle="Revocation blocks future sync immediately. It cannot erase keys or plaintext the device already holds." close={close}>
     <div className="cloud-row">
-      <div><strong>{id}</strong><small>{String(device.state ?? "pending")} · {String(device.fingerprint ?? "no fingerprint")}</small></div>
+      <div><strong>{id}</strong><small>{String(device.state ?? "pending")} · {String(device.pairing_phrase ?? "code unavailable")}</small></div>
     </div>
     <p className="muted">
       If this is your last approved device, connect and approve a replacement first. Without an
-      approved device there is no way back into the encrypted history, and a recovery key alone
-      cannot restore access.
+      approved device, keep a version 2 recovery kit so you can approve its replacement.
     </p>
     <div className="form-actions">
       <button className="primary-btn" disabled={busy} onClick={onConfirm}>{busy && <LoaderCircle className="spin" size={14}/>}Revoke device</button>
       <button className="text-btn" disabled={busy} onClick={close}>Keep device</button>
-    </div>
-  </Modal>;
-}
-
-function VerifyRecoveryDialog({ close, onVerified }: { close: () => void; onVerified: () => void }) {
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const verify = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await apiMutation("/api/v1/cloud/recovery/verify", { recovery_key: key.trim() });
-      onVerified();
-    } catch (reason) { setError(messageOf(reason)); }
-    finally { setBusy(false); }
-  };
-  return <Modal title="Verify recovery key" subtitle="Confirms the key you saved still unwraps this workspace. Nothing is uploaded and nothing is blocked if you skip this." close={close}>
-    {error && <Notice kind="error">{error}</Notice>}
-    <label className="field">
-      <span>Recovery key</span>
-      <input type="password" value={key} autoComplete="off" placeholder="Paste the key you stored offline" onChange={(event) => setKey(event.target.value)}/>
-    </label>
-    <div className="form-actions">
-      <button className="primary-btn" disabled={busy || !key.trim()} onClick={verify}>{busy && <LoaderCircle className="spin" size={14}/>}Verify</button>
-      <button className="text-btn" disabled={busy} onClick={close}>Cancel</button>
     </div>
   </Modal>;
 }

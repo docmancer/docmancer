@@ -22,7 +22,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 
 ## Core Commands
 
-- `docmancer setup`: preview and confirm machine-wide indexing, canonical reconciliation, detected agent skills, and automatic recall and capture hooks.
+- `docmancer setup`: preview and confirm machine-wide indexing, canonical combination, detected agent skills, and automatic recall and capture hooks.
 - `docmancer docs add <path>`: index local files or directories.
 - `docmancer docs add <url>`: fetch and index documentation from a URL or GitHub repository.
 - `docmancer docs sync [source]`: re-fetch and re-index all sources, or one specific source.
@@ -33,6 +33,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 - `docmancer docs query "question" --allow-degraded`: in dense, sparse, or hybrid modes, fall back when vector retrieval fails instead of erroring.
 - `docmancer ask`, `docmancer read`, `docmancer write`, `docmancer edit`, `docmancer move`: use local memory.
 - `docmancer common`, `docmancer delivery`, `docmancer timeline`: inspect cross-agent recurrence, activation, and decision changes.
+- `docmancer cloud connect`: with explicit user authorization, connect the first machine, approve another machine by four-word code, or resume an approved connection. Use `--recover` only when no connected machine remains.
 - `docmancer duplicate`, `docmancer trash`, `docmancer restore`: perform explicit, hash-guarded file operations.
 - `docmancer docs list`, `docmancer docs remove`, `docmancer doctor`: manage and diagnose local state.
 - `docmancer docs download <url> --output <dir>`: download docs to markdown without indexing.

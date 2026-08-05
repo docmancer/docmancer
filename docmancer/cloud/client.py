@@ -251,6 +251,13 @@ class CloudClient:
             json=payload,
         )
 
+    def recover_device(self, workspace_id: str, device_id: str, payload: dict) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/devices/{device_id}/recover",
+            json=payload,
+        )
+
     def revoke_device(self, workspace_id: str, device_id: str) -> dict:
         return self._request(
             "POST",

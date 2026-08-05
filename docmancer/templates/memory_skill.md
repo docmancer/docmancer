@@ -10,7 +10,7 @@ allowed-tools:
 
 Executable: `{{DOCS_KIT_CMD}}`
 
-Docmancer combines automatically reconciled machine-wide Shared Memory, curated project Markdown, and attributable evidence discovered from local coding agents.
+Docmancer combines automatically maintained machine-wide Shared Memory, curated project Markdown, and attributable evidence discovered from local coding agents.
 
 ## Workflow
 
@@ -22,7 +22,7 @@ Docmancer combines automatically reconciled machine-wide Shared Memory, curated 
 6. Use `docmancer common`, `delivery`, or `timeline` for cross-agent recurrence, delivery proof, or canonical decision history.
 7. Use `docmancer docs ...` separately for library and vendor documentation.
 
-Read-only Ask reads the latest committed index and calls the configured answer provider by default when one is ready. It does not scan files or reconcile Shared Memory. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `docmancer ask "<the task>" --fresh` only when the task must wait for newly changed agent files.
+Read-only Ask reads the latest committed index and calls the configured answer provider by default when one is ready. It does not scan files or combine Shared Memory. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `docmancer ask "<the task>" --fresh` only when the task must wait for newly changed agent files.
 
 A reply to one action clarification continues the original request. Do not treat it as a new read-only question. Never interpret `yes` or `ok` as approval to execute a stored proposal. Broad machine-wide forget requests use `shared/canonical-exclusions.md` to filter generated Shared Memory; they never edit the underlying repository or agent-owned source memory.
 
@@ -32,7 +32,7 @@ A reply to one action clarification continues the original request. Do not treat
 
 Read one generated section with `docmancer memory canonical show <section>`, or read its raw file with paths such as `docmancer read --global profile/preferences.md`. Note that `--global` is required, because `docmancer read` otherwise resolves against the current project's tree.
 
-Each section has two zones. The generated zone is rebuilt automatically whenever the evidence changes, so anything written there is destroyed during the next reconciliation. The pinned zone is preserved exactly.
+Each section has two zones. The generated zone is rebuilt automatically whenever the evidence changes, so anything written there is destroyed during the next combination. The pinned zone is preserved exactly.
 
 When the user states a durable correction or standing preference that belongs to the whole machine rather than one project, pin it:
 
@@ -80,7 +80,7 @@ docmancer status --json
 - Keep memory and documentation results separate.
 - Generated-Context mutations (`context refresh`, `rollback`, `adopt`, and `retire`) are compatibility operations and remain human-controlled. Agents use Shared Memory and read-only delivery surfaces.
 
-The 0.8 aliases have been removed. Use `ask`, `web`, `import`, and `cloud sync` directly.
+The 0.8 aliases have been removed. Use `ask`, `web`, and `import` directly. When the user explicitly authorizes Personal Sync, `cloud connect` owns first-device setup, four-word approval, recovery fallback, and the automatic first transfer. Use `cloud sync` only for an explicit retry or later push and pull.
 
 <!-- docmancer:providers:start -->
 ## Generation providers

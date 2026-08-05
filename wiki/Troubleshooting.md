@@ -97,7 +97,7 @@ docmancer setup
 docmancer memory canonical --refresh
 ```
 
-Ask and web startup deliberately do not perform canonical reconciliation.
+Ask and web startup deliberately do not perform canonical combination.
 
 ## A legacy Context revision does not exist
 
@@ -177,6 +177,14 @@ Use `--provider`, `--strategy`, or `--max-pages` when automatic discovery choose
 
 Local Ask, Shared Memory, legacy Context, Library, integrations, capture, and docs continue to work. Reconnect with `docmancer cloud connect` when needed. Cloud adds encrypted continuity and coordination, not local recall quality.
 
+## A new VPS or machine is waiting for approval
+
+Leave the new machine at its four-word pairing code. On a machine that already has the workspace key, run `docmancer cloud connect`, compare the four words, and approve. Then run `docmancer cloud connect` once more on the new machine so it can receive its wrapped key and download memory. If no connected machine is available, restart with `docmancer cloud connect --recover` and enter the offline recovery kit.
+
+## Personal Sync stopped uploading after a billing problem
+
+A failed renewal keeps uploads available for a fixed 7-day grace period. After that, the hosted workspace is read-only for 30 days, so pull and encrypted export still work but new uploads do not. Reactivate before hosted deletion to resume sync. None of these states disable local memory or local commands.
+
 ## An old command is no longer recognised
 
-The 0.8 aliases were removed in 0.9. Use `ask` for recall, `web` for the human interface, `import` for arbitrary Markdown, `cloud sync` for encrypted continuity, and the `docs` or `agent` namespace for advanced operations. `context refresh` remains available only for generated-Context compatibility.
+The 0.8 aliases were removed in 0.9. Use `ask` for recall, `web` for the human interface, `import` for arbitrary Markdown, `cloud connect` for Personal Sync onboarding, `cloud sync` for an explicit encrypted-transfer retry, and the `docs` or `agent` namespace for advanced operations. `context refresh` remains available only for generated-Context compatibility.

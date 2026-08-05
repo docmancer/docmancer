@@ -93,18 +93,17 @@ def _print_cloud_status(value: dict) -> None:
                 "Local key material: "
                 + ("available" if local_keys.get("workspace_key_available") else "workspace key unavailable")
             )
-            click.echo(
-                "Next: approve this device from an existing trusted device, then run "
-                "`docmancer cloud sync`."
-            )
+            click.echo("Next: run `docmancer cloud connect` on a trusted machine and compare the pairing code.")
             return
         click.echo("Personal Sync: not connected")
         click.echo("Next: run `docmancer cloud connect` to connect this machine.")
         return
 
     recovery = value.get("recovery") if isinstance(value.get("recovery"), dict) else {}
-    if recovery.get("verified"):
-        recovery_label = "verified"
+    if recovery.get("protection") == "device_replacement":
+        recovery_label = "replacement ready"
+    elif recovery.get("verified"):
+        recovery_label = "decrypt only"
     elif recovery.get("configured"):
         recovery_label = "configured, not verified"
     else:
@@ -130,20 +129,14 @@ def _print_cloud_status(value: dict) -> None:
     elif conflicts:
         click.echo("Next: resolve the reported sync conflicts before relying on this machine's state.")
     elif not cursor:
-        click.echo("Next: run `docmancer cloud sync` to complete the first encrypted sync.")
+        click.echo("Automatic sync has not completed yet. Use `docmancer cloud sync` to retry.")
     else:
         click.echo("Status: setup is complete and the local sync queue is clear.")
 
     if not recovery.get("configured"):
         click.echo(
-            "Recommended: run `docmancer cloud recovery create`. Without a recovery key the "
-            "workspace key cannot be reconstructed at all. Keep an approved device either way, "
-            "because a recovery key alone cannot enrol a new machine."
-        )
-    elif not recovery.get("verified"):
-        click.echo(
-            "Optional: confirm you copied the key correctly with `docmancer cloud recovery verify`. "
-            "Nothing is blocked if you skip it."
+            "Recommended: create a recovery kit from Cloud settings. Without one, the workspace "
+            "key cannot be reconstructed if every connected device is lost."
         )
 
 
@@ -174,6 +167,7 @@ def _resume_existing_connect(
     account: dict,
     keys: KeyStore,
     root: Path,
+    recovery_key: str | None = None,
 ) -> bool:
     from docmancer.cloud.connect import ConnectError, resume_existing_connect
 
@@ -186,9 +180,66 @@ def _resume_existing_connect(
     if outcome is None:
         return False
     click.echo(str(outcome.get("message") or ""))
+    if outcome.get("state") == "pending_approval" and recovery_key:
+        _verify_recovery(recovery_key, approve_pending=True)
+        click.echo("Recovery approved this machine. Downloading encrypted memory now.")
+        _run_sync_command()
+        return True
+    if outcome.get("state") == "already_connected":
+        _offer_pending_device_approval(outcome)
     if outcome.get("state") == "resume_sync":
         _run_sync_command()
     return True
+
+
+def _offer_pending_device_approval(outcome: dict) -> None:
+    """Turn `cloud connect` on a trusted machine into the approval surface."""
+    from docmancer.cloud.connect import pairing_phrase
+    from docmancer.cloud.crypto import b64decode, b64encode, wrap_key
+
+    pending = list(outcome.get("pending_devices") or [])
+    if not pending:
+        return
+    if len(pending) > 1:
+        click.echo(
+            f"{len(pending)} machines are waiting for approval. Use the advanced "
+            "`docmancer cloud devices` command to choose one."
+        )
+        return
+    row = pending[0]
+    device_id = str(row.get("device_id") or row.get("id") or "")
+    fingerprint = str(row.get("fingerprint") or "")
+    phrase = pairing_phrase(fingerprint)
+    click.echo(f"Another machine is waiting. Pairing code: {phrase}")
+    if not click.get_text_stream("stdin").isatty():
+        click.echo("Run `docmancer cloud connect` interactively on this trusted machine to approve it.")
+        return
+    if not click.confirm("Does this code match the new machine? Approve it"):
+        return
+    client, _root_path, config, account, keys = _client()
+    workspace_id = str(account["workspace_id"])
+    account_id = str(account["account_id"])
+    workspace = config.workspace(workspace_id)
+    key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
+    workspace_key = keys.workspace_key(account_id, workspace_id, key_version)
+    box_public = row.get("box_public_key") or row.get("box_pubkey")
+    if not workspace_key or not box_public:
+        client.close()
+        raise click.ClickException("the trusted machine cannot prepare this device's key wrapper")
+    try:
+        client.approve_device(
+            workspace_id,
+            device_id,
+            {
+                "wrapped_key": b64encode(
+                    wrap_key(workspace_key, b64decode(str(box_public)))
+                ),
+                "key_version": key_version,
+            },
+        )
+    finally:
+        client.close()
+    click.echo("Machine approved. Rerun `docmancer cloud connect` there to finish restoration.")
 
 
 @click.group(cls=DocmancerGroup, context_settings=HELP_CONTEXT_SETTINGS, invoke_without_command=True, short_help="Manage optional encrypted cloud sync.")
@@ -199,7 +250,7 @@ def cloud_group(ctx: click.Context) -> None:
         _print_cloud_status(cloud_status())
 
 
-@cloud_group.command(cls=DocmancerCommand, short_help="Show local cloud state.", hidden=True)
+@cloud_group.command(cls=DocmancerCommand, short_help="Show local cloud state.")
 @click.option("--json", "as_json", is_flag=True)
 def status(as_json: bool) -> None:
     value = cloud_status()
@@ -209,7 +260,7 @@ def status(as_json: bool) -> None:
     _print_cloud_status(value)
 
 
-@cloud_group.command("connect", cls=DocmancerCommand, short_help="Connect encrypted cloud sync.")
+@cloud_group.command("connect", cls=DocmancerCommand, short_help="Connect, approve, or recover a Personal Sync device.")
 @click.option("--base-url", default=None, help="Docmancer Cloud API base URL. Defaults to the hosted service.")
 @click.option("--account-id", default=None, help="Required only with a static development token.")
 @click.option("--workspace-id", default=None, help="Required only with a static development token.")
@@ -219,10 +270,11 @@ def status(as_json: bool) -> None:
 @click.option(
     "--create-recovery/--no-create-recovery",
     default=True,
-    show_default=True,
-    help="Create and display a recovery key after connecting.",
+    hidden=True,
+    help="Create and display a recovery kit after connecting.",
 )
-@click.option("--recovery-key", default=None, hide_input=True, help="Verify an existing recovery key after connecting.")
+@click.option("--recover", is_flag=True, help="Recover a replacement device using an offline recovery kit.")
+@click.option("--recovery-key", default=None, hidden=True)
 def login(
     base_url: str | None,
     account_id: str | None,
@@ -231,6 +283,7 @@ def login(
     token: str | None,
     device_code_timeout: int,
     create_recovery: bool,
+    recover: bool,
     recovery_key: str | None,
 ) -> None:
     from docmancer.cloud.config import default_cloud_base_url
@@ -243,6 +296,10 @@ def login(
         start_connect,
     )
 
+    if recover and recovery_key:
+        raise click.UsageError("choose only one of --recover or --recovery-key")
+    if recover:
+        recovery_key = click.prompt("Recovery kit", hide_input=True)
     if recovery_key:
         # --create-recovery now defaults on, so only an explicit pairing is a usage error.
         source = click.get_current_context().get_parameter_source("create_recovery")
@@ -267,6 +324,7 @@ def login(
         else:
             if _resume_existing_connect(
                 base_url=resolved_base, config=config, account=existing_account, keys=keys, root=root,
+                recovery_key=recovery_key,
             ):
                 return
             session = start_connect(
@@ -284,19 +342,18 @@ def login(
 
     pending = outcome["state"] == "pending_approval"
     if pending:
-        click.echo(
-            f"Registered pending device {outcome['device_id']}. "
-            f"Approve this fingerprint from an existing device: {outcome['fingerprint']}"
-        )
+        click.echo(f"Registered this machine as a pending device ({outcome['device_id']}).")
+        from docmancer.cloud.connect import pairing_phrase
+
+        click.echo(f"Pairing code: {pairing_phrase(str(outcome['fingerprint']))}")
     else:
         _enqueue_current_project_or_warn(root, keys)
-        click.echo(f"Connected device {outcome['device_id']}. Encrypted sync is enabled.")
+        click.echo(f"Connected this machine ({outcome['device_id']}). Encrypted sync is enabled.")
     if create_recovery:
         if pending:
-            # A pending device has no workspace key yet, so there is nothing to wrap.
             click.echo(
-                "A recovery key cannot be created until this device is approved. "
-                "Run `docmancer cloud recovery create` afterwards."
+                "Approve the matching pairing code on an existing machine, or rerun "
+                "`docmancer cloud connect --recover` with your recovery kit."
             )
         else:
             try:
@@ -304,12 +361,25 @@ def login(
             except click.ClickException as exc:
                 # The device is connected either way, so this must not fail the command.
                 click.echo(
-                    f"Connected, but no recovery key was created: {exc.format_message()}. "
-                    "Run `docmancer cloud recovery create` to create one.",
+                    f"Connected, but no recovery kit was created: {exc.format_message()}. "
+                    "Open Cloud settings to create a replacement recovery kit.",
                     err=True,
                 )
     elif recovery_key:
-        _verify_recovery(recovery_key)
+        _verify_recovery(recovery_key, approve_pending=pending)
+        if pending:
+            click.echo("Recovery approved this machine. Downloading encrypted memory now.")
+            _run_sync_command()
+
+    if not pending:
+        click.echo("Running the first encrypted sync.")
+        try:
+            _run_sync_command()
+        except click.ClickException as exc:
+            click.echo(
+                f"Connected successfully, but the first sync needs a retry: {exc.format_message()}",
+                err=True,
+            )
 
 
 def _prompt_for_workspace(rows: list[dict]) -> dict:
@@ -426,7 +496,7 @@ def link(path: Path, project_id: str | None) -> None:
     click.echo(f"{project_id} -> {path}")
 
 
-@cloud_group.command(cls=DocmancerCommand, short_help="List, approve, or revoke registered devices.")
+@cloud_group.command(cls=DocmancerCommand, short_help="List, approve, or revoke registered devices.", hidden=True)
 @click.option("--approve", "approve_id", default=None, metavar="DEVICE_ID")
 @click.option("--revoke", "revoke_id", default=None, metavar="DEVICE_ID")
 @click.option("--fingerprint", default=None, help="Fingerprint confirmed out of band for --approve.")
@@ -611,12 +681,12 @@ def devsync() -> None:
     _run_sync_command()
 
 
-@cloud_group.group(cls=DocmancerGroup, short_help="Create and verify a recovery key.")
+@cloud_group.group(cls=DocmancerGroup, short_help="Manage legacy recovery operations.", hidden=True)
 def recovery() -> None:
     pass
 
 
-@recovery.command("create", cls=DocmancerCommand, short_help="Create and upload a recovery wrapper.")
+@recovery.command("create", cls=DocmancerCommand, short_help="Create and upload a self-tested recovery kit wrapper.")
 def recovery_create() -> None:
     _create_recovery()
 
@@ -629,10 +699,17 @@ def _create_recovery() -> None:
     workspace_key = keys.workspace_key(str(account.get("account_id") or ""), workspace_id)
     if not workspace_id or not workspace_key:
         raise click.ClickException("login and a local workspace key are required")
-    recovery_key, wrapper = create_recovery(workspace_id, workspace_key, root=root)
+    workspace = config.workspace(workspace_id)
+    key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
+    recovery_key, wrapper = create_recovery(
+        workspace_id,
+        workspace_key,
+        root=root,
+        key_version=key_version,
+    )
     wrapper_path = config.paths.root / "recovery-wrapper.json"
     wrapper_path.write_text(json.dumps(wrapper, indent=2) + "\n", encoding="utf-8")
-    click.echo("Store this recovery key offline. It will not be shown again:")
+    click.echo("Save this recovery kit offline. It will not be shown again:")
     click.echo(recovery_key)
     try:
         client, _root_path, _config, _account, _keys = _client()
@@ -642,22 +719,21 @@ def _create_recovery() -> None:
             client.close()
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Recovery wrapper is saved locally but was not uploaded: {exc}", err=True)
-    click.echo(
-        "Optional: confirm you copied it correctly with `docmancer cloud recovery verify`. "
-        "Nothing is blocked if you skip it."
-    )
+    click.echo("Recovery protection was cryptographically self-tested on this machine.")
 
 
-@recovery.command("verify", cls=DocmancerCommand, short_help="Verify a recovery key against the stored wrapper.")
+@recovery.command("verify", cls=DocmancerCommand, short_help="Verify a recovery kit against the stored wrapper.")
 @click.option("--key", prompt=True, hide_input=True)
 def recovery_verify(key: str) -> None:
     _verify_recovery(key)
 
 
-def _verify_recovery(key: str) -> None:
-    from docmancer.cloud.recovery import verify_recovery
+def _verify_recovery(key: str, *, approve_pending: bool = False) -> None:
+    from docmancer.cloud.crypto import b64encode, wrap_key
+    from docmancer.cloud.recovery import recovery_approval, verify_recovery
 
     root, config, account, keys = _context()
+    workspace_id = str(account["workspace_id"])
     wrapper_path = config.paths.root / "recovery-wrapper.json"
     if not wrapper_path.is_file():
         client, _root_path, _config, _account, _keys = _client()
@@ -667,11 +743,50 @@ def _verify_recovery(key: str) -> None:
             client.close()
     else:
         wrapper = json.loads(wrapper_path.read_text(encoding="utf-8"))
+    if str(wrapper.get("workspace_id") or "") != workspace_id:
+        raise click.ClickException("this recovery kit belongs to a different workspace")
+    account_id = str(account["account_id"])
+    device_id = str(account["device_id"])
     workspace_key = verify_recovery(key, wrapper, root=root)
-    workspace = config.workspace(str(account["workspace_id"]))
-    key_version = int((workspace[1] if workspace else {}).get("key_version") or 1)
-    keys.set_workspace_key(str(account["account_id"]), str(account["workspace_id"]), workspace_key, key_version=key_version)
-    click.echo("Recovery key verified.")
+    workspace = config.workspace(workspace_id)
+    key_version = int(
+        wrapper.get("key_version")
+        or (workspace[1] if workspace else {}).get("key_version")
+        or 1
+    )
+    if approve_pending:
+        sign_public = keys.get(account_id, "device-signing-public")
+        box_public = keys.get(account_id, "device-box-public")
+        if not sign_public or not box_public:
+            raise click.ClickException("this machine's device identity is incomplete")
+        wrapped_key = b64encode(wrap_key(workspace_key, box_public))
+        try:
+            approval = recovery_approval(
+                key,
+                wrapper,
+                device_id=device_id,
+                sign_public_key=b64encode(sign_public),
+                box_public_key=b64encode(box_public),
+                wrapped_key=wrapped_key,
+                key_version=key_version,
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        client, _root_path, _config, _account, _keys = _client()
+        try:
+            client.recover_device(workspace_id, device_id, approval)
+        finally:
+            client.close()
+    keys.set_workspace_key(
+        account_id,
+        workspace_id,
+        workspace_key,
+        key_version=key_version,
+    )
+    config.set_workspace(workspace_id, key_version=key_version)
+    if approve_pending:
+        config.save_account(enabled=True)
+    click.echo("Recovery kit verified locally.")
 
 
 @cloud_group.command("export", cls=DocmancerCommand, short_help="Export local memory without contacting the server.", hidden=True)

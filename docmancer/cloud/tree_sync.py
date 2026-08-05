@@ -13,6 +13,8 @@ from docmancer.cloud.serialize import build_tree_payload
 from docmancer.memory.tree.parser import parse_tree_file
 from docmancer.memory.tree.store import TreeStore, _atomic_write, _unlink_durable
 
+MACHINE_TREE_ID = "prj_machine"
+
 
 def payload_for_file(path: Path, *, tree_root: Path, project_id: str, parent: str | None = None) -> dict:
     entry = parse_tree_file(path)
@@ -40,13 +42,14 @@ def payload_for_file(path: Path, *, tree_root: Path, project_id: str, parent: st
     )
 
 
-def queue_tree_changes(
-    project_path: str | Path, *, root: str | Path, keystore=None,
+def _queue_tree_root(
+    tree_root: Path,
+    *,
+    project_id: str,
+    root: str | Path,
+    keystore=None,
 ) -> dict[str, int]:
-    project = Path(project_path).expanduser().resolve()
-    tree_root = project / ".docmancer" / "tree"
     config = CloudConfig(root)
-    project_id = config.ensure_project(project)
     state = CloudState(config.paths.sync_state)
     prior = state.tree_heads(project_id)
     current: dict[str, dict] = {}
@@ -96,20 +99,47 @@ def queue_tree_changes(
     return {"changed": len(payloads), "queued": queued}
 
 
+def queue_machine_tree_changes(
+    *, root: str | Path, keystore=None,
+) -> dict[str, int]:
+    """Queue the exact machine-wide canonical Markdown tree."""
+    return _queue_tree_root(
+        Path(root).expanduser().resolve() / "tree",
+        project_id=MACHINE_TREE_ID,
+        root=root,
+        keystore=keystore,
+    )
+
+
+def queue_tree_changes(
+    project_path: str | Path, *, root: str | Path, keystore=None,
+) -> dict[str, int]:
+    project = Path(project_path).expanduser().resolve()
+    return _queue_tree_root(
+        project / ".docmancer" / "tree",
+        project_id=CloudConfig(root).ensure_project(project),
+        root=root,
+        keystore=keystore,
+    )
+
+
 def apply_tree_payload(payload: dict, *, root: str | Path, state: CloudState) -> str:
     config = CloudConfig(root)
-    mapping = config.mapping_status(payload["project_id"])
-    if mapping["state"] != "mapped":
-        state.add_conflict(
-            record_ref=payload["file_id"],
-            local_revision_id=None,
-            remote_revision_id=payload["revision_id"],
-            reason=f"project_mapping_{mapping['state']}",
-            payload=payload,
-        )
-        return "deferred"
-    project = Path(mapping["paths"][0])
-    tree_root = project / ".docmancer" / "tree"
+    if payload["project_id"] == MACHINE_TREE_ID:
+        tree_root = Path(root).expanduser().resolve() / "tree"
+    else:
+        mapping = config.mapping_status(payload["project_id"])
+        if mapping["state"] != "mapped":
+            state.add_conflict(
+                record_ref=payload["file_id"],
+                local_revision_id=None,
+                remote_revision_id=payload["revision_id"],
+                reason=f"project_mapping_{mapping['state']}",
+                payload=payload,
+            )
+            return "deferred"
+        project = Path(mapping["paths"][0])
+        tree_root = project / ".docmancer" / "tree"
     store = TreeStore(tree_root)
     store.index.rebuild()
     address = f"docmancer://memory/{payload['file_id']}"
@@ -163,4 +193,10 @@ def apply_tree_payload(payload: dict, *, root: str | Path, state: CloudState) ->
     return outcome
 
 
-__all__ = ["apply_tree_payload", "payload_for_file", "queue_tree_changes"]
+__all__ = [
+    "MACHINE_TREE_ID",
+    "apply_tree_payload",
+    "payload_for_file",
+    "queue_machine_tree_changes",
+    "queue_tree_changes",
+]

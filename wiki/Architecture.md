@@ -4,13 +4,13 @@ Docmancer separates canonical local files, disposable retrieval state, agent del
 
 ## Canonical layer
 
-The machine-wide baseline lives as source-attributed Markdown under `~/.docmancer/tree`. Its stable scaffold includes `README.md`, `profile/about.md`, `profile/preferences.md`, `principles/working-style.md`, `projects/active.md`, and optional files under `shared/`. Docmancer reconciles the generated zones from eligible indexed evidence. A configured generation provider can merge and compress redacted evidence; deterministic local selection and rendering is the fallback. Pinned zones survive every rebuild.
+The machine-wide baseline lives as source-attributed Markdown under `~/.docmancer/tree`. Its stable scaffold includes `README.md`, `profile/about.md`, `profile/preferences.md`, `principles/working-style.md`, `projects/active.md`, and optional files under `shared/`. Docmancer combines the generated zones from eligible indexed evidence. A configured generation provider can merge and compress redacted evidence; deterministic local selection and rendering is the fallback. Pinned zones survive every rebuild.
 
 Deliberate project Markdown under `<project>/.docmancer/tree` remains the source of truth for project-specific curation. Frontmatter carries stable identity, type, scope, authority, project identity, source citations, lifecycle status, revision lineage, tags, and curation origin. Content hashes guard edits and moves.
 
 A memory atom is one small, self-contained, source-attributed fact, decision, rule, preference, or workflow. Atoms are disposable retrieval units derived from agent-owned evidence and canonical files. They have stable identities that do not depend on line numbers, and long content is split losslessly rather than truncated. They are not a second writable source of truth.
 
-Markdown that a user explicitly imports for whole-file curation lives under `.docmancer/inbox`. Automatic session capture uses the inbox only as a transient spool, then indexes durable conclusions, reconciles machine-wide memory, and removes the processed checkpoint. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
+Markdown that a user explicitly imports for whole-file curation lives under `.docmancer/inbox`. Automatic session capture uses the inbox only as a transient spool, then indexes durable conclusions, combines machine-wide memory, and removes the processed checkpoint. Recoverable deletions live under `.docmancer/trash`. Harvested agent-owned files remain read-only.
 
 ## Human outcomes
 
@@ -34,13 +34,13 @@ Retrieval changes must be evaluated against the repository benchmark corpus befo
 
 ## Capture and curation
 
-Lifecycle capture normalizes Claude Code and Codex hook payloads into one bounded schema. Redaction occurs before durable payload construction. Eligible durable conclusions are indexed and reconciled automatically, retrying the same event is idempotent, and failures never block the host agent.
+Lifecycle capture normalizes Claude Code and Codex hook payloads into one bounded schema. Redaction occurs before durable payload construction. Eligible durable conclusions are indexed and combined automatically, retrying the same event is idempotent, and failures never block the host agent.
 
-The setup warning and confirmation authorize automatic local reconciliation and, when configured, provider-assisted synthesis. Reconciliation performs structural extraction, exact normalized duplicate detection, stable whole-file placement, provenance recording, and deterministic fallback. It does not create a per-atom approval queue.
+The setup warning and confirmation authorize automatic local combination and, when configured, provider-assisted synthesis. Combination performs structural extraction, exact normalized duplicate detection, stable whole-file placement, provenance recording, and deterministic fallback. It does not create a per-atom approval queue.
 
 ## Surfaces
 
-CLI, MCP, and the local web application use the same file-first services. Read-only Ask calls a configured answer provider by default after retrieval, but it does not perform maintenance unless `--fresh` is explicit. Web startup serves the last committed index immediately and schedules a non-blocking changed-source refresh. Neither path reconciles Shared Memory as part of request latency. The web server binds to `127.0.0.1`, uses a one-time browser bootstrap token, and enforces origin and CSRF checks. Local filesystem mutations cannot be requested by the hosted website.
+CLI, MCP, and the local web application use the same file-first services. Read-only Ask calls a configured answer provider by default after retrieval, but it does not perform maintenance unless `--fresh` is explicit. Web startup serves the last committed index immediately and schedules a non-blocking changed-source refresh. Neither path combines Shared Memory as part of request latency. The web server binds to `127.0.0.1`, uses a one-time browser bootstrap token, and enforces origin and CSRF checks. Local filesystem mutations cannot be requested by the hosted website.
 
 Explicit mutation requests use the shared memory-action service. It retrieves bounded candidates, reads the authoritative complete file and hash, and makes one structured provider call. The validated result is either clarification, no action, or exactly one file action. The server creates the action ID, scope, paths, hashes, diff, and destructive classification. Saved web conversations persist the proposal in SQLite; Apply and Cancel address that server-owned record and never accept executable Markdown from the browser.
 
@@ -48,7 +48,7 @@ Apply rechecks the captured content hash and refuses stale edits instead of reba
 
 Action clarification is conversation state, not ordinary Ask prose. The saved assistant turn retains the original mutation request and clarification count, so the next user reply continues the same planning request. One repeated clarification is refused instead of starting a question loop. Confirmation-only chat messages never execute a pending action.
 
-Generated canonical sections still derive from read-only agent evidence. A broad machine-wide forget request creates or edits `shared/canonical-exclusions.md`, whose literal case-insensitive path and text rules filter evidence before section selection. Applying that control file triggers an immediate deterministic reconciliation. Source repositories and agent-owned memory files remain unchanged.
+Generated canonical sections still derive from read-only agent evidence. A broad machine-wide forget request creates or edits `shared/canonical-exclusions.md`, whose literal case-insensitive path and text rules filter evidence before section selection. Applying that control file triggers an immediate deterministic combination. Source repositories and agent-owned memory files remain unchanged.
 
 Docs retrieval remains a separate user-facing surface even though it shares parts of the local indexing engine.
 
@@ -62,4 +62,4 @@ External editors are supported because Markdown is canonical, but they do not by
 
 ## Cloud boundary
 
-Cloud handles encrypted transport, managed history and recovery, approved devices, and Team coordination. Plaintext canonical memory and private keys remain local. `docmancer cloud sync` is the only normal Cloud sync command. Local source maintenance runs through explicit memory sync, lifecycle capture, the optional web background refresh, or `ask --fresh`; `reindex` remains an advanced recovery operation.
+Cloud handles encrypted transport, managed history and recovery, approved devices, and Team coordination. Plaintext canonical memory and private keys remain local. `docmancer cloud connect` owns normal onboarding, trusted-device approval, recovery fallback, and the automatic first transfer. `docmancer cloud sync` is the explicit retry and subsequent push/pull command, not a separate onboarding gate. Local source maintenance runs through lifecycle capture, the optional web background refresh, or `ask --fresh`; `reindex` remains an advanced recovery operation.

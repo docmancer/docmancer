@@ -22,7 +22,9 @@ install: pipx install docmancer
 
 # docmancer
 
-Work from the same local memory as every other coding agent on this machine, instead of making the user explain the project again. Claude Code, Codex, Cursor, Gemini, and other coding agents write memory, instructions, and rules all over the machine, each locked in its own silo. Docmancer discovers that evidence, reconciles the durable parts into one human-readable Shared Memory tree, and gives every agent grounded, cited recall over it: automatically through recall hooks (Claude Code and Codex), on demand through this skill and the CLI, and through MCP tools for everything else. The core memory path runs locally. Network access happens only when the user explicitly fetches online documentation, uses an external model, checks a package registry, or enables Cloud.
+An AI-agent memory harness: shared memory for coding agents.
+
+Work from the same local memory as every other coding agent on this machine, instead of making the user explain the project again. Claude Code, Codex, Cursor, Gemini, and other coding agents write memory, instructions, and rules all over the machine, each locked in its own silo. Docmancer discovers that evidence, combines the durable parts into one human-readable Shared Memory tree, and gives every agent grounded, cited recall over it: automatically through recall hooks (Claude Code and Codex), on demand through this skill and the CLI, and through MCP tools for everything else. The core memory path runs locally. Network access happens only when the user explicitly fetches online documentation, uses an external model, checks a package registry, or enables Cloud.
 
 ## Quick start
 
@@ -69,6 +71,8 @@ docmancer status --check
 ```
 
 Existing-file mutations require the current content hash. Conversational Ask proposals affect exactly one complete file and never apply because the user merely types “yes”. Imported and harvested sources remain read-only. Never trash, restore, connect Cloud, change capture installation, or publish Team memory without explicit user authorization.
+
+When the user explicitly authorizes Personal Sync, `docmancer cloud connect` is the normal entry point. The first connected machine creates and checks the recovery kit and starts the first encrypted transfer. A second machine displays a four-word pairing code for approval from a connected machine; `docmancer cloud connect --recover` is the fallback when no connected machine remains. `docmancer cloud sync` is an explicit retry or later push and pull, not an onboarding requirement.
 
 ## Documentation commands
 

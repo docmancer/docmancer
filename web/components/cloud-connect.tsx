@@ -31,7 +31,7 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
   const [copied, setCopied] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
-  const [createRecovery, setCreateRecovery] = useState(true);
+  const [recoveryInput, setRecoveryInput] = useState("");
   const cancelled = useRef(false);
 
   useEffect(() => () => { cancelled.current = true; }, []);
@@ -48,7 +48,8 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
     try {
       const job = await apiStartJob("/api/v1/cloud/connect", {
         base_url: baseUrl.trim() || undefined,
-        create_recovery: createRecovery,
+        create_recovery: !recoveryInput.trim(),
+        recovery_key: recoveryInput.trim() || undefined,
       });
       const result = await watchJob(job, (stage, data) => {
         if (stage === "device_code") {
@@ -100,18 +101,23 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
         yet you will sign in with GitHub or Google first, and the code entry form appears
         straight after that.
       </p>
-      <label className="recovery-choice">
+      <div className="recovery-choice">
         <span className="recovery-choice-icon"><ShieldCheck size={18}/></span>
         <span className="recovery-choice-copy">
-          <strong>Create a recovery key</strong>
-          <small>Restore this workspace after a reset. The key is shown once, so save it somewhere safe.</small>
+          <strong>Recovery is included</strong>
+          <small>Your first device creates and checks a recovery kit automatically. Save the one-time download somewhere safe.</small>
         </span>
+      </div>
+      <label className="field">
+        <span>Recovery kit (only if this replaces a lost device)</span>
         <input
-          type="checkbox"
-          checked={createRecovery}
-          aria-label="Create a recovery key"
-          onChange={(event) => setCreateRecovery(event.target.checked)}
+          type="password"
+          value={recoveryInput}
+          autoComplete="off"
+          placeholder="Leave blank for a normal connection"
+          onChange={(event) => setRecoveryInput(event.target.value)}
         />
+        <small>A recovery kit can approve this replacement without another trusted machine.</small>
       </label>
       <button className="text-btn advanced-toggle" onClick={() => setAdvanced(!advanced)}>
         {advanced ? "Hide" : "Show"} advanced options
@@ -163,34 +169,26 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
       <p><LoaderCircle className="spin" size={15}/> Authorized. Registering this device and preparing the workspace.</p>
     </div>}
 
-    {phase === "pending_approval" && recoveryKey && <div className="connect-step">
-      <div className="feature-icon mint"><ShieldCheck size={19}/></div>
-      <h3>Save this recovery key before approving the device</h3>
-      <p>
-        This device is registered, but an existing approved device still needs to confirm
-        its fingerprint before encrypted sync can start.
-      </p>
-      <RecoveryKeyPanel value={recoveryKey} onAcknowledge={() => setRecoveryKey("")}/>
-    </div>}
-
-    {phase === "pending_approval" && !recoveryKey && <div className="connect-step">
+    {phase === "pending_approval" && <div className="connect-step">
       <div className="feature-icon mint"><ShieldCheck size={19}/></div>
       <h3>This device is registered and waiting for approval</h3>
       <p>
-        Your account already has an approved device, so that device has to confirm this one
-        before the workspace key is shared with it. Approve this fingerprint from the other
-        machine, then run a sync here.
+        On a connected machine, run <code>docmancer cloud connect</code> and confirm that both
+        machines show this four-word code. Then run connect here once more. If the other machine
+        is unavailable, start again and paste your recovery kit.
       </p>
-      <div className="device-code"><code>{String(outcome.fingerprint ?? "")}</code></div>
+      <div className="device-code"><code>{String(outcome.pairing_phrase ?? "Unavailable")}</code></div>
       <div className="form-actions"><button className="primary-btn" onClick={close}>Done</button></div>
     </div>}
 
     {phase === "connected" && <div className="connect-step">
       <div className="feature-icon mint"><Check size={19}/></div>
       <h3>This device is connected</h3>
+      <p className="muted">Docmancer has started the first encrypted sync automatically.</p>
       {Boolean(outcome.queue_warning) && <Notice kind="error">{String(outcome.queue_warning)}</Notice>}
+      {Boolean(outcome.sync_warning) && <Notice kind="error">Connected successfully, but the first sync needs a retry: {String(outcome.sync_warning)}</Notice>}
       {Boolean(outcome.recovery_upload_error) && <Notice kind="error">
-        This recovery key was saved on this machine, but it could not be uploaded: {String(outcome.recovery_upload_error)}.
+        This recovery kit was saved on this machine, but its hosted wrapper could not be uploaded: {String(outcome.recovery_upload_error)}.
         Until the upload succeeds, it will not work on a different machine. Retry from Settings once the service is reachable.
       </Notice>}
       {recoveryKey
@@ -203,26 +201,34 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
 export function RecoveryKeyPanel({ value, onAcknowledge }: { value: string; onAcknowledge: () => void }) {
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const download = () => {
+    const blob = new Blob([`${value}\n`], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "docmancer-recovery-kit.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+    setSaved(true);
+  };
   return <div className="recovery-panel">
-    <div className="recovery-warning"><TriangleAlert size={16}/> <strong>Store this recovery key offline now. It is shown once and cannot be retrieved again.</strong></div>
+    <div className="recovery-warning"><TriangleAlert size={16}/> <strong>Save this recovery kit offline now. It is shown once and can approve a replacement device.</strong></div>
     <div className="device-code">
       <code>{value}</code>
       <button
         className="icon-btn"
-        aria-label="Copy recovery key"
+        aria-label="Copy recovery kit"
         onClick={async () => {
           await navigator.clipboard.writeText(value).catch(() => undefined);
           setCopied(true);
+          setSaved(true);
           window.setTimeout(() => setCopied(false), 2000);
         }}
       >{copied ? <Check size={16}/> : <Copy size={16}/>}</button>
     </div>
-    <label className="checkbox-row">
-      <input type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)}/>
-      <span>I have saved this recovery key somewhere safe.</span>
-    </label>
     <div className="form-actions">
-      <button className="primary-btn" disabled={!saved} onClick={onAcknowledge}>Done</button>
+      <button className="primary-btn" onClick={download}>Download recovery kit</button>
+      {saved && <button className="secondary-btn" onClick={onAcknowledge}>Done</button>}
     </div>
   </div>;
 }

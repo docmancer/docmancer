@@ -1095,15 +1095,19 @@ class LocalApi:
             )
         base_url = optional_text(body, "base_url") or default_cloud_base_url()
         create_recovery = bool(body.get("create_recovery"))
+        recovery_key = optional_text(body, "recovery_key") or None
 
         async def operation(progress: Callable[[str, dict[str, Any]], None]) -> dict:
             outcome = await self.runtime.cloud_connect(
-                base_url=base_url, create_recovery=create_recovery, progress=progress,
+                base_url=base_url,
+                create_recovery=create_recovery,
+                recovery_key=recovery_key,
+                progress=progress,
             )
-            # The recovery key is shown exactly once and never enters the pollable job record.
-            recovery_key = outcome.pop("recovery_key", None)
-            self._recovery_key_once = recovery_key
-            outcome["recovery_key_available"] = recovery_key is not None
+            # The recovery kit is shown exactly once and never enters the pollable job record.
+            one_time_recovery_key = outcome.pop("recovery_key", None)
+            self._recovery_key_once = one_time_recovery_key
+            outcome["recovery_key_available"] = one_time_recovery_key is not None
             return outcome
 
         job = self.jobs.start("cloud.connect", operation)
@@ -1114,7 +1118,7 @@ class LocalApi:
         self._recovery_key_once = None
         if not recovery_key:
             return JSONResponse(
-                {"error": {"code": "NOT_FOUND", "message": "no unread recovery key is available"}},
+                {"error": {"code": "NOT_FOUND", "message": "no unread recovery kit is available"}},
                 status_code=404,
             )
         return JSONResponse({"recovery_key": recovery_key})

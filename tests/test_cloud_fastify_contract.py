@@ -82,7 +82,9 @@ def test_real_python_client_bootstraps_against_real_fastify_api(tmp_path):
         )
         UUID(created["workspace_id"])
         UUID(created["device_id"])
-        assert created["entitlement"]["status"] == "trialing"
+        assert created["entitlement"]["status"] == "incomplete"
+        assert created["entitlement"]["checkout_required"] is True
+        assert created["entitlement"]["can_push"] is True
         assert authenticated.status(created["workspace_id"])["devices"]["approved"] == 1
         authenticated.close()
 

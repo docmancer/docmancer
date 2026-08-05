@@ -54,6 +54,12 @@ ProgressCallback = Callable[[str, dict[str, Any]], None]
 WorkspaceChooser = Callable[[list[dict]], dict]
 
 DEVICE_CODE_TIMEOUT = 300
+_PAIRING_WORDS = (
+    "amber", "arch", "birch", "bloom", "cedar", "cobalt", "coral", "dawn",
+    "ember", "fern", "fjord", "flint", "grove", "harbour", "hazel", "iris",
+    "juniper", "lagoon", "lark", "maple", "meadow", "mist", "ocean", "olive",
+    "pebble", "pine", "quartz", "reed", "river", "sage", "tide", "willow",
+)
 
 
 def _noop(stage: str, data: dict[str, Any]) -> None:
@@ -68,6 +74,16 @@ def memory_root() -> Path:
 
 def _fingerprint(signing_public: bytes) -> str:
     return "docmancer-" + hashlib.sha256(signing_public).hexdigest()[:32]
+
+
+def pairing_phrase(fingerprint: str) -> str:
+    """Return a short visual comparison phrase for a full device fingerprint."""
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).digest()
+    value = int.from_bytes(digest[:3], "big") >> 4
+    words: list[str] = []
+    for shift in (15, 10, 5, 0):
+        words.append(_PAIRING_WORDS[(value >> shift) & 31])
+    return " ".join(words)
 
 
 def _canonical_uuid(value: Any, message: str) -> str:
@@ -167,19 +183,24 @@ def resume_existing_connect(
         "workspace_id": workspace_id,
         "device_id": device_id,
         "fingerprint": str(current.get("fingerprint") or "unknown"),
+        "pending_devices": [
+            row
+            for row in rows
+            if str(row.get("state") or "pending") == "pending"
+            and str(row.get("device_id") or row.get("id") or "") != device_id
+        ],
     }
     if state != "approved":
         result["state"] = "pending_approval"
+        result["pairing_phrase"] = pairing_phrase(result["fingerprint"])
         result["message"] = (
-            f"Device {device_id} is already pending approval. Confirm fingerprint: {result['fingerprint']}"
+            f"This machine is waiting for approval. Pairing code: {result['pairing_phrase']}"
         )
         emit("pending_approval", result)
         return result
     if config.enabled():
         result["state"] = "already_connected"
-        result["message"] = (
-            f"Device {device_id} is already connected. Run `docmancer cloud sync` to transfer changes."
-        )
+        result["message"] = f"This machine is connected ({device_id})."
         emit("already_connected", result)
         return result
 
@@ -616,5 +637,6 @@ __all__ = [
     "finish_connect",
     "memory_root",
     "resume_existing_connect",
+    "pairing_phrase",
     "start_connect",
 ]
