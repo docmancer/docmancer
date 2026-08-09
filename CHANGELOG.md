@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.15] - Unreleased
+## [0.9.15] - 2026-08-09
 ### Added
 
 - **Development-preview agent backup and restore for Claude Code and Codex.** `docmancer backup` previews a secret-stripped inventory before creating an encrypted local archive, while `docmancer restore` verifies the archive, requires project mapping where needed, skips identical files, and quarantines divergent history instead of overwriting it. Optional Cloud snapshots use the same encrypted archive format and deduplicate encrypted chunks.
