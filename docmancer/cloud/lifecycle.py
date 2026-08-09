@@ -27,7 +27,14 @@ def enqueue_revisions_if_enabled(
     root: str | Path,
     keystore: KeyStore | None = None,
 ) -> int:
-    """Encrypt and queue many revisions with one config, key, and DB session."""
+    """Encrypt revisions only when an explicit Cloud action supplies keys.
+
+    Local memory writes, agent hooks, and background refreshes intentionally
+    call this without a keystore. They must never unlock the operating-system
+    keyring. An explicit Cloud sync snapshots current revisions before transfer.
+    """
+    if keystore is None:
+        return 0
     config = CloudConfig(root)
     account = config.account()
     workspace = config.workspace()
@@ -39,7 +46,7 @@ def enqueue_revisions_if_enabled(
     key_version = int(workspace[1].get("key_version") or 1)
     if not account_id or not device_id:
         return 0
-    keys = keystore or KeyStore()
+    keys = keystore
     workspace_key = keys.workspace_key(account_id, workspace_id)
     signing_private = keys.get(account_id, "device-signing-private")
     if not workspace_key or not signing_private:

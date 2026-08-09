@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from docmancer.core.sqlite import connect
+
 
 class LibraryCatalog:
     """Index lightweight list metadata while canonical content stays elsewhere."""
@@ -19,7 +21,7 @@ class LibraryCatalog:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5)
+        connection = connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=5000")
         return connection

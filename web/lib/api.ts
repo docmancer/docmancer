@@ -2,19 +2,70 @@ export type JsonMap = Record<string, unknown>;
 
 let csrfToken = "";
 
-export async function establishSession(): Promise<void> {
-  const response = await fetch("/api/v1/session", { credentials: "same-origin" });
+/* Losing the local service is a whole-app condition, not a per-panel one. Every
+ * view that fetches on mount used to catch the same failure and render its own
+ * banner, so a single dead server produced a stack of identical notices and
+ * dismissing one only revealed the next. Connection failures are now published
+ * once here; the app shell renders them, panels skip them, and the state clears
+ * itself as soon as any request succeeds. */
+export const OFFLINE_MESSAGE =
+  "Docmancer cannot reach the local service on this machine. If you stopped it, start it again with docmancer web; this message clears itself once the connection is back.";
+export const SESSION_MESSAGE =
+  "This browser tab is no longer signed in to the local service. Reopen Docmancer from the terminal to authenticate it again.";
+
+let connectionMessage = "";
+const connectionListeners = new Set<(message: string) => void>();
+
+export function currentConnectionMessage(): string {
+  return connectionMessage;
+}
+
+export function isConnectionMessage(message: string): boolean {
+  return message === OFFLINE_MESSAGE || message === SESSION_MESSAGE;
+}
+
+export function onConnectionChange(listener: (message: string) => void): () => void {
+  connectionListeners.add(listener);
+  return () => { connectionListeners.delete(listener); };
+}
+
+function publishConnection(message: string) {
+  if (message === connectionMessage) return;
+  connectionMessage = message;
+  connectionListeners.forEach((listener) => listener(message));
+}
+
+async function request(path: string, init: RequestInit): Promise<JsonMap> {
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch (reason) {
+    // An aborted request is the caller's own doing and says nothing about the
+    // server, so it must not masquerade as a connection failure.
+    if (reason instanceof DOMException && reason.name === "AbortError") throw reason;
+    publishConnection(OFFLINE_MESSAGE);
+    throw new Error(OFFLINE_MESSAGE);
+  }
+  if (response.status === 401) {
+    publishConnection(SESSION_MESSAGE);
+    throw new Error(SESSION_MESSAGE);
+  }
   const data = await decode(response);
+  publishConnection("");
+  return data;
+}
+
+export async function establishSession(): Promise<void> {
+  const data = await request("/api/v1/session", { credentials: "same-origin" });
   csrfToken = String(data.csrf_token ?? "");
 }
 
 export async function apiGet(path: string, signal?: AbortSignal): Promise<JsonMap> {
-  const response = await fetch(path, {
+  return request(path, {
     credentials: "same-origin",
     headers: { Accept: "application/json" },
     signal,
   });
-  return decode(response);
 }
 
 export async function apiMutation(
@@ -22,7 +73,7 @@ export async function apiMutation(
   body: JsonMap,
   method = "POST",
 ): Promise<JsonMap> {
-  const response = await fetch(path, {
+  return request(path, {
     method,
     credentials: "same-origin",
     headers: {
@@ -32,7 +83,6 @@ export async function apiMutation(
     },
     body: JSON.stringify(body),
   });
-  return decode(response);
 }
 
 export async function apiJobMutation(

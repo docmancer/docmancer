@@ -13,6 +13,7 @@ from docmancer.cloud.config import CloudConfig
 from docmancer.cloud.crypto import b64decode, b64encode, box_keypair, random_key, signing_keypair, unwrap_key, wrap_key
 from docmancer.cloud.envelope import build_envelope, open_envelope
 from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allowed
+from docmancer.cloud.estimate import estimate_sync
 from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
 from docmancer.cloud.lifecycle import (
     enqueue_revision_if_enabled,
@@ -431,6 +432,24 @@ def test_lifecycle_queue_is_local_ciphertext_only(tmp_path):
     assert device["signing_private"] not in config.paths.sync_state.read_bytes()
 
 
+def test_lifecycle_does_not_open_keychain_without_explicit_cloud_action(
+    tmp_path, monkeypatch
+):
+    from docmancer.cloud import lifecycle
+
+    config = CloudConfig(tmp_path)
+    config.save_account(enabled=True, account_id="acct", workspace_id="ws", device_id="dev")
+    config.set_workspace("ws", key_version=1)
+
+    def forbidden_keystore():
+        raise AssertionError("local memory activity must not open Keychain")
+
+    monkeypatch.setattr(lifecycle, "KeyStore", forbidden_keystore)
+
+    assert enqueue_revision_if_enabled(payload(), root=tmp_path) is False
+    assert not config.paths.sync_state.exists()
+
+
 def test_lifecycle_bulk_queue_skips_known_revisions(tmp_path):
     config = CloudConfig(tmp_path)
     config.save_account(
@@ -604,6 +623,128 @@ def test_sync_refreshes_peer_keys_and_rotated_workspace_key(tmp_path):
     workspace = config.workspace("ws")[1]
     assert workspace["key_version"] == 2
     assert set(workspace["device_public_keys"]) == {"local", "peer"}
+
+
+def test_explicit_sync_snapshots_revisions_skipped_by_passive_local_writes(tmp_path):
+    config = CloudConfig(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    config.save_account(
+        enabled=True,
+        account_id="acct",
+        workspace_id="ws",
+        device_id="local",
+        base_url="https://cloud.invalid",
+    )
+    config.set_workspace("ws", key_version=1)
+    config.link_project("project-1", project)
+    keys = KeyStore(MemorySecretBackend())
+    local_keys = keys.ensure_device_keys("acct")
+    keys.set_workspace_key("acct", "ws", random_key(), key_version=1)
+    MemoryRecordStore(tmp_path).add(
+        "Queue this only when explicit sync runs.",
+        scope_kind="project",
+        project_path=project,
+    )
+    accepted: list[dict] = []
+
+    class Client:
+        def devices(self, _workspace_id):
+            return {
+                "current_key_version": 1,
+                "devices": [
+                    {
+                        "device_id": "local",
+                        "state": "approved",
+                        "key_version": 1,
+                        "signing_public_key": b64encode(local_keys["signing_public"]),
+                        "box_public_key": b64encode(local_keys["box_public"]),
+                    }
+                ],
+            }
+
+        def entitlement(self, _workspace_id):
+            return {
+                "status": "trialing",
+                "can_push": True,
+                "can_pull": True,
+                "can_export": True,
+            }
+
+        def push(
+            self,
+            _workspace_id,
+            envelopes,
+            *,
+            idempotency_key,
+            cursor,
+            protocol_version,
+        ):
+            accepted.extend(envelopes)
+            return {"accepted": [item["envelope_id"] for item in envelopes]}
+
+        def pull(self, _workspace_id, *, cursor=None, limit=250):
+            return {"envelopes": [], "cursor": str(cursor or "0")}
+
+    result = sync_once(Client(), root=tmp_path, keystore=keys)
+
+    assert result["projection_snapshots"] == 1
+    assert result["pushed"] >= 1
+    assert accepted
+    assert "Queue this only when explicit sync runs." not in json.dumps(accepted)
+
+
+def test_sync_estimate_sizes_encrypted_upload_without_queueing(tmp_path):
+    config = CloudConfig(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    config.save_account(
+        enabled=True,
+        account_id="acct",
+        workspace_id="ws",
+        device_id="local",
+        base_url="https://cloud.invalid",
+    )
+    config.set_workspace("ws", key_version=1)
+    config.link_project("prj_project", project)
+    keys = KeyStore(MemorySecretBackend())
+    keys.ensure_device_keys("acct")
+    keys.set_workspace_key("acct", "ws", random_key(), key_version=1)
+    MemoryRecordStore(tmp_path).add(
+        "Estimate this encrypted memory without changing the queue.",
+        scope_kind="project",
+        project_path=project,
+    )
+    state = CloudState(config.paths.sync_state)
+    before = state.status()
+
+    result = estimate_sync(
+        root=tmp_path,
+        keystore=keys,
+        entitlement={
+            "status": "active",
+            "plan_key": "sync",
+            "can_push": True,
+            "can_pull": True,
+            "limits": {
+                "sync_storage_bytes": None,
+                "max_envelope_bytes": 1_200_000,
+                "max_batch_bytes": 8_000_000,
+                "max_batch_count": 100,
+                "backup_storage_bytes": 1_000_000_000,
+            },
+        },
+    )
+
+    assert result["estimate"]["new_envelopes"] == 1
+    assert result["estimate"]["existing_queued_envelopes"] == 0
+    assert result["estimate"]["upload_request_bytes"] > result["estimate"]["new_plaintext_bytes"]
+    assert result["estimate"]["encrypted_ciphertext_bytes"] > result["estimate"]["new_plaintext_bytes"]
+    assert result["limits"]["sync_storage_bytes"] is None
+    assert result["fits_limits"] is True
+    assert result["read_only"] is True
+    assert state.status() == before
+    assert state.pending_all() == []
 
 
 def test_remote_lineage_apply_and_conflict(tmp_path):

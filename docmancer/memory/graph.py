@@ -19,6 +19,7 @@ from threading import Lock
 from typing import Callable, Iterable, Sequence
 
 from docmancer.memory.atomic import AtomicMemoryEntry
+from docmancer.core.sqlite import connect
 
 
 GRAPH_SCHEMA_VERSION = 2
@@ -128,7 +129,7 @@ class MemoryGraphStore:
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=5.0)
+        conn = connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")

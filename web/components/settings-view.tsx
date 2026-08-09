@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { apiGet, apiJobMutation, apiMutation, type JsonMap } from "@/lib/api";
-import { AgentGroup, CommandRow, Loading, messageOf, Notice, PageHeading, rows } from "./workspace-app";
+import { AgentGroup, CommandRow, Loading, Notice, PageHeading, panelMessage, rows } from "./workspace-app";
 import { CloudSettings } from "./cloud-settings";
 import { WizardLogo } from "./wizard-logo";
 
@@ -49,7 +49,7 @@ export function AgentEditor({ onSaved }: { onSaved?: () => void }) {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    apiGet("/api/v1/agent").then(setValue).catch((reason) => setError(messageOf(reason))).finally(() => setLoading(false));
+    apiGet("/api/v1/agent").then(setValue).catch((reason) => setError(panelMessage(reason))).finally(() => setLoading(false));
   }, []);
   const save = async () => {
     setBusy(true); setError("");
@@ -57,7 +57,7 @@ export function AgentEditor({ onSaved }: { onSaved?: () => void }) {
       setValue(await apiMutation("/api/v1/agent", value, "PUT"));
       setNotice("Docmancer's behavior was saved locally.");
       onSaved?.();
-    } catch (reason) { setError(messageOf(reason)); }
+    } catch (reason) { setError(panelMessage(reason)); }
     finally { setBusy(false); }
   };
   if (loading) return <Loading label="Loading Docmancer"/>;
@@ -96,7 +96,7 @@ function ModelSettings() {
     setProviders(rows(providerData.items).filter((item) => Array.isArray(item.capabilities) && item.capabilities.map(String).includes("llm")));
     setDefaults(defaultData);
   };
-  useEffect(() => { queueMicrotask(() => load().catch((reason) => setError(messageOf(reason)))); }, []);
+  useEffect(() => { queueMicrotask(() => load().catch((reason) => setError(panelMessage(reason)))); }, []);
   const loadModels = async (refresh = false) => {
     if (!selected) return;
     if (refresh) setBusy("models");
@@ -106,7 +106,7 @@ function ModelSettings() {
       setModelState(data);
     } catch (reason) {
       setModels([]);
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
     } finally {
       if (refresh) setBusy("");
     }
@@ -121,7 +121,7 @@ function ModelSettings() {
       }).catch((reason) => {
         if (cancelled) return;
         setModels([]);
-        setError(messageOf(reason));
+        setError(panelMessage(reason));
       });
     });
     return () => { cancelled = true; };
@@ -134,17 +134,17 @@ function ModelSettings() {
   const save = async () => {
     setBusy("save");
     try { setDefaults(await apiMutation("/api/v1/settings/ai-defaults", defaults, "PUT")); setNotice("Model settings saved locally."); }
-    catch (reason) { setError(messageOf(reason)); } finally { setBusy(""); }
+    catch (reason) { setError(panelMessage(reason)); } finally { setBusy(""); }
   };
   const saveKey = async () => {
     setBusy("key");
     try { await apiMutation(`/api/v1/providers/${selected}/key`, { key, validate: false }, "PUT"); setKey(""); setNotice("Credential stored in your operating-system keyring."); await load(); }
-    catch (reason) { setError(messageOf(reason)); } finally { setBusy(""); }
+    catch (reason) { setError(panelMessage(reason)); } finally { setBusy(""); }
   };
   const test = async () => {
     setBusy("test");
     try { const result = await apiMutation(`/api/v1/providers/${selected}/test`, {}); setNotice(`${String(provider.label ?? selected)} is ready with ${String(result.model ?? activeModel)}.`); }
-    catch (reason) { setError(messageOf(reason)); } finally { setBusy(""); }
+    catch (reason) { setError(panelMessage(reason)); } finally { setBusy(""); }
   };
   return <div className="settings-form">
     <div className="settings-title"><div className="feature-icon blue"><SlidersHorizontal size={19}/></div><div><span className="eyebrow">One active model</span><h2>Model configuration</h2><p>Select a provider first, then choose one of its models.</p></div></div>
@@ -225,7 +225,7 @@ export function SetupFlow({ initial, onComplete }: { initial: JsonMap; onComplet
       if (result.verified === false) throw new Error("Docmancer finished setup, but one or more integrations could not be verified.");
       setNotice("The selected integrations were installed and verified.");
       window.setTimeout(() => onComplete?.(), 450);
-    } catch (reason) { setError(messageOf(reason)); } finally { setBusy(false); }
+    } catch (reason) { setError(panelMessage(reason)); } finally { setBusy(false); }
   };
   const toggle = (id: string) => setSelected((current) => {
     const next = new Set(current);

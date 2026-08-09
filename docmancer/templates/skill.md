@@ -16,6 +16,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 - Prior decisions, project conventions, standing instructions, preferences, or earlier failures may affect the task.
 - The user explicitly asks to remember or manage durable memory.
 - The user asks about a library, SDK, API, or vendor and indexed documentation may provide a more exact answer.
+- The user explicitly asks to protect, move, or restore Claude Code or Codex history and setup.
 
 ## Memory workflow
 
@@ -49,6 +50,9 @@ docmancer edit docmancer://memory/<id> - --expected-hash <hash>
 docmancer move docmancer://memory/<id> decisions/hosting.md --expected-hash <hash>
 docmancer import ./notes
 docmancer status --json
+docmancer backup --dry-run
+docmancer restore ./agents.dmbak --dry-run
+docmancer consolidate
 ```
 
 `docmancer import` copies whole Markdown files into the project inbox. It never rewrites the source. Stable `docmancer://memory/<id>` addresses survive moves.
@@ -61,7 +65,9 @@ Generated machine-wide sections contain a pinned zone and a generated zone. Comb
 
 Conversational Ask proposals affect exactly one complete file and never apply because the user merely types “yes”. Never trash, restore, connect Cloud, change capture installation, or publish Team memory without explicit user authorization.
 
-When the user explicitly authorizes Personal Sync, use `docmancer cloud connect` for the first machine, four-word approval from a connected machine, and the automatic first transfer. Use `docmancer cloud connect --recover` only when no connected machine remains. `docmancer cloud sync` is an explicit retry or later push and pull, not an onboarding requirement.
+Agent backup is separate from Shared Memory file restore. Use `docmancer backup --dry-run` for a read-only inventory only when backup scope is relevant. Create a snapshot, run `docmancer restore`, or approve a consolidation proposal only when the user explicitly authorizes that action. Cloud key rotation is unavailable while encrypted history exists. `docmancer memory-restore` is the legacy hash-guarded Shared Memory file operation.
+
+When the user explicitly authorizes Personal Sync, use `docmancer cloud connect` for the first machine, four-word approval from a connected machine, and the automatic first transfer. Use `docmancer cloud connect --recover` only when no connected machine remains. `docmancer cloud estimate` is a read-only preview of upload size and plan limits. `docmancer cloud sync` is an explicit retry or later push and pull, not an onboarding requirement.
 
 ## Documentation workflow
 

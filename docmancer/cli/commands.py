@@ -1418,6 +1418,53 @@ def doctor_cmd(config_path: str | None):
         _emit_status_line(f"unavailable ({exc})", state="warn", indent=4)
 
     click.echo()
+    click.echo(_style("  Agent backup and restore", fg="white", bold=True))
+    try:
+        from docmancer.backup.inventory import inventory as backup_inventory
+
+        backup = backup_inventory(home=home).as_dict()
+        by_agent = backup.get("by_agent") or {}
+        if by_agent:
+            _emit_status_line(
+                f"adapters ready: {', '.join(f'{name} ({count} artifacts)' for name, count in sorted(by_agent.items()))}",
+                indent=4,
+            )
+            for name in sorted(by_agent):
+                adapter_versions = ", ".join(
+                    str(value) for value in backup["adapter_versions"].get(name, [])
+                ) or "unknown"
+                vendor_versions = ", ".join(
+                    backup["vendor_versions"].get(name, [])
+                ) or "unknown"
+                _emit_status_line(
+                    f"{name}: adapter {adapter_versions}; vendor {vendor_versions}",
+                    indent=6,
+                )
+        else:
+            _emit_status_line("no Claude Code or Codex backup artifacts detected", state="warn", indent=4)
+        _emit_status_line(
+            f"portable inventory: {backup['artifacts']} artifacts, {backup['source_bytes']} logical bytes, {len(backup['excluded'])} exclusions",
+            indent=4,
+        )
+    except Exception as exc:  # noqa: BLE001 - doctor must continue through other checks
+        _emit_status_line(f"adapter inventory failed ({exc})", state="error", indent=4)
+    try:
+        from docmancer.backup.cloud import cloud_backup_status
+
+        cloud_backups = cloud_backup_status()
+        if cloud_backups.get("error"):
+            _emit_status_line(f"Cloud backup status unavailable ({cloud_backups['error']})", state="warn", indent=4)
+        elif cloud_backups.get("connected"):
+            _emit_status_line(
+                f"Cloud snapshots: {len(cloud_backups['snapshots'])}; pending key migrations: {cloud_backups['pending_key_migration']}; quota: {cloud_backups['quota_bytes']} bytes",
+                indent=4,
+            )
+        else:
+            _emit_status_line("Cloud not connected; encrypted local .dmbak archives are available", indent=4)
+    except Exception as exc:  # noqa: BLE001 - network diagnostics are non-fatal
+        _emit_status_line(f"Cloud backup check unavailable ({exc})", state="warn", indent=4)
+
+    click.echo()
     click.echo(_style("  Project Shared Memory", fg="white", bold=True))
     from docmancer.memory.tree.project import resolve_project_root
 

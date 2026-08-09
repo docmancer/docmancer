@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.15] - Unreleased
+### Added
+
+- **Development-preview agent backup and restore for Claude Code and Codex.** `docmancer backup` previews a secret-stripped inventory before creating an encrypted local archive, while `docmancer restore` verifies the archive, requires project mapping where needed, skips identical files, and quarantines divergent history instead of overwriting it. Optional Cloud snapshots use the same encrypted archive format and deduplicate encrypted chunks.
+- **Reviewed transcript consolidation.** `docmancer consolidate` finds durable candidate decisions and constraints in Claude Code and Codex histories, preserves source evidence, and requires an explicit review and approval before it writes a memory atom. An optional configured provider receives only bounded redacted candidate spans.
+- **Read-only Personal Sync estimates.** `docmancer cloud estimate` calculates the next encrypted upload, including queue state, encryption overhead, request batching, and plan limits, without queueing or sending data.
+- **Workspace-key rotation.** `docmancer cloud rotate-key` prepares replacement device and recovery wrappers for an approved workspace key rotation. It refuses to rotate while an agent-backup migration would make historical snapshots unsafe.
+
+### Fixed
+
+- **Local SQLite connections close reliably.** Stores now share a connection helper that closes file descriptors after use, preventing a long-running local app from exhausting its file limit.
+- **Passive local actions do not unlock the operating-system keyring.** Cloud credentials are read only for an explicit Cloud action, while the status command can perform an explicit keychain check when needed.
+
 ## [0.9.14] - 2026-08-05
 ### Added
 

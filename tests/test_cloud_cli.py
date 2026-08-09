@@ -24,7 +24,7 @@ def test_cloud_status_explains_the_next_step(tmp_path, monkeypatch):
     assert '"configured"' not in result.output
 
 
-def test_cloud_status_exposes_pending_registration_and_key_availability(tmp_path, monkeypatch):
+def test_cloud_status_exposes_pending_registration_without_reading_keychain(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
 
     monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
@@ -49,13 +49,38 @@ def test_cloud_status_exposes_pending_registration_and_key_availability(tmp_path
     assert value["registered"] is True
     assert value["connection_state"] == "pending_approval"
     assert value["local_keys"] == {
-        "device_identity_available": True,
-        "workspace_key_available": True,
+        "checked": False,
+        "device_identity_available": None,
+        "workspace_key_available": None,
     }
     assert result.exit_code == 0
     assert "device registered, awaiting approval" in result.output
-    assert "Local key material: available" in result.output
+    assert "Local key material: not checked" in result.output
     assert "trusted machine" in result.output
+
+
+def test_cloud_status_checks_keychain_only_when_explicitly_requested(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id="account-1",
+        workspace_id="workspace-1",
+        device_id="device-1",
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.ensure_device_keys("account-1")
+    keys.set_workspace_key("account-1", "workspace-1", b"w" * 32)
+    monkeypatch.setattr(cloud_commands, "KeyStore", lambda: keys)
+
+    value = cloud_commands.cloud_status(tmp_path, check_keychain=True)
+
+    assert value["local_keys"] == {
+        "checked": True,
+        "device_identity_available": True,
+        "workspace_key_available": True,
+    }
 
 
 def test_cloud_status_summarises_connected_state(monkeypatch):
@@ -64,7 +89,7 @@ def test_cloud_status_summarises_connected_state(monkeypatch):
     monkeypatch.setattr(
         cloud_commands,
         "cloud_status",
-        lambda: {
+        lambda **_kwargs: {
             "configured": True,
             "account_id": "account-1",
             "workspace_id": "workspace-1",
@@ -87,6 +112,67 @@ def test_cloud_status_summarises_connected_state(monkeypatch):
     assert "Last sync cursor: none yet" in result.output
     assert "Next: run `docmancer cloud sync`" in result.output
     assert '"pending"' not in result.output
+
+
+def test_cloud_estimate_reports_size_limits_and_does_not_sync(monkeypatch):
+    from docmancer.cli import cloud_commands
+    from docmancer.cloud import estimate as estimate_module
+
+    class Client:
+        def entitlement(self, _workspace_id):
+            return {"status": "active", "can_push": True}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cloud_commands,
+        "_client",
+        lambda: (
+            Client(),
+            object(),
+            object(),
+            {"workspace_id": "workspace-1"},
+            object(),
+        ),
+    )
+    monkeypatch.setattr(
+        estimate_module,
+        "estimate_sync",
+        lambda **_kwargs: {
+            "plan": {"key": "sync", "status": "active", "can_push": True},
+            "estimate": {
+                "total_envelopes": 3,
+                "upload_batches": 1,
+                "upload_request_bytes": 2400,
+                "encrypted_envelope_bytes": 2200,
+                "encrypted_ciphertext_bytes": 1500,
+                "new_plaintext_bytes": 1200,
+                "existing_queued_envelopes": 1,
+                "new_envelopes": 2,
+            },
+            "limits": {
+                "source": "service",
+                "sync_storage_bytes": None,
+                "max_envelope_bytes": 1_200_000,
+                "max_batch_bytes": 8_000_000,
+                "max_batch_count": 100,
+                "client_batch_target_bytes": 6_000_000,
+                "backup_storage_bytes": 1_000_000_000,
+            },
+            "by_kind": {"record_revision": {"envelopes": 2}},
+            "issues": [],
+        },
+    )
+
+    result = CliRunner().invoke(cli, ["cloud", "estimate"])
+
+    assert result.exit_code == 0
+    assert "Will send: 3 encrypted envelope(s) in 1 request(s)" in result.output
+    assert "Estimated upload: 2.4 KB" in result.output
+    assert "no stored-memory quota" in result.output
+    assert "Agent backup storage: 1 GB (separate from Personal Sync)" in result.output
+    assert "Nothing was queued or uploaded" in result.output
 
 
 def test_cloud_disable_does_not_remove_local_memory(tmp_path, monkeypatch):

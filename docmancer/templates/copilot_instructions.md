@@ -30,7 +30,7 @@ docmancer read docmancer://memory/<id>
 docmancer write "# Decision" --path decisions/example.md --scope project
 docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>
 docmancer trash docmancer://memory/<id> --expected-hash <hash>
-docmancer restore <restore-token>
+docmancer memory-restore <restore-token>
 docmancer docs add ./docs
 docmancer docs add https://docs.example.com
 docmancer docs sync

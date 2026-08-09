@@ -57,7 +57,11 @@ For a broad machine-wide forget request, Docmancer proposes `shared/canonical-ex
 | `docmancer move <address> <new-path> --expected-hash <hash>` | Moves a file while preserving its stable identity. |
 | `docmancer duplicate <address> <new-path> --expected-hash <hash>` | Creates a copy with a new stable identity. |
 | `docmancer trash <address> --expected-hash <hash>` | Moves a file into recoverable trash. |
-| `docmancer restore <token>` | Restores a trashed file using its restore token. |
+| `docmancer restore [archive.dmbak]` | Verifies, previews, and restores a local archive or an approved Cloud source-device snapshot. |
+| `docmancer memory-restore <token>` | Restores a trashed Shared Memory file using its restore token. |
+| `docmancer backup --dry-run` | Previews Claude Code and Codex artifacts, transformations, and exclusions. |
+| `docmancer backup` | Creates an encrypted local or managed Cloud agent snapshot. |
+| `docmancer consolidate` | Creates source-attributed memory proposals from agent histories for review. |
 | `docmancer import <path>` | Copies Markdown into the project inbox for whole-file curation without modifying the source. |
 
 Existing-file writes are hash guarded. Imported and harvested source files remain read-only evidence.
@@ -170,6 +174,7 @@ Three stores sit behind the search tools, and they are deliberately separate. `s
 | --- | --- |
 | `docmancer cloud connect` | Connects a device, creates and checks the first-device recovery kit, and starts encrypted sync. On a trusted device it also offers to approve one pending machine by four-word code. Run it again on the approved machine to finish and pull memory. |
 | `docmancer cloud status` | Shows local account, workspace, device, and transfer state. |
+| `docmancer cloud estimate` | Sizes changed memory, encryption overhead, upload requests, and current plan limits without queueing or uploading anything. Add `--json` for structured output. |
 | `docmancer cloud sync` | Pushes and pulls client-encrypted revisions. |
 | `docmancer cloud devices` | Lists devices and supports explicit approval or revocation. |
 | `docmancer cloud recovery create` | Advanced command that replaces the current recovery kit with a self-tested version 2 kit. |

@@ -23,7 +23,12 @@ def _root() -> Path:
     return Path(default_memory_db()).parent
 
 
-def cloud_status(root: str | Path | None = None) -> dict:
+def cloud_status(
+    root: str | Path | None = None,
+    *,
+    check_keychain: bool = False,
+) -> dict:
+    """Return local Cloud metadata without unlocking Keychain by default."""
     base = Path(root) if root else _root()
     config = CloudConfig(base)
     state = CloudState(config.paths.sync_state)
@@ -31,14 +36,12 @@ def cloud_status(root: str | Path | None = None) -> dict:
     account_id = str(account.get("account_id") or "")
     workspace_id = str(account.get("workspace_id") or "")
     device_id = str(account.get("device_id") or "")
-    keys = KeyStore()
-    session_available = bool(account_id and keys.token(account_id))
-    registered = bool(
-        session_available and account_id and workspace_id and device_id
-    )
-    device_identity_available = bool(
-        account_id
-        and all(
+    registered = bool(account_id and workspace_id and device_id)
+    device_identity_available: bool | None = None
+    workspace_key_available: bool | None = None
+    if check_keychain and account_id:
+        keys = KeyStore()
+        device_identity_available = all(
             keys.get(account_id, kind)
             for kind in (
                 "device-signing-private",
@@ -47,10 +50,9 @@ def cloud_status(root: str | Path | None = None) -> dict:
                 "device-box-public",
             )
         )
-    )
-    workspace_key_available = bool(
-        account_id and workspace_id and keys.workspace_key(account_id, workspace_id)
-    )
+        workspace_key_available = bool(
+            workspace_id and keys.workspace_key(account_id, workspace_id)
+        )
     workspace = config.workspace()
     recovery = {"configured": False, "verified": False}
     if config.paths.recovery_status.is_file():
@@ -72,6 +74,7 @@ def cloud_status(root: str | Path | None = None) -> dict:
         "device_id": account.get("device_id"),
         "base_url": account.get("base_url"),
         "local_keys": {
+            "checked": check_keychain,
             "device_identity_available": device_identity_available,
             "workspace_key_available": workspace_key_available,
         },
@@ -91,7 +94,13 @@ def _print_cloud_status(value: dict) -> None:
             click.echo(f"This device: {value.get('device_id') or 'unknown'}")
             click.echo(
                 "Local key material: "
-                + ("available" if local_keys.get("workspace_key_available") else "workspace key unavailable")
+                + (
+                    "available"
+                    if local_keys.get("workspace_key_available")
+                    else "workspace key unavailable"
+                    if local_keys.get("checked")
+                    else "not checked (checked when a Cloud action needs it)"
+                )
             )
             click.echo("Next: run `docmancer cloud connect` on a trusted machine and compare the pairing code.")
             return
@@ -252,12 +261,106 @@ def cloud_group(ctx: click.Context) -> None:
 
 @cloud_group.command(cls=DocmancerCommand, short_help="Show local cloud state.")
 @click.option("--json", "as_json", is_flag=True)
-def status(as_json: bool) -> None:
-    value = cloud_status()
+@click.option(
+    "--check-keychain",
+    is_flag=True,
+    help="Verify stored Cloud keys now. This may show a macOS Keychain prompt.",
+)
+def status(as_json: bool, check_keychain: bool) -> None:
+    value = cloud_status(check_keychain=check_keychain)
     if as_json:
         click.echo(json.dumps(value, indent=2, sort_keys=True))
         return
     _print_cloud_status(value)
+
+
+@cloud_group.command("rotate-key", cls=DocmancerCommand, short_help="Rotate encrypted Cloud data to a new workspace key.")
+@click.option("--yes", is_flag=True, help="Confirm the rotation after the recovery kit is verified.")
+def rotate_key(yes: bool) -> None:
+    """Atomically wrap a new key for every approved device and recovery."""
+    from docmancer.cloud.crypto import b64decode
+    from docmancer.cloud.recovery import rewrap_recovery
+    from docmancer.cloud.rotation import prepare_rotation
+
+    client, root, config, account, keys = _client()
+    workspace_id = str(account["workspace_id"])
+    account_id = str(account["account_id"])
+    current = config.workspace(workspace_id)
+    current_version = int(
+        account.get("key_version")
+        or (current[1] if current else {}).get("key_version")
+        or 1
+    )
+    previous_key = keys.workspace_key(account_id, workspace_id, current_version)
+    if previous_key is None:
+        client.close()
+        raise click.ClickException("the current workspace key is unavailable on this device")
+    local = cloud_status(root)
+    if int(local.get("pending") or 0):
+        client.close()
+        raise click.ClickException("sync pending encrypted revisions before rotating the workspace key")
+    try:
+        snapshots = list(client.backups(workspace_id).get("snapshots") or [])
+        if snapshots:
+            raise click.ClickException(
+                "workspace-key rotation is unavailable while agent backups exist; "
+                "historical-key migration must land before rotation can be safe"
+            )
+        devices = [
+            row
+            for row in list(client.devices(workspace_id).get("devices") or [])
+            if str(row.get("state") or "") == "approved"
+        ]
+        public_keys = {
+            str(row.get("device_id") or row.get("id")): b64decode(
+                str(row.get("box_public_key") or row.get("box_pubkey") or "")
+            )
+            for row in devices
+        }
+        if not public_keys:
+            raise click.ClickException("no approved devices are available for key rotation")
+        stored_wrapper = client.recovery_wrapper(workspace_id)
+        new_version = current_version + 1
+        new_key, prepared = prepare_rotation(public_keys, key_version=new_version)
+        recovery_key = click.prompt("Recovery kit", hide_input=True)
+        try:
+            recovery_wrapper = rewrap_recovery(
+                recovery_key,
+                stored_wrapper,
+                previous_workspace_key=previous_key,
+                workspace_key=new_key,
+                key_version=new_version,
+            )
+        except (KeyError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not yes and not click.confirm(
+            f"Rotate workspace key from version {current_version} to {new_version} for {len(public_keys)} approved device(s)?",
+            default=False,
+        ):
+            raise click.Abort()
+        result = client.rotate_workspace_key(
+            workspace_id,
+            {
+                "key_version": new_version,
+                "wrappers": [
+                    {"device_id": device_id, "wrapped_key": wrapped_key}
+                    for device_id, wrapped_key in prepared["wrappers"].items()
+                ],
+                "recovery_wrapper": recovery_wrapper,
+            },
+        )
+        keys.set_workspace_key(account_id, workspace_id, new_key, key_version=new_version)
+        config.set_workspace(workspace_id, key_version=new_version)
+        config.save_account(key_version=new_version)
+        wrapper_path = config.paths.root / "recovery-wrapper.json"
+        wrapper_path.write_text(json.dumps(recovery_wrapper, indent=2) + "\n", encoding="utf-8")
+        click.echo(
+            f"Workspace key rotated to version {new_version}. Existing older snapshots remain restorable until each source device creates a new backup."
+        )
+        if result.get("workspace"):
+            click.echo(f"Workspace: {workspace_id}")
+    finally:
+        client.close()
 
 
 @cloud_group.command("connect", cls=DocmancerCommand, short_help="Connect, approve, or recover a Personal Sync device.")
@@ -430,6 +533,115 @@ def disable() -> None:
     _root_path, config, _account, _keys = _context()
     config.save_account(enabled=False)
     click.echo("Remote transfer disabled. Local memory was not changed.")
+
+
+def _format_bytes(value: int | None) -> str:
+    if value is None:
+        return "No quota"
+    amount = float(value)
+    units = ("B", "KB", "MB", "GB", "TB")
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if amount < 1000 or candidate == units[-1]:
+            break
+        amount /= 1000
+    return (
+        f"{amount:.0f} {unit}"
+        if amount >= 10 or unit == "B" or amount.is_integer()
+        else f"{amount:.1f} {unit}"
+    )
+
+
+def _print_sync_estimate(value: dict) -> None:
+    plan = value["plan"]
+    estimate = value["estimate"]
+    limits = value["limits"]
+    click.echo("Personal Sync upload estimate")
+    click.echo(
+        f"Plan: {str(plan['key']).title()} ({str(plan['status']).replace('_', ' ')})"
+    )
+    click.echo(
+        f"Upload access: {'allowed' if plan['can_push'] else 'not allowed on the current plan'}"
+    )
+    click.echo(
+        f"Will send: {estimate['total_envelopes']:,} encrypted envelope(s) "
+        f"in {estimate['upload_batches']:,} request(s)"
+    )
+    click.echo(f"Estimated upload: {_format_bytes(estimate['upload_request_bytes'])}")
+    click.echo(
+        "Encrypted envelopes: "
+        f"{_format_bytes(estimate['encrypted_envelope_bytes'])} "
+        f"({_format_bytes(estimate['encrypted_ciphertext_bytes'])} ciphertext)"
+    )
+    click.echo(
+        f"New local plaintext represented: {_format_bytes(estimate['new_plaintext_bytes'])}"
+    )
+    click.echo(
+        f"Queue: {estimate['existing_queued_envelopes']:,} already queued, "
+        f"{estimate['new_envelopes']:,} newly detected"
+    )
+    if value.get("by_kind"):
+        kinds = ", ".join(
+            f"{kind} {row['envelopes']:,}"
+            for kind, row in sorted(value["by_kind"].items())
+        )
+        click.echo(f"New data by type: {kinds}")
+    limit_source = str(limits.get("source") or "client_defaults").replace("_", " ")
+    click.echo(f"Limits ({limit_source})")
+    sync_quota = limits.get("sync_storage_bytes")
+    click.echo(
+        "  Stored Personal Sync data: "
+        + ("no stored-memory quota" if sync_quota is None else _format_bytes(sync_quota))
+    )
+    click.echo(f"  One encrypted envelope: {_format_bytes(limits['max_envelope_bytes'])}")
+    click.echo(
+        f"  One upload request: {_format_bytes(limits['max_batch_bytes'])}, "
+        f"up to {limits['max_batch_count']:,} envelopes"
+    )
+    click.echo(
+        f"  Client batching target: {_format_bytes(limits['client_batch_target_bytes'])}"
+    )
+    click.echo(
+        f"  Agent backup storage: {_format_bytes(limits['backup_storage_bytes'])} "
+        "(separate from Personal Sync)"
+    )
+    if value.get("issues"):
+        for issue in value["issues"]:
+            click.echo(f"Warning: {issue}", err=True)
+    else:
+        click.echo("Result: this upload fits the current transfer limits.")
+    click.echo("Nothing was queued or uploaded.")
+
+
+@cloud_group.command(
+    "estimate",
+    cls=DocmancerCommand,
+    short_help="Estimate the next encrypted sync upload.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the full estimate as JSON.")
+def estimate_command(as_json: bool) -> None:
+    """Size changed memory, encryption overhead, requests, and plan limits.
+
+    Includes the durable record history, memory atoms and relationships,
+    machine and mapped-project tree files, and anything already in the local
+    encrypted outbox. It reads Cloud keys because it builds real envelopes in
+    memory, but it does not queue or upload them.
+    """
+    from docmancer.cloud.estimate import estimate_sync
+
+    client, root, _config, account, keys = _client()
+    try:
+        entitlement = client.entitlement(str(account["workspace_id"]))
+        value = estimate_sync(root=root, keystore=keys, entitlement=entitlement)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        client.close()
+    if as_json:
+        click.echo(json.dumps(value, indent=2, sort_keys=True))
+        return
+    _print_sync_estimate(value)
 
 
 @cloud_group.command("sync", cls=DocmancerCommand, short_help="Push and pull encrypted revisions now.")

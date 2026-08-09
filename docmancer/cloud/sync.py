@@ -13,6 +13,7 @@ from docmancer.cloud.entitlement import cache_entitlement, remote_transfer_allow
 
 _PUSH_BATCH_SIZE = 100
 _PUSH_BATCH_BYTES = 6_000_000
+_MAX_ENVELOPE_BYTES = 1_200_000
 _PULL_PAGE_SIZE = 500
 _MAX_PULL_PAGES = 100
 
@@ -28,18 +29,10 @@ def _push_batches(
     current: list[dict] = []
     for envelope in envelopes:
         candidate = [*current, envelope]
-        payload = {
-            "protocol_version": protocol_version,
-            "base_cursor": cursor,
-            "device_ack_cursor": cursor,
-            "envelopes": candidate,
-        }
-        encoded_bytes = len(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
+        encoded_bytes = encoded_request_bytes(
+            candidate,
+            cursor=cursor,
+            protocol_version=protocol_version,
         )
         if encoded_bytes <= _PUSH_BATCH_BYTES:
             current = candidate
@@ -50,18 +43,10 @@ def _push_batches(
                 "the encrypted outbox was preserved"
             )
         batches.append(current)
-        single_payload = {
-            "protocol_version": protocol_version,
-            "base_cursor": cursor,
-            "device_ack_cursor": cursor,
-            "envelopes": [envelope],
-        }
-        single_bytes = len(
-            json.dumps(
-                single_payload,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
+        single_bytes = encoded_request_bytes(
+            [envelope],
+            cursor=cursor,
+            protocol_version=protocol_version,
         )
         if single_bytes > _PUSH_BATCH_BYTES:
             raise ValueError(
@@ -72,6 +57,24 @@ def _push_batches(
     if current:
         batches.append(current)
     return batches
+
+
+def encoded_request_bytes(
+    envelopes: list[dict], *, cursor: int, protocol_version: int,
+) -> int:
+    """Return the UTF-8 JSON size sent to the sync push endpoint."""
+    return len(
+        json.dumps(
+            {
+                "protocol_version": protocol_version,
+                "base_cursor": cursor,
+                "device_ack_cursor": cursor,
+                "envelopes": envelopes,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _push_pending(client, *, state: CloudState, workspace_id: str, cursor: int) -> int:
@@ -203,10 +206,24 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     if not workspace_key:
         raise ValueError("workspace key is unavailable on this device")
     state = CloudState(config.paths.sync_state)
+    from docmancer.cloud.connect import enqueue_project
     from docmancer.cloud.tree_sync import (
         queue_machine_tree_changes,
         queue_tree_changes,
     )
+
+    projection_count = 0
+    for project_id in config.workspaces().get("projects", {}):
+        mapping = config.mapping_status(str(project_id))
+        if mapping["state"] != "mapped":
+            continue
+        enqueue_project(
+            Path(root),
+            keys,
+            Path(mapping["paths"][0]),
+            db_path=Path(root) / "memory.db",
+        )
+        projection_count += 1
 
     tree_changes = queue_machine_tree_changes(root=root, keystore=keys)
     for project_id, row in config.workspaces().get("projects", {}).items():
@@ -256,6 +273,7 @@ def sync_once(client, *, root: str | Path, keystore: KeyStore | None = None) -> 
     return {
         "pushed": pushed,
         "paused": not can_push,
+        "projection_snapshots": projection_count,
         "tree_changes": tree_changes,
         **applied,
         **state.status(),

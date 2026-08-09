@@ -19,7 +19,7 @@ BANNER_LINES = [
 ]
 
 BANNER_COLOR = "bright_cyan"
-TAGLINE = "One local memory that every coding agent you use starts from."
+TAGLINE = "Shared memory for coding agents. Backup and restore are in preview."
 
 
 def color_enabled() -> bool:

@@ -6,7 +6,7 @@
 
 # Docmancer
 
-**An AI-agent memory harness: shared memory for coding agents.**
+**Your AI coding environment, restored on every machine.**
 
 [![PyPI version](https://img.shields.io/pypi/v/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
 [![Downloads](https://img.shields.io/pypi/dm/docmancer?style=flat-square&color=b25539)](https://pypi.org/project/docmancer/)
@@ -19,6 +19,43 @@
 <img src="https://raw.githubusercontent.com/docmancer/docmancer/main/readme-assets/web-readme.png" alt="The Docmancer local app showing agent memory, the Shared Memory file tree, and the Library" width="1000" />
 
 </div>
+
+## Your coding agents remember what happened on one machine
+
+> Agent backup and restore are development-preview commands. Local encrypted archives are available now. Managed Cloud snapshots remain gated on migration and recovery acceptance.
+
+Docmancer securely restores their sessions, memory, and setup, then makes the useful project context available to every agent you use.
+
+Claude Code and Codex can search the files they already wrote on one machine. A normal dotfile tool can copy directories. Neither gives you an agent-aware, secret-stripped backup with structural verification, project mapping, conflict quarantine, and a reviewed path from raw history to shared project memory.
+
+Start by seeing what Docmancer can protect:
+
+```bash
+docmancer backup --dry-run
+```
+
+Create a free passphrase-encrypted local archive:
+
+```bash
+docmancer backup --local --to ~/Backups/agents.dmbak
+```
+
+On a new machine, close Claude Code and Codex and preview the restore:
+
+```bash
+docmancer restore ~/Backups/agents.dmbak --dry-run
+docmancer restore ~/Backups/agents.dmbak
+```
+
+Docmancer restores missing history, skips identical files, merges only safe configuration, and quarantines divergent sessions. It never copies authentication stores, `.env` files, literal MCP environment values, caches, logs, telemetry, or machine keys.
+
+After backup or restore, local consolidation finds durable decisions and constraints in the protected histories. Every proposal links to exact transcript evidence and waits for review:
+
+```bash
+docmancer consolidate
+docmancer consolidate --review PROPOSAL_ID
+docmancer consolidate --approve PROPOSAL_ID
+```
 
 ## Your agents already learned this. They just cannot tell each other.
 
@@ -192,6 +229,7 @@ docmancer ask "Update decisions/release.md to require two reviewers" --apply
 | `docmancer status` | Show memory, source, security, integration, and Cloud health. |
 | `docmancer doctor` | Diagnose installation and configuration problems. |
 | `docmancer cloud connect` | Connect this machine, approve another machine by four-word code, and start encrypted sync. |
+| `docmancer cloud estimate` | Preview the next encrypted upload size, batching, and current plan limits without queueing or sending it. |
 
 Run `docmancer --help` or `docmancer <command> --help` for exact arguments, and see the [command reference](https://docmancer.dev/docs/cli-reference) for the full surface.
 

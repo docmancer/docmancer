@@ -157,6 +157,43 @@ def verify_recovery(value: str, wrapper: dict, *, root: str | Path) -> bytes:
     return workspace_key
 
 
+def rewrap_recovery(
+    value: str,
+    wrapper: dict,
+    *,
+    previous_workspace_key: bytes,
+    workspace_key: bytes,
+    key_version: int,
+) -> dict:
+    """Rewrap a rotated workspace key without changing the offline recovery kit."""
+    if int(wrapper.get("version") or 1) < 2:
+        raise ValueError("create a version 2 recovery kit before rotating the workspace key")
+    root_key = _decode_key(value)
+    workspace_id = str(wrapper["workspace_id"])
+    wrapping_key = _derive(root_key, workspace_id, b"workspace-key")
+    recovered = decrypt(
+        b64decode(str(wrapper["ciphertext"])),
+        wrapping_key,
+        nonce=b64decode(str(wrapper["nonce"])),
+        aad=workspace_id.encode("utf-8"),
+    )
+    if recovered != previous_workspace_key:
+        raise ValueError("recovery kit does not match the current workspace key")
+    nonce, ciphertext = encrypt(
+        workspace_key,
+        wrapping_key,
+        aad=workspace_id.encode("utf-8"),
+    )
+    return {
+        "version": 2,
+        "workspace_id": workspace_id,
+        "key_version": int(key_version),
+        "nonce": b64encode(nonce),
+        "ciphertext": b64encode(ciphertext),
+        "recovery_verify_key": str(wrapper["recovery_verify_key"]),
+    }
+
+
 def recovery_approval(
     value: str,
     wrapper: dict,
@@ -202,5 +239,6 @@ def recovery_approval(
 __all__ = [
     "create_recovery",
     "recovery_approval",
+    "rewrap_recovery",
     "verify_recovery",
 ]

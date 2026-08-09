@@ -16,6 +16,11 @@ _MEMORY_SUFFIXES = {".md", ".markdown"}
 class CodexHarness(Harness):
     name = "codex"
 
+    def backup_adapter(self):
+        from docmancer.backup.adapters import CodexBackupAdapter
+
+        return CodexBackupAdapter(self.home)
+
     def discover(self) -> list[HarnessSource]:
         base = self.home / ".codex"
         if not base.is_dir():

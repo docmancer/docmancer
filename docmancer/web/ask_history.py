@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from docmancer.core.sqlite import connect
+
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 _EXPLICIT_MACHINE_MUTATION_RE = re.compile(
@@ -45,7 +47,7 @@ class AskHistoryStore:
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=5)
+        connection = connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")

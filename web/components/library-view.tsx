@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, type JsonMap } from "@/lib/api";
-import { messageOf, Modal, Notice, PageHeading, rows } from "./workspace-app";
+import { messageOf, Modal, Notice, PageHeading, panelMessage, rows } from "./workspace-app";
 
 type Tab = "memory" | "evidence" | "docs";
 type TabData = {
@@ -117,7 +117,7 @@ export function LibraryView() {
         };
       });
     } catch (reason) {
-      if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(messageOf(reason));
+      if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(panelMessage(reason));
     } finally {
       if (sequence === requestNumber.current) {
         setLoading(false);
@@ -178,7 +178,7 @@ export function LibraryView() {
     try {
       setDetail(await apiGet(`/api/v1/library/${tab}/${encodeURIComponent(String(item.record_id))}`));
     } catch (reason) {
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
     } finally {
       setDetailLoading(false);
     }
@@ -197,7 +197,7 @@ export function LibraryView() {
       const params = new URLSearchParams({ q: detailQuery.trim(), source: String(detail.origin), page_size: "8" });
       const result = await apiGet(`/api/v1/docs?${params}`);
       setDetailResults(rows(result.items));
-    } catch (reason) { setError(messageOf(reason)); }
+    } catch (reason) { setError(panelMessage(reason)); }
     finally { setDetailSearchBusy(false); }
   };
 

@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from docmancer.core.sqlite import connect
+
 
 class CloudState:
     def __init__(self, path: str | Path) -> None:
@@ -15,7 +17,7 @@ class CloudState:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        conn = connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -73,6 +75,14 @@ class CloudState:
     def pending(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT envelope_json FROM outbox ORDER BY created_at, revision_ref LIMIT ?", (limit,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def pending_all(self) -> list[dict[str, Any]]:
+        """Return the complete durable outbox in upload order."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT envelope_json FROM outbox ORDER BY created_at, revision_ref"
+            ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def known_revision_refs(self) -> set[str]:

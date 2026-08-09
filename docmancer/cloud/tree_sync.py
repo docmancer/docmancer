@@ -42,13 +42,13 @@ def payload_for_file(path: Path, *, tree_root: Path, project_id: str, parent: st
     )
 
 
-def _queue_tree_root(
+def plan_tree_root(
     tree_root: Path,
     *,
     project_id: str,
     root: str | Path,
-    keystore=None,
-) -> dict[str, int]:
+) -> list[dict]:
+    """Build the next tree revision payloads without changing sync state."""
     config = CloudConfig(root)
     state = CloudState(config.paths.sync_state)
     prior = state.tree_heads(project_id)
@@ -85,6 +85,22 @@ def _queue_tree_root(
                 deleted=True,
             )
         )
+    return payloads
+
+
+def _queue_tree_root(
+    tree_root: Path,
+    *,
+    project_id: str,
+    root: str | Path,
+    keystore=None,
+) -> dict[str, int]:
+    payloads = plan_tree_root(
+        tree_root,
+        project_id=project_id,
+        root=root,
+    )
+    state = CloudState(CloudConfig(root).paths.sync_state)
     queued = enqueue_revisions_if_enabled(payloads, root=root, keystore=keystore)
     state.set_tree_heads(
         {
@@ -196,6 +212,7 @@ def apply_tree_payload(payload: dict, *, root: str | Path, state: CloudState) ->
 __all__ = [
     "MACHINE_TREE_ID",
     "apply_tree_payload",
+    "plan_tree_root",
     "payload_for_file",
     "queue_machine_tree_changes",
     "queue_tree_changes",

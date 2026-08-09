@@ -419,6 +419,17 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         "default_retrieval": "model2vec + sqlite-vec",
         "heavy_retrieval": "optional FastEmbed + Qdrant",
     }
+    try:
+        from docmancer.backup.cloud import cloud_backup_status
+
+        value["agent_backups"] = cloud_backup_status()
+    except Exception as exc:  # noqa: BLE001 - status must retain local diagnostics
+        value["agent_backups"] = {
+            "connected": bool(value.get("cloud_enabled")),
+            "snapshots": [],
+            "pending_key_migration": 0,
+            "error": str(exc),
+        }
     db_exists = Path(str(value["memory"].get("db_path") or "")).exists()
     value["healthy"] = bool(db_exists and not value["security_findings"])
     if as_json:
@@ -432,6 +443,16 @@ def status_cmd(check: bool, as_json: bool, project_path: Path | None) -> None:
         click.echo(f"Agent memory projections: {len(value['agent_delivery'])}")
         click.echo(f"Retrieval: {value['tree']['default_retrieval']} ({value['tree']['heavy_retrieval']})")
         click.echo(f"Cloud: {'connected' if value['cloud_enabled'] else 'local only'}")
+        backups = value["agent_backups"]
+        if backups.get("error"):
+            click.echo(f"Agent backups: unavailable ({backups['error']})")
+        elif backups.get("connected"):
+            click.echo(
+                f"Agent backups: {len(backups['snapshots'])} source device snapshot(s), "
+                f"{backups['pending_key_migration']} pending key migration(s)"
+            )
+        else:
+            click.echo("Agent backups: encrypted local archives available; Cloud not connected")
         if observed_drift:
             click.echo(f"Instruction blocks: {len(observed_drift)} were stale")
         for row in refreshed_blocks:

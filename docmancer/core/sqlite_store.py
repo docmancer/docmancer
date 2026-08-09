@@ -17,6 +17,7 @@ from docmancer.core.chunking import (
     chunk_paragraphs_tokens,
 )
 from docmancer.core.models import Document, RetrievedChunk
+from docmancer.core.sqlite import connect
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -223,7 +224,7 @@ class SQLiteStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn = connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA synchronous=NORMAL")

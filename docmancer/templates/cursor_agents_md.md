@@ -29,7 +29,7 @@ Use `docmancer ask "task" --agent cursor` and `read` for memory. Use `common`, `
 - `docmancer write "# Decision" --path decisions/example.md --scope project`
 - `docmancer duplicate docmancer://memory/<id> decisions/copy.md --expected-hash <hash>`
 - `docmancer trash docmancer://memory/<id> --expected-hash <hash>`
-- `docmancer restore <restore-token>`
+- `docmancer memory-restore <restore-token>`
 - `docmancer setup`
 - `docmancer docs add ./docs`
 - `docmancer docs add https://docs.example.com`

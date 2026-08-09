@@ -224,6 +224,44 @@ class CloudClient:
     def status(self, workspace_id: str) -> dict:
         return self._request("GET", f"/v1/workspaces/{workspace_id}/overview")
 
+    def stage_backup(self, workspace_id: str, payload: dict) -> dict:
+        return self._request("POST", f"/v1/workspaces/{workspace_id}/backups/stage", json=payload)
+
+    def lookup_backup_chunks(self, workspace_id: str, chunks: list[dict]) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/backups/chunks/lookup",
+            json={"chunks": chunks},
+        )
+
+    def upload_backup_chunk(
+        self, workspace_id: str, stage_id: str, reference: str, ciphertext: bytes
+    ) -> dict:
+        return self._request(
+            "PUT",
+            f"/v1/workspaces/{workspace_id}/backups/stages/{stage_id}/chunks/{reference}",
+            json={"ciphertext": b64encode(ciphertext)},
+        )
+
+    def commit_backup(self, workspace_id: str, stage_id: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/backups/stages/{stage_id}/commit",
+            json={},
+        )
+
+    def backups(self, workspace_id: str) -> dict:
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/backups")
+
+    def backup_snapshot(self, workspace_id: str, snapshot_id: str) -> dict:
+        return self._request("GET", f"/v1/workspaces/{workspace_id}/backups/{snapshot_id}")
+
+    def backup_chunk(self, workspace_id: str, snapshot_id: str, reference: str) -> dict:
+        return self._request(
+            "GET",
+            f"/v1/workspaces/{workspace_id}/backups/{snapshot_id}/chunks/{reference}",
+        )
+
     def workspaces(self) -> dict:
         return self._request("GET", "/v1/workspaces")
 
@@ -239,6 +277,13 @@ class CloudClient:
             "GET",
             f"/v1/workspaces/{workspace_id}/key-wrappers",
             params={"device_id": device_id, "key_version": key_version},
+        )
+
+    def rotate_workspace_key(self, workspace_id: str, payload: dict) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/workspaces/{workspace_id}/keys/rotate",
+            json=payload,
         )
 
     def register_device(self, workspace_id: str, payload: dict) -> dict:

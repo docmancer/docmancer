@@ -4,11 +4,14 @@ import {
   ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, ChevronRight, CircleHelp,
   Cloud, Command, Copy, FileText, History, Library, LoaderCircle, Moon,
   PanelLeftClose, PanelLeftOpen, Plus, Settings, ShieldCheck,
-  Sparkles, Sun, Trash2, X,
+  Sparkles, Sun, TriangleAlert, Trash2, X,
 } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { apiGet, apiJobMutation, apiMutation, establishSession, type JsonMap } from "@/lib/api";
+import {
+  apiGet, apiJobMutation, apiMutation, currentConnectionMessage, establishSession,
+  isConnectionMessage, onConnectionChange, type JsonMap,
+} from "@/lib/api";
 import { LibraryView } from "./library-view";
 import { MarkdownContent } from "./markdown-content";
 import { SharedMemoryWorkbench } from "./shared-memory-workbench";
@@ -50,6 +53,22 @@ function canonical(view: ViewKey): CanonicalView {
 export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
   const view = canonical(initialView);
   const [error, setError] = useState("");
+  const [connection, setConnection] = useState(() => currentConnectionMessage());
+  // Dismissing acknowledges one specific message, and it has to outlive the
+  // page: every nav link is a full document load in this static export, so an
+  // in-memory dismissal would reappear the moment the user changed view. A
+  // later, different failure still gets through.
+  const [dismissedConnection, setDismissedConnection] = useState(
+    () => (typeof window === "undefined" ? "" : window.localStorage.getItem(CONNECTION_WARNING_DISMISS_KEY) ?? ""),
+  );
+  const dismissConnection = (message: string) => {
+    setDismissedConnection(message);
+    window.localStorage.setItem(CONNECTION_WARNING_DISMISS_KEY, message);
+  };
+  const retireDismissal = () => {
+    setDismissedConnection("");
+    window.localStorage.removeItem(CONNECTION_WARNING_DISMISS_KEY);
+  };
   const [dark, setDark] = useState(() => typeof window !== "undefined" && (
     window.localStorage.getItem("docmancer-theme") === "dark"
     || (!window.localStorage.getItem("docmancer-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches)
@@ -58,8 +77,20 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
+  useEffect(() => onConnectionChange((message) => {
+    setConnection(message);
+    if (!message) retireDismissal();
+  }), []);
   useEffect(() => {
-    establishSession().catch((reason) => setError(messageOf(reason)));
+    // A session that establishes is proof the local service is reachable, and
+    // it is the one such proof a freshly loaded page gets without a state
+    // transition to listen for. Retiring the acknowledgement here matters: if
+    // the same failure recurs later it is news, not the message already waved
+    // away, and a stored dismissal would otherwise mute it forever.
+    establishSession().then(retireDismissal).catch((reason) => {
+      const message = messageOf(reason);
+      if (!isConnectionMessage(message)) setError(message);
+    });
   }, []);
 
   const toggleTheme = () => {
@@ -97,6 +128,8 @@ export function WorkspaceApp({ initialView }: { initialView: ViewKey }) {
           </button>
         </div>
       </header>
+      {connection && connection !== dismissedConnection
+        && <Notice kind="error" onClose={() => dismissConnection(connection)}>{connection}</Notice>}
       {error && <Notice kind="error" onClose={() => setError("")}>{error}</Notice>}
       <Page view={view}/>
     </main>
@@ -259,7 +292,7 @@ function HomeView() {
     setSetupLoaded(true);
     setCloudLoaded(true);
     const failed = [setupResult, conversationResult].find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") setError(messageOf(failed.reason));
+    if (failed?.status === "rejected") setError(panelMessage(failed.reason));
   }, []);
   useEffect(() => { queueMicrotask(() => void load()); }, [load]);
   useEffect(() => {
@@ -305,7 +338,7 @@ function HomeView() {
       setMessages(conversationTurns(conversation));
       setHistoryOpen(false);
     } catch (reason) {
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
     }
   };
   const deleteConversation = async (conversationId: string) => {
@@ -321,7 +354,7 @@ function HomeView() {
       setConversationToDelete(null);
       await refreshConversations();
     } catch (reason) {
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
     } finally {
       setBusy("");
     }
@@ -338,7 +371,7 @@ function HomeView() {
         if (!conversationId) throw new Error("Docmancer could not create the conversation.");
         setActiveConversation(conversationId);
       } catch (reason) {
-        setError(messageOf(reason));
+        setError(panelMessage(reason));
         return;
       }
     }
@@ -372,7 +405,7 @@ function HomeView() {
       } : turn));
       if (!temporary) await refreshConversations();
     } catch (reason) {
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
       setMessages((current) => current.map((turn) =>
         turn.id === assistantId ? { ...turn, content: "I could not complete that search. Try again after checking the message below.", pending: false } : turn
       ));
@@ -397,7 +430,7 @@ function HomeView() {
         turn.id === turnId ? { ...turn, action: resolved } : turn
       ));
     } catch (reason) {
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
       if (activeConversation) {
         const conversation = await apiGet(
           `/api/v1/ask/conversations/${encodeURIComponent(activeConversation)}`,
@@ -664,7 +697,9 @@ export function Modal({ title, subtitle, close, children }: { title: string; sub
 }
 
 export function Notice({ kind = "success", onClose, children }: { kind?: "success" | "error"; onClose?: () => void; children: ReactNode }) {
-  return <div className={`notice ${kind}`}><span>{kind === "success" ? <Check size={15}/> : <X size={15}/>}</span><p>{children}</p>{onClose && <button onClick={onClose}>Dismiss</button>}</div>;
+  // The error glyph used to be an X, which reads as a close control sitting
+  // next to text that will not close when you click it. Dismiss is the button.
+  return <div className={`notice ${kind}`}><span>{kind === "success" ? <Check size={15}/> : <TriangleAlert size={15}/>}</span><p>{children}</p>{onClose && <button onClick={onClose}>Dismiss</button>}</div>;
 }
 
 export function Loading({ label }: { label: string }) {
@@ -711,6 +746,15 @@ export function objectAt(value: JsonMap, key: string): JsonMap {
   const item = value[key]; return item && typeof item === "object" && !Array.isArray(item) ? item as JsonMap : {};
 }
 export function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
+/** The message a panel should show, or "" when the app shell already owns it.
+ *
+ * Connection failures are reported once by the shell. A panel that also renders
+ * them stacks a second identical banner, and dismissing the first only uncovers
+ * the second, which looks exactly like a Dismiss button that does not work. */
+export function panelMessage(reason: unknown): string {
+  const message = messageOf(reason);
+  return isConnectionMessage(message) ? "" : message;
+}
 function answerContent(result: JsonMap): string {
   const answer = result.answer;
   if (typeof answer === "string") return answer;

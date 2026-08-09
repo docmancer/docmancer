@@ -20,6 +20,11 @@ from .paths import project_path_for_slug_dir
 class ClaudeCodeHarness(Harness):
     name = "claude-code"
 
+    def backup_adapter(self):
+        from docmancer.backup.adapters import ClaudeCodeBackupAdapter
+
+        return ClaudeCodeBackupAdapter(self.home)
+
     def discover(self) -> list[HarnessSource]:
         sources: list[HarnessSource] = []
         base = self.home / ".claude" / "projects"

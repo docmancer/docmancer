@@ -17,7 +17,9 @@ from docmancer.cli.commands import (
     update_cmd,
 )
 from docmancer.cli.cloud_commands import cloud_group
+from docmancer.cli.backup_commands import backup_cmd, restore_cmd
 from docmancer.cli.context_commands import context_group
+from docmancer.cli.consolidate_commands import consolidate_cmd
 from docmancer.cli.distribution_commands import package_check_cmd
 from docmancer.cli.help import DocmancerCommand, DocmancerGroup, HELP_CONTEXT_SETTINGS, format_examples
 from docmancer.cli.mcp_commands import mcp_group
@@ -64,6 +66,8 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
     context_settings=HELP_CONTEXT_SETTINGS,
     epilog=format_examples(
         "docmancer setup",
+        "docmancer backup --dry-run",
+        "docmancer restore ./agents.dmbak --dry-run",
         "docmancer web",
         'docmancer ask "what deployment decisions have we recorded?"',
         'docmancer write "# Release\\n\\nDeploy through Railway." --path decisions/release.md',
@@ -84,7 +88,7 @@ def _show_version(ctx: click.Context, param: click.Parameter, value: bool) -> No
 @click.option("--config", "config_path", default=None, hidden=True, help="Path to docmancer.yaml.")
 @click.pass_context
 def cli(ctx, config_path: str | None):
-    """Give every coding agent on this machine one local memory, and recall what they already wrote, with separate docs retrieval. Everything runs locally unless you choose a provider or Cloud."""
+    """Protect and restore coding-agent history and setup, then give the agents you use one local memory of reviewed project context, with separate docs retrieval. Local archives and memory stay local unless you choose Cloud or a provider."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
@@ -177,6 +181,9 @@ review_command.name = "review"
 review_command.short_help = "Review legacy record proposals and memory-index findings."
 cli.add_command(review_command, "review")
 cli.add_command(web_cmd, "web")
+cli.add_command(backup_cmd, "backup")
+cli.add_command(restore_cmd, "restore")
+cli.add_command(consolidate_cmd, "consolidate")
 cli.add_command(import_command, "import")
 cli.add_command(write, "write")
 cli.add_command(read, "read")
@@ -194,7 +201,7 @@ for _command, _name in (
     (providers_group, "providers"),
     (duplicate, "duplicate"),
     (trash, "trash"),
-    (restore, "restore"),
+    (restore, "memory-restore"),
     (reindex_command, "reindex"),
     (migrate_command, "migrate"),
     (capture_command, "capture"),

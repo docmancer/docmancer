@@ -18,6 +18,7 @@ export function CloudSettings() {
   const [devices, setDevices] = useState<JsonMap[]>([]);
   const [team, setTeam] = useState<JsonMap>({});
   const [loading, setLoading] = useState(true);
+  const [remoteLoaded, setRemoteLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -31,19 +32,28 @@ export function CloudSettings() {
     try {
       const cloud = await apiGet("/api/v1/cloud");
       setStatus(cloud);
-      if (cloud.configured) {
-        const [deviceData, teamData] = await Promise.all([apiGet("/api/v1/cloud/devices"), apiGet("/api/v1/cloud/team")]);
-        setDevices(rows(deviceData.items));
-        setTeam(teamData);
-      } else if (cloud.registered) {
-        const deviceData = await apiGet("/api/v1/cloud/devices");
-        setDevices(rows(deviceData.items));
-        setTeam({});
-      }
+      setDevices([]);
+      setTeam({});
+      setRemoteLoaded(false);
     } catch (reason) { setError(messageOf(reason)); }
     finally { setLoading(false); }
   };
   useEffect(() => { queueMicrotask(() => void load()); }, []);
+
+  const loadRemote = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const [deviceData, teamData] = await Promise.all([
+        apiGet("/api/v1/cloud/devices"),
+        status.configured ? apiGet("/api/v1/cloud/team") : Promise.resolve({}),
+      ]);
+      setDevices(rows(deviceData.items));
+      setTeam(teamData);
+      setRemoteLoaded(true);
+    } catch (reason) { setError(messageOf(reason)); }
+    finally { setBusy(false); }
+  };
 
   const run = async (action: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -83,6 +93,9 @@ export function CloudSettings() {
   const configured = Boolean(status.configured);
   const registered = Boolean(status.registered);
   const localKeys = (status.local_keys ?? {}) as JsonMap;
+  const keyState = (value: unknown, missing: string) => localKeys.checked
+    ? value ? "Present" : missing
+    : "Checked when used";
   const recovery = (status.recovery ?? {}) as JsonMap;
   const members = rows(team.members);
   const pending = devices.filter((device) => String(device.state ?? "") === "pending");
@@ -128,9 +141,9 @@ export function CloudSettings() {
       : "This device is known to your account, but encrypted sync stays off until a trusted device confirms its four-word code."}>
       <div className="cloud-status-grid">
         <article><strong>{configured ? "Connected" : "Pending"}</strong><span>Connection state</span></article>
-        <article><strong>{devices.length}</strong><span>Registered devices</span></article>
-        <article><strong>{localKeys.device_identity_available ? "Present" : "Missing"}</strong><span>Local device identity</span></article>
-        <article><strong>{localKeys.workspace_key_available ? "Present" : "Unavailable"}</strong><span>Local workspace key</span></article>
+        <article><strong>{remoteLoaded ? devices.length : "Not loaded"}</strong><span>Registered devices</span></article>
+        <article><strong>{keyState(localKeys.device_identity_available, "Missing")}</strong><span>Local device identity</span></article>
+        <article><strong>{keyState(localKeys.workspace_key_available, "Unavailable")}</strong><span>Local workspace key</span></article>
       </div>
       {!configured && <Notice kind="error">
         On a trusted device, run <code>docmancer cloud connect</code> and confirm the code
@@ -138,6 +151,9 @@ export function CloudSettings() {
         here with your recovery kit if that machine is unavailable.
       </Notice>}
       <div className="form-actions">
+        {!remoteLoaded && <button className="secondary-btn" disabled={busy} onClick={() => void loadRemote()}>
+          {busy && <LoaderCircle className="spin" size={14}/>}Load Cloud details
+        </button>}
         <button className="primary-btn" disabled={busy || (configured && !canPush)} onClick={configured
           ? sync
           : () => run(() => apiJobMutation("/api/v1/cloud/sync", {}, () => undefined), "Approval confirmed and first sync complete.")}>
@@ -161,7 +177,8 @@ export function CloudSettings() {
     </AgentGroup>
 
     <AgentGroup title="Devices" note="A four-word pairing code makes device approval easy to compare without exposing key material.">
-      {devices.length === 0 && <p className="muted">No devices are registered yet.</p>}
+      {!remoteLoaded && <p className="muted">Cloud device details are loaded only when you request them, so opening Docmancer does not unlock Keychain.</p>}
+      {remoteLoaded && devices.length === 0 && <p className="muted">No devices are registered yet.</p>}
       {devices.map((device) => {
         const id = String(device.device_id ?? device.id ?? "");
         const state = String(device.state ?? "pending");
@@ -206,7 +223,7 @@ export function CloudSettings() {
         <RecoveryKeyPanel value={replacementRecoveryKey} onAcknowledge={() => { setReplacementRecoveryKey(""); setRecoveryUploadError(""); }}/>
       </div>}
       <div className="form-actions">
-        {Boolean(localKeys.workspace_key_available) && !replacementRecoveryKey && <button className="secondary-btn" disabled={busy} onClick={createRecoveryKey}>
+        {(configured || Boolean(localKeys.workspace_key_available)) && !replacementRecoveryKey && <button className="secondary-btn" disabled={busy} onClick={createRecoveryKey}>
           {recovery.configured ? "Replace lost recovery kit" : "Create recovery kit"}
         </button>}
       </div>
@@ -217,7 +234,8 @@ export function CloudSettings() {
         Team Sync is not available yet. An invitation cannot be accepted, so this shows the
         state the service already holds rather than an invite control that cannot complete.
       </p>
-      {members.length === 0 && <p className="muted">No team members yet.</p>}
+      {!remoteLoaded && <p className="muted">Load Cloud details above to check members and proposals.</p>}
+      {remoteLoaded && members.length === 0 && <p className="muted">No team members yet.</p>}
       {members.map((member) => <article key={String(member.email ?? member.member_id)} className="cloud-row">
         <div><strong>{String(member.email ?? member.member_id ?? "member")}</strong><small>{String(member.role ?? "member")} · {String(member.state ?? "active")}</small></div>
       </article>)}

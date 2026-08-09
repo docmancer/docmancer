@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from docmancer.backup.adapters import BackupAdapter
     from docmancer.core.models import Document
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,15 @@ class Harness(ABC):
     @abstractmethod
     def harvest(self, source: HarnessSource) -> list[MemoryEntry]:
         """Read a source into memory entries (skipping unreadable files)."""
+
+    def backup_adapter(self) -> "BackupAdapter | None":
+        """Return this harness's portable-history adapter when supported.
+
+        Discovery remains owned by the harness registry. Most data-driven
+        harnesses only support memory harvesting, so backup is an optional
+        capability rather than a second registry.
+        """
+        return None
 
 
 def discover_harnesses(home: Path | None = None, config=None) -> list[Harness]:

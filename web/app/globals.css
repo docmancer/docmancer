@@ -369,7 +369,7 @@ code, pre, kbd { font-family: var(--font-geist-mono), ui-monospace, monospace; }
 .library-activity > div, .memory-activity > div { display: grid; gap: 3px; }
 .library-activity strong, .memory-activity strong { color: var(--text); font-size: 11.5px; }
 .library-activity span, .memory-activity span { color: var(--muted); font-size: 10.5px; line-height: 1.45; }
-.memory-activity.error { border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); color: var(--amber); background: color-mix(in srgb, var(--amber-soft) 60%, var(--surface)); }
+.memory-activity.warning { border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); color: var(--amber); background: color-mix(in srgb, var(--amber-soft) 60%, var(--surface)); }
 .library-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; box-shadow: var(--shadow-sm); }
 .library-toolbar { min-height: 80px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px; border-bottom: 1px solid var(--line); }
 .library-toolbar h2 { margin: 4px 0 0; font-size: 16px; letter-spacing: -.02em; }
@@ -859,6 +859,10 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
 /* Shared Memory is intentionally filesystem-native: dense enough to scan,
    quiet enough to read, and recognisably local rather than dashboard-like. */
 .shared-memory-workbench { display: grid; gap: 14px; }
+/* Every pinned column parks 18px above the fold. The page's usual 80px bottom
+   padding sits below the workbench, so at maximum scroll it would shove those
+   columns back up by the difference; matching the padding keeps them parked. */
+.page:has(> .shared-memory-workbench) { padding-bottom: 18px; }
 .memory-command-bar {
   min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
   border: 1px solid var(--line); border-radius: 12px; padding: 7px 8px 7px 13px;
@@ -871,12 +875,19 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
 .memory-command-actions { display: flex; align-items: center; gap: 10px; }
 .quiet-progress { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
 .memory-map-layout {
-  min-height: 610px; display: grid; grid-template-columns: minmax(250px, .78fr) minmax(390px, 1.45fr) minmax(230px, .72fr);
-  overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--surface);
+  /* At least as tall as the reading pane, which sizes itself to the viewport
+     rather than to the row, so a short file tree cannot clip it. */
+  min-height: max(610px, calc(100vh - 94px)); display: grid; grid-template-columns: minmax(250px, .78fr) minmax(390px, 1.45fr) minmax(230px, .72fr);
+  /* `clip` rather than `hidden`: it still trims the rounded corners but does not
+     make this box a scroll container, which would strand the sticky columns. */
+  overflow: clip; border: 1px solid var(--line); border-radius: 15px; background: var(--surface);
 }
 .memory-map-panel, .memory-reading-panel, .agent-reach-panel { min-width: 0; }
+/* Offset set per column by useStickyColumn: the app-bar gap for short columns,
+   a negative overhang for tall ones so the page scrolls through them first. */
+.memory-side-sticky { position: sticky; top: var(--memory-stick-top, 76px); }
 .memory-map-panel { border-right: 1px solid var(--line); background: color-mix(in srgb, var(--surface-soft) 78%, var(--surface) 22%); }
-.memory-map-panel > header, .agent-reach-panel > header {
+.memory-side-sticky > header {
   min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 17px; border-bottom: 1px solid var(--line);
 }
 .memory-map-panel h2, .agent-reach-panel h2, .memory-reading-panel h2 { margin: 2px 0 0; font-size: 17px; letter-spacing: -.02em; }
@@ -901,7 +912,13 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
 .legacy-evidence-note div { display: grid; gap: 2px; }
 .legacy-evidence-note strong { color: var(--text); font-size: 10px; }
 .legacy-evidence-note span { font-size: 9px; line-height: 1.45; }
-.memory-reading-panel { min-height: 610px; background: var(--surface); }
+/* The reading pane holds its own scroll: it stays pinned at viewport height so
+   long Markdown scrolls inside `.memory-markdown` instead of stretching the row
+   and dragging the two columns down with it. */
+.memory-reading-panel {
+  position: sticky; top: 76px; align-self: start;
+  height: calc(100vh - 94px); min-height: 610px; overflow: hidden; background: var(--surface);
+}
 .memory-reading-empty { height: 100%; max-width: 410px; margin: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px; text-align: center; }
 .file-stack { width: 58px; height: 66px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid var(--line-strong); border-radius: 6px 13px 13px 6px; color: var(--action); box-shadow: -7px 7px 0 var(--surface-soft), -8px 8px 0 var(--line); }
 .memory-reading-empty h2 { margin: 8px 0; font-size: 25px; }
@@ -918,8 +935,8 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
 .memory-file-reader > footer { display: grid; gap: 3px; padding: 10px 18px; border-top: 1px solid var(--line); background: var(--surface-soft); }
 .memory-file-reader > footer span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
 .agent-reach-panel { border-left: 1px solid var(--line); background: var(--surface-soft); }
-.agent-reach-panel > header { display: block; }
-.agent-reach-panel > header p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.agent-reach-panel .memory-side-sticky > header { display: block; }
+.agent-reach-panel .memory-side-sticky > header p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .agent-reach-list { padding: 8px; }
 .agent-reach-list button { width: 100%; min-height: 54px; display: grid; grid-template-columns: 25px minmax(0, 1fr) 14px; align-items: center; gap: 8px; padding: 8px; border: 0; border-bottom: 1px solid var(--line); color: var(--text); background: transparent; text-align: left; }
 .agent-reach-list button:hover { border-radius: 8px; background: var(--surface); }
@@ -969,6 +986,8 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
 @media (max-width: 1100px) {
   .memory-map-layout { grid-template-columns: 260px minmax(0, 1fr); }
   .agent-reach-panel { grid-column: 1 / -1; border-top: 1px solid var(--line); border-left: 0; }
+  /* Stacked under both columns, the agent panel has nothing left to stick to. */
+  .agent-reach-panel .memory-side-sticky { position: static; }
   .agent-reach-list { display: grid; grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 720px) {
@@ -976,7 +995,8 @@ input:disabled { color: var(--faint); background: var(--surface-soft); }
   .memory-command-actions { justify-content: space-between; }
   .memory-map-layout { display: block; min-height: 0; overflow: visible; }
   .memory-map-panel, .memory-reading-panel, .agent-reach-panel { min-height: 0; border: 0; border-bottom: 1px solid var(--line); }
-  .memory-reading-panel { min-height: 430px; }
+  .memory-side-sticky { position: static; }
+  .memory-reading-panel { position: static; height: auto; min-height: 430px; overflow: visible; }
   .agent-reach-list { grid-template-columns: 1fr; }
   .file-meta-strip { grid-template-columns: 1fr; }
   .file-meta-strip span { border-right: 0; border-bottom: 1px solid var(--line); }

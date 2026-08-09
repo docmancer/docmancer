@@ -2,12 +2,12 @@
 
 import {
   ArrowRight, Check, ChevronDown, ChevronRight, CircleDot, FileText, LoaderCircle,
-  Folder, FolderOpen, Plus, Radio, RefreshCw, Search, ShieldCheck, X,
+  Folder, FolderOpen, Plus, Radio, RefreshCw, Search, ShieldCheck, TriangleAlert, X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiMutation, type JsonMap } from "@/lib/api";
 import { MarkdownContent } from "./markdown-content";
-import { messageOf, Modal, Notice, rows } from "./workspace-app";
+import { messageOf, Modal, Notice, panelMessage, rows } from "./workspace-app";
 
 type Root = JsonMap & { key: string; label: string; files: JsonMap[]; folders: JsonMap[] };
 
@@ -32,6 +32,43 @@ function writeSessionCache(key: string, value: unknown) {
   } catch {
     // The in-module snapshot still makes client-side navigation instant.
   }
+}
+
+/** Keep a workbench sidebar in view without trapping its own scrolling.
+ *
+ * A plain `position: sticky; top: 76px` pins a column immediately, which is
+ * wrong here: the canonical file tree is routinely taller than the viewport, so
+ * pinning it at the top means its lower half is unreachable. Instead the sticky
+ * offset is measured from the column itself. Columns that fit the viewport stick
+ * under the app bar as usual; taller columns get a negative offset equal to
+ * their overhang, so the page scrolls through the whole column first and the
+ * column then parks with its last row against the bottom of the viewport.
+ */
+function useStickyColumn<T extends HTMLElement>(): RefObject<T | null> {
+  const ref = useRef<T | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const TOP_GAP = 76;
+    const BOTTOM_GAP = 18;
+    const apply = () => {
+      const room = window.innerHeight - TOP_GAP - BOTTOM_GAP;
+      const overhang = element.offsetHeight - room;
+      element.style.setProperty(
+        "--memory-stick-top",
+        `${overhang > 0 ? TOP_GAP - overhang : TOP_GAP}px`,
+      );
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(element);
+    window.addEventListener("resize", apply);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
+  return ref;
 }
 
 function mainReadme(memory: JsonMap): JsonMap | undefined {
@@ -87,11 +124,11 @@ export function SharedMemoryWorkbench() {
           hasOpenedMainReadme.current = true;
           void apiGet(`/api/v1/shared-memory/file?address=${encodeURIComponent(String(readme.address))}`)
             .then((file) => setSelected(file))
-            .catch((reason) => setError(messageOf(reason)));
+            .catch((reason) => setError(panelMessage(reason)));
         }
       }).catch((reason) => {
         setLoading(false);
-        if (!cachedMemory) setError(messageOf(reason));
+        if (!cachedMemory) setError(panelMessage(reason));
       });
       void apiGet("/api/v1/delivery").then((agents) => {
         const items = rows(agents.items);
@@ -107,7 +144,7 @@ export function SharedMemoryWorkbench() {
       return true;
     } catch (reason) {
       setLoading(false);
-      setError(messageOf(reason));
+      setError(panelMessage(reason));
       return true;
     }
   }, [cachedMemory]);
@@ -166,7 +203,7 @@ export function SharedMemoryWorkbench() {
       const result = await apiGet(`/api/v1/shared-memory/file?address=${encodeURIComponent(address)}`);
       if (openingAddress.current === address) setSelected(result);
     } catch (reason) {
-      if (openingAddress.current === address) setError(messageOf(reason));
+      if (openingAddress.current === address) setError(panelMessage(reason));
     } finally {
       if (openingAddress.current === address) setOpeningFile(null);
     }
@@ -188,6 +225,9 @@ export function SharedMemoryWorkbench() {
     }
   };
 
+  const mapColumn = useStickyColumn<HTMLDivElement>();
+  const agentColumn = useStickyColumn<HTMLDivElement>();
+
   const toggle = (id: string) => setExpanded((current) =>
     current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
   );
@@ -200,18 +240,18 @@ export function SharedMemoryWorkbench() {
       </div>
     </div>
 
-    {(loading || backgroundRefresh || libraryRefresh || backgroundError) && <div className={`memory-activity${backgroundError ? " error" : ""}`} role="status">
-      {backgroundError ? <ShieldCheck size={16}/> : <RefreshCw className="spin" size={16}/>}
+    {(loading || backgroundRefresh || libraryRefresh || backgroundError) && <div className={`memory-activity${backgroundError ? " warning" : ""}`} role="status">
+      {backgroundError ? <TriangleAlert size={16}/> : <RefreshCw className="spin" size={16}/>}
       <div>
         <strong>{backgroundError
-          ? "Shared Memory is open with its last saved state"
+          ? "Refresh paused. Showing saved memory"
           : loading
             ? "Starting local memory services"
             : backgroundRefresh
               ? "Checking agent memory for changes"
               : "Updating the Library index"}</strong>
         <span>{backgroundError
-          ? `A background refresh could not finish: ${backgroundError}`
+          ? `Docmancer could not check for newer agent memory. Your saved files are safe and available. Details: ${backgroundError}`
           : loading
             ? "The interface is ready now. Canonical files and agent delivery will appear independently as their local indexes open."
             : "This runs in the background. You can browse files, switch pages, and keep working while Docmancer finishes."}</span>
@@ -222,24 +262,26 @@ export function SharedMemoryWorkbench() {
 
     <div className="memory-map-layout">
       <section className="memory-map-panel">
-        <header>
-          <div><span className="eyebrow">Canonical files</span><h2>Your shared memory</h2></div>
-          <span className="file-total">{roots.reduce((sum, root) => sum + Number(root.count ?? 0), 0)} files</span>
-        </header>
-        {loading
-          ? <MemoryTreeSkeleton/>
-          : roots.map((root) => <MemoryRoot
-              key={root.key}
-              root={root}
-              expanded={expanded}
-              query={query}
-              selected={String(selected?.address ?? "")}
-              toggle={toggle}
-              openFile={openFile}
-            />)}
-        {!loading && Number(data.legacy_generated_files ?? 0) > 0 && <div className="legacy-evidence-note">
-          <ShieldCheck size={15}/><div><strong>{Number(data.legacy_generated_files).toLocaleString()} generated topic files kept as evidence</strong><span>They remain available to retrieval but are not presented as canonical memory.</span></div>
-        </div>}
+        <div className="memory-side-sticky" ref={mapColumn}>
+          <header>
+            <div><span className="eyebrow">Canonical files</span><h2>Your shared memory</h2></div>
+            <span className="file-total">{roots.reduce((sum, root) => sum + Number(root.count ?? 0), 0)} files</span>
+          </header>
+          {loading
+            ? <MemoryTreeSkeleton/>
+            : roots.map((root) => <MemoryRoot
+                key={root.key}
+                root={root}
+                expanded={expanded}
+                query={query}
+                selected={String(selected?.address ?? "")}
+                toggle={toggle}
+                openFile={openFile}
+              />)}
+          {!loading && Number(data.legacy_generated_files ?? 0) > 0 && <div className="legacy-evidence-note">
+            <ShieldCheck size={15}/><div><strong>{Number(data.legacy_generated_files).toLocaleString()} generated topic files kept as evidence</strong><span>They remain available to retrieval but are not presented as canonical memory.</span></div>
+          </div>}
+        </div>
       </section>
 
       <section className="memory-reading-panel">
@@ -252,6 +294,7 @@ export function SharedMemoryWorkbench() {
       </section>
 
       <aside className="agent-reach-panel">
+        <div className="memory-side-sticky" ref={agentColumn}>
         <header><span className="eyebrow">Available to agents</span><h2>Who can use it</h2><p>See whether each agent uses automatic recall, an installed skill, or a managed projection.</p></header>
         {agentLoading ? <AgentSkeleton/> : delivery.length ? <div className="agent-reach-list">{delivery.map((agent, index) => {
           const connected = agent.integration_state === "connected";
@@ -261,6 +304,7 @@ export function SharedMemoryWorkbench() {
             <ArrowRight size={13}/>
           </button>;
         })}</div> : <div className="agent-empty"><Radio size={18}/><p>No coding-agent integrations detected yet.</p><code>docmancer setup</code></div>}
+        </div>
       </aside>
     </div>
 
@@ -353,7 +397,7 @@ function AddMemory({ close, saved }: { close: () => void; saved: () => void }) {
         type: kind === "decisions" ? "decision" : kind === "constraints" ? "constraint" : kind === "workflows" ? "workflow" : "fact",
       });
       saved();
-    } catch (reason) { setError(messageOf(reason)); } finally { setBusy(false); }
+    } catch (reason) { setError(panelMessage(reason)); } finally { setBusy(false); }
   };
   return <Modal title="Add project memory" subtitle="Docmancer places it in the standard project scaffold." close={close}><form className="add-memory-form" onSubmit={submit}>
     <label>Kind<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="decisions">Decision</option><option value="constraints">Constraint</option><option value="workflows">Workflow</option><option value="lessons">Lesson</option></select></label>

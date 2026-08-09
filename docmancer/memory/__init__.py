@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from docmancer.harness import default_home, harvest_all
+from docmancer.core.sqlite import connect
 from docmancer.harness.privacy import PrivacyFilter
 from docmancer.memory.atomic import AtomicMemoryEntry, extract_atoms, merge_atoms
 from docmancer.memory.hooks import DEFAULT_HOOK_THRESHOLD as DEFAULT_MEMORY_RELEVANCE_THRESHOLD
@@ -77,7 +78,7 @@ def _read_schema_meta(db_path: str) -> dict[str, str]:
     if not Path(db_path).exists():
         return {}
     try:
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             rows = conn.execute(f"SELECT key, value FROM {_SCHEMA_META_TABLE}").fetchall()
     except sqlite3.Error:
         return {}
@@ -85,7 +86,7 @@ def _read_schema_meta(db_path: str) -> dict[str, str]:
 
 
 def _write_schema_meta(db_path: str, meta: dict[str, str]) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_SCHEMA_META_TABLE} "
             "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"

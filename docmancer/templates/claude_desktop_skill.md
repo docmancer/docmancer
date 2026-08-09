@@ -34,7 +34,7 @@ Executable: `{{DOCS_KIT_CMD}}`
 - `docmancer ask`, `docmancer read`, `docmancer write`, `docmancer edit`, `docmancer move`: use local memory.
 - `docmancer common`, `docmancer delivery`, `docmancer timeline`: inspect cross-agent recurrence, activation, and decision changes.
 - `docmancer cloud connect`: with explicit user authorization, connect the first machine, approve another machine by four-word code, or resume an approved connection. Use `--recover` only when no connected machine remains.
-- `docmancer duplicate`, `docmancer trash`, `docmancer restore`: perform explicit, hash-guarded file operations.
+- `docmancer duplicate`, `docmancer trash`, `docmancer memory-restore`: perform explicit, hash-guarded Shared Memory file operations.
 - `docmancer docs list`, `docmancer docs remove`, `docmancer doctor`: manage and diagnose local state.
 - `docmancer docs download <url> --output <dir>`: download docs to markdown without indexing.
 
