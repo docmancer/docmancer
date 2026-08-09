@@ -61,7 +61,7 @@ def _files(root: Path, *, suffixes: set[str] | None = None):
     if not root.is_dir():
         return
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or not _safe(path):
+        if not path.is_file() or not _safe(path.relative_to(root)):
             continue
         if suffixes is not None and path.suffix.casefold() not in suffixes:
             continue
@@ -178,7 +178,7 @@ class ClaudeCodeBackupAdapter(BackupAdapter):
             (base / "settings.local.json", "settings"),
             (self.home / ".claude.json", "settings"),
         ):
-            if path.is_file() and _safe(path):
+            if path.is_file() and _safe(Path(path.name)):
                 if project_filter_active and path == base / "history.jsonl":
                     excluded.append({"path": str(path), "reason": "mixed-project-history-withheld"})
                     continue
@@ -197,7 +197,7 @@ class ClaudeCodeBackupAdapter(BackupAdapter):
                 continue
             root = Path(root_s)
             for candidate in (root / ".mcp.json", root / ".claude" / "settings.json", root / ".claude" / "settings.local.json"):
-                if candidate.is_file() and _safe(candidate):
+                if candidate.is_file() and _safe(Path(candidate.name)):
                     artifacts.append(self._project_spec(candidate, root, "mcp" if candidate.name == ".mcp.json" else "settings"))
         return _dedupe(artifacts), excluded
 
@@ -226,7 +226,7 @@ class CodexBackupAdapter(BackupAdapter):
             (base / "AGENTS.override.md", "instructions"),
             (base / "config.toml", "settings"),
         ):
-            if path.is_file() and _safe(path):
+            if path.is_file() and _safe(Path(path.name)):
                 if project_filter_active and path == base / "history.jsonl":
                     excluded.append({"path": str(path), "reason": "mixed-project-history-withheld"})
                     continue
@@ -248,7 +248,7 @@ class CodexBackupAdapter(BackupAdapter):
             root = Path(root_s)
             for name in ("AGENTS.md", "AGENTS.override.md"):
                 candidate = root / name
-                if candidate.is_file() and _safe(candidate):
+                if candidate.is_file() and _safe(Path(candidate.name)):
                     artifacts.append(self._project_spec(candidate, root, "instructions"))
         return _dedupe(artifacts), excluded
 
