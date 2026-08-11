@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.16] - Unreleased
+## [0.9.16] - 2026-08-11
 ### Added
 
 - **Personal Sync can be paused without forgetting a device.** `docmancer cloud pause` stops transfer while retaining the resumable device identity, workspace key, and Cloud session.
