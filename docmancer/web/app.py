@@ -266,6 +266,7 @@ def create_app(
         Route("/api/v1/cloud/connect/cancel", api.cloud_connect_cancel, methods=["POST"]),
         Route("/api/v1/cloud/connect/recovery-key", api.cloud_recovery_key_once, methods=["POST"]),
         Route("/api/v1/cloud/recovery-key/create", api.cloud_recovery_key_create, methods=["POST"]),
+        Route("/api/v1/cloud/pause", api.cloud_pause, methods=["POST"]),
         Route("/api/v1/cloud/disconnect", api.cloud_disconnect, methods=["POST"]),
         Route("/api/v1/cloud/sync", api.cloud_sync, methods=["POST"]),
         Route("/api/v1/cloud/devices", api.cloud_devices, methods=["GET"]),

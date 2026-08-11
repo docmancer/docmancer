@@ -106,6 +106,46 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _relevant_excerpt(
+    text: str,
+    query_tokens: set[str],
+    *,
+    max_chars: int = 1200,
+) -> str:
+    """Return a bounded passage around the strongest lexical match."""
+    body = str(text or "").strip()
+    if len(body) <= max_chars:
+        return body
+    lines = body.splitlines()
+    if not query_tokens:
+        return body[:max_chars].rstrip()
+
+    ranked = []
+    for index, line in enumerate(lines):
+        overlap = len(query_tokens & _tokens(line))
+        heading_bonus = 2 if line.lstrip().startswith("#") and overlap else 0
+        ranked.append((overlap + heading_bonus, -len(line), -index, index))
+    best = max(ranked)[-1]
+    start = best
+    end = best + 1
+    excerpt = lines[best]
+    while True:
+        candidates = []
+        if start > 0:
+            candidates.append((start - 1, lines[start - 1] + "\n" + excerpt))
+        if end < len(lines):
+            candidates.append((end, excerpt + "\n" + lines[end]))
+        fitting = [candidate for candidate in candidates if len(candidate[1]) <= max_chars]
+        if not fitting:
+            break
+        index, excerpt = min(fitting, key=lambda candidate: abs(candidate[0] - best))
+        if index < start:
+            start = index
+        else:
+            end = index + 1
+    return excerpt.strip()
+
+
 @dataclass
 class ContextItem:
     address: str
@@ -274,13 +314,18 @@ def compile_context(index: AddressIndex, request: ContextRequest) -> ContextBund
         if not is_mandatory and query_tokens and overlap <= 0 and vector_score < 0.35:
             candidate_outcomes[entry.memory_id] = (False, "not_relevant")
             continue
+        excerpt = (
+            entry.body.strip()[:280]
+            if is_mandatory
+            else _relevant_excerpt(entry.body, query_tokens)
+        )
         item = ContextItem(
             address=entry.address,
             title=entry.title,
-            excerpt=entry.body.strip()[:280],
+            excerpt=excerpt,
             authority=entry.authority,
             source_type=entry.curation_origin,
-            token_estimate=_estimate_tokens(entry.body),
+            token_estimate=_estimate_tokens(entry.body if is_mandatory else excerpt),
             recorded_at=str(getattr(entry, "updated_at", "") or ""),
         )
         if is_mandatory:

@@ -2480,7 +2480,7 @@ class LocalRuntime:
         mutation_disabled_reason: str | None = None,
     ) -> dict:
         from docmancer.memory.ask import ask
-        from docmancer.memory.actions import MemoryActionEngine, is_mutation_request
+        from docmancer.memory.actions import MemoryActionEngine
 
         continued_request = str(pending_action_request or "").strip()
         action_task = (
@@ -2488,28 +2488,33 @@ class LocalRuntime:
             if continued_request
             else task
         )
-        mutation_request = bool(is_mutation_request(task) or continued_request)
-        action_result = None
-        if mutation_request and action_enabled:
-            action_result = await asyncio.to_thread(
-                MemoryActionEngine(
-                    self.project_path,
-                    memory_agent=self._require_memory(),
-                ).plan,
-                action_task,
-                history=conversation_history,
-            )
+        action_result = await asyncio.to_thread(
+            MemoryActionEngine(
+                self.project_path,
+                memory_agent=self.memory,
+            ).plan,
+            action_task,
+            history=conversation_history,
+        )
+        request_kind = str(action_result.get("request_kind") or "read")
+        if continued_request and request_kind == "read":
+            request_kind = "mutate"
+        mutation_request = request_kind in {"mutate", "mixed"}
+        read_question = str(action_result.get("read_question") or "").strip()
+        recall_task = read_question or task
+        retrieval_queries = list(action_result.get("retrieval_queries") or [])
         bundle = await asyncio.to_thread(
             ask,
-            task,
+            recall_task,
             project_path=self.project_path,
             token_budget=token_budget,
             agent_name=agent,
             surface="web",
             integration_mode="workbench-preview",
-            answer=False if mutation_request else answer,
+            answer=False if request_kind == "mutate" else answer,
             answer_mode=mode,
-            on_delta=None if mutation_request else on_delta,
+            retrieval_queries=retrieval_queries,
+            on_delta=None if request_kind == "mutate" else on_delta,
         )
         items = [
             *bundle["mandatory_policies"],
@@ -2527,16 +2532,22 @@ class LocalRuntime:
             "index_revision": bundle["index_revision"],
             "refresh": bundle["refresh"],
             "answer_unavailable": bundle.get("answer_unavailable"),
+            "request_kind": request_kind,
+            "retrieval_queries": bundle.get("retrieval_queries", []),
             "timings": {},
         }
         if mutation_request:
             if mutation_disabled_reason:
-                result["answer"] = {
+                mutation_message = {
                     "text": mutation_disabled_reason,
                     "provider": None,
                     "model": None,
                 }
-            elif action_result is not None:
+                if request_kind == "mutate":
+                    result["answer"] = mutation_message
+                else:
+                    result["action_message"] = mutation_message
+            else:
                 if (
                     action_result.get("kind") == "clarification"
                     and action_clarification_count >= 1
@@ -2550,18 +2561,21 @@ class LocalRuntime:
                             "or use the explicit memory editor."
                         ),
                     }
-                result["answer"] = {
+                action_message = {
                     "text": str(action_result.get("message") or ""),
                     "provider": action_result.get("provider"),
                     "model": action_result.get("model"),
                 }
-                result["action"] = action_result.get("proposal")
+                if request_kind == "mutate":
+                    result["answer"] = action_message
+                else:
+                    result["action_message"] = action_message
+                result["action"] = (
+                    action_result.get("proposal") if action_enabled else None
+                )
                 action_kind = str(action_result.get("kind") or "")
                 result["action_kind"] = action_kind
-                retryable_action = action_kind == "clarification" or (
-                    action_kind == "unavailable"
-                    and action_clarification_count == 0
-                )
+                retryable_action = action_kind == "clarification"
                 result["action_request"] = (
                     continued_request or task
                     if retryable_action
@@ -2994,20 +3008,49 @@ class LocalRuntime:
         cancel.set()
         return {"cancelled": True}
 
+    async def cloud_pause(self) -> dict:
+        """Pause transfer while retaining the resumable Cloud identity."""
+        from docmancer.cloud.config import CloudConfig
+
+        root = Path(self._require_memory().db_path).parent
+        config = CloudConfig(root)
+        if not config.account().get("workspace_id"):
+            raise ValueError("this machine is not connected to Personal Sync")
+        await asyncio.to_thread(config.save_account, enabled=False, paused=True)
+        return {"paused": True}
+
     async def cloud_disconnect(self) -> dict:
-        """Clear the local cloud session without touching local memory."""
+        """Revoke this device and remove its local Cloud identity."""
+        from docmancer.cloud.client import CloudClient
         from docmancer.cloud.config import CloudConfig
         from docmancer.cloud.keystore import KeyStore
+        from docmancer.cloud.lifecycle import forget_local_cloud
 
         root = Path(self._require_memory().db_path).parent
         config = CloudConfig(root)
         account = config.account()
         keys = KeyStore()
         account_id = str(account.get("account_id") or "")
-        if account_id:
-            await asyncio.to_thread(keys.delete, account_id, "access-token")
-        await asyncio.to_thread(config.save_account, enabled=False)
-        return {"disconnected": True}
+        workspace_id = str(account.get("workspace_id") or "")
+        device_id = str(account.get("device_id") or "")
+        token = await asyncio.to_thread(keys.token, account_id)
+        signing_private = await asyncio.to_thread(
+            keys.get, account_id, "device-signing-private"
+        )
+        if not account_id or not workspace_id or not device_id or not token:
+            raise ValueError("Cloud session is incomplete; reconnect before disconnecting")
+        client = CloudClient(
+            str(account.get("base_url") or ""),
+            token=token.decode("utf-8"),
+            device_id=device_id,
+            signing_private_key=signing_private,
+        )
+        try:
+            await asyncio.to_thread(client.revoke_device, workspace_id, device_id)
+        finally:
+            client.close()
+        await asyncio.to_thread(forget_local_cloud, config, account, keys)
+        return {"disconnected": True, "device_revoked": True}
 
     async def cloud_sync(self) -> dict:
         from docmancer.cloud.client import CloudClient

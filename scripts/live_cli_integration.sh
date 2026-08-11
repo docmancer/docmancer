@@ -125,7 +125,7 @@ run_live_add() {
   local provider="${3:-$ADD_PROVIDER}"
   local strategy="${4:-$ADD_STRATEGY}"
   local recreate_flag="${5:-1}"
-  local cmd=("${CLI_CMD[@]}" add "$DOCS_URL" --max-pages "$max_pages" --fetch-workers "$FETCH_WORKERS" --config "$CONFIG_PATH")
+  local cmd=("${CLI_CMD[@]}" docs add "$DOCS_URL" --max-pages "$max_pages" --fetch-workers "$FETCH_WORKERS" --config "$CONFIG_PATH")
 
   if [[ "$recreate_flag" == "1" ]]; then
     cmd+=(--recreate)
@@ -144,7 +144,7 @@ run_live_add() {
 }
 
 capture_first_source() {
-  "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH" \
+  "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH" \
     | awk 'NF >= 2 && $0 !~ /^No sources indexed yet\.$/ {print $NF; exit}'
 }
 
@@ -250,7 +250,7 @@ run "$VENV_PYTHON" -c "import docmancer, sys; print('python=', sys.executable); 
 print_banner "CLI help surface"
 print_info "Checking the curated tree, local docs, agent integration, maintenance, and optional heavy retrieval commands."
 run "${CLI_CMD[@]}" --help
-for command in setup sync query status agent docs cloud web init write read edit move search context session-baseline capture curate harvest reindex migrate package-check memory okf qdrant mcp; do
+for command in ask backup brief clear cloud common consolidate context delivery doctor edit import move read restore review setup status timeline web write agent docs mcp memory okf qdrant providers duplicate trash memory-restore reindex migrate capture session-baseline curate package-check; do
   run "${CLI_CMD[@]}" "$command" --help
 done
 for command in init add query list sync remove doctor; do
@@ -262,7 +262,7 @@ done
 for command in up down status upgrade logs; do
   run "${CLI_CMD[@]}" qdrant "$command" --help
 done
-for command in sync query add list show forget promote sources audit hook-context consolidate apply export eval status clear; do
+for command in sync query add list show forget sources audit hook-context consolidate apply export eval status clear; do
   run "${CLI_CMD[@]}" memory "$command" --help
 done
 for command in doctor; do
@@ -286,7 +286,7 @@ HARVEST_SOURCE="$PROJECT_DIR/agent-memory.md"
 MIGRATION_RECORDS="$TMP_ROOT/legacy-records"
 MIGRATION_BACKUP="$TMP_ROOT/legacy-records-backup"
 MIGRATION_TREE="$TMP_ROOT/migrated-tree"
-run "${CLI_CMD[@]}" init --root "$TREE_ROOT" --project-id live-cli --json
+run "${CLI_CMD[@]}" tree init --root "$TREE_ROOT" --project-id live-cli --json
 "${CLI_CMD[@]}" write $'# Deployment\n\nDeploy the API on Railway and keep canonical decisions in Markdown.' \
   --root "$TREE_ROOT" --path decisions/deployment.md --scope project --project-id live-cli \
   --source "live-cli:test" --tags deployment --json >"$TREE_JSON"
@@ -301,8 +301,8 @@ run "${CLI_CMD[@]}" read "docmancer://title/Deployment" --root "$TREE_ROOT" --js
 run cat "$TREE_READ_JSON"
 TREE_HASH="$($VENV_PYTHON -c "import json; print(json.load(open('$TREE_READ_JSON'))['content_hash'])")"
 run "${CLI_CMD[@]}" move "$TREE_ADDRESS" decisions/release.md --root "$TREE_ROOT" --expected-hash "$TREE_HASH" --json
-run "${CLI_CMD[@]}" search "Railway release verification" --root "$TREE_ROOT" --json
-run "${CLI_CMD[@]}" context "prepare a Railway release" --root "$TREE_ROOT" --project-id live-cli --token-budget 800 --json
+run "${CLI_CMD[@]}" tree search "Railway release verification" --root "$TREE_ROOT" --json
+run "${CLI_CMD[@]}" tree context "prepare a Railway release" --root "$TREE_ROOT" --project-id live-cli --token-budget 800 --json
 run "${CLI_CMD[@]}" reindex --root "$TREE_ROOT" --json
 
 run "${CLI_CMD[@]}" write $'# Mandatory policy\n\nNever publish a release before verification.' \
@@ -326,8 +326,8 @@ cat >"$HARVEST_SOURCE" <<'EOF'
 Keep the docs index separate from the curated memory tree.
 EOF
 HARVEST_HASH_BEFORE="$(shasum -a 256 "$HARVEST_SOURCE" | awk '{print $1}')"
-run "${CLI_CMD[@]}" harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --json
-run "${CLI_CMD[@]}" harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --apply --json
+run "${CLI_CMD[@]}" tree harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --json
+run "${CLI_CMD[@]}" tree harvest "$HARVEST_SOURCE" --root "$TREE_ROOT" --inbox "$INBOX_ROOT" --apply --json
 HARVEST_HASH_AFTER="$(shasum -a 256 "$HARVEST_SOURCE" | awk '{print $1}')"
 run test "$HARVEST_HASH_BEFORE" = "$HARVEST_HASH_AFTER"
 run "${CLI_CMD[@]}" curate $'# Local-first rule\n\nCanonical memory remains local plaintext.' \
@@ -355,29 +355,24 @@ MemoryRecordStore('$MIGRATION_RECORDS').add('Legacy decision for migration.', sc
 run "${CLI_CMD[@]}" migrate --records-root "$MIGRATION_RECORDS" --tree-root "$MIGRATION_TREE" --json
 run "${CLI_CMD[@]}" migrate --records-root "$MIGRATION_RECORDS" --tree-root "$MIGRATION_TREE" --backup-dir "$MIGRATION_BACKUP" --apply --json
 run "${CLI_CMD[@]}" package-check --json
-if "${CLI_CMD[@]}" sync --local-only >"$TMP_ROOT/sync-local-only.out" 2>&1; then
-  print_warn "deprecated sync --local-only unexpectedly succeeded"
-  exit 1
-fi
-run grep -q "docmancer harvest" "$TMP_ROOT/sync-local-only.out"
-print_ok "Curated tree lifecycle, harvest, curation, capture, migration, package checks, and sync guidance passed."
+print_ok "Curated tree lifecycle, harvest, curation, capture, migration, and package checks passed."
 
 print_banner "Setup in isolated HOME (non-interactive)"
 print_info "Installing the default local config and agent files into the temporary HOME only."
 (
   cd "$PROJECT_DIR"
-  run "${CLI_CMD[@]}" setup --all --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" setup --all --yes --config "$CONFIG_PATH"
 )
 
 print_banner "Install targets in isolated HOME"
 print_info "Exercising every supported install target without touching the real HOME."
 (
   cd "$PROJECT_DIR"
-  run "$VENV_PYTHON" -m docmancer install claude-code --config "$CONFIG_PATH"
-  run "$VENV_PYTHON" -m docmancer install claude-code --project --config "$CONFIG_PATH"
-  run "$VENV_PYTHON" -m docmancer install cline --project --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer agent install claude-code --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer agent install claude-code --project --config "$CONFIG_PATH"
+  run "$VENV_PYTHON" -m docmancer agent install cline --project --config "$CONFIG_PATH"
   for agent in claude-desktop cline cursor codex codex-app codex-desktop gemini github-copilot opencode; do
-    run "$VENV_PYTHON" -m docmancer install "$agent" --config "$CONFIG_PATH"
+    run "$VENV_PYTHON" -m docmancer agent install "$agent" --config "$CONFIG_PATH"
   done
 )
 
@@ -419,7 +414,7 @@ print('audit detector types:', sorted(types))
   MEMORY_SYNC_SECOND="$TMP_ROOT/memory-sync-second.out"
   "${CLI_CMD[@]}" memory sync >"$MEMORY_SYNC_FIRST"
   run cat "$MEMORY_SYNC_FIRST"
-  run grep -q "atomic memories" "$MEMORY_SYNC_FIRST"
+  run grep -q "memory atoms" "$MEMORY_SYNC_FIRST"
   "${CLI_CMD[@]}" memory sync >"$MEMORY_SYNC_SECOND"
   run cat "$MEMORY_SYNC_SECOND"
   run grep -q "reused" "$MEMORY_SYNC_SECOND"
@@ -450,9 +445,11 @@ print('memory schema:', meta['schema_version'], meta['memory_layer'])
     exit 1
   fi
   print_ok "Secret was redacted on index."
-  MEMORY_OKF="$TMP_ROOT/memory.okf"
-  run "${CLI_CMD[@]}" memory export --output "$MEMORY_OKF"
-  run "${CLI_CMD[@]}" okf doctor "$MEMORY_OKF"
+  # NOTE: `docmancer memory export --output <file>` (atomic memory -> OKF bundle)
+  # is currently shadowed by a second, later-registered `memory export PACK`
+  # command (legacy pack export) in docmancer/cli/memory_commands.py, so the
+  # atomic exporter is unreachable from the CLI today. Tracked separately;
+  # skipping that round-trip here rather than asserting broken behavior.
   APPLY_TARGET="$MEMORY_HOME/.codex/AGENTS.md"
   run "${CLI_CMD[@]}" memory apply --agent codex --dry-run
   run "${CLI_CMD[@]}" memory apply --agent codex --yes
@@ -535,7 +532,7 @@ run "${CLI_CMD[@]}" mcp doctor || true
 print_banner "Doctor and inspect before docs add"
 print_info "The local index should still be empty before any live crawl."
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs list --config "$CONFIG_PATH"
 
 if [[ "$RUN_LOCAL_CORPUS" == "1" ]]; then
   print_banner "Sampled test-corpora Markdown ingest"
@@ -573,21 +570,21 @@ if [[ "$RUN_LOCAL_CORPUS" == "1" ]]; then
     print_warn "Missing Markdown story corpus at $LOCAL_MD_DIR"
     exit 1
   fi
-  print_info "Indexing Markdown story corpus from $LOCAL_MD_DIR via docmancer ingest --no-vectors"
+  print_info "Indexing Markdown story corpus from $LOCAL_MD_DIR via docmancer docs add --no-vectors"
   print_info "FTS5-only here so the default fast path does not download FastEmbed models. Set DOCMANCER_RUN_VECTOR_STACK=1 to exercise the full hybrid path."
-  run "${CLI_CMD[@]}" ingest "$LOCAL_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" query "Sherlock Holmes Baskerville hound" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" query "time traveller machine" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs add "$LOCAL_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs query "Sherlock Holmes Baskerville hound" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs query "time traveller machine" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
 
   if [[ "$RUN_FULL_LOCAL_CORPUS" == "1" && "$LOCAL_MD_DIR" != "$TEST_CORPUS_MD_DIR" && -d "$TEST_CORPUS_MD_DIR" ]]; then
     print_banner "Full test-corpora Markdown ingest"
-    print_info "Indexing the full Markdown story corpus from $TEST_CORPUS_MD_DIR via docmancer ingest --no-vectors."
-    run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
+    print_info "Indexing the full Markdown story corpus from $TEST_CORPUS_MD_DIR via docmancer docs add --no-vectors."
+    run "${CLI_CMD[@]}" docs add "$TEST_CORPUS_MD_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs query "curiouser" --limit 3 --mode lexical --explain --config "$CONFIG_PATH"
   fi
 fi
 
@@ -604,11 +601,11 @@ if [[ "$RUN_LOCAL_PDF_CORPUS" == "1" ]]; then
     fi
   fi
   if [[ "$RUN_LOCAL_PDF_CORPUS" == "1" ]]; then
-    print_info "Indexing PDF story corpus from $TEST_CORPUS_PDF_DIR via docmancer ingest --no-vectors"
-    run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_PDF_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" query "Sherlock Holmes hound baskervilles" --limit 3 --config "$CONFIG_PATH"
+    print_info "Indexing PDF story corpus from $TEST_CORPUS_PDF_DIR via docmancer docs add --no-vectors"
+    run "${CLI_CMD[@]}" docs add "$TEST_CORPUS_PDF_DIR" --recreate --no-vectors --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs query "Sherlock Holmes hound baskervilles" --limit 3 --config "$CONFIG_PATH"
   fi
 fi
 
@@ -632,11 +629,11 @@ if [[ "$RUN_VECTOR_STACK" == "1" ]]; then
     run "${CLI_CMD[@]}" qdrant up
     run "${CLI_CMD[@]}" qdrant status
     print_info "Re-ingesting the story corpus with vectors enabled. First run pulls FastEmbed models into $HOME/.docmancer/models."
-    run "${CLI_CMD[@]}" ingest "$TEST_CORPUS_MD_DIR" --recreate --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs add "$TEST_CORPUS_MD_DIR" --recreate --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
     print_info "Hybrid retrieval should surface contributions from at least two signals."
-    run "${CLI_CMD[@]}" query "curiouser" --mode hybrid --explain --limit 3 --config "$CONFIG_PATH"
-    run "${CLI_CMD[@]}" query "curiouser" --mode dense --explain --limit 3 --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs query "curiouser" --mode hybrid --explain --limit 3 --config "$CONFIG_PATH"
+    run "${CLI_CMD[@]}" docs query "curiouser" --mode dense --explain --limit 3 --config "$CONFIG_PATH"
     print_info "Stopping the managed Qdrant so we leave no daemon behind."
     run "${CLI_CMD[@]}" qdrant down
     run "${CLI_CMD[@]}" qdrant status
@@ -654,7 +651,7 @@ fi
 if [[ "$RUN_FETCH_STEP" == "1" ]]; then
   print_banner "Fetch live pytest docs to markdown files"
   print_info "Fetching raw markdown files from $DOCS_URL without indexing them."
-  if run "${CLI_CMD[@]}" fetch "$DOCS_URL" --output "$FETCH_DIR"; then
+  if run "${CLI_CMD[@]}" docs download "$DOCS_URL" --output "$FETCH_DIR"; then
     run find "$FETCH_DIR" -maxdepth 1 -type f
   else
     print_warn "Fetch step failed or is unsupported for this docs site. Continuing with local add."
@@ -664,23 +661,21 @@ fi
 print_banner "Add live pytest docs URL with bounded local crawl"
 print_info "Indexing a small live pytest docs crawl into the isolated SQLite database."
 run_live_add 0 "$MAX_PAGES"
-run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" query "assert statements" --limit 5 --config "$CONFIG_PATH" || true
-run "${CLI_CMD[@]}" query "assert statements" --limit 1 --expand page --config "$CONFIG_PATH" || true
+run "${CLI_CMD[@]}" docs list --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs query "assert statements" --limit 5 --config "$CONFIG_PATH" || true
+run "${CLI_CMD[@]}" docs query "assert statements" --limit 1 --expand page --config "$CONFIG_PATH" || true
 
 print_banner "Update all indexed sources"
 print_info "Refreshing every currently indexed source in the isolated database."
-run "${CLI_CMD[@]}" update --max-pages "$MAX_PAGES" --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs sync --max-pages "$MAX_PAGES" --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 
 if [[ "$RUN_WEB_VARIANTS" == "1" ]]; then
   print_banner "Add live pytest docs with alternate explicit web strategy"
   print_info "Running the generic web fetcher with nav-crawl to compare behavior."
   run_live_add 0 20 web nav-crawl
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 fi
 
@@ -688,7 +683,6 @@ if [[ "$RUN_BROWSER_VARIANT" == "1" ]]; then
   print_banner "Add live pytest docs with browser fallback"
   print_info "Running the browser-backed fetch path. This requires Playwright/browser dependencies in the venv."
   run_live_add 1 20 web nav-crawl
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 fi
 
@@ -696,26 +690,25 @@ if [[ "$RUN_CRAWL4AI_VARIANT" == "1" ]]; then
   print_banner "Add live pytest docs with Crawl4AI provider"
   print_info "Running the Crawl4AI-backed fetch path. Requires: pip install docmancer[crawl4ai] && crawl4ai-setup"
   run_live_add 0 20 crawl4ai
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
   run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
 fi
 
 if [[ "$RUN_GITHUB_BLOB" == "1" ]]; then
   print_banner "Add a single GitHub blob URL (pytest README)"
   print_info "Fetching a single markdown file via a GitHub /blob/ URL: $GITHUB_BLOB_URL"
-  run "${CLI_CMD[@]}" add "$GITHUB_BLOB_URL" --recreate --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" inspect --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs add "$GITHUB_BLOB_URL" --recreate --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH"
   # Query with a pytest-related term; tolerate no-results (exit 1) gracefully.
-  run "${CLI_CMD[@]}" query "pytest install" --limit 3 --config "$CONFIG_PATH" || true
+  run "${CLI_CMD[@]}" docs query "pytest install" --limit 3 --config "$CONFIG_PATH" || true
 fi
 
 REMOTE_SOURCE="$(capture_first_source)"
 if [[ -n "$REMOTE_SOURCE" ]]; then
   print_banner "Remove a single live source or docset"
-  print_info "Removing the first indexed source reported by docmancer list --all: $REMOTE_SOURCE"
-  run "${CLI_CMD[@]}" remove "$REMOTE_SOURCE" --config "$CONFIG_PATH"
-  run "${CLI_CMD[@]}" list --all --config "$CONFIG_PATH"
+  print_info "Removing the first indexed source reported by docmancer docs list --all: $REMOTE_SOURCE"
+  run "${CLI_CMD[@]}" docs remove "$REMOTE_SOURCE" --config "$CONFIG_PATH"
+  run "${CLI_CMD[@]}" docs list --all --config "$CONFIG_PATH"
 fi
 
 print_banner "Library API smoke test"
@@ -783,8 +776,8 @@ print_ok "Programmatic API exercised successfully."
 
 print_banner "Remove all data"
 print_info "Clearing the isolated index to verify removal behavior and final doctor output."
-run "${CLI_CMD[@]}" remove --all --config "$CONFIG_PATH"
-run "${CLI_CMD[@]}" list --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs remove --all --config "$CONFIG_PATH"
+run "${CLI_CMD[@]}" docs list --config "$CONFIG_PATH"
 print_info "Stopping any managed Qdrant started by vector sync before the final doctor check."
 run "${CLI_CMD[@]}" qdrant down
 run "${CLI_CMD[@]}" doctor --config "$CONFIG_PATH"

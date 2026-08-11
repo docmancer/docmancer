@@ -133,25 +133,25 @@ def test_reconcile_writes_stable_laptop_files_and_is_idempotent(tmp_path):
 
 
 def test_canonical_exclusion_file_withholds_projects_without_touching_sources(tmp_path):
-    token_tape = tmp_path / "repos" / "token_tape"
-    pets = tmp_path / "repos" / "wecasa-for-pets"
+    legacy_dashboard = tmp_path / "repos" / "legacy_dashboard"
+    retired_portal = tmp_path / "repos" / "retired-portal"
     docmancer = tmp_path / "repos" / "docmancer"
     atoms = [
         _atom(
-            "token-tape",
-            "TokenTape is a tokenized equities product.",
+            "legacy-dashboard",
+            "Legacy Dashboard is an archived analytics product.",
             "decision",
-            source_path=str(token_tape / "AGENTS.md"),
+            source_path=str(legacy_dashboard / "AGENTS.md"),
             scope_kind="project",
-            project_path=str(token_tape),
+            project_path=str(legacy_dashboard),
         ),
         _atom(
-            "pets",
-            "The pet marketplace targets behavioural experts.",
+            "retired-portal",
+            "The retired portal served an old customer segment.",
             "decision",
-            source_path=str(pets / "memory.md"),
+            source_path=str(retired_portal / "memory.md"),
             scope_kind="project",
-            project_path=str(pets),
+            project_path=str(retired_portal),
         ),
         _atom(
             "docmancer",
@@ -169,8 +169,8 @@ def test_canonical_exclusion_file_withholds_projects_without_touching_sources(tm
             "# Canonical memory exclusions\n\n"
             "These rules affect generated Shared Memory only.\n\n"
             "## Evidence path contains\n\n"
-            "- token_tape\n"
-            "- wecasa-for-pets\n\n"
+            "- legacy_dashboard\n"
+            "- retired-portal\n\n"
             "## Text contains\n"
         ),
         memory_type="constraint",
@@ -183,24 +183,24 @@ def test_canonical_exclusion_file_withholds_projects_without_touching_sources(tm
     projects = (root / "tree" / "projects" / "active.md").read_text()
 
     assert result["changed"] is True
-    assert "TokenTape" not in projects
-    assert "pet marketplace" not in projects
+    assert "Legacy Dashboard" not in projects
+    assert "retired portal" not in projects
     assert "Docmancer is the active memory product" in projects
-    assert (token_tape / "AGENTS.md").as_posix() not in projects
+    assert (legacy_dashboard / "AGENTS.md").as_posix() not in projects
 
 
 def test_canonical_exclusion_parser_is_case_insensitive_and_literal():
     rules = parse_canonical_exclusions(
         "# Canonical memory exclusions\n\n"
         "## Evidence path contains\n\n"
-        "- `Token_Tape`\n\n"
+        "- `Legacy_Dashboard`\n\n"
         "## Text contains\n\n"
-        "- Pet Marketplace\n"
+        "- Retired Portal\n"
     )
 
     assert rules == {
-        "evidence_path_contains": ("token_tape",),
-        "text_contains": ("pet marketplace",),
+        "evidence_path_contains": ("legacy_dashboard",),
+        "text_contains": ("retired portal",),
     }
 
 

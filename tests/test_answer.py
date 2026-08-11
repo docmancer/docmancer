@@ -64,11 +64,33 @@ def _bundle(*, mandatory=False, conflicts=None):
 def test_intent_classification_and_authority_floor():
     assert classify_intent("what mentions deployment?") == "exploratory"
     assert classify_intent("why did we choose Railway?") == "decision_rationale"
+    assert classify_intent("Why is it still there in active.md?") == "factual_recall"
     assert classify_intent("what are the mandatory deployment rules?") == "normative"
     assert retrieval_sufficiency(_bundle(), "what are the mandatory deployment rules?") == "unmet"
     assert retrieval_sufficiency(
         _bundle(mandatory=True), "what are the mandatory deployment rules?"
     ) == "met"
+
+
+def test_current_state_why_question_uses_factual_evidence_instead_of_refusing():
+    provider = _AnswerProvider("Legacy Dashboard is still present in active.md [1].")
+    bundle = _bundle()
+    bundle["curated_memory"] = [{
+        "address": "docmancer://memory/active-projects",
+        "title": "Active Projects",
+        "excerpt": "## Legacy Dashboard\n\nLocal path: /repos/legacy_dashboard",
+        "authority": "advisory",
+        "source_type": "generated",
+    }]
+
+    result = generate_answer(
+        bundle,
+        "Why is it still there in active.md?",
+        client=provider,
+    )
+
+    assert result.refused is False
+    assert provider.calls == 1
 
 
 def test_generate_answer_resolves_citations_and_verification():
@@ -95,8 +117,8 @@ def test_generate_answer_resolves_citations_and_verification():
     assert deltas == [result.text]
 
 
-def test_normative_question_without_mandatory_record_refuses_without_provider_call():
-    provider = _AnswerProvider("This must never be called.")
+def test_normative_question_without_mandatory_record_answers_with_sufficiency_metadata():
+    provider = _AnswerProvider("The available record is advisory, not mandatory [1].")
 
     result = generate_answer(
         _bundle(),
@@ -104,9 +126,9 @@ def test_normative_question_without_mandatory_record_refuses_without_provider_ca
         client=provider,
     )
 
-    assert result.refused is True
+    assert result.refused is False
     assert result.verification.retrieval_sufficiency == "unmet"
-    assert provider.calls == 0
+    assert provider.calls == 1
 
 
 def test_indexed_instruction_file_satisfies_normative_authority():

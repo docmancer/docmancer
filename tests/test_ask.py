@@ -341,6 +341,9 @@ def test_ask_apply_executes_validated_action_without_prompt(tmp_path):
         "kind": "proposal",
         "message": "Review this proposal.",
         "proposal": proposal,
+        "request_kind": "mutate",
+        "read_question": None,
+        "retrieval_queries": [],
     }
     engine.execute.return_value = {
         "address": "docmancer://memory/release",

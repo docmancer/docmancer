@@ -32,8 +32,8 @@ _CONSOLIDATE_SYSTEM_INLINE_SOURCES = (
     "as warnings rather than silently picking a side. Group related facts into "
     "topical sections. Prefer compressed structured facts over prose-heavy "
     "rewriting. Do not use em dashes. Attribute every fact: end each fact or "
-    "bullet with a short inline citation of the source path it came from, for "
-    "example (source: path/to/file.md). Also record the full provenance path set "
+    "bullet with a short inline citation using the format (source: <path>). "
+    "Also record the full provenance path set "
     "in source_paths."
 )
 

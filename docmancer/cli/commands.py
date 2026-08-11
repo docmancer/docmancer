@@ -1979,7 +1979,7 @@ def _resolved_docmancer_home() -> Path:
 @click.command(
     cls=DocmancerCommand,
     context_settings=HELP_CONTEXT_SETTINGS,
-    short_help="Remove all docmancer state from this machine.",
+    short_help="Remove local memory indexes, models, and caches.",
     epilog=format_examples(
         "docmancer clear",
         "docmancer clear --yes",
@@ -1995,7 +1995,7 @@ def _resolved_docmancer_home() -> Path:
     help="Skip the FastEmbed / Qdrant-hosted HuggingFace model caches.",
 )
 def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
-    """Remove every docmancer-related directory from this machine.
+    """Remove local memory indexes, models, and caches from this machine.
 
     Removes (by default):
 
@@ -2014,7 +2014,8 @@ def clear_cmd(assume_yes: bool, keep_config: bool, keep_models: bool) -> None:
     Project-local .docmancer/ directories, Cloud connection metadata, and Cloud
     credentials held in the OS keyring are NOT removed. Keeping the metadata
     with the keyring identity prevents a local reset from registering a duplicate
-    pending device. Use ``docmancer cloud disconnect`` separately when wanted.
+    pending device. Use ``docmancer cloud pause`` to stop transfers temporarily,
+    or ``docmancer cloud disconnect`` to revoke and forget this device.
     Rebuild afterwards with: docmancer setup
     """
     home = Path.home()

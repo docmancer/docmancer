@@ -16,6 +16,17 @@ type Phase =
   | "pending_approval"
   | "failed";
 
+function approvalUrl(verificationUri: string, userCode: string): string {
+  if (!verificationUri) return "";
+  try {
+    const url = new URL(verificationUri);
+    if (userCode) url.searchParams.set("code", userCode);
+    return url.toString();
+  } catch {
+    return verificationUri;
+  }
+}
+
 /**
  * Drives device-code login from the browser. The dialog never talks to the
  * hosted API directly: it starts a local job and follows its progress stages.
@@ -145,7 +156,8 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
 
     {phase === "awaiting_authorization" && <div className="connect-step">
       <span className="eyebrow">Step 1 of 2</span>
-      <h3>Enter this code in your browser</h3>
+      <h3>Approve this device in your browser</h3>
+      <p>The approval page opens with this code filled in.</p>
       <div className="device-code">
         <code>{userCode}</code>
         <button className="icon-btn" onClick={copyCode} aria-label="Copy code">
@@ -153,8 +165,8 @@ export function ConnectDialog({ close, onConnected }: { close: () => void; onCon
         </button>
       </div>
       <div className="form-actions">
-        <a className="primary-btn" href={verificationUri} target="_blank" rel="noreferrer">
-          Open Docmancer <ExternalLink size={14}/>
+        <a className="primary-btn" href={approvalUrl(verificationUri, userCode)} target="_blank" rel="noreferrer">
+          Continue to approval <ExternalLink size={14}/>
         </a>
         <button className="secondary-btn" onClick={abandon}>Cancel</button>
       </div>

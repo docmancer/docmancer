@@ -185,6 +185,84 @@ def test_cloud_disable_does_not_remove_local_memory(tmp_path, monkeypatch):
     assert memory.read_text(encoding="utf-8") == "keep"
 
 
+def test_cloud_pause_retains_identity_and_status_reports_paused(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=True,
+        account_id="account-1",
+        workspace_id="workspace-1",
+        device_id="device-1",
+        base_url="https://cloud.invalid",
+    )
+
+    paused = CliRunner().invoke(cli, ["cloud", "pause"])
+    status = CliRunner().invoke(cli, ["cloud", "status"])
+
+    assert paused.exit_code == 0, paused.output
+    assert config.account()["paused"] is True
+    assert config.account()["workspace_id"] == "workspace-1"
+    assert "Personal Sync: paused on this device" in status.output
+    assert "docmancer cloud connect" in status.output
+
+
+def test_cloud_disconnect_revokes_device_and_forgets_local_cloud(tmp_path, monkeypatch):
+    from docmancer.cli import cloud_commands
+
+    monkeypatch.setenv("DOCMANCER_HOME", str(tmp_path))
+    memory = tmp_path / "tree" / "keep.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("keep", encoding="utf-8")
+    config = CloudConfig(tmp_path)
+    config.save_account(
+        enabled=False,
+        account_id="account-1",
+        workspace_id="workspace-1",
+        device_id="device-1",
+        base_url="https://cloud.invalid",
+        key_version=2,
+    )
+    keys = KeyStore(MemorySecretBackend())
+    keys.set_token("account-1", "token")
+    keys.ensure_device_keys("account-1")
+    keys.set_workspace_key("account-1", "workspace-1", b"w" * 32, key_version=1)
+    keys.set_workspace_key("account-1", "workspace-1", b"x" * 32, key_version=2)
+    revoked: list[tuple[str, str]] = []
+
+    class Client:
+        def revoke_device(self, workspace_id, device_id):
+            revoked.append((workspace_id, device_id))
+            return {"device_id": device_id, "state": "revoked"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        cloud_commands,
+        "_client",
+        lambda: (Client(), tmp_path, config, config.account(), keys),
+    )
+
+    result = CliRunner().invoke(cli, ["cloud", "disconnect"])
+
+    assert result.exit_code == 0, result.output
+    assert revoked == [("workspace-1", "device-1")]
+    assert not config.paths.root.exists()
+    for kind in (
+        "access-token",
+        "device-signing-private",
+        "device-signing-public",
+        "device-box-private",
+        "device-box-public",
+        "workspace:workspace-1",
+        "workspace:workspace-1:v1",
+        "workspace:workspace-1:v2",
+    ):
+        assert keys.get("account-1", kind) is None
+    assert memory.read_text(encoding="utf-8") == "keep"
+    assert "device revoked" in result.output
+
+
 def test_cloud_connect_is_idempotent_for_an_existing_device(tmp_path, monkeypatch):
     from docmancer.cli import cloud_commands
     from docmancer.cloud import connect as connect_module

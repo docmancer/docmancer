@@ -9,6 +9,18 @@ docmancer doctor
 
 These commands report Shared Memory, indexed evidence, retrieval state, integrations, legacy Context revisions, provider readiness, masked security findings, and optional Cloud status.
 
+## pipx installed Docmancer but the command is not found
+
+pipx installs user commands into its bin directory, which is commonly `~/.local/bin` on Linux. A successful install does not make the command visible when that directory is missing from the current shell's `PATH`.
+
+```bash
+pipx ensurepath
+export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"
+docmancer --version
+```
+
+`pipx ensurepath` updates the shell configuration for future terminals. The `export` line uses pipx's configured bin directory and fixes the current terminal immediately. If you omit the export, reconnect over SSH or start a new login session before running `docmancer`.
+
 ## The wrong executable is running
 
 ```bash

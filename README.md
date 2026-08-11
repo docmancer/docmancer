@@ -74,8 +74,12 @@ Nothing leaves your machine unless you ask it to. There is no telemetry, no acco
 
 ```bash
 pipx install docmancer
+pipx ensurepath
+export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"
 docmancer setup
 ```
+
+`pipx ensurepath` makes the change persistent for future terminals. The `export` line makes Docmancer available in the current terminal immediately, which matters in an existing SSH session. If `docmancer` still reports `command not found`, reconnect over SSH and try again.
 
 If you use uv, `uv tool install docmancer` installs it the same way.
 
@@ -286,7 +290,7 @@ The hosted service receives ciphertext, and it cannot read your plaintext memory
 
 ## Requirements
 
-Docmancer supports Python 3.11 and newer, including 3.14, so the install command does not need an interpreter pin. `pipx install docmancer` (or `uv tool install docmancer`) can use whichever recent Python your machine already provides. If an install has already gone wrong, `docmancer doctor` will tell you why.
+Docmancer supports Python 3.11 and newer, including 3.14, so the install command does not need an interpreter pin. `pipx install docmancer` (or `uv tool install docmancer`) can use whichever recent Python your machine already provides. If pipx installs successfully but the shell cannot find `docmancer`, run `pipx ensurepath`, export the bin directory with `export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"`, and try again. For problems after the command starts, `docmancer doctor` will tell you why.
 
 ## Contributing
 

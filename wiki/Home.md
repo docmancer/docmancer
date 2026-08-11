@@ -20,10 +20,14 @@ Docmancer discovers existing memory without rewriting the source files, keeps pr
 
 ```bash
 pipx install docmancer
+pipx ensurepath
+export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"
 docmancer setup
 cd /path/to/your-project
 docmancer web
 ```
+
+The PATH export makes Docmancer available in the current terminal, including an existing SSH session. `pipx ensurepath` keeps it available in future terminals.
 
 If you use uv, `uv tool install docmancer` installs it the same way.
 

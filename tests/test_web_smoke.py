@@ -99,6 +99,16 @@ def test_hashed_static_asset_from_manifest_is_served(tmp_path: Path) -> None:
         assert response.status_code == 200, f"static asset {asset!r} did not serve"
 
 
+def test_packaged_cloud_connect_carries_code_to_approval_page() -> None:
+    javascript = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (STATIC_DIR / "_next" / "static" / "chunks").glob("*.js")
+    )
+
+    assert "Continue to approval" in javascript
+    assert 'searchParams.set("code"' in javascript
+
+
 def test_live_api_answers_after_authentication(tmp_path: Path) -> None:
     client, app = _client(tmp_path / "ask.sqlite3")
     with client:

@@ -6,11 +6,15 @@ The current command surface is organised by outcome. Bare `docmancer` shows the 
 
 ```bash
 pipx install docmancer
+pipx ensurepath
+export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"
 docmancer setup
 cd /path/to/project
 docmancer web
 docmancer ask "What deployment decisions apply?"
 ```
+
+The PATH export makes Docmancer available in the current terminal, including an existing SSH session. `pipx ensurepath` keeps it available in future terminals.
 
 If you use uv, `uv tool install docmancer` installs it the same way.
 
@@ -180,8 +184,9 @@ Three stores sit behind the search tools, and they are deliberately separate. `s
 | `docmancer cloud recovery create` | Advanced command that replaces the current recovery kit with a self-tested version 2 kit. |
 | `docmancer cloud recovery verify` | Legacy diagnostic for checking an existing recovery kit. Normal kit creation already performs this cryptographic self-test. |
 | `docmancer cloud export <destination>` | Exports local memory without contacting the server. |
-| `docmancer cloud disconnect` | Clears the Cloud session without changing local memory. |
-| `docmancer cloud delete-remote --confirm DELETE` | Schedules server-held ciphertext for deletion while preserving local memory. |
+| `docmancer cloud pause` | Stops transfer while retaining the resumable device identity and Cloud credentials. |
+| `docmancer cloud disconnect` | Revokes this device and removes its local Cloud credentials without changing local memory or the subscription. |
+| `docmancer cloud delete-remote --confirm DELETE` | Cancels the subscription and schedules server-held ciphertext for deletion while preserving local memory. |
 
 Cloud sync never substitutes for local source indexing or combination.
 
@@ -217,7 +222,7 @@ Provider-backed refreshes report elapsed distillation time and whether they met 
 - `docmancer curate` applies whole-file curation.
 - `docmancer okf doctor` validates an Open Knowledge Format bundle.
 - `docmancer package-check` verifies versioned distribution artifacts.
-- `docmancer clear` removes machine-wide Docmancer state after explicit confirmation.
+- `docmancer clear` removes local memory indexes, models, and caches after explicit confirmation. It preserves Cloud identity unless you separately disconnect the device.
 
 Run `docmancer <namespace> --help` and `docmancer <namespace> <command> --help` for exact arguments.
 

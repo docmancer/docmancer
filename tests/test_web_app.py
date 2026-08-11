@@ -356,10 +356,10 @@ class FakeRuntime:
                     "before_markdown": "",
                     "after_markdown": (
                         "# Canonical memory exclusions\n\n"
-                        "## Evidence path contains\n\n- token_tape\n"
+                        "## Evidence path contains\n\n- legacy_dashboard\n"
                     ),
-                    "diff": "+- token_tape\n",
-                    "rationale": "Withhold TokenTape from generated Shared Memory.",
+                    "diff": "+- legacy_dashboard\n",
+                    "rationale": "Withhold Legacy Dashboard from generated Shared Memory.",
                     "destructive": False,
                     "status": "pending",
                 }
@@ -367,7 +367,15 @@ class FakeRuntime:
 
     async def execute_memory_action(self, proposal: dict, *, actor_surface: str) -> dict:
         self.executed_action = {"proposal": proposal, "actor_surface": actor_surface}
-        return {"address": proposal["address"], "content_hash": "hash-2"}
+        return {
+            "address": proposal["address"],
+            "content_hash": "hash-2",
+            "postcondition": getattr(
+                self,
+                "postcondition",
+                {"status": "satisfied", "checks": [{"name": "file_body_matches", "passed": True}]},
+            ),
+        }
 
     async def resolve_memory_conflict(self, identifier: str, resolution: str, *, winner: str | None = None) -> dict:
         return {"relation_id": identifier, "resolution": resolution, "winner": winner}
@@ -900,7 +908,7 @@ def test_action_clarification_continues_into_one_proposal_without_q_and_a_loop(
         first = client.post(
             "/api/v1/ask",
             json={
-                "task": "Remove TokenTape from Shared Memory",
+                "task": "Remove Legacy Dashboard from Shared Memory",
                 "conversation_id": conversation_id,
             },
             headers=headers,
@@ -919,7 +927,7 @@ def test_action_clarification_continues_into_one_proposal_without_q_and_a_loop(
         assert second.status_code == 200
         assert second.json()["action"]["path"] == "shared/canonical-exclusions.md"
         assert runtime.ask_calls[-1]["pending_action_request"] == (
-            "Remove TokenTape from Shared Memory"
+            "Remove Legacy Dashboard from Shared Memory"
         )
 
 
@@ -946,7 +954,7 @@ def test_referential_retry_recovers_original_request_after_legacy_refusal(
         )
         _, answer_id = history.begin_exchange(
             conversation_id,
-            "Remove TokenTape and pet projects from Shared Memory globally.",
+            "Remove Legacy Dashboard and Retired Portal from Shared Memory globally.",
         )
         history.complete_answer(
             conversation_id,
@@ -964,7 +972,7 @@ def test_referential_retry_recovers_original_request_after_legacy_refusal(
         assert response.status_code == 200
         assert response.json()["action"]["path"] == "shared/canonical-exclusions.md"
         assert runtime.ask_calls[-1]["pending_action_request"] == (
-            "Remove TokenTape and pet projects from Shared Memory globally."
+            "Remove Legacy Dashboard and Retired Portal from Shared Memory globally."
         )
 
 
@@ -1045,6 +1053,40 @@ def test_saved_ask_action_is_applied_from_server_side_proposal(tmp_path: Path) -
             f"/api/v1/ask/conversations/{conversation_id}",
         ).json()
         assert conversation["messages"][-1]["action"]["status"] == "applied"
+
+
+def test_ask_action_does_not_claim_success_when_postcondition_fails(tmp_path: Path) -> None:
+    client, app, runtime = app_client(tmp_path)
+    runtime.postcondition = {
+        "status": "not_satisfied",
+        "checks": [{"name": "excluded_text_absent", "passed": False}],
+    }
+    with client:
+        csrf = authenticate(client, app)
+        headers = {
+            "origin": "http://127.0.0.1:48123",
+            "x-docmancer-csrf": csrf,
+        }
+        conversation_id = client.post(
+            "/api/v1/ask/conversations",
+            json={},
+            headers=headers,
+        ).json()["id"]
+        action = client.post(
+            "/api/v1/ask",
+            json={"task": "Update the release decision.", "conversation_id": conversation_id},
+            headers=headers,
+        ).json()["action"]
+
+        response = client.post(
+            f"/api/v1/ask/actions/{action['id']}",
+            json={"decision": "apply"},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "ACTION_POSTCONDITION_FAILED"
+        assert response.json()["action"]["status"] == "failed"
 
 
 def test_ask_action_rejects_browser_supplied_executable_fields(tmp_path: Path) -> None:
@@ -1240,6 +1282,41 @@ def test_failed_background_job_is_logged_with_a_traceback(caplog):
     record = next(r for r in caplog.records if r.name == "docmancer.web.api")
     assert "context.refresh" in record.getMessage()
     assert record.exc_info is not None, "the traceback must be logged, not just the message"
+
+
+def test_expected_background_job_outcome_is_logged_without_a_traceback(caplog):
+    import asyncio
+    import logging
+
+    from docmancer.cloud.connect import ConnectCancelled
+    from docmancer.web.api import JobRegistry
+
+    async def scenario():
+        registry = JobRegistry()
+
+        async def operation(_progress):
+            raise ConnectCancelled("the connection attempt was cancelled")
+
+        job = registry.start(
+            "cloud.connect",
+            operation,
+            expected_errors=(ConnectCancelled,),
+        )
+        for _ in range(200):
+            if job["state"] in {"completed", "failed"}:
+                break
+            await asyncio.sleep(0.01)
+        return job
+
+    with caplog.at_level(logging.INFO, logger="docmancer.web.api"):
+        job = asyncio.run(scenario())
+
+    assert job["state"] == "failed"
+    assert job["error"] == "the connection attempt was cancelled"
+    record = next(r for r in caplog.records if r.name == "docmancer.web.api")
+    assert "cloud.connect" in record.getMessage()
+    assert record.levelno == logging.INFO
+    assert record.exc_info is None
 
 
 def test_canonical_status_and_section_are_served(tmp_path: Path) -> None:

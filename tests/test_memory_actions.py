@@ -8,7 +8,6 @@ import pytest
 from docmancer.memory.actions import (
     MemoryActionDraft,
     MemoryActionEngine,
-    is_mutation_request,
 )
 from docmancer.memory.laptop import CANONICAL_EXCLUSIONS_PATH
 from docmancer.memory.tree.errors import AlreadyExistsError, StaleWriteError
@@ -31,15 +30,23 @@ class FakePlanner:
         return self.draft
 
 
-def test_read_only_questions_do_not_enter_action_planning() -> None:
-    assert is_mutation_request("What is our release process?") is False
-    assert is_mutation_request("What did we save about deployment?") is False
-    assert is_mutation_request("How did the release workflow change?") is False
-    assert is_mutation_request("Update the release process.") is True
-    assert is_mutation_request("Could you update the release process?") is True
-    assert is_mutation_request("Streamline the file principles/working-style.md") is True
-    assert is_mutation_request("Simplify this project workflow") is True
-    assert is_mutation_request("Undo the deletion.") is True
+def test_read_only_questions_are_classified_semantically() -> None:
+    planner = FakePlanner(MemoryActionDraft(
+        request_kind="read",
+        outcome="none",
+        read_question="What is our release process?",
+        retrieval_queries=["release process"],
+    ))
+
+    result = MemoryActionEngine(Path.cwd()).plan(
+        "What is our release process?",
+        client=planner,
+    )
+
+    assert planner.calls == 1
+    assert result["kind"] == "none"
+    assert result["request_kind"] == "read"
+    assert result["read_question"] == "What is our release process?"
 
 
 def test_plan_and_execute_one_guarded_project_edit(tmp_path: Path) -> None:
@@ -52,6 +59,7 @@ def test_plan_and_execute_one_guarded_project_edit(tmp_path: Path) -> None:
         expect="absent",
     )
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="edit",
         scope="project",
@@ -74,11 +82,13 @@ def test_plan_and_execute_one_guarded_project_edit(tmp_path: Path) -> None:
     assert "+Run tests and a smoke test." in proposal["diff"]
     applied = engine.execute(proposal, actor_surface="test")
     assert applied["content_hash"] != entry.content_hash
+    assert applied["postcondition"]["status"] == "satisfied"
     assert "smoke test" in store.read(entry.address).body
 
 
 def test_global_forget_request_prepares_a_valid_canonical_exclusion(tmp_path: Path) -> None:
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="create",
         scope="machine",
@@ -86,17 +96,18 @@ def test_global_forget_request_prepares_a_valid_canonical_exclusion(tmp_path: Pa
         markdown=(
             "# Canonical memory exclusions\n\n"
             "## Evidence path contains\n\n"
-            "- /rwa_stuff/token_tape\n"
-            "- project_mewline_cat_collar.md\n\n"
+            "- /archive/legacy_dashboard\n"
+            "- retired_portal.md\n\n"
             "## Text contains\n\n"
-            "- TokenTape\n"
+            "- Legacy Dashboard\n"
         ),
         rationale="Keep these projects out of generated machine-wide memory.",
+        desired_visibility="absent_from_generated_shared_memory",
     ))
     engine = MemoryActionEngine(tmp_path / "project")
 
     result = engine.plan(
-        "Remove TokenTape and pet projects from Shared Memory globally, never source files.",
+        "Remove the legacy dashboard and retired portal from Shared Memory globally, never source files.",
         client=planner,
     )
 
@@ -104,7 +115,7 @@ def test_global_forget_request_prepares_a_valid_canonical_exclusion(tmp_path: Pa
     assert result["proposal"]["scope"] == "machine"
     assert result["proposal"]["path"] == CANONICAL_EXCLUSIONS_PATH
     payload = planner.last_payload
-    assert payload["scope_hint"] == "machine"
+    assert payload["scope_hint"] is None
     assert "without touching source files" in " ".join(payload["rules"])
 
 
@@ -125,6 +136,7 @@ def test_natural_shared_memory_retirement_request_forces_canonical_exclusion(
         expect="absent",
     )
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation=None,
         scope=None,
@@ -132,16 +144,16 @@ def test_natural_shared_memory_retirement_request_forces_canonical_exclusion(
             "# Canonical memory exclusions\n\n"
             "## Evidence path contains\n\n"
             "- old-project\n"
-            "- token_tape\n\n"
+            "- legacy_dashboard\n\n"
             "## Text contains\n\n"
-            "- Token Tape\n"
-            "- TokenTape\n"
+            "- Legacy Dashboard\n"
         ),
         rationale="The project is no longer active.",
+        desired_visibility="absent_from_generated_shared_memory",
     ))
 
     result = engine.plan(
-        'Remove the project "token tape" from all my shared memory files '
+        'Remove the project "legacy dashboard" from all my shared memory files '
         "or de-prioritize it - I am not using it anymore",
         client=planner,
     )
@@ -151,7 +163,7 @@ def test_natural_shared_memory_retirement_request_forces_canonical_exclusion(
     assert result["proposal"]["scope"] == "machine"
     assert result["proposal"]["path"] == CANONICAL_EXCLUSIONS_PATH
     assert result["proposal"]["address"] == existing.address
-    assert planner.last_payload["scope_hint"] == "machine"
+    assert planner.last_payload["scope_hint"] is None
     assert planner.last_payload["canonical_exclusion_target"] == {
         "scope": "machine",
         "path": CANONICAL_EXCLUSIONS_PATH,
@@ -160,30 +172,30 @@ def test_natural_shared_memory_retirement_request_forces_canonical_exclusion(
     }
 
 
-def test_action_prompt_defines_shared_memory_and_varied_cleanup_language(
+def test_action_prompt_defines_shared_memory_semantically_without_examples(
     tmp_path: Path,
 ) -> None:
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="clarification",
         message="Should this remain visible when directly relevant?",
     ))
 
     MemoryActionEngine(tmp_path / "project").plan(
-        "De-prioritize Token Tape in Shared Memory but keep it visible when relevant.",
+        "De-prioritize the legacy dashboard in Shared Memory but keep it visible when relevant.",
         client=planner,
     )
 
     reference = planner.last_payload["shared_memory_reference"]
     assert "machine-wide canonical memory" in reference["definition"]
-    assert "all my shared memory files" in reference["terminology"]["same_product_surface"]
+    assert "unambiguous natural-language references" in (
+        reference["terminology"]["same_product_surface"]
+    )
     assert any(
-        "remove, forget, hide, exclude" in rule
+        "semantic intent" in rule
         for rule in reference["intent_precedence"]
     )
-    assert any(
-        "or de-prioritize it" in example["request"].casefold()
-        for example in reference["examples"]
-    )
+    assert "examples" not in reference
     assert reference["canonical_exclusion_contract"]["required_path"] == (
         CANONICAL_EXCLUSIONS_PATH
     )
@@ -191,6 +203,7 @@ def test_action_prompt_defines_shared_memory_and_varied_cleanup_language(
 
 def test_invalid_canonical_exclusion_is_refused(tmp_path: Path) -> None:
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="create",
         scope="machine",
@@ -224,6 +237,7 @@ def test_server_resolves_existing_exclusion_target_instead_of_trusting_provider(
         expect="absent",
     )
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="create",
         scope="machine",
@@ -233,14 +247,15 @@ def test_server_resolves_existing_exclusion_target_instead_of_trusting_provider(
             "# Canonical memory exclusions\n\n"
             "## Evidence path contains\n\n"
             "- old-project\n"
-            "- /rwa_stuff/token_tape\n\n"
+            "- /archive/legacy_dashboard\n\n"
             "## Text contains\n\n"
-            "- TokenTape\n"
+            "- Legacy Dashboard\n"
         ),
+        desired_visibility="absent_from_generated_shared_memory",
     ))
 
     result = engine.plan(
-        "Remove TokenTape from Shared Memory globally without touching source files.",
+        "Remove the legacy dashboard from Shared Memory globally without touching source files.",
         client=planner,
     )
 
@@ -248,6 +263,49 @@ def test_server_resolves_existing_exclusion_target_instead_of_trusting_provider(
     assert result["proposal"]["operation"] == "edit"
     assert result["proposal"]["address"] == existing.address
     assert result["proposal"]["expected_hash"] == existing.content_hash
+
+
+def test_canonical_forget_adds_repository_slug_and_rebuilds_canonical_memory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
+        outcome="proposal",
+        operation="create",
+        scope="machine",
+        path=CANONICAL_EXCLUSIONS_PATH,
+        markdown=(
+            "# Canonical memory exclusions\n\n"
+            "## Evidence path contains\n\n"
+            "- Legacy Dashboard\n\n"
+            "## Text contains\n\n"
+            "- Legacy Dashboard\n"
+        ),
+        desired_visibility="absent_from_generated_shared_memory",
+    ))
+
+    engine = MemoryActionEngine(tmp_path / "project")
+    result = engine.plan(
+        "Remove the Legacy Dashboard project from my shared memory everywhere.",
+        client=planner,
+    )
+
+    assert result["kind"] == "proposal"
+    assert "- legacy_dashboard" in result["proposal"]["after_markdown"]
+
+    reconcile_calls = []
+
+    class _Reconciler:
+        def reconcile(self, **kwargs):
+            reconcile_calls.append(kwargs)
+            return {"changed": True, "revision_id": "rebuilt"}
+
+    monkeypatch.setattr(engine, "_reconciler", lambda: _Reconciler())
+    applied = engine.execute(result["proposal"], actor_surface="test")
+
+    assert reconcile_calls == [{"use_provider": False, "force": True}]
+    assert applied["canonical_reconcile"]["revision_id"] == "rebuilt"
 
 
 def test_stale_action_never_overwrites_a_newer_file(tmp_path: Path) -> None:
@@ -339,6 +397,7 @@ def test_generated_machine_section_can_only_be_pinned(tmp_path: Path) -> None:
     )
     engine = MemoryActionEngine(tmp_path / "project")
     bad = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="trash",
         scope="machine",
@@ -349,6 +408,7 @@ def test_generated_machine_section_can_only_be_pinned(tmp_path: Path) -> None:
     assert "pin actions only" in refused["message"]
 
     good = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="pin",
         scope="machine",
@@ -379,6 +439,7 @@ def test_exact_large_generated_section_can_prepare_a_pinned_proposal(
     )
     assert 16_000 < len(entry.body) < 24_000
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="pin",
         scope="machine",
@@ -426,6 +487,7 @@ def test_generated_streamline_request_becomes_an_actionable_clarification(
         expect="absent",
     )
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="pin",
         scope="machine",
@@ -442,7 +504,7 @@ def test_generated_streamline_request_becomes_an_actionable_clarification(
     assert result["kind"] == "clarification"
     assert "generated from source evidence" in result["message"]
     assert "concise summary" in result["message"]
-    assert planner.calls == 0
+    assert planner.calls == 1
 
 
 def test_empty_generated_pin_after_clarification_stays_actionable(
@@ -462,6 +524,7 @@ def test_empty_generated_pin_after_clarification_stays_actionable(
         expect="absent",
     )
     planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
         outcome="proposal",
         operation="pin",
         scope="machine",
@@ -480,8 +543,8 @@ def test_empty_generated_pin_after_clarification_stays_actionable(
     assert planner.calls == 1
 
 
-def test_secret_and_oversized_requests_never_reach_provider(tmp_path: Path) -> None:
-    planner = FakePlanner(MemoryActionDraft(outcome="none"))
+def test_secret_requests_never_reach_provider_and_oversized_targets_are_blocked(tmp_path: Path) -> None:
+    planner = FakePlanner(MemoryActionDraft(request_kind="read", outcome="none"))
     engine = MemoryActionEngine(tmp_path / "project")
     secret = engine.plan(
         "Remember api_key=sk-1234567890abcdefghijklmnop",
@@ -491,19 +554,33 @@ def test_secret_and_oversized_requests_never_reach_provider(tmp_path: Path) -> N
     assert planner.calls == 0
 
     store = TreeStore(tmp_path / "project" / ".docmancer" / "tree")
-    store.write(
+    large = store.write(
         relative_path="decisions/large.md",
         text="# Large\n\n" + ("x" * 16_001),
         scope="project",
         expect="absent",
     )
+    oversized_planner = FakePlanner(MemoryActionDraft(
+        request_kind="mutate",
+        outcome="proposal",
+        operation="edit",
+        scope="project",
+        target_address=large.address,
+        markdown="# Large\n\nReplacement.\n",
+    ))
     oversized = engine.plan(
         "Update decisions/large.md with the latest decision",
-        client=planner,
+        client=oversized_planner,
     )
     assert oversized["kind"] == "unavailable"
     assert "16,000" in oversized["message"]
-    assert planner.calls == 0
+    assert oversized_planner.calls == 1
+    candidate = next(
+        row for row in oversized_planner.last_payload["candidates"]
+        if row["address"] == large.address
+    )
+    assert candidate["content_available"] is False
+    assert candidate["markdown"] == ""
 
 
 def test_provider_failure_and_malformed_action_never_produce_a_proposal(

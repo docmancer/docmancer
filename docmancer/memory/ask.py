@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Sequence
 
 from docmancer.memory.tree.compiler import (
     ContextRequest,
@@ -36,6 +36,7 @@ def ask(
     answer: bool | None = None,
     answer_client=None,
     answer_mode: str = "normal",
+    retrieval_queries: Sequence[str] | None = None,
     on_delta: Callable[[str], None] | None = None,
 ) -> dict:
     """Return one bounded context bundle from the two local memory corpora.
@@ -129,17 +130,40 @@ def ask(
     scoped = project_path is not None or scope == "project"
     query_project = project if scoped else None
 
+    query_texts: list[str] = []
+    for query in [task, *(retrieval_queries or ())]:
+        value = " ".join(str(query or "").split())
+        if value and value not in query_texts:
+            query_texts.append(value)
+        if len(query_texts) == 4:
+            break
+
     chunks = []
     recall_error = None
     if remaining:
         try:
-            chunks = agent.query(
-                task,
-                limit=limit,
-                project_path=query_project,
-                scope=scope,
-                include_history=include_history,
-            )
+            by_record: dict[tuple[str, str], Any] = {}
+            for query in query_texts:
+                for chunk in agent.query(
+                    query,
+                    limit=limit,
+                    project_path=query_project,
+                    scope=scope,
+                    include_history=include_history,
+                ):
+                    metadata = dict(chunk.metadata or {})
+                    key = (
+                        str(metadata.get("source_path") or chunk.source or ""),
+                        str(chunk.text or ""),
+                    )
+                    previous = by_record.get(key)
+                    if previous is None or float(chunk.score or 0.0) > float(previous.score or 0.0):
+                        by_record[key] = chunk
+            chunks = sorted(
+                by_record.values(),
+                key=lambda chunk: float(chunk.score or 0.0),
+                reverse=True,
+            )[:limit]
         except Exception as exc:  # noqa: BLE001 - an absent recall index leaves tree recall usable
             # Tree recall still works without the index, so this is not fatal.
             # But it must not be silent: a failed query and an empty corpus both
@@ -218,6 +242,7 @@ def ask(
             "canonical_revision_id": reconcile.get("revision_id"),
         },
         "debug_evidence": evidence_debug,
+        "retrieval_queries": query_texts,
         "answer": None,
     }
     if answer is None:

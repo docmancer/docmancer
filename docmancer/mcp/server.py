@@ -55,7 +55,7 @@ CanonicalUnpinText = Annotated[
     str,
     Field(description="Case-insensitive substring identifying pinned lines to remove from the selected section."),
 ]
-MemoryType = Annotated[str, Field(description="Free-form memory classification stored in frontmatter, such as fact, decision, preference, or constraint. Defaults to fact.")]
+MemoryType = Annotated[str, Field(description="Free-form memory classification stored in frontmatter. Defaults to fact.")]
 MemoryScope = Annotated[
     Literal["global", "project"],
     Field(description="Memory visibility scope stored in frontmatter. Use global for machine-wide memory or project for project-scoped memory."),
@@ -66,9 +66,9 @@ Authority = Annotated[
 ]
 ProjectId = Annotated[str | None, Field(description="Project identifier stored in the memory file frontmatter. Omit unless the memory belongs to a named project.")]
 ProjectPath = Annotated[str | None, Field(description=_PROJECT_PATH_HELP)]
-Sources = Annotated[list[str] | None, Field(description="Source references, such as file paths or URLs, that back the memory content.")]
+Sources = Annotated[list[str] | None, Field(description="Source references that back the memory content.")]
 Tags = Annotated[list[str] | None, Field(description="Labels used to classify and retrieve the memory content.")]
-MemoryStatus = Annotated[str, Field(description="Free-form lifecycle status stored in frontmatter, such as active, draft, or archived. Only active entries are recalled. Defaults to active.")]
+MemoryStatus = Annotated[str, Field(description="Free-form lifecycle status stored in frontmatter. Only active entries are recalled. Defaults to active.")]
 CurationOrigin = Annotated[str, Field(description="Free-form origin label stored in frontmatter recording how the memory was created. Defaults to deliberate_write.")]
 Expect = Annotated[str, Field(description="Create/update guard, and not an enum: pass the literal string absent for create-only, or the file's current content_hash for a guarded update.")]
 Address = Annotated[str, Field(description="Stable docmancer://memory/<id> address, relative path, or exact title of the memory file.")]
@@ -82,7 +82,7 @@ PinnableSection = Annotated[
     Field(description="Canonical section to modify. canonical-memory is excluded because it describes the store itself and is regenerated wholesale."),
 ]
 RestoreToken = Annotated[str, Field(description="Restore token returned by a prior trash_memory call, identifying the file to restore.")]
-AgentName = Annotated[str, Field(description="Target agent identifier, such as claude-code or cursor, used to shape and attribute the result. Defaults are tool-specific.")]
+AgentName = Annotated[str, Field(description="Target agent identifier used to shape and attribute the result. Defaults are tool-specific.")]
 TokenBudget = Annotated[int | None, Field(description="Approximate maximum token size of the returned bundle. Omit to use the tool default.")]
 RequiredTokenBudget = Annotated[int, Field(description="Approximate maximum token size of the returned context projection.")]
 TimelineFileId = Annotated[str | None, Field(description="Stable memory file identifier. Supply it to restrict the timeline to one file's history.")]
@@ -147,8 +147,7 @@ def build_server(project_path: str | Path | None = None):
             "(default 8); include_history adds superseded evidence to the active evidence; "
             "expand_relations adds items linked to a direct match. "
             "Returns a list of objects with score, excerpt, source_path, scope, kind, lifecycle_state, "
-            "and a docmancer://record/<id> record_uri. Returns [] when nothing matches. "
-            "Example: query='why did we choose Railway', limit=5."
+            "and a docmancer://record/<id> record_uri. Returns [] when nothing matches."
         ),
         annotations=ToolAnnotations(
             title="Search harvested agent evidence",
@@ -182,7 +181,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: query is the natural-language text to match against the indexed documentation; "
             "limit caps the number of results (default 8). "
             "Returns a list of objects with the matching excerpt, its source document, and a relevance "
-            "score. Example: query='fastapi dependency injection', limit=5."
+            "score."
         ),
         annotations=ToolAnnotations(
             title="Search local documentation index",
@@ -229,17 +228,15 @@ def build_server(project_path: str | Path | None = None):
             "correcting the reconciled canonical memory about the user, which is regenerated and would "
             "discard the edit: use pin_memory for that. To change only the body of an existing file, "
             "prefer edit_memory. "
-            "Parameters: relative_path is the file's path in the tree, such as "
-            "'decisions/deployment.md'; text is the full Markdown body; expect is the write guard, "
+            "Parameters: relative_path is the file's path in the tree and must include the Markdown "
+            "suffix; text is the full Markdown body; expect is the write guard, "
             "'absent' (default) to create only and fail if the path exists, or the current "
             "content_hash to permit a guarded overwrite; memory_type, scope, authority, status, and "
             "curation_origin are frontmatter labels described in the schema; project_id names the "
             "owning project; sources lists backing file paths or URLs; tags lists retrieval labels; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns an object with the stable address, the new content_hash, and the revision id, "
-            "all of which later guarded calls need. "
-            "Example: relative_path='decisions/deployment.md', text='# Deployment\\n\\nWe use Railway.', "
-            "authority='mandatory'."
+            "all of which later guarded calls need."
         ),
         annotations=ToolAnnotations(
             title="Create or update a memory file",
@@ -293,8 +290,7 @@ def build_server(project_path: str | Path | None = None):
             "exact title; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns an object with the body, frontmatter, address, content_hash, and revision id, or "
-            "a candidates list when the address was ambiguous. "
-            "Example: address='docmancer://memory/01J8XY...'."
+            "a candidates list when the address was ambiguous."
         ),
         annotations=ToolAnnotations(
             title="Read a memory file",
@@ -326,9 +322,7 @@ def build_server(project_path: str | Path | None = None):
             "Markdown body, which overwrites rather than appends; expected_hash is the content_hash "
             "from the read that produced text; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the address and the new content_hash and revision id. "
-            "Example: address='docmancer://memory/01J8XY...', text='# Deployment\\n\\nWe use Fly.io.', "
-            "expected_hash='9f2c...'."
+            "Returns an object with the address and the new content_hash and revision id."
         ),
         annotations=ToolAnnotations(
             title="Replace a memory file body",
@@ -363,8 +357,7 @@ def build_server(project_path: str | Path | None = None):
             "status summary of every section. "
             "Returns, with a section, that section split into its pinned zone (durable, survives "
             "reconciliation) and its generated zone (rewritten automatically), plus content_hash and "
-            "revision id. Without a section, returns per-section presence and pinned-line counts. "
-            "Example: section='preferences'."
+            "revision id. Without a section, returns per-section presence and pinned-line counts."
         ),
         annotations=ToolAnnotations(
             title="Read canonical memory about the user",
@@ -388,8 +381,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: section selects which canonical section to pin into, one of about, "
             "preferences, working-principles, or active-projects; text is the complete line to pin, "
             "which should read as a standalone statement because it is stored verbatim. "
-            "Returns an object with the section, its path, and the updated pinned-line count. "
-            "Example: section='preferences', text='Prefers pnpm over npm for all TypeScript work.'"
+            "Returns an object with the section, its path, and the updated pinned-line count."
         ),
         annotations=ToolAnnotations(
             title="Pin a durable line to canonical memory",
@@ -414,8 +406,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: section selects which canonical section to modify, one of about, preferences, "
             "working-principles, or active-projects; text is the case-insensitive substring, not a "
             "whole line and not a pattern, identifying the pinned lines to delete. "
-            "Returns an object with the section and how many lines were removed. "
-            "Example: section='preferences', text='pnpm'."
+            "Returns an object with the section and how many lines were removed."
         ),
         annotations=ToolAnnotations(
             title="Remove pinned lines from canonical memory",
@@ -440,9 +431,7 @@ def build_server(project_path: str | Path | None = None):
             "path in the tree, including the .md suffix, and renaming is just a move within the same "
             "directory; expected_hash is the file's current content_hash from read_memory; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the unchanged address, the new path, and the new revision id. "
-            "Example: address='docmancer://memory/01J8XY...', "
-            "new_relative_path='decisions/hosting.md', expected_hash='9f2c...'."
+            "Returns an object with the unchanged address, the new path, and the new revision id."
         ),
         annotations=ToolAnnotations(
             title="Move or rename a memory file",
@@ -479,9 +468,7 @@ def build_server(project_path: str | Path | None = None):
             "source file's current content_hash from read_memory, which guards against copying a "
             "revision you have not seen; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the new copy's address, path, content_hash, and revision id. "
-            "Example: address='docmancer://memory/01J8XY...', "
-            "new_relative_path='decisions/hosting-staging.md', expected_hash='9f2c...'."
+            "Returns an object with the new copy's address, path, content_hash, and revision id."
         ),
         annotations=ToolAnnotations(
             title="Duplicate a memory file",
@@ -517,8 +504,7 @@ def build_server(project_path: str | Path | None = None):
             "content_hash from read_memory, confirming you are discarding the revision you actually "
             "saw; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the trashed address and the restore_token needed to undo it. "
-            "Example: address='docmancer://memory/01J8XY...', expected_hash='9f2c...'."
+            "Returns an object with the trashed address and the restore_token needed to undo it."
         ),
         annotations=ToolAnnotations(
             title="Trash a memory file",
@@ -549,8 +535,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: restore_token is the exact token returned by the trash_memory call being "
             "undone; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the restored address, path, and revision id. "
-            "Example: restore_token='trash-01J8XY...'."
+            "Returns an object with the restored address, path, and revision id."
         ),
         annotations=ToolAnnotations(
             title="Restore a trashed memory file",
@@ -579,8 +564,7 @@ def build_server(project_path: str | Path | None = None):
             "(default 8, capped at 50); "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns a list of objects with the docmancer://memory address, title, excerpt, authority, "
-            "and source_type. Pass an address to read_memory for the full file. "
-            "Example: query='prior deployment decision', limit=5."
+            "and source_type. Pass an address to read_memory for the full file."
         ),
         annotations=ToolAnnotations(
             title="Search curated memory",
@@ -602,8 +586,8 @@ def build_server(project_path: str | Path | None = None):
 
     @server.tool(
         description=(
-            "READ-ONLY: list the memories that recur across two or more independent agent harnesses, "
-            "for example something both Claude Code and Cursor recorded separately. Local disk read "
+            "READ-ONLY: list the memories that recur across two or more independent agent harnesses. "
+            "This is a local disk read "
             "over already-harvested evidence; docmancer's own generated integration copies are "
             "excluded so they cannot manufacture agreement. Recurrence is evidence of salience, not "
             "proof of correctness, so treat the result as a signal worth checking rather than settled "
@@ -612,7 +596,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns a list of objects describing each recurring memory and the harnesses it was seen "
-            "in. Returns [] when nothing recurs. Example: call with no arguments."
+            "in. Returns [] when nothing recurs."
         ),
         annotations=ToolAnnotations(
             title="Memories recurring across agents",
@@ -643,7 +627,7 @@ def build_server(project_path: str | Path | None = None):
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns a list with one row per agent giving its integration mode, hook status, and last "
             "delivered revision and hash. A stale or absent revision on one row is the signal to look "
-            "for. Example: call with no arguments."
+            "for."
         ),
         annotations=ToolAnnotations(
             title="Per-agent context delivery status",
@@ -672,7 +656,7 @@ def build_server(project_path: str | Path | None = None):
             "Parameters: "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns an object with the current revision, its scope and freshness, the active "
-            "exclusions, and cluster metadata. Example: call with no arguments."
+            "exclusions, and cluster metadata."
         ),
         annotations=ToolAnnotations(
             title="Consolidated context revision status",
@@ -697,13 +681,12 @@ def build_server(project_path: str | Path | None = None):
             "debugging an integration. It is one of three context tools: context_status reports the "
             "revision and its freshness, and context_delivery reports whether each agent is receiving "
             "it. Refresh, rollback, adopt, and retire are human-only CLI or local-web operations. "
-            "Parameters: agent is the required target agent identifier, such as claude-code or cursor, "
+            "Parameters: agent is the required target agent identifier, "
             "and the projection is shaped for that agent's integration; token_budget bounds the "
             "rendered size in approximate tokens (default 2000), so raising it returns more content and "
             "lowering it truncates by priority; "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
-            "Returns an object with the rendered projection text and the revision it was built from. "
-            "Example: agent='claude-code', token_budget=4000."
+            "Returns an object with the rendered projection text and the revision it was built from."
         ),
         annotations=ToolAnnotations(
             title="Render a context projection for an agent",
@@ -742,7 +725,7 @@ def build_server(project_path: str | Path | None = None):
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Omit every filter for the whole recent history. "
             "Returns a list of entries with the operation, timestamp, affected file, revision ids, and "
-            "a readable diff. Example: file_id='01J8XY...', operation='edit', limit=20."
+            "a readable diff."
         ),
         annotations=ToolAnnotations(
             title="Memory change timeline",
@@ -811,8 +794,7 @@ def build_server(project_path: str | Path | None = None):
             "(default mcp-client); "
             f"project_path {_PROJECT_PATH_HELP[0].lower()}{_PROJECT_PATH_HELP[1:]} "
             "Returns an object with the mandatory policy, curated memory, and evidence sections, each "
-            "carrying source citations, plus the generated answer when answer is true. "
-            "Example: task='how do we deploy this project', token_budget=2000."
+            "carrying source citations, plus the generated answer when answer is true."
         ),
         annotations=ToolAnnotations(
             title="Recall memory for a task",

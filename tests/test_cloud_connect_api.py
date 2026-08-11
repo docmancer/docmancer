@@ -9,10 +9,12 @@ be read exactly once and never appears in the pollable job record.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from starlette.testclient import TestClient
 
+from docmancer.cloud.connect import ConnectTimeout
 from docmancer.web.app import create_app
 
 
@@ -25,6 +27,7 @@ class CloudRuntime:
         self.configured = configured
         self.recovery = recovery
         self.cancelled = False
+        self.paused = False
         self.disconnected = False
         self.recovery_upload_error = ""
         self.stages: list[str] = []
@@ -61,6 +64,10 @@ class CloudRuntime:
     def cloud_cancel_connect(self) -> dict:
         self.cancelled = True
         return {"cancelled": True}
+
+    async def cloud_pause(self) -> dict:
+        self.paused = True
+        return {"paused": True}
 
     async def cloud_disconnect(self) -> dict:
         self.disconnected = True
@@ -160,6 +167,29 @@ def test_cancel_reaches_the_runtime(tmp_path: Path) -> None:
     assert runtime.cancelled is True
 
 
+def test_connect_timeout_is_returned_without_an_error_traceback(
+    tmp_path: Path, caplog,
+) -> None:
+    runtime = CloudRuntime()
+
+    async def time_out(**_kwargs):
+        raise ConnectTimeout("device login timed out")
+
+    runtime.cloud_connect = time_out  # type: ignore[method-assign]
+    client, app = api_client(tmp_path, runtime)
+    with caplog.at_level(logging.INFO, logger="docmancer.web.api"), client:
+        headers = authenticate(client, app)
+        started = client.post("/api/v1/cloud/connect", json={}, headers=headers)
+        job = drain(client, started.json()["id"])
+
+    assert job["state"] == "failed"
+    assert job["error"] == "device login timed out"
+    records = [record for record in caplog.records if record.name == "docmancer.web.api"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert records[0].exc_info is None
+
+
 def test_disconnect_clears_the_session(tmp_path: Path) -> None:
     runtime = CloudRuntime(configured=True)
     client, app = api_client(tmp_path, runtime)
@@ -169,6 +199,17 @@ def test_disconnect_clears_the_session(tmp_path: Path) -> None:
 
     assert response.json() == {"disconnected": True}
     assert runtime.disconnected is True
+
+
+def test_pause_retains_the_cloud_identity(tmp_path: Path) -> None:
+    runtime = CloudRuntime(configured=True)
+    client, app = api_client(tmp_path, runtime)
+    with client:
+        headers = authenticate(client, app)
+        response = client.post("/api/v1/cloud/pause", json={}, headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"paused": True}
+    assert runtime.paused is True
 
 
 def test_recovery_key_is_read_once_and_never_enters_the_job_record(tmp_path: Path) -> None:

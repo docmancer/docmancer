@@ -26,6 +26,7 @@ export function CloudSettings() {
   const [replacementRecoveryKey, setReplacementRecoveryKey] = useState("");
   const [recoveryUploadError, setRecoveryUploadError] = useState("");
   const [revoking, setRevoking] = useState<JsonMap | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -75,7 +76,14 @@ export function CloudSettings() {
     () => apiMutation(`/api/v1/cloud/devices/${encodeURIComponent(id)}/revoke`, { confirmation: id }),
     "Device revoked.",
   ).then(() => setRevoking(null));
-  const disconnect = () => run(() => apiMutation("/api/v1/cloud/disconnect", {}), "Cloud session cleared. Local memory was not changed.");
+  const pause = () => run(
+    () => apiMutation("/api/v1/cloud/pause", {}),
+    "Personal Sync paused. Cloud credentials were kept.",
+  );
+  const disconnect = () => run(
+    () => apiMutation("/api/v1/cloud/disconnect", {}),
+    "Device revoked and local Cloud credentials removed. Local memory was not changed.",
+  ).then(() => setDisconnecting(false));
   const createRecoveryKey = async () => {
     setBusy(true);
     setError("");
@@ -92,6 +100,7 @@ export function CloudSettings() {
 
   const configured = Boolean(status.configured);
   const registered = Boolean(status.registered);
+  const paused = Boolean(status.paused);
   const localKeys = (status.local_keys ?? {}) as JsonMap;
   const keyState = (value: unknown, missing: string) => localKeys.checked
     ? value ? "Present" : missing
@@ -128,8 +137,8 @@ export function CloudSettings() {
     <div className="settings-title">
       <div className="feature-icon mint">{configured ? <Cloud size={19}/> : <ShieldCheck size={19}/>}</div>
       <div>
-        <span className="eyebrow">{configured ? "Encrypted Cloud connected" : "Device registered"}</span>
-        <h2>{configured ? "Sync, devices, recovery, and Team" : "Approval is still required"}</h2>
+        <span className="eyebrow">{configured ? "Encrypted Cloud connected" : paused ? "Personal Sync paused" : "Device registered"}</span>
+        <h2>{configured ? "Sync, devices, recovery, and Team" : paused ? "This device is ready to resume" : "Approval is still required"}</h2>
         <p>Manage the local side of encrypted continuity. Billing and checkout remain on docmancer.dev.</p>
       </div>
     </div>
@@ -138,14 +147,16 @@ export function CloudSettings() {
 
     <AgentGroup title="Connection" note={configured
       ? "This device holds the workspace key and can encrypt and decrypt revisions."
-      : "This device is known to your account, but encrypted sync stays off until a trusted device confirms its four-word code."}>
+      : paused
+        ? "Transfer is paused, while this device keeps its resumable identity and workspace key."
+        : "This device is known to your account, but encrypted sync stays off until a trusted device confirms its four-word code."}>
       <div className="cloud-status-grid">
-        <article><strong>{configured ? "Connected" : "Pending"}</strong><span>Connection state</span></article>
+        <article><strong>{configured ? "Connected" : paused ? "Paused" : "Pending"}</strong><span>Connection state</span></article>
         <article><strong>{remoteLoaded ? devices.length : "Not loaded"}</strong><span>Registered devices</span></article>
         <article><strong>{keyState(localKeys.device_identity_available, "Missing")}</strong><span>Local device identity</span></article>
         <article><strong>{keyState(localKeys.workspace_key_available, "Unavailable")}</strong><span>Local workspace key</span></article>
       </div>
-      {!configured && <Notice kind="error">
+      {!configured && !paused && <Notice kind="error">
         On a trusted device, run <code>docmancer cloud connect</code> and confirm the code
         <strong> {String(currentDevice?.pairing_phrase ?? "unavailable")}</strong>. You can also reconnect
         here with your recovery kit if that machine is unavailable.
@@ -156,8 +167,11 @@ export function CloudSettings() {
         </button>}
         <button className="primary-btn" disabled={busy || (configured && !canPush)} onClick={configured
           ? sync
-          : () => run(() => apiJobMutation("/api/v1/cloud/sync", {}, () => undefined), "Approval confirmed and first sync complete.")}>
-          {busy && <LoaderCircle className="spin" size={14}/>}{configured ? "Retry sync" : "Check approval"}
+          : () => run(
+              () => apiJobMutation("/api/v1/cloud/sync", {}, () => undefined),
+              paused ? "Personal Sync resumed." : "Approval confirmed and first sync complete.",
+            )}>
+          {busy && <LoaderCircle className="spin" size={14}/>}{configured ? "Retry sync" : paused ? "Resume Personal Sync" : "Check approval"}
         </button>
       </div>
     </AgentGroup>
@@ -253,8 +267,11 @@ export function CloudSettings() {
       </div>
     </AgentGroup>
 
-    <AgentGroup title="Disconnect" note="Clears the local cloud session and stops encrypted transfer. Local memory is never deleted.">
-      <div className="form-actions"><button className="text-btn" disabled={busy} onClick={disconnect}>{configured ? "Disconnect this device" : "Disconnect local link"}</button></div>
+    <AgentGroup title="Pause or disconnect" note="Pausing keeps this device ready to resume. Disconnecting revokes it and removes local Cloud credentials. Local memory is never deleted.">
+      <div className="form-actions">
+        {configured && <button className="secondary-btn" disabled={busy} onClick={pause}>Pause Personal Sync</button>}
+        <button className="text-btn" disabled={busy} onClick={() => setDisconnecting(true)}>Disconnect this device</button>
+      </div>
     </AgentGroup>
 
     {revoking && <RevokeDeviceDialog
@@ -263,6 +280,18 @@ export function CloudSettings() {
       close={() => setRevoking(null)}
       onConfirm={() => void revoke(String(revoking.device_id ?? revoking.id ?? ""))}
     />}
+
+    {disconnecting && <Modal title="Disconnect this device?" subtitle="This revokes the Cloud registration and removes local Cloud credentials." close={() => setDisconnecting(false)}>
+      <p className="muted">
+        Local memory stays on this machine, and the remote encrypted workspace and subscription
+        remain active for other devices. If this is the last approved device, connect and approve
+        a replacement first.
+      </p>
+      <div className="form-actions">
+        <button className="primary-btn" disabled={busy} onClick={() => void disconnect()}>{busy && <LoaderCircle className="spin" size={14}/>}Disconnect device</button>
+        <button className="text-btn" disabled={busy} onClick={() => setDisconnecting(false)}>Keep connected</button>
+      </div>
+    </Modal>}
 
   </div>;
 }

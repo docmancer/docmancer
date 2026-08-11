@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -89,3 +90,89 @@ def test_local_runtime_ask_and_reindex_use_tree_without_legacy_services(tmp_path
     assert result["items"][0]["address"].startswith("docmancer://memory/")
     reindexed = asyncio.run(runtime.tree_mutate("reindex", {"action": "reindex"}))
     assert reindexed["reindexed"] == 1
+
+
+def test_local_runtime_ask_uses_resolved_question_without_raw_conversation(tmp_path: Path) -> None:
+    runtime = LocalRuntime(project_path=tmp_path)
+    bundle = {
+        "answer": None,
+        "mandatory_policies": [],
+        "curated_memory": [],
+        "relevant_evidence": [],
+        "token_estimate": 0,
+        "index_revision": "test",
+        "refresh": {"requested": False},
+    }
+
+    turn = {
+        "kind": "none",
+        "message": "",
+        "request_kind": "read",
+        "read_question": "Why is Legacy Dashboard still present in active.md?",
+        "retrieval_queries": [
+            "Legacy Dashboard active.md",
+            "canonical exclusions Legacy Dashboard",
+        ],
+        "proposal": None,
+    }
+    with (
+        patch("docmancer.memory.actions.MemoryActionEngine.plan", return_value=turn),
+        patch("docmancer.memory.ask.ask", return_value=bundle) as recall,
+    ):
+        asyncio.run(runtime.ask_tree(
+            "Why is it still in active.md?",
+            conversation_history=[
+                {"role": "user", "content": "Remove Legacy Dashboard from shared memory everywhere."},
+                {"role": "assistant", "content": "The exclusion proposal was applied."},
+            ],
+        ))
+
+    recall_task = recall.call_args.args[0]
+    assert recall_task == "Why is Legacy Dashboard still present in active.md?"
+    assert "Remove Legacy Dashboard" not in recall_task
+    assert recall.call_args.kwargs["retrieval_queries"] == turn["retrieval_queries"]
+
+
+def test_local_runtime_mixed_turn_returns_answer_and_proposal(tmp_path: Path) -> None:
+    runtime = LocalRuntime(project_path=tmp_path)
+    proposal = {
+        "operation": "edit",
+        "scope": "machine",
+        "path": "shared/canonical-exclusions.md",
+        "status": "pending",
+    }
+    turn = {
+        "kind": "proposal",
+        "message": "Review the proposed Shared Memory change.",
+        "request_kind": "mixed",
+        "read_question": "Why is the retired project still in Shared Memory?",
+        "retrieval_queries": ["retired project Shared Memory"],
+        "proposal": proposal,
+        "provider": "test",
+        "model": "test",
+    }
+    bundle = {
+        "answer": {"text": "It remains in the generated section because the current exclusion does not match it [1]."},
+        "mandatory_policies": [],
+        "curated_memory": [],
+        "relevant_evidence": [{"address": "profile/active.md", "title": "Active"}],
+        "token_estimate": 20,
+        "index_revision": "test",
+        "refresh": {"requested": False},
+        "retrieval_queries": turn["retrieval_queries"],
+    }
+
+    with (
+        patch("docmancer.memory.actions.MemoryActionEngine.plan", return_value=turn),
+        patch("docmancer.memory.ask.ask", return_value=bundle) as recall,
+    ):
+        result = asyncio.run(runtime.ask_tree(
+            "Why is it still there, and remove it?",
+            action_enabled=True,
+        ))
+
+    assert result["request_kind"] == "mixed"
+    assert result["answer"] == bundle["answer"]
+    assert result["action"] == proposal
+    assert result["action_message"]["text"] == turn["message"]
+    assert recall.call_args.kwargs["answer"] is None

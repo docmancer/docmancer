@@ -37,6 +37,7 @@ def cloud_status(
     workspace_id = str(account.get("workspace_id") or "")
     device_id = str(account.get("device_id") or "")
     registered = bool(account_id and workspace_id and device_id)
+    paused = bool(account.get("paused"))
     device_identity_available: bool | None = None
     workspace_key_available: bool | None = None
     if check_keychain and account_id:
@@ -66,9 +67,11 @@ def cloud_status(
         "registered": registered,
         "connection_state": (
             "connected" if config.enabled()
+            else "paused" if paused and registered
             else "pending_approval" if registered
             else "not_connected"
         ),
+        "paused": paused,
         "account_id": account.get("account_id"),
         "workspace_id": account.get("workspace_id"),
         "device_id": account.get("device_id"),
@@ -87,6 +90,12 @@ def cloud_status(
 
 def _print_cloud_status(value: dict) -> None:
     if not value.get("configured"):
+        if value.get("paused") and value.get("registered"):
+            click.echo("Personal Sync: paused on this device")
+            click.echo(f"Workspace: {value.get('workspace_id') or 'unknown'}")
+            click.echo(f"This device: {value.get('device_id') or 'unknown'}")
+            click.echo("Next: run `docmancer cloud connect` to resume this device.")
+            return
         if value.get("registered"):
             local_keys = value.get("local_keys") or {}
             click.echo("Personal Sync: device registered, awaiting approval")
@@ -495,21 +504,33 @@ def _prompt_for_workspace(rows: list[dict]) -> dict:
 
 
 
-@cloud_group.command("disconnect", cls=DocmancerCommand, short_help="Disconnect cloud without deleting local memory.")
+@cloud_group.command("pause", cls=DocmancerCommand, short_help="Pause transfer and retain this device's Cloud identity.")
+def pause() -> None:
+    _root_path, config, account, _keys = _context()
+    if not account.get("workspace_id"):
+        raise click.ClickException("this machine is not connected to Personal Sync")
+    config.save_account(enabled=False, paused=True)
+    click.echo("Personal Sync paused on this device. Local memory and Cloud credentials were kept.")
+
+
+@cloud_group.command("disconnect", cls=DocmancerCommand, short_help="Revoke and forget this Cloud device without deleting local memory.")
 @click.option("--export", "export_destination", type=click.Path(path_type=Path), default=None, help="Export local Markdown records first.")
 @click.option("--delete-remote", is_flag=True, help="Schedule server-held ciphertext for deletion first.")
 @click.option("--confirm", default=None, help="Required as DELETE with --delete-remote.")
 def logout(export_destination: Path | None, delete_remote: bool, confirm: str | None) -> None:
+    from docmancer.cloud.lifecycle import forget_local_cloud
+
     if export_destination is not None:
         _export_local(export_destination)
     if delete_remote:
         _delete_remote(confirm or "")
-    _root_path, config, account, keys = _context()
-    account_id = str(account.get("account_id") or "")
-    if account_id:
-        keys.delete(account_id, "access-token")
-    config.save_account(enabled=False)
-    click.echo("Cloud session cleared. Local memory was not changed.")
+    client, _root_path, config, account, keys = _client()
+    try:
+        client.revoke_device(str(account["workspace_id"]), str(account["device_id"]))
+    finally:
+        client.close()
+    forget_local_cloud(config, account, keys)
+    click.echo("Cloud device revoked and local Cloud credentials removed. Local memory was not changed.")
 
 
 @cloud_group.command(cls=DocmancerCommand, short_help="Show the current account and device.", hidden=True)
@@ -530,9 +551,10 @@ def enable() -> None:
 
 @cloud_group.command(cls=DocmancerCommand, short_help="Pause remote transfer and keep local memory.", hidden=True)
 def disable() -> None:
+    click.echo("Deprecated: `docmancer cloud disable` moved to `docmancer cloud pause`.", err=True)
     _root_path, config, _account, _keys = _context()
-    config.save_account(enabled=False)
-    click.echo("Remote transfer disabled. Local memory was not changed.")
+    config.save_account(enabled=False, paused=True)
+    click.echo("Personal Sync paused on this device. Local memory and Cloud credentials were kept.")
 
 
 def _format_bytes(value: int | None) -> str:

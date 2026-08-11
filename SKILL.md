@@ -30,9 +30,13 @@ Work from the same local memory as every other coding agent on this machine, ins
 
 ```bash
 pipx install docmancer
+pipx ensurepath
+export PATH="$(pipx environment --value PIPX_BIN_DIR):$PATH"
 docmancer setup                              # discovers agents, indexes their memory, installs skills and hooks
 docmancer ask "why did we pick Railway?"     # grounded answer with citations from what your agents wrote
 ```
+
+The PATH export makes Docmancer available in the current terminal, including an existing SSH session. `pipx ensurepath` keeps it available in future terminals.
 
 If you use uv, `uv tool install docmancer` installs it the same way.
 
@@ -46,7 +50,7 @@ The default profile uses SQLite FTS5, sqlite-vec, and bundled Model2Vec embeddin
 4. Keep memory and technical-documentation results separate.
 5. Use `docmancer docs list` and `docmancer docs query` for libraries, APIs, and vendor documentation.
 
-Read-only Ask reads the latest committed local index. A configured generation provider is called by default after retrieval to produce grounded prose. Explicit mutation requests use one structured provider call to prepare one `create`, `edit`, `pin`, `move`, `duplicate`, `trash`, or `restore` proposal. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `--fresh` when the question must first wait for changed agent sources to be indexed.
+Read-only Ask reads the latest committed local index. A configured generation provider semantically separates read and mutation intent, produces grounded prose for the read part, and prepares at most one validated proposal for the mutation part. A mixed request can return both an answer and a proposal. Applying a proposal re-reads the affected state and reports whether the requested outcome was verified. Use `--read-only` to suppress action planning, `--apply` only after explicit authorisation, `--no-answer` for evidence only, and `--fresh` when the question must first wait for changed agent sources to be indexed.
 
 ## Memory commands
 

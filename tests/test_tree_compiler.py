@@ -108,6 +108,34 @@ def test_bundle_stays_within_token_budget_when_mandatory_fits(tmp_path: Path) ->
     assert bundle.token_estimate <= 100 + 1  # small rounding slack from the coarse estimator
 
 
+def test_large_canonical_file_returns_query_relevant_excerpt(tmp_path: Path) -> None:
+    store = TreeStore(tmp_path / "tree")
+    store.write(
+        relative_path="projects/active.md",
+        text=(
+            "# Active Projects\n\n"
+            + ("Unrelated project detail.\n" * 1000)
+            + "\n## Legacy Dashboard\n\nLocal path: /repos/legacy_dashboard\n"
+            + ("More unrelated detail.\n" * 1000)
+        ),
+        memory_type="active-projects",
+        scope="global",
+        expect="absent",
+    )
+
+    bundle = compile_context(
+        store.index,
+        ContextRequest(
+            task="Current request: Why is it still in active.md? Legacy Dashboard",
+            token_budget=500,
+        ),
+    )
+
+    assert len(bundle.curated_memory) == 1
+    assert "## Legacy Dashboard" in bundle.curated_memory[0].excerpt
+    assert bundle.curated_memory[0].token_estimate <= 300
+
+
 def test_conflict_warnings_and_evidence_are_empty_by_default(tmp_path: Path) -> None:
     store = TreeStore(tmp_path / "memory")
     store.write(relative_path="a.md", text="# A\n\nBody.\n", expect="absent")

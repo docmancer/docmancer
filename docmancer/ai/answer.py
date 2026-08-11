@@ -23,7 +23,6 @@ _NORMATIVE_TERMS = {
     "forbidden",
 }
 _RATIONALE_TERMS = {
-    "why",
     "rationale",
     "reason",
     "reasons",
@@ -33,6 +32,11 @@ _RATIONALE_TERMS = {
     "decided",
     "decision",
 }
+_WHY_DECISION_RE = re.compile(
+    r"\bwhy\b.*\b(?:choose|chose|chosen|decide|decided|decision|select|selected|"
+    r"adopt|adopted|switch|switched)\b",
+    re.IGNORECASE,
+)
 _EXPLORATORY_PREFIXES = ("what mentions", "find ", "search ", "show references")
 # Matches the recall floor in docmancer.memory.hooks so "sufficient" here means
 # the same thing it means in retrieval.
@@ -82,7 +86,7 @@ def classify_intent(task: str) -> str:
     words = set(re.findall(r"[a-z0-9_-]+", normalized))
     if words & _NORMATIVE_TERMS:
         return "normative"
-    if words & _RATIONALE_TERMS:
+    if words & _RATIONALE_TERMS or _WHY_DECISION_RE.search(normalized):
         return "decision_rationale"
     if normalized.startswith(_EXPLORATORY_PREFIXES):
         return "exploratory"
@@ -261,32 +265,6 @@ def _verification(
     )
 
 
-def _refusal(task: str, sufficiency: str, mode: str) -> AnswerResult:
-    intent = classify_intent(task)
-    if intent == "normative":
-        reason = "The retrieved records do not contain a mandatory-authority source for this policy question."
-    elif intent == "decision_rationale":
-        reason = "The retrieved records do not contain a decision or rationale record that answers this question."
-    else:
-        reason = "The retrieved records do not cover this question."
-    return AnswerResult(
-        text=f"{reason} Record the missing information or try a narrower query.",
-        citations=(),
-        verification=VerificationResult(
-            citations_valid="not_applicable",
-            quotes_faithful="not_applicable",
-            retrieval_sufficiency=sufficiency,
-            evidence_utilization=0.0,
-            evidence_utilization_denominator=0,
-            conflict_coverage="not_applicable",
-        ),
-        provider=None,
-        model=None,
-        mode=mode,
-        refused=True,
-    )
-
-
 def generate_answer(
     bundle: Mapping[str, Any],
     task: str,
@@ -297,13 +275,11 @@ def generate_answer(
     options: CompletionOptions | None = None,
     on_delta: Callable[[str], None] | None = None,
 ) -> AnswerResult:
-    """Generate one cited answer, or refuse before the provider call."""
+    """Generate one cited answer and report retrieval sufficiency separately."""
     if mode not in {"concise", "normal", "thorough"}:
         raise ValueError("mode must be concise, normal, or thorough")
     records = _evidence_records(bundle)
     sufficiency = retrieval_sufficiency(bundle, task)
-    if sufficiency != "met":
-        return _refusal(task, sufficiency, mode)
 
     from docmancer.harness.secrets import redact_secrets
 

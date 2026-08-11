@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.16] - Unreleased
+### Added
+
+- **Personal Sync can be paused without forgetting a device.** `docmancer cloud pause` stops transfer while retaining the resumable device identity, workspace key, and Cloud session.
+- **Ask can answer and prepare a memory change in one turn.** Provider-backed Ask semantically separates read, mutation, and mixed intent, searches up to four bounded query variants, returns a grounded answer for the read part, and prepares at most one complete-file proposal for explicit approval.
+- **Memory actions verify their requested outcome.** After an approved create, edit, pin, move, duplicate, trash, restore, or canonical exclusion, Docmancer re-reads the affected state and reports whether the expected postcondition was satisfied instead of treating a completed write as proof of success.
+
+### Changed
+
+- **Cloud disconnect now means disconnect.** `docmancer cloud disconnect` revokes the current registration, removes local Cloud metadata and keyring credentials, and leaves local memory, the remote encrypted workspace, and its subscription unchanged.
+- **Clear is explicitly local.** `docmancer clear` now describes its actual scope as local memory indexes, models, and caches. It continues to preserve Cloud identity so a local rebuild cannot create a duplicate pending device.
+- **Partial evidence produces a useful partial answer.** Retrieval sufficiency remains explicit metadata, but a weak or incomplete evidence bundle no longer becomes a generic pre-provider refusal when it can still support part of the answer.
+- **Canonical forget requests preserve their evidence.** Natural-language requests to stop surfacing a project or topic strengthen the canonical exclusion rules, rebuild generated Shared Memory, and leave repositories and agent-owned source memory untouched.
+
+### Fixed
+
+- **Cloud approval no longer sends local-web users around the onboarding loop.** The local app opens the hosted approval page with its eight-character code already filled in, preserves that code through sign-in, and waits for the same authorization attempt to finish.
+- **Large canonical files recall the relevant section.** Query-sensitive excerpts replace arbitrary leading slices, so a matching decision near the end of a generated file can still reach Ask within the token budget.
+- **Expected Cloud connection outcomes are clean.** Cancellation and authorization timeout are reported as normal bounded outcomes instead of noisy background-job tracebacks.
+
 ## [0.9.15] - 2026-08-09
 ### Added
 

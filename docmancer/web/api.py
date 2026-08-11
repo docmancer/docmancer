@@ -40,7 +40,7 @@ CAPABILITIES = {
     "audit": ["secrets", "hooks"],
     "intelligence": ["review", "recent", "maintenance", "history", "resolve"],
     "maintenance": ["sync", "consolidate", "apply", "doctor"],
-    "cloud": ["status", "connect", "disconnect", "sync", "devices", "recovery", "team", "billing"],
+    "cloud": ["status", "connect", "pause", "disconnect", "sync", "devices", "recovery", "team", "billing"],
 }
 
 COMMERCIAL_LINKS = {
@@ -105,6 +105,9 @@ def answer_metadata(result: dict[str, Any]) -> dict[str, Any]:
         "evidence": evidence,
         "verification": answer_details.get("verification"),
         "refused": answer_details.get("refused"),
+        "request_kind": result.get("request_kind"),
+        "retrieval_queries": result.get("retrieval_queries"),
+        "action_message": result.get("action_message"),
         "action_kind": result.get("action_kind"),
         "action_request": result.get("action_request"),
         "action_clarification_count": result.get("action_clarification_count"),
@@ -132,6 +135,8 @@ class JobRegistry:
         self,
         kind: str,
         operation: Callable[[Callable[[str, dict[str, Any]], None]], Awaitable[Any]],
+        *,
+        expected_errors: tuple[type[Exception], ...] = (),
     ) -> dict[str, Any]:
         job_id = secrets.token_urlsafe(12)
         job = {
@@ -156,6 +161,12 @@ class JobRegistry:
             try:
                 job["result"] = jsonable(await operation(progress))
                 job["state"] = "completed"
+            except expected_errors as exc:
+                job["state"] = "failed"
+                job["error"] = str(exc)
+                logger.info(
+                    "background job %s (%s) ended: %s", job_id, kind, exc
+                )
             except Exception as exc:  # Converted to a bounded local error for polling.
                 job["state"] = "failed"
                 job["error"] = str(exc)
@@ -447,7 +458,7 @@ class LocalApi:
                             mutation_disabled_reason=(
                                 "Start a saved conversation before asking Docmancer to change Shared Memory. "
                                 "Temporary chats remain read-only."
-                                if temporary
+                                if not conversation_id
                                 else None
                             ),
                         )
@@ -567,6 +578,29 @@ class LocalApi:
                         status_code=409,
                     )
                 return error_response(exc)
+            postcondition = result.get("postcondition") or {}
+            if postcondition.get("status") == "not_satisfied":
+                resolved = await asyncio.to_thread(
+                    self.ask_history.resolve_action,
+                    action_id,
+                    status="failed",
+                    result=result,
+                )
+                return JSONResponse(
+                    {
+                        "error": {
+                            "code": "ACTION_POSTCONDITION_FAILED",
+                            "message": (
+                                "The memory write completed, but the requested outcome was not verified."
+                            ),
+                            "retry_safe": False,
+                            "checks": postcondition.get("checks") or [],
+                        },
+                        "action": jsonable(resolved),
+                        "result": jsonable(result),
+                    },
+                    status_code=409,
+                )
             resolved = await asyncio.to_thread(
                 self.ask_history.resolve_action,
                 action_id,
@@ -1085,6 +1119,7 @@ class LocalApi:
 
     async def cloud_connect(self, request: Request) -> JSONResponse:
         from docmancer.cloud.config import default_cloud_base_url
+        from docmancer.cloud.connect import ConnectCancelled, ConnectTimeout
 
         body = await request_json(request)
         status = await self.runtime.cloud_status()
@@ -1110,7 +1145,11 @@ class LocalApi:
             outcome["recovery_key_available"] = one_time_recovery_key is not None
             return outcome
 
-        job = self.jobs.start("cloud.connect", operation)
+        job = self.jobs.start(
+            "cloud.connect",
+            operation,
+            expected_errors=(ConnectCancelled, ConnectTimeout),
+        )
         return JSONResponse(jsonable(job), status_code=202)
 
     async def cloud_recovery_key_once(self, request: Request) -> JSONResponse:
@@ -1132,6 +1171,9 @@ class LocalApi:
 
     async def cloud_disconnect(self, request: Request) -> JSONResponse:
         return JSONResponse(jsonable(await self.runtime.cloud_disconnect()))
+
+    async def cloud_pause(self, request: Request) -> JSONResponse:
+        return JSONResponse(jsonable(await self.runtime.cloud_pause()))
 
     async def cloud_sync(self, request: Request) -> JSONResponse:
         job = self.jobs.start("cloud.sync", lambda _progress: self.runtime.cloud_sync())

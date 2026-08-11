@@ -85,31 +85,31 @@ def ask_cmd(
 ) -> None:
     """Retrieve one bounded local evidence bundle, then ask the configured provider to answer from it when available."""
     from docmancer.memory.ask import ask
-    from docmancer.memory.actions import MemoryActionEngine, is_mutation_request
+    from docmancer.memory.actions import MemoryActionEngine
 
     if apply_action and read_only:
         raise click.UsageError("--apply cannot be combined with --read-only")
     if apply_action and answer is False:
         raise click.UsageError("--apply cannot be combined with --no-answer")
 
-    mutation_request = bool(
-        is_mutation_request(task)
-        and not read_only
-        and answer is not False
-    )
     action_result = None
-    if mutation_request:
+    if not read_only and answer is not False:
         from docmancer.memory import MemoryAgent
 
         action_result = MemoryActionEngine(
             project_path or Path.cwd(),
             memory_agent=MemoryAgent(),
         ).plan(task)
+    request_kind = str((action_result or {}).get("request_kind") or "read")
+    mutation_request = request_kind in {"mutate", "mixed"}
+    read_question = str((action_result or {}).get("read_question") or "").strip()
+    recall_task = read_question or task
+    retrieval_queries = list((action_result or {}).get("retrieval_queries") or [])
 
     # --no-cite strips citation markers, which cannot be retracted once they
     # have streamed to the terminal. Buffer instead of streaming a copy the
     # caller asked not to see.
-    should_stream = stream and cite and not as_json and sys.stdout.isatty() and not mutation_request
+    should_stream = stream and cite and not as_json and sys.stdout.isatty() and request_kind != "mutate"
     streamed = False
 
     def on_delta(delta: str) -> None:
@@ -118,7 +118,7 @@ def ask_cmd(
         click.echo(delta, nl=False)
 
     result = ask(
-        task,
+        recall_task,
         project_path=project_path,
         token_budget=token_budget,
         limit=limit,
@@ -128,10 +128,12 @@ def ask_cmd(
         agent_name=agent_name,
         surface="cli",
         integration_mode="direct",
-        answer=False if mutation_request else answer,
+        answer=False if request_kind == "mutate" else answer,
         answer_mode=mode,
+        retrieval_queries=retrieval_queries,
         on_delta=on_delta if should_stream else None,
     )
+    result["request_kind"] = request_kind
     if not debug:
         result.pop("debug_evidence", None)
     proposal = action_result.get("proposal") if isinstance(action_result, dict) else None
@@ -156,7 +158,10 @@ def ask_cmd(
                 proposal,
                 actor_surface="cli-ask",
             )
-            result["action"]["status"] = "applied"
+            postcondition = result["result"].get("postcondition") or {}
+            result["action"]["status"] = (
+                "failed" if postcondition.get("status") == "not_satisfied" else "applied"
+            )
     elif apply_action:
         raise click.ClickException(
             str((action_result or {}).get("message") or "No valid memory action was proposed.")
@@ -172,7 +177,13 @@ def ask_cmd(
         click.echo(str(proposal.get("diff") or "(No textual diff)"))
         click.echo("Shared Memory was not changed. Re-run with --apply to execute this proposal.")
         click.echo()
-    if result.get("result"):
+    if result.get("result") and result.get("action", {}).get("status") == "failed":
+        click.echo(
+            "The memory write completed, but the requested outcome was not verified.",
+            err=True,
+        )
+        click.echo()
+    elif result.get("result"):
         click.echo(f"Applied {proposal['operation']} to Shared Memory.")
         click.echo()
 

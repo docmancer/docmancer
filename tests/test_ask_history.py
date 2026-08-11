@@ -47,7 +47,7 @@ def test_failed_legacy_action_recovers_last_explicit_machine_request(tmp_path) -
     conversation = store.create_conversation()
     _, first_answer = store.begin_exchange(
         conversation["id"],
-        "Remove TokenTape and pet projects from Shared Memory globally.",
+        "Remove Legacy Dashboard and Retired Portal from Shared Memory globally.",
     )
     store.complete_answer(
         conversation["id"],
@@ -66,7 +66,7 @@ def test_failed_legacy_action_recovers_last_explicit_machine_request(tmp_path) -
     context = store.pending_action_context(conversation["id"])
 
     assert context["clarification_request"] == (
-        "Remove TokenTape and pet projects from Shared Memory globally."
+        "Remove Legacy Dashboard and Retired Portal from Shared Memory globally."
     )
     assert context["clarification_count"] == 1
 

@@ -38,6 +38,6 @@ The synced data includes the machine-wide tree at `~/.docmancer/tree` and mapped
 
 Stripe Checkout starts a card-backed 30-day trial. The chosen subscription begins automatically when the trial ends unless it is canceled. A failed renewal gets a fixed 7-day upload grace period, followed by a 30-day read-only recovery and export window. Hosted data is scheduled for deletion after that window. Renewing before deletion resumes sync.
 
-None of these states disable local Ask, Shared Memory, read, write, import, capture, MCP, docs, or the workbench. Disconnecting and remote deletion also leave the local Markdown tree untouched.
+None of these states disable local Ask, Shared Memory, read, write, import, capture, MCP, docs, or the workbench. `docmancer cloud pause` stops transfer while retaining the local device identity. `docmancer cloud disconnect` revokes and forgets only this device. Remote deletion cancels the workspace subscription before scheduling hosted ciphertext deletion. All three leave the local Markdown tree untouched.
 
 Team Sync, which would publish an approved complete memory file to colleagues, is not available yet.

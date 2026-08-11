@@ -12,6 +12,29 @@ from docmancer.cloud.keystore import KeyStore
 from docmancer.cloud.outbox import CloudState
 
 
+def forget_local_cloud(
+    config: CloudConfig,
+    account: dict[str, Any],
+    keys: KeyStore,
+) -> None:
+    """Remove local Cloud metadata and all known keyring material."""
+    account_id = str(account.get("account_id") or "")
+    workspace_id = str(account.get("workspace_id") or "")
+    workspace = config.workspace(workspace_id)
+    key_version = int(
+        account.get("key_version")
+        or ((workspace[1] if workspace else {}).get("key_version"))
+        or 1
+    )
+    if account_id:
+        keys.delete_cloud_identity(
+            account_id,
+            workspace_id,
+            key_version=key_version,
+        )
+    config.clear_local_cloud()
+
+
 def enqueue_revision_if_enabled(
     payload: dict[str, Any],
     *,
@@ -77,4 +100,8 @@ def enqueue_revisions_if_enabled(
     return state.enqueue_many(new_envelopes())
 
 
-__all__ = ["enqueue_revision_if_enabled", "enqueue_revisions_if_enabled"]
+__all__ = [
+    "enqueue_revision_if_enabled",
+    "enqueue_revisions_if_enabled",
+    "forget_local_cloud",
+]

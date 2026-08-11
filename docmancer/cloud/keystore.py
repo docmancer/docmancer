@@ -100,5 +100,25 @@ class KeyStore:
     def set_token(self, account_id: str, value: str) -> None:
         self.set(account_id, "access-token", value.encode("utf-8"))
 
+    def delete_cloud_identity(
+        self,
+        account_id: str,
+        workspace_id: str,
+        *,
+        key_version: int = 1,
+    ) -> None:
+        """Forget the local Cloud session, device identity, and workspace keys."""
+        for kind in (
+            "access-token",
+            "device-signing-private",
+            "device-signing-public",
+            "device-box-private",
+            "device-box-public",
+            f"workspace:{workspace_id}",
+        ):
+            self.delete(account_id, kind)
+        for version in range(1, max(1, int(key_version)) + 1):
+            self.delete(account_id, f"workspace:{workspace_id}:v{version}")
+
 
 __all__ = ["KeyStore", "MemorySecretBackend", "SecretBackend", "SERVICE"]

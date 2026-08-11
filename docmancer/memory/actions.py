@@ -16,12 +16,15 @@ from docmancer.memory.laptop import (
     CANONICAL_SECTION_PATHS,
     LaptopMemoryReconciler,
     laptop_memory_root,
+    parse_canonical_exclusions,
     validate_canonical_exclusions,
 )
 from docmancer.memory.tree.journal import DecisionJournal
+from docmancer.memory.tree.errors import AddressNotFoundError
 from docmancer.memory.tree.parser import parse_tree_file
 from docmancer.memory.tree.project import resolve_project_root, tree_paths
 from docmancer.memory.tree.store import TreeStore
+from docmancer.memory.tree.zones import split_zones
 
 
 ACTION_OPERATIONS = ("create", "edit", "pin", "move", "duplicate", "trash", "restore")
@@ -31,46 +34,17 @@ MACHINE_FOLDERS = ("profile", "principles", "projects", "shared")
 MAX_AI_FILE_CHARS = 16_000
 MAX_AI_EXACT_GENERATED_CHARS = 24_000
 
-_MUTATION_VERB = (
-    r"(?:remember|save|record|update|edit|change|rewrite|streamline|simplify|shorten|move|rename|duplicate|copy|"
-    r"delete|remove|forget|trash|hide|exclude|suppress|ignore|retire|shelve|de[- ]?prioriti[sz]e|"
-    r"stop\s+(?:showing|surfacing|including|using)|restore|undelete|undo\s+(?:the\s+)?deletion)"
-)
-_MUTATION_RE = re.compile(
-    rf"(?:^\s*(?:please\s+)?{_MUTATION_VERB}\b|"
-    rf"\b(?:please|can\s+you|could\s+you|would\s+you|will\s+you|"
-    rf"i\s+want\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to|let(?:'s|\s+us))\s+"
-    rf"{_MUTATION_VERB}\b)",
-    re.IGNORECASE,
-)
-_MACHINE_RE = re.compile(
-    r"\b(machine[- ]wide|global(?:ly)?|all projects|every project|across projects|"
-    r"shared memor(?:y|ies)|canonical memor(?:y|ies)|master memor(?:y|ies)|"
-    r"laptop(?:[- ]wide)? memor(?:y|ies)|all (?:of )?my memor(?:y|ies)|"
-    r"all (?:of )?my shared memory files|every shared memory file|across (?:all )?my memor(?:y|ies)|"
-    r"my preference|i prefer|about me|my profile|my career)\b",
-    re.IGNORECASE,
-)
-_PROJECT_RE = re.compile(
-    r"\b(this project|this repo|this repository|current project|current repo|"
-    r"project decision|project workflow|release workflow|deployment decision)\b",
-    re.IGNORECASE,
-)
-_CANONICAL_FORGET_RE = re.compile(
-    r"\b(?:delete|remove|forget|trash|hide|exclude|suppress|ignore|retire|shelve|"
-    r"de[- ]?prioriti[sz]e|stop (?:showing|surfacing|including|using)|"
-    r"no longer (?:show|surface|include|use)|not (?:using|working on))\b",
-    re.IGNORECASE | re.DOTALL,
-)
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}", re.IGNORECASE)
-_GENERATED_REWRITE_RE = re.compile(r"\b(?:streamline|simplify|shorten)\b", re.IGNORECASE)
 
 
 class MemoryActionDraft(BaseModel):
-    """One provider response. The server rejects incomplete combinations."""
+    """Semantic turn interpretation plus an optional memory proposal."""
 
+    request_kind: Literal["read", "mutate", "mixed"]
     outcome: Literal["proposal", "clarification", "none"]
     message: str = ""
+    read_question: str | None = None
+    retrieval_queries: list[str] = Field(default_factory=list)
     operation: Literal["create", "edit", "pin", "move", "duplicate", "trash", "restore"] | None = None
     scope: Literal["project", "machine"] | None = None
     target_address: str | None = None
@@ -78,6 +52,8 @@ class MemoryActionDraft(BaseModel):
     markdown: str | None = None
     section: str | None = None
     restore_token: str | None = None
+    desired_visibility: Literal["unchanged", "absent_from_generated_shared_memory"] = "unchanged"
+    preserve_source_evidence: bool = True
     rationale: str = ""
 
 
@@ -87,24 +63,9 @@ class ActionPlanningResult(BaseModel):
     proposal: dict[str, Any] | None = None
     provider: str | None = None
     model: str | None = None
-
-
-def is_mutation_request(task: str) -> bool:
-    """High-precision local gate. Ordinary Ask never pays for action planning."""
-    return bool(_MUTATION_RE.search(task or ""))
-
-
-def _scope_hint(task: str) -> str | None:
-    machine = bool(_MACHINE_RE.search(task))
-    project = bool(_PROJECT_RE.search(task))
-    if machine == project:
-        return None
-    return "machine" if machine else "project"
-
-
-def _canonical_forget_request(task: str, scope_hint: str | None) -> bool:
-    """Recognize a broad generated-memory removal, never a source-file delete."""
-    return scope_hint == "machine" and bool(_CANONICAL_FORGET_RE.search(task or ""))
+    request_kind: Literal["read", "mutate", "mixed"] = "read"
+    read_question: str | None = None
+    retrieval_queries: list[str] = Field(default_factory=list)
 
 
 def _safe_markdown(text: str, *, label: str) -> str:
@@ -118,6 +79,50 @@ def _safe_markdown(text: str, *, label: str) -> str:
     if redact_secrets(value) != value:
         raise ValueError(f"{label} contains possible secrets and must be edited manually")
     return value + ("\n" if not value.endswith("\n") else "")
+
+
+def _strengthen_canonical_exclusions(markdown: str) -> str:
+    """Add path-safe variants when a provider only returns a display name.
+
+    Repository names commonly use underscores even when their display names use
+    spaces. A text-only exclusion can therefore leave branded-neutral evidence
+    from that repository in generated canonical files.
+    """
+    rules = parse_canonical_exclusions(markdown)
+    if not any(rules.values()):
+        return markdown
+    existing = set(rules["evidence_path_contains"])
+    additions: list[str] = []
+    for value in rules["text_contains"]:
+        slug = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+        if "_" in slug and slug not in existing and slug not in additions:
+            additions.append(slug)
+    if not additions:
+        return markdown
+
+    lines = markdown.rstrip("\n").splitlines()
+    heading = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().casefold() == "## evidence path contains"
+        ),
+        None,
+    )
+    if heading is None:
+        return markdown
+    insert_at = next(
+        (
+            index
+            for index in range(heading + 1, len(lines))
+            if lines[index].strip().startswith("## ")
+        ),
+        len(lines),
+    )
+    while insert_at > heading + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines[insert_at:insert_at] = [f"- {value}" for value in additions]
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _allowed_path(scope: str, value: str) -> str:
@@ -237,32 +242,28 @@ class MemoryActionEngine:
         history: list[dict[str, str]] | None = None,
         client=None,
     ) -> dict[str, Any]:
-        if not is_mutation_request(task):
-            return ActionPlanningResult(kind="none", message="").model_dump()
         if redact_secrets(task) != task:
             return ActionPlanningResult(
                 kind="unavailable",
                 message="This request may contain a secret. Edit the memory file manually instead.",
+                request_kind="mutate",
             ).model_dump()
 
         candidates = self._candidates(task)
-        hint = _scope_hint(task)
-        canonical_forget = _canonical_forget_request(task, hint)
-        exclusion = None
-        if canonical_forget:
-            exclusion = next(
-                (
-                    row
-                    for row in self._entries()
-                    if row["scope"] == "machine"
-                    and row["path"] == CANONICAL_EXCLUSIONS_PATH
-                ),
-                None,
-            )
-            if exclusion is not None and all(
-                row["address"] != exclusion["address"] for row in candidates
-            ):
-                candidates.append(exclusion)
+        exclusion = next(
+            (
+                row
+                for row in self._entries()
+                if row["scope"] == "machine"
+                and row["path"] == CANONICAL_EXCLUSIONS_PATH
+            ),
+            None,
+        )
+        if exclusion is not None and all(
+            row["address"] != exclusion["address"] for row in candidates
+        ):
+            candidates.append(exclusion)
+        hint = None
         exact_scopes = {
             str(row["scope"])
             for row in candidates
@@ -271,6 +272,8 @@ class MemoryActionEngine:
         if len(exact_scopes) == 1:
             hint = next(iter(exact_scopes))
         safe_candidates = []
+        planner_candidates = []
+        blocked_targets: dict[str, str] = {}
         for row in candidates:
             body = str(row["markdown"])
             exact_target = str(row["address"]) in task or str(row["path"]) in task
@@ -280,40 +283,25 @@ class MemoryActionEngine:
                 else MAX_AI_FILE_CHARS
             )
             if len(body) > size_limit or redact_secrets(body) != body:
-                if exact_target:
-                    reason = (
-                        f"The complete target file exceeds {size_limit:,} characters."
-                        if len(body) > size_limit
-                        else "Secret redaction would change the complete target file."
-                    )
-                    return ActionPlanningResult(
-                        kind="unavailable",
-                        message=f"{reason} Shared Memory is unchanged; use the manual editor.",
-                    ).model_dump()
+                reason = (
+                    f"The complete target file exceeds {size_limit:,} characters."
+                    if len(body) > size_limit
+                    else "Secret redaction would change the complete target file."
+                )
+                blocked_targets[str(row["address"])] = reason
+                planner_candidates.append({
+                    **row,
+                    "markdown": "",
+                    "content_available": False,
+                    "unavailable_reason": reason,
+                })
                 continue
             safe_candidates.append(row)
-
-        generated_rewrite_target = next(
-            (
-                row for row in safe_candidates
-                if row.get("generated_section")
-                and (str(row["address"]) in task or str(row["path"]) in task)
-            ),
-            None,
-        )
-        if (
-            generated_rewrite_target is not None
-            and _GENERATED_REWRITE_RE.search(task)
-            and "User clarification:" not in task
-        ):
-            return ActionPlanningResult(
-                kind="clarification",
-                message=(
-                    f"{generated_rewrite_target['path']} is generated from source evidence, so "
-                    "replacing it directly would be overwritten on the next refresh. Should I "
-                    "prepare a concise summary in its preserved pinned section instead?"
-                ),
-            ).model_dump()
+            planner_candidates.append({
+                **row,
+                "content_available": True,
+                "unavailable_reason": None,
+            })
 
         try:
             planner = client or self._client()
@@ -331,8 +319,8 @@ class MemoryActionEngine:
             "project": str(self.project_path),
             "scope_hint": hint,
             "scope_rule": (
-                "Use scope_hint when present. If it is absent and the target does not uniquely "
-                "determine scope, return clarification asking machine-wide or current project."
+                "Use scope_hint when present. Otherwise infer scope from the request and current "
+                "targets. Ask one clarification only when both scopes remain materially plausible."
             ),
             "shared_memory_reference": {
                 "definition": (
@@ -341,27 +329,14 @@ class MemoryActionEngine:
                     "notes, and durable machine-wide controls."
                 ),
                 "terminology": {
-                    "same_product_surface": [
-                        "Shared Memory",
-                        "shared memories",
-                        "canonical memory",
-                        "master memory",
-                        "laptop memory",
-                        "laptop-wide memory",
-                        "machine memory",
-                        "global memory",
-                        "all my memory files",
-                        "all my shared memory files",
-                        "memory shared by my agents",
-                        "memory available to every agent",
-                    ],
-                    "not_the_same_thing": [
-                        "A source repository or its code files",
-                        "Agent-owned source memory such as CLAUDE.md or MEMORY.md",
-                        "Project-scoped curated memory under the current project's .docmancer tree",
-                        "The separate technical-documentation index",
-                        "Chat history",
-                    ],
+                    "same_product_surface": (
+                        "Treat unambiguous natural-language references to machine-wide memory shared "
+                        "across agents as references to Shared Memory."
+                    ),
+                    "not_the_same_thing": (
+                        "Do not treat source repositories, agent-owned source memory, project-scoped "
+                        "curated memory, the technical-documentation index, or chat history as Shared Memory."
+                    ),
                 },
                 "storage_model": [
                     (
@@ -393,19 +368,17 @@ class MemoryActionEngine:
                         "request to delete repositories or agent-owned evidence."
                     ),
                     (
-                        "Words such as remove, forget, hide, exclude, suppress, ignore, retire, shelve, "
-                        "stop showing, stop surfacing, no longer include, and de-prioritize all express "
-                        "canonical-exclusion intent when their object is material in Shared Memory."
+                        "Interpret language that asks for material to stop appearing in Shared Memory by "
+                        "its semantic intent, not by matching a fixed vocabulary."
                     ),
                     (
-                        "Lifecycle explanations such as 'I am not using it anymore', 'we stopped working "
-                        "on it', 'this is inactive', or 'this is no longer relevant' strengthen an "
-                        "accompanying removal or exclusion request. They do not authorize source deletion."
+                        "Lifecycle commentary strengthens an accompanying removal or exclusion request, "
+                        "but never authorizes source deletion by itself."
                     ),
                     (
-                        "When the user offers alternatives such as 'remove it or de-prioritize it' and the "
-                        "context says the subject is inactive or unused, choose the supported canonical "
-                        "exclusion. Do not return a proposal without an operation."
+                        "When the user offers removal and unsupported ranking as alternatives and says the "
+                        "subject is inactive or unused, choose the supported canonical exclusion. Do not "
+                        "return a proposal without an operation."
                     ),
                     (
                         "If the user asks only for lower ranking or lower priority while explicitly wanting "
@@ -435,58 +408,21 @@ class MemoryActionEngine:
                         "Do not add broad terms that could suppress unrelated projects or evidence.",
                     ],
                 },
-                "examples": [
-                    {
-                        "request": "Remove Token Tape from all my shared memory files.",
-                        "interpretation": "Canonical exclusion for Token Tape in machine-wide Shared Memory.",
-                    },
-                    {
-                        "request": "Remove the project Token Tape or de-prioritize it. I am not using it anymore.",
-                        "interpretation": "Choose canonical exclusion because removal is supported and inactivity resolves the alternative.",
-                    },
-                    {
-                        "request": "Stop surfacing the old pet marketplace project to any of my agents.",
-                        "interpretation": "Canonical exclusion because the request targets cross-agent generated memory.",
-                    },
-                    {
-                        "request": "Forget everything from repositories whose path contains /token_tape/.",
-                        "interpretation": "Add a narrow Evidence path contains exclusion. Do not touch those repositories.",
-                    },
-                    {
-                        "request": "Hide references to Mewline from canonical memory but keep the source notes.",
-                        "interpretation": "Add a narrow Text contains exclusion and preserve source notes.",
-                    },
-                    {
-                        "request": "This project is shelved and should no longer appear in laptop-wide memory.",
-                        "interpretation": "Canonical exclusion for the identified project.",
-                    },
-                    {
-                        "request": "De-prioritize Token Tape but keep it visible when directly relevant.",
-                        "interpretation": "Clarification required because persistent ranking weights are unsupported and exclusion would hide it.",
-                    },
-                    {
-                        "request": "Trash decisions/obsolete-launch.md from this project.",
-                        "interpretation": "Exact project-file trash, not a canonical exclusion.",
-                    },
-                    {
-                        "request": "Rewrite projects/active.md to remove Token Tape.",
-                        "interpretation": "Do not rewrite the generated section. Use canonical exclusion or ask about a pinned note.",
-                    },
-                    {
-                        "request": "Delete the Token Tape repository and its memory.",
-                        "interpretation": "Never delete the repository. Only a Shared Memory proposal is permitted here, and source deletion requires separate explicit handling outside this system.",
-                    },
-                ],
                 "output_requirements": [
+                    "Classify the request as read, mutate, or mixed by meaning.",
+                    "For read requests return outcome none and a self-contained read_question.",
+                    "For mixed requests return a proposal and a self-contained read_question.",
                     "Return exactly one proposal, one necessary clarification, or none.",
                     "A proposal must always include exactly one supported operation.",
                     "Never invent an address, path, operation, or restore token.",
                     "Never convert a Shared Memory cleanup into source-file deletion.",
-                    "Never treat yes, ok, approval language, or lifecycle commentary by itself as authorization to apply an action.",
+                    "Never treat approval language or lifecycle commentary by itself as authorization to apply an action.",
                 ],
             },
             "rules": [
-                "Return exactly one action or one clarification.",
+                "Return no action for a read-only request.",
+                "Return exactly one action or one necessary clarification for a mutation request.",
+                "Provide up to four focused retrieval queries for the read part of the request.",
                 "scope_hint is authoritative when present; never ask the user to repeat that scope.",
                 "Use only a supplied target_address for existing files.",
                 (
@@ -496,7 +432,7 @@ class MemoryActionEngine:
                 ),
                 "For create, edit, or pin, markdown is the complete proposed body or complete pinned zone.",
                 "Move and duplicate stay within one scope.",
-                "Never interpret yes or approval as an action.",
+                "Never interpret approval language by itself as an action.",
                 (
                     "A broad request to remove topics or projects from generated machine-wide "
                     f"Shared Memory without touching source files must create or edit "
@@ -514,21 +450,19 @@ class MemoryActionEngine:
                     "title": row["title"],
                     "markdown": row["markdown"],
                     "generated_section": row["generated_section"],
+                    "content_available": row["content_available"],
+                    "unavailable_reason": row["unavailable_reason"],
                 }
-                for row in safe_candidates
+                for row in planner_candidates
             ],
             "trash": self._trash_candidates(),
             "recent_conversation": list(history or [])[-6:],
-            "canonical_exclusion_target": (
-                {
-                    "scope": "machine",
-                    "path": CANONICAL_EXCLUSIONS_PATH,
-                    "address": exclusion["address"] if exclusion is not None else None,
-                    "required_operation": "edit" if exclusion is not None else "create",
-                }
-                if canonical_forget
-                else None
-            ),
+            "canonical_exclusion_target": {
+                "scope": "machine",
+                "path": CANONICAL_EXCLUSIONS_PATH,
+                "address": exclusion["address"] if exclusion is not None else None,
+                "required_operation": "edit" if exclusion is not None else "create",
+            },
         }
         try:
             draft = planner.parse(
@@ -536,9 +470,10 @@ class MemoryActionEngine:
                     {
                         "role": "system",
                         "content": (
-                            "Plan exactly one safe Shared Memory file action from the supplied "
-                            "request and constraints. Do not answer the request as a question. "
-                            "Do not ask for information the request or scope_hint already supplies."
+                            "Interpret the turn semantically. Separate its read and mutation parts, "
+                            "then plan at most one safe Shared Memory file action under the supplied "
+                            "constraints. Do not rely on fixed phrases or named cases. Do not ask for "
+                            "information the request, conversation, or current targets already supply."
                         ),
                     },
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
@@ -555,7 +490,34 @@ class MemoryActionEngine:
 
         provider = str(getattr(planner, "provider_name", "") or "")
         model = str(getattr(planner, "model", "") or "")
+        request_kind = str(draft.request_kind or "read")
+        read_question = str(draft.read_question or "").strip() or (
+            task if request_kind in {"read", "mixed"} else None
+        )
+        retrieval_queries = []
+        for query in draft.retrieval_queries:
+            value = " ".join(str(query or "").split())
+            if value and value not in retrieval_queries:
+                retrieval_queries.append(value)
+            if len(retrieval_queries) == 4:
+                break
+        if read_question and read_question not in retrieval_queries:
+            retrieval_queries.insert(0, read_question)
+            retrieval_queries = retrieval_queries[:4]
+        routing = {
+            "request_kind": request_kind,
+            "read_question": read_question,
+            "retrieval_queries": retrieval_queries,
+        }
         if draft.outcome != "proposal":
+            if draft.outcome == "none" and request_kind != "read":
+                return ActionPlanningResult(
+                    kind="unavailable",
+                    message="Docmancer could not produce the requested memory change. Shared Memory is unchanged.",
+                    provider=provider,
+                    model=model,
+                    **routing,
+                ).model_dump()
             return ActionPlanningResult(
                 kind="clarification" if draft.outcome == "clarification" else "none",
                 message=draft.message or (
@@ -565,6 +527,24 @@ class MemoryActionEngine:
                 ),
                 provider=provider,
                 model=model,
+                **routing,
+            ).model_dump()
+        if request_kind == "read":
+            return ActionPlanningResult(
+                kind="unavailable",
+                message="Docmancer received an inconsistent action plan. Shared Memory is unchanged.",
+                provider=provider,
+                model=model,
+                **routing,
+            ).model_dump()
+        target_block = blocked_targets.get(str(draft.target_address or ""))
+        if target_block:
+            return ActionPlanningResult(
+                kind="unavailable",
+                message=f"{target_block} Shared Memory is unchanged; use the manual editor.",
+                provider=provider,
+                model=model,
+                **routing,
             ).model_dump()
         if draft.operation == "pin" and not str(draft.markdown or "").strip():
             target = next(
@@ -585,7 +565,22 @@ class MemoryActionEngine:
                     ),
                     provider=provider,
                     model=model,
+                    **routing,
                 ).model_dump()
+        canonical_forget = (
+            draft.desired_visibility == "absent_from_generated_shared_memory"
+        )
+        if canonical_forget and not draft.preserve_source_evidence:
+            return ActionPlanningResult(
+                kind="unavailable",
+                message=(
+                    "Ask can remove material from generated Shared Memory, but it cannot delete "
+                    "the underlying repositories or agent-owned evidence. Shared Memory is unchanged."
+                ),
+                provider=provider,
+                model=model,
+                **routing,
+            ).model_dump()
         if canonical_forget:
             draft.scope = "machine"
             draft.path = CANONICAL_EXCLUSIONS_PATH
@@ -595,6 +590,8 @@ class MemoryActionEngine:
             else:
                 draft.operation = "edit"
                 draft.target_address = str(exclusion["address"])
+            if str(draft.markdown or "").strip():
+                draft.markdown = _strengthen_canonical_exclusions(str(draft.markdown))
         try:
             proposal = self._validate_draft(draft, safe_candidates)
         except ValueError as exc:
@@ -603,6 +600,7 @@ class MemoryActionEngine:
                 message=f"Docmancer refused the proposed memory action: {exc}. Shared Memory is unchanged.",
                 provider=provider,
                 model=model,
+                **routing,
             ).model_dump()
         proposal.update(id=new_action_id(), provider=provider, model=model)
         return ActionPlanningResult(
@@ -611,6 +609,7 @@ class MemoryActionEngine:
             proposal=proposal,
             provider=provider,
             model=model,
+            **routing,
         ).model_dump()
 
     def _validate_draft(
@@ -717,6 +716,85 @@ class MemoryActionEngine:
         target = str(proposal.get("path") or proposal.get("target") or "Shared Memory")
         return f"I prepared one {operation} proposal for {target}. Review the complete change before applying it."
 
+    def _postcondition(
+        self,
+        proposal: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Verify the requested local state after the guarded operation completes."""
+        operation = str(proposal["operation"])
+        scope = str(proposal["scope"])
+        store = self._store(scope)
+        checks: list[dict[str, Any]] = []
+
+        def check(name: str, passed: bool, detail: str = "") -> None:
+            checks.append({"name": name, "passed": bool(passed), "detail": detail})
+
+        try:
+            if operation == "pin":
+                section = str(proposal["section"])
+                current = self._reconciler().read_section(section)
+                expected = str(proposal["after_markdown"]).strip()
+                check("pinned_zone_matches", str(current.get("pinned") or "").strip() == expected)
+            elif operation == "trash":
+                try:
+                    store.read(str(proposal["address"]))
+                except (AddressNotFoundError, FileNotFoundError, KeyError):
+                    check("source_no_longer_active", True)
+                else:
+                    check("source_no_longer_active", False)
+                check("restore_token_returned", bool(result.get("restore_token")))
+            else:
+                address = str(result.get("address") or proposal.get("address") or "")
+                current = store.read(address)
+                current_path = current.path.relative_to(store.root).as_posix()
+                if operation in {"create", "edit", "duplicate", "restore"}:
+                    expected_body = str(proposal.get("after_markdown") or "")
+                    if operation in {"create", "edit"}:
+                        check("file_body_matches", current.body == expected_body)
+                    else:
+                        check("file_is_readable", bool(current.body or current_path))
+                if operation in {"move", "duplicate", "restore"}:
+                    check("file_path_matches", current_path == str(result.get("path") or proposal.get("path") or ""))
+
+            if scope == "machine" and str(proposal.get("path") or "") == CANONICAL_EXCLUSIONS_PATH:
+                rules = parse_canonical_exclusions(str(proposal.get("after_markdown") or ""))
+                previous_rules = parse_canonical_exclusions(
+                    str(proposal.get("before_markdown") or "")
+                )
+                previous_text = {
+                    value.casefold() for value in previous_rules["text_contains"]
+                }
+                requested_text = [
+                    value for value in rules["text_contains"]
+                    if value.casefold() not in previous_text
+                ]
+                surviving: list[str] = []
+                for section, relative_path in CANONICAL_SECTION_PATHS.items():
+                    if section == "canonical-memory":
+                        continue
+                    path = self.machine_store.root / relative_path
+                    if not path.is_file():
+                        continue
+                    generated = split_zones(
+                        parse_tree_file(path).body
+                    ).generated.casefold()
+                    for literal in requested_text:
+                        if literal.casefold() in generated:
+                            surviving.append(f"{relative_path}: {literal}")
+                check(
+                    "excluded_text_absent_from_generated_sections",
+                    not surviving,
+                    "; ".join(surviving),
+                )
+        except Exception as exc:  # noqa: BLE001 - verification must report, not hide, an applied write
+            check("verification_completed", False, f"{type(exc).__name__}: {exc}")
+
+        return {
+            "status": "satisfied" if checks and all(row["passed"] for row in checks) else "not_satisfied",
+            "checks": checks,
+        }
+
     def execute(
         self,
         proposal: dict[str, Any],
@@ -737,14 +815,15 @@ class MemoryActionEngine:
                     use_provider=False,
                     force=True,
                 )
+            result["postcondition"] = self._postcondition(proposal, result)
             return result
 
         if operation == "pin":
-            return self._reconciler().set_pinned(
+            return finish(self._reconciler().set_pinned(
                 str(proposal["section"]),
                 str(proposal["after_markdown"]).rstrip(),
                 expect=expected_hash,
-            )
+            ))
         if operation == "create":
             entry = store.write(
                 relative_path=_allowed_path(scope, path),
@@ -777,7 +856,7 @@ class MemoryActionEngine:
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {"address": entry.address, "path": path, "content_hash": entry.content_hash}
+            return finish({"address": entry.address, "path": path, "content_hash": entry.content_hash})
         if operation == "duplicate":
             entry = store.duplicate(
                 address,
@@ -786,7 +865,7 @@ class MemoryActionEngine:
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {"address": entry.address, "path": path, "content_hash": entry.content_hash}
+            return finish({"address": entry.address, "path": path, "content_hash": entry.content_hash})
         if operation == "trash":
             token = store.trash(
                 address,
@@ -794,18 +873,18 @@ class MemoryActionEngine:
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {"trashed": True, "restore_token": token, "path": path}
+            return finish({"trashed": True, "restore_token": token, "path": path})
         if operation == "restore":
             entry = store.restore(
                 str(proposal["restore_token"]),
                 actor_surface=actor_surface,
                 actor_harness=actor_harness,
             )
-            return {
+            return finish({
                 "address": entry.address,
                 "path": entry.path.relative_to(store.root).as_posix(),
                 "content_hash": entry.content_hash,
-            }
+            })
         raise ValueError(f"unsupported memory action {operation!r}")
 
 
@@ -820,6 +899,5 @@ __all__ = [
     "MAX_AI_EXACT_GENERATED_CHARS",
     "MemoryActionDraft",
     "MemoryActionEngine",
-    "is_mutation_request",
     "new_action_id",
 ]

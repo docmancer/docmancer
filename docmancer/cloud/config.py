@@ -83,9 +83,19 @@ class CloudConfig:
     def save_account(self, **updates: Any) -> dict:
         value = self.account()
         value.update(updates)
+        if updates.get("enabled") is True and "paused" not in updates:
+            value["paused"] = False
         value["version"] = 1
         _write_json(self.paths.account, value)
         return value
+
+    def clear_local_cloud(self) -> None:
+        """Remove every non-keyring Cloud artifact from this machine."""
+        if not self.paths.root.exists():
+            return
+        import shutil
+
+        shutil.rmtree(self.paths.root)
 
     def workspaces(self) -> dict:
         return _read_json(self.paths.workspaces, {"version": 1, "projects": {}, "workspaces": {}})
