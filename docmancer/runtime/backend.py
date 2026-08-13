@@ -2873,10 +2873,10 @@ class LocalRuntime:
                     )
             if create_recovery:
                 try:
-                    recovery_key, upload_error = self._cloud_create_recovery(
+                    generated_recovery_key, upload_error = self._cloud_create_recovery(
                         root, keys, outcome["workspace_id"]
                     )
-                    outcome["recovery_key"] = recovery_key
+                    outcome["recovery_key"] = generated_recovery_key
                     if upload_error:
                         outcome["recovery_upload_error"] = upload_error
                 except ValueError as exc:

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.17] - Unreleased
+### Fixed
+
+- **Personal Sync connection no longer crashes after browser approval.** The local app now correctly returns the pending-approval state when no recovery kit was supplied, so the pairing or recovery flow can continue normally.
+
 ## [0.9.16] - 2026-08-11
 ### Added
 

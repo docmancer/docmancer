@@ -6,6 +6,9 @@ here breaks both front ends at once.
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from docmancer.cloud import connect as connect_module
@@ -25,6 +28,7 @@ from docmancer.cloud.keystore import KeyStore, MemorySecretBackend
 from docmancer.cloud.outbox import CloudState
 from docmancer.memory.atomic import AtomicMemoryEntry
 from docmancer.memory.graph import MemoryGraphStore
+from docmancer.runtime.backend import LocalRuntime
 
 ACCOUNT_ID = "00000000-0000-4000-8000-000000000001"
 WORKSPACE_ID = "00000000-0000-4000-8000-000000000002"
@@ -230,6 +234,44 @@ def test_finish_connect_registers_a_second_device_as_pending(flow):
     assert outcome["key_version"] == 2
     assert outcome["fingerprint"].startswith("docmancer-")
     assert CloudConfig(root).enabled() is False, "a pending device must not enable transfer"
+
+
+def test_runtime_connect_without_recovery_key_returns_pending_approval(
+    tmp_path, monkeypatch,
+):
+    """The web flow must not shadow the optional recovery-key argument."""
+    keys = KeyStore(MemorySecretBackend())
+    runtime = LocalRuntime.__new__(LocalRuntime)
+    runtime.project_path = str(tmp_path / "project")
+    runtime._cloud_connect_cancel = None
+    runtime._require_memory = lambda: SimpleNamespace(db_path=tmp_path / "memory.db")
+
+    monkeypatch.setattr(connect_module, "resume_existing_connect", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(connect_module, "start_connect", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        connect_module,
+        "await_authorization",
+        lambda *_args, **_kwargs: {"access_token": "token", "account_id": ACCOUNT_ID},
+    )
+    monkeypatch.setattr(
+        connect_module,
+        "finish_connect",
+        lambda *_args, **_kwargs: {
+            "state": "pending_approval",
+            "workspace_id": WORKSPACE_ID,
+            "fingerprint": "docmancer-pending",
+        },
+    )
+    monkeypatch.setattr(connect_module, "pairing_phrase", lambda _fingerprint: "four word code here")
+    monkeypatch.setattr("docmancer.cloud.keystore.KeyStore", lambda: keys)
+
+    outcome = asyncio.run(
+        runtime.cloud_connect(base_url="https://cloud.invalid", create_recovery=True)
+    )
+
+    assert outcome["state"] == "pending_approval"
+    assert outcome["pairing_phrase"] == "four word code here"
+    assert "local workspace key is required" in outcome["recovery_key_unavailable"]
 
 
 def test_finish_connect_rejects_an_invalid_account_uuid(flow):
