@@ -9,7 +9,7 @@
       "name": "docmancer",
       "source": "./plugins/docmancer",
       "description": "Recall and update local curated Markdown memory.",
-      "version": "0.9.16",
+      "version": "0.9.17",
       "category": "development"
     }
   ]
